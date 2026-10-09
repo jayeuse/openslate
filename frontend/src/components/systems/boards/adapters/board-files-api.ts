@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { ApiContractError, apiFetch, apiRequest } from "@/lib/api";
 import {
+  assertLifecyclePurgePreviewFor,
+  lifecyclePurgeInputSchema,
+  lifecyclePurgePreviewSchema,
+  type LifecyclePurgeInput,
+} from "@/lib/lifecycle";
+import {
   fileDetails,
   fileWireSchema,
   MAX_FILE_BYTES,
@@ -228,4 +234,143 @@ export async function downloadBoardAttachment(
     signal,
     BOARD_FILE_REQUEST_ERROR,
   );
+}
+
+const unlinkedFileWire = fileWireSchema
+  .extend({
+    purpose: z.literal("board_attachment"),
+    record_id: z.null(),
+    department_id: z.null(),
+    board_id: uuid,
+  })
+  .transform((file) => ({
+    ...fileDetails(file),
+    boardId: file.board_id,
+    isDeleted: file.is_deleted,
+  }));
+const unlinkedPageWire = z
+  .object({
+    items: z.array(unlinkedFileWire),
+    pagination: z
+      .object({
+        limit: z.number().int().min(1).max(100),
+        offset: z.number().int().min(0),
+        count: z.number().int().min(0),
+        total: z.number().int().min(0),
+        has_more: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .refine(
+    ({ items, pagination: p }) =>
+      items.length === p.count &&
+      p.count <= p.limit &&
+      p.offset + p.count <= Math.max(p.total, p.offset) &&
+      p.has_more === p.offset + p.count < p.total,
+  )
+  .transform(({ items, pagination: { has_more, ...page } }) => ({
+    items,
+    pagination: { ...page, hasMore: has_more },
+  }));
+export type BoardUnlinkedFile = z.output<typeof unlinkedFileWire>;
+export type BoardUnlinkedFilePage = z.output<typeof unlinkedPageWire>;
+
+export async function listUnlinkedBoardFiles(
+  rawBoardId: string,
+  options: { deleted: "exclude" | "only"; offset: number; limit?: number },
+  signal?: AbortSignal,
+): Promise<BoardUnlinkedFilePage> {
+  const boardId = uuid.parse(rawBoardId);
+  const params = z
+    .object({
+      deleted: z.enum(["exclude", "only"]),
+      offset: z.number().int().min(0),
+      limit: z.number().int().min(1).max(100).default(25),
+    })
+    .parse(options);
+  const query = new URLSearchParams({
+    deleted: params.deleted,
+    limit: String(params.limit),
+    offset: String(params.offset),
+  });
+  const page = await apiFetch(
+    `/boards/${boardId}/files?${query}`,
+    unlinkedPageWire,
+    { cache: "no-store", signal },
+  );
+  if (
+    page.pagination.offset !== params.offset ||
+    page.pagination.limit !== params.limit ||
+    page.items.some(
+      (file) =>
+        file.boardId !== boardId ||
+        file.isDeleted !== (params.deleted === "only"),
+    )
+  )
+    throw new ApiContractError();
+  return page;
+}
+
+export async function archiveUnlinkedBoardFile(
+  rawBoardId: string,
+  rawFileId: string,
+): Promise<BoardUnlinkedFile> {
+  const boardId = uuid.parse(rawBoardId),
+    fileId = uuid.parse(rawFileId);
+  const file = await apiFetch(
+    `/boards/${boardId}/files/${fileId}/archive`,
+    unlinkedFileWire,
+    { method: "POST", cache: "no-store" },
+  );
+  if (file.boardId !== boardId || file.id !== fileId || !file.isDeleted)
+    throw new ApiContractError();
+  return file;
+}
+
+export async function previewBoardFilePurge(
+  rawBoardId: string,
+  rawFileId: string,
+) {
+  const boardId = uuid.parse(rawBoardId),
+    fileId = uuid.parse(rawFileId);
+  const preview = await apiFetch(
+    `/boards/${boardId}/files/${fileId}/purge/preview`,
+    lifecyclePurgePreviewSchema,
+    { method: "POST", cache: "no-store" },
+  );
+  assertLifecyclePurgePreviewFor(preview, "file", fileId);
+  return preview;
+}
+
+export async function purgeBoardFile(
+  rawBoardId: string,
+  rawFileId: string,
+  rawInput: LifecyclePurgeInput,
+): Promise<BoardUnlinkedFile> {
+  const boardId = uuid.parse(rawBoardId),
+    fileId = uuid.parse(rawFileId);
+  const input = lifecyclePurgeInputSchema.parse(rawInput);
+  const file = await apiFetch(
+    `/boards/${boardId}/files/${fileId}/purge`,
+    unlinkedFileWire,
+    {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify({
+        token: input.token,
+        confirmation_name: input.confirmationName,
+        password: input.password,
+      }),
+    },
+  );
+  if (
+    file.boardId !== boardId ||
+    file.id !== fileId ||
+    !file.isDeleted ||
+    file.state !== "purged" ||
+    file.filename !== input.confirmationName
+  )
+    throw new ApiContractError();
+  return file;
 }

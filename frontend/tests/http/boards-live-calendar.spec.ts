@@ -1,4 +1,8 @@
 import { expect, test, type Page } from "./helpers/test";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type {
@@ -1316,4 +1320,457 @@ test("denied latest-version check clears cached occurrences even when retry fail
   });
   expect(failed.data).toBeNull();
   expect(failed.status).toBe("error");
+});
+
+async function installArchivedEventPurge(
+  browser: Page,
+  role: "admin" | "member" = "admin",
+  failChallenge = false,
+  holdPreview = false,
+) {
+  await installOpenViewEventSource(browser);
+  await installSelectedEventApi(browser);
+  await browser.route("**/api/auth/me", (route) =>
+    route.fulfill({ json: { id: authorId, role, access: [] } }),
+  );
+  const workspace = {
+    display_name: "OpenSlate",
+    mark: "OS",
+    logo_file_id: null,
+    revision: 1,
+    today: "2026-09-14",
+    week_start: "monday",
+    locale: "en-US",
+    timezone: "UTC",
+    purge_enabled: true,
+  };
+  await browser.route("**/api/workspace", (route) =>
+    route.fulfill({ json: workspace }),
+  );
+  let releasePreview = () => {};
+  const previewGate = new Promise<void>((resolve) => {
+    releasePreview = resolve;
+  });
+  await browser.route(`**/api/boards/${boardId}/my-access`, (route) =>
+    route.fulfill({
+      json: {
+        level: "manage",
+        read: true,
+        write: true,
+        manage: true,
+      },
+    }),
+  );
+  const impact = {
+    target_type: "board_event",
+    target_id: eventId,
+    actor_id: authorId,
+    operation: "purge",
+    rows: [],
+    external_impacts: [],
+    key_strips: [],
+    blockers: [],
+    impact_digest: "a".repeat(64),
+  };
+  let purges = 0;
+  let deleted = false;
+  await browser.route(`**/api/boards/${boardId}/events?**`, (route) => {
+    const items = deleted ? [] : [{ ...selectedEventWire, archived: true }];
+    return route.fulfill({
+      json: {
+        items,
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+        board_revision: deleted ? 2 : 1,
+      },
+    });
+  });
+  await browser.route(
+    `**/api/boards/${boardId}/events/${eventId}/purge**`,
+    async (route) => {
+      if (route.request().url().endsWith("/preview")) {
+        if (holdPreview) await previewGate;
+        return route.fulfill({
+          json: {
+            impact,
+            token: "owned-event-preview",
+            expires_at: "2026-09-26T00:00:00Z",
+            confirmation_name: selectedEventWire.title,
+            last_successful_backup_at: null,
+          },
+        });
+      }
+      purges += 1;
+      expect(route.request().postDataJSON()).toEqual({
+        token: "owned-event-preview",
+        confirmation_name: selectedEventWire.title,
+        password: "synthetic-event-password",
+      });
+      if (failChallenge)
+        return route.fulfill({
+          status: 404,
+          json: {
+            detail: {
+              code: "challenge_not_found",
+              message: "private event internals",
+            },
+          },
+        });
+      deleted = true;
+      return route.fulfill({ json: { impact, operation_id: null } });
+    },
+  );
+  return {
+    workspace,
+    releasePreview,
+    get purges() {
+      return purges;
+    },
+  };
+}
+
+for (const failChallenge of [false, true]) {
+  test(`S04 archived event purge ${failChallenge ? "retains its row after an unavailable challenge" : "removes only its confirmed archived row"}`, async ({
+    page: browser,
+  }) => {
+    const api = await installArchivedEventPurge(
+      browser,
+      "admin",
+      failChallenge,
+    );
+    await browser.goto(`/boards?board=${boardId}&section=calendar`);
+    await browser
+      .getByRole("button", { name: "Event lists", exact: true })
+      .click();
+    await browser
+      .getByRole("menuitem", { name: "Archived events", exact: true })
+      .click();
+    const archived = browser.getByRole("region", {
+      name: "Archived Board events",
+      exact: true,
+    });
+    await archived
+      .getByRole("button", {
+        name: `Permanently delete ${selectedEventWire.title}`,
+        exact: true,
+      })
+      .click();
+    const review = browser.getByRole("dialog", {
+      name: "Permanently delete event?",
+    });
+    await expect(
+      review.getByText(
+        "Last successful backup: No successful backup recorded.",
+      ),
+    ).toBeVisible();
+    await review
+      .getByLabel("Type the event name")
+      .fill(selectedEventWire.title + " ");
+    await review
+      .getByLabel("Administrator password")
+      .fill("synthetic-event-password");
+    await expect(
+      review.getByRole("button", {
+        name: "Confirm permanent deletion",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect(api.purges).toBe(0);
+    await review
+      .getByLabel("Type the event name")
+      .fill(selectedEventWire.title);
+    await review
+      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .click();
+    if (failChallenge) {
+      await expect(
+        review.getByText("The review is unavailable. Request a new review."),
+      ).toBeVisible();
+      await review
+        .getByRole("button", { name: "Review again", exact: true })
+        .click();
+      await expect(review.getByLabel("Administrator password")).toHaveValue("");
+      await review.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(
+        archived.getByRole("button", {
+          name: `Restore ${selectedEventWire.title}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+    } else {
+      await expect(review).toBeHidden();
+      await expect(
+        archived.getByText(selectedEventWire.title, { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        browser.getByText("Event permanently deleted.", { exact: true }),
+      ).toBeVisible();
+    }
+    expect(api.purges).toBe(1);
+    await expect(browser.getByText("private event internals")).toHaveCount(0);
+  });
+}
+
+test("S04 archived event remains restorable by a member without permanent-delete authority", async ({
+  page: browser,
+}) => {
+  const api = await installArchivedEventPurge(browser, "member");
+  await browser.goto(`/boards?board=${boardId}&section=calendar`);
+  await browser
+    .getByRole("button", { name: "Event lists", exact: true })
+    .click();
+  await browser
+    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .click();
+  const archived = browser.getByRole("region", {
+    name: "Archived Board events",
+    exact: true,
+  });
+  await expect(
+    archived.getByRole("button", {
+      name: `Restore ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    archived.getByRole("button", {
+      name: `Permanently delete ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(api.purges).toBe(0);
+});
+
+test("S04 pending event review can recover after purge setting changes without accepting its late preview", async ({
+  page: browser,
+}) => {
+  const api = await installArchivedEventPurge(browser, "admin", false, true);
+  await browser.goto(`/boards?board=${boardId}&section=calendar`);
+  await browser
+    .getByRole("button", { name: "Event lists", exact: true })
+    .click();
+  await browser
+    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .click();
+  const archived = browser.getByRole("region", {
+    name: "Archived Board events",
+    exact: true,
+  });
+  const begin = archived.getByRole("button", {
+    name: `Permanently delete ${selectedEventWire.title}`,
+    exact: true,
+  });
+  await begin.click();
+  await expect(
+    browser
+      .getByRole("dialog", { name: "Permanently delete event?" })
+      .getByText("Preparing review…"),
+  ).toBeVisible();
+  api.workspace.purge_enabled = false;
+  await sendOpenViewEvent(browser, "invalidate", {
+    entity: "workspace_profiles",
+  });
+  await expect(
+    browser.getByRole("dialog", { name: "Permanently delete event?" }),
+  ).toBeHidden();
+  const released = browser.waitForResponse((response) =>
+    response.url().endsWith("/purge/preview"),
+  );
+  api.releasePreview();
+  await released;
+  api.workspace.purge_enabled = true;
+  await sendOpenViewEvent(browser, "invalidate", {
+    entity: "workspace_profiles",
+  });
+  await expect(begin).toBeVisible();
+  await expect(begin).toBeEnabled();
+  expect(api.purges).toBe(0);
+});
+test("S04 correction: admin purges archived-parent event while ordinary lifecycle editing stays unavailable", async ({
+  page: browser,
+}) => {
+  const api = await installArchivedEventPurge(browser);
+  const archivedParent = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: "Calendar board",
+    description: "Current calendar",
+    status: "archived",
+    revision: 1,
+    level: "manage",
+    created_at: selectedEventWire.created_at,
+    updated_at: selectedEventWire.updated_at,
+  };
+  await browser.route(`**/api/boards/${boardId}`, (route) =>
+    route.fulfill({ json: archivedParent }),
+  );
+  await browser.route("**/api/boards?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [archivedParent],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  await browser.goto(
+    `/boards?board=${boardId}&section=calendar&status=archived`,
+  );
+  await expect(
+    browser.getByRole("heading", { name: "Calendar", exact: true }).last(),
+  ).toBeVisible();
+  await expect(
+    browser.getByRole("button", { name: "Event lists", exact: true }),
+  ).toBeVisible();
+  await browser
+    .getByRole("button", { name: "Event lists", exact: true })
+    .click();
+  await browser
+    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .click();
+  const archived = browser.getByRole("region", {
+    name: "Archived Board events",
+    exact: true,
+  });
+  await expect(
+    archived.getByText(selectedEventWire.title, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    archived.getByRole("button", {
+      name: `Restore ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    browser.getByRole("button", { name: "New event", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    browser.getByRole("button", { name: "Edit event", exact: true }),
+  ).toHaveCount(0);
+  await archived
+    .getByRole("button", {
+      name: `Permanently delete ${selectedEventWire.title}`,
+      exact: true,
+    })
+    .click();
+  const review = browser.getByRole("dialog", {
+    name: "Permanently delete event?",
+  });
+  await review.getByLabel("Type the event name").fill(selectedEventWire.title);
+  await review
+    .getByLabel("Administrator password")
+    .fill("synthetic-event-password");
+  await review
+    .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  await expect(
+    archived.getByText(selectedEventWire.title, { exact: true }),
+  ).toHaveCount(0);
+  expect(api.purges).toBe(1);
+});
+
+test("S04 correction: archived-parent admin retains current-access retry after an event-list failure", async ({
+  page: browser,
+}) => {
+  await installArchivedEventPurge(browser);
+  const parent = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: "Calendar board",
+    description: "Current calendar",
+    status: "archived",
+    revision: 1,
+    level: "manage",
+    created_at: selectedEventWire.created_at,
+    updated_at: selectedEventWire.updated_at,
+  };
+  await browser.route(`**/api/boards/${boardId}`, (route) =>
+    route.fulfill({ json: parent }),
+  );
+  await browser.route("**/api/boards?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [parent],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  let fail = true,
+    reads = 0;
+  await browser.route(`**/api/boards/${boardId}/events?**`, (route) => {
+    reads += 1;
+    if (fail)
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Private dependency failure" },
+      });
+    return route.fulfill({
+      json: {
+        items: [{ ...selectedEventWire, archived: true }],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+        board_revision: 1,
+      },
+    });
+  });
+  await browser.goto(
+    `/boards?board=${boardId}&section=calendar&status=archived`,
+  );
+  await browser
+    .getByRole("button", { name: "Event lists", exact: true })
+    .click();
+  await browser
+    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .click();
+  const retry = browser.getByRole("button", {
+    name: "Retry archived events",
+    exact: true,
+  });
+  await expect(retry).toBeVisible();
+  await expect(browser.getByText("Private dependency failure")).toHaveCount(0);
+  await expect(
+    browser.getByRole("button", {
+      name: `Permanently delete ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  fail = false;
+  await retry.click();
+  await expect(
+    browser.getByRole("button", {
+      name: `Permanently delete ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(reads).toBe(2);
+  await expect(
+    browser.getByRole("button", {
+      name: `Restore ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
 });

@@ -822,3 +822,435 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
     }
   }
 });
+
+const controlFileId = "00000000-0000-4000-8000-000000000041";
+const controlFile = {
+  id: controlFileId,
+  purpose: "board_attachment",
+  record_id: null,
+  department_id: null,
+  board_id: boardId,
+  creator_id: actorId,
+  filename: "building-map.pdf",
+  media_type: "application/pdf",
+  expected_size: 5,
+  actual_size: 5,
+  state: "ready",
+  failure_code: null,
+  is_deleted: false,
+  created_at: board.createdAt,
+  updated_at: board.updatedAt,
+};
+
+async function installFileManagement(page: Page, startArchived = false) {
+  const api = await installArchivedBoard(page);
+  const currentBoard = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: board.name,
+    description: board.description,
+    status: startArchived ? "archived" : "active",
+    revision: board.revision,
+    level: "manage",
+    created_at: board.createdAt,
+    updated_at: board.updatedAt,
+  };
+  let file = { ...controlFile };
+  let fileReadsWhileArchived = 0;
+  let purgeAttempts = 0;
+  let failChallenge = false;
+  let malformedFile = false;
+  const writes: string[] = [];
+  const preview = {
+    ...purgePreview,
+    confirmation_name: controlFile.filename,
+    last_successful_backup_at: null,
+    impact: {
+      ...purgePreview.impact,
+      target_type: "file",
+      target_id: controlFileId,
+      rows: [purgeRow("files", controlFileId)],
+    },
+  };
+  await page.route("**/api/boards**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    if (path === "/api/boards")
+      return route.fulfill({
+        json: {
+          items: [currentBoard],
+          pagination: {
+            limit: 25,
+            offset: 0,
+            count: 1,
+            total: 1,
+            has_more: false,
+          },
+        },
+      });
+    if (path === `/api/boards/${boardId}`)
+      return route.fulfill({ json: currentBoard });
+    if (
+      [
+        `/api/boards/${boardId}/archive`,
+        `/api/boards/${boardId}/restore`,
+      ].includes(path)
+    ) {
+      currentBoard.status = path.endsWith("/archive") ? "archived" : "active";
+      currentBoard.revision += 1;
+      writes.push(currentBoard.status);
+      return route.fulfill({ json: currentBoard });
+    }
+    if (path === `/api/boards/${boardId}/files`) {
+      if (currentBoard.status !== "active") fileReadsWhileArchived += 1;
+      const archived = url.searchParams.get("deleted") === "only";
+      const items =
+        file.is_deleted === archived
+          ? [{ ...file, board_id: malformedFile ? departmentId : boardId }]
+          : [];
+      return route.fulfill({
+        json: {
+          items,
+          pagination: {
+            limit: 25,
+            offset: 0,
+            count: items.length,
+            total: items.length,
+            has_more: false,
+          },
+        },
+      });
+    }
+    if (path === `/api/boards/${boardId}/files/${controlFileId}/archive`) {
+      file = { ...file, is_deleted: true };
+      writes.push("file_archive");
+      return route.fulfill({ json: file });
+    }
+    if (path === `/api/boards/${boardId}/files/${controlFileId}/purge/preview`)
+      return route.fulfill({ json: preview });
+    if (path === `/api/boards/${boardId}/files/${controlFileId}/purge`) {
+      purgeAttempts += 1;
+      expect(request.postDataJSON()).toEqual({
+        token: preview.token,
+        confirmation_name: controlFile.filename,
+        password: "synthetic-file-password",
+      });
+      if (failChallenge)
+        return route.fulfill({
+          status: 404,
+          json: {
+            detail: {
+              code: "challenge_not_found",
+              message: "private internals",
+            },
+          },
+        });
+      file = { ...file, state: "purged" };
+      writes.push("file_purge");
+      return route.fulfill({ json: file });
+    }
+    if (path === `/api/boards/${boardId}/purge/preview`) {
+      expect(file.state).toBe("purged");
+      return route.fulfill({ json: purgePreview });
+    }
+    if (path === `/api/boards/${boardId}/purge`) {
+      writes.push("board_purge");
+      return route.fulfill({
+        json: { impact: purgePreview.impact, operation_id: null },
+      });
+    }
+    return route.fallback();
+  });
+  return {
+    ...api,
+    writes,
+    get fileReadsWhileArchived() {
+      return fileReadsWhileArchived;
+    },
+    get purgeAttempts() {
+      return purgeAttempts;
+    },
+    expireChallenge() {
+      failChallenge = true;
+    },
+    wrongBoard() {
+      malformedFile = true;
+    },
+  };
+}
+
+for (const startArchived of [false, true]) {
+  test(`S04 owned unattached file can be archived and purged before its ${startArchived ? "restored" : "active"} Board`, async ({
+    page,
+  }) => {
+    const api = await installFileManagement(page, startArchived);
+    await page.goto(
+      `/boards?board=${boardId}&section=overview${startArchived ? "&status=archived" : ""}`,
+    );
+    await page.getByRole("button", { name: "Board menu", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .click();
+    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    if (startArchived) {
+      await expect(
+        manage.getByText("Restore this Board to manage its unattached files."),
+      ).toBeVisible();
+      expect(api.fileReadsWhileArchived).toBe(0);
+      await manage
+        .getByRole("button", { name: "Restore Board", exact: true })
+        .click();
+      await page
+        .getByRole("alertdialog", { name: "Restore Board?" })
+        .getByRole("button", { name: "Restore Board", exact: true })
+        .click();
+    }
+    await manage
+      .getByRole("button", {
+        name: `Archive ${controlFile.filename}`,
+        exact: true,
+      })
+      .click();
+    await manage.getByLabel("File status").selectOption("only");
+    await manage
+      .getByRole("button", {
+        name: `Permanently delete ${controlFile.filename}`,
+        exact: true,
+      })
+      .click();
+    const review = page.getByRole("dialog", {
+      name: "Permanently delete file?",
+    });
+    await expect(
+      review.getByText(
+        "Last successful backup: No successful backup recorded.",
+      ),
+    ).toBeVisible();
+    await review
+      .getByLabel("Type the file name")
+      .fill(` ${controlFile.filename}`);
+    await review
+      .getByLabel("Administrator password")
+      .fill("synthetic-file-password");
+    await expect(
+      review.getByRole("button", {
+        name: "Confirm permanent deletion",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect(api.purgeAttempts).toBe(0);
+    await review.getByLabel("Type the file name").fill(controlFile.filename);
+    await review
+      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .click();
+    await expect(review).toBeHidden();
+    await expect(
+      manage.getByText("Permanently deleted", { exact: true }),
+    ).toBeVisible();
+    await manage
+      .getByRole("button", { name: "Archive Board", exact: true })
+      .click();
+    const archive = page.getByRole("alertdialog", { name: "Archive Board?" });
+    await archive
+      .getByLabel(`Type “${board.name}” to confirm`)
+      .fill(board.name);
+    await archive
+      .getByRole("button", { name: "Archive Board", exact: true })
+      .click();
+    await manage
+      .getByRole("button", { name: "Permanently delete Board", exact: true })
+      .click();
+    await manage.getByLabel("Type the Board name").fill(board.name);
+    await manage
+      .getByLabel("Administrator password")
+      .fill("synthetic-file-password");
+    await manage
+      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .click();
+    await expect(manage).toBeHidden();
+    expect(api.writes).toEqual([
+      ...(startArchived ? ["active"] : []),
+      "file_archive",
+      "file_purge",
+      "archived",
+      "board_purge",
+    ]);
+    expect(api.fileReadsWhileArchived).toBe(0);
+  });
+}
+test("S04 correction: obsolete file preview cannot unlock a fresh Board review after real refresh", async ({
+  page,
+}) => {
+  await installFileManagement(page);
+  let current = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: board.name,
+    description: board.description,
+    status: "active",
+    revision: board.revision,
+    level: "manage",
+    created_at: board.createdAt,
+    updated_at: board.updatedAt,
+  };
+  let holdNext = false,
+    detailHeld = false,
+    fileHeld = false,
+    boardHeld = false;
+  let releaseDetail = () => {},
+    releaseFile = () => {},
+    releaseBoard = () => {};
+  const detailGate = new Promise<void>((resolve) => {
+    releaseDetail = resolve;
+  });
+  const fileGate = new Promise<void>((resolve) => {
+    releaseFile = resolve;
+  });
+  const boardGate = new Promise<void>((resolve) => {
+    releaseBoard = resolve;
+  });
+  let purges = 0;
+  await page.route(`**/api/boards/${boardId}`, async (route) => {
+    if (holdNext) {
+      holdNext = false;
+      detailHeld = true;
+      await detailGate;
+    }
+    return route.fulfill({ json: current });
+  });
+  await page.route("**/api/boards?**", (route) => {
+    const wanted =
+      new URL(route.request().url()).searchParams.get("status") ?? "active";
+    const items =
+      wanted === "all" || wanted === current.status ? [current] : [];
+    return route.fulfill({
+      json: {
+        items,
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+      },
+    });
+  });
+  await page.route(
+    `**/api/boards/${boardId}/files/${controlFileId}/purge/preview`,
+    async (route) => {
+      fileHeld = true;
+      await fileGate;
+      return route.fulfill({
+        json: {
+          ...purgePreview,
+          confirmation_name: controlFile.filename,
+          impact: {
+            ...purgePreview.impact,
+            target_type: "file",
+            target_id: controlFileId,
+            rows: [purgeRow("files", controlFileId)],
+          },
+        },
+      });
+    },
+  );
+  await page.route(`**/api/boards/${boardId}/purge/preview`, async (route) => {
+    boardHeld = true;
+    await boardGate;
+    return route.fulfill({
+      json: {
+        ...purgePreview,
+        impact: { ...purgePreview.impact, rows: [purgeRow("boards", boardId)] },
+      },
+    });
+  });
+  await page.route("**/api/**", (route) => {
+    if (
+      route.request().method() === "POST" &&
+      new URL(route.request().url()).pathname.endsWith("/purge")
+    ) {
+      purges += 1;
+      return route.fulfill({
+        status: 409,
+        json: { detail: "Unexpected diagnostic purge" },
+      });
+    }
+    return route.fallback();
+  });
+  try {
+    await page.goto(`/boards?board=${boardId}&section=overview`);
+    await expect(
+      page.getByRole("heading", { name: board.name, exact: true }),
+    ).toBeVisible();
+    holdNext = true;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect.poll(() => detailHeld).toBe(true);
+    await page.getByRole("button", { name: "Board menu", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
+      .click();
+    const manage = page.getByRole("dialog", { name: "Manage Board" });
+    await manage
+      .getByRole("button", {
+        name: `Archive ${controlFile.filename}`,
+        exact: true,
+      })
+      .click();
+    await manage.getByLabel("File status").selectOption("only");
+    await manage
+      .getByRole("button", {
+        name: `Permanently delete ${controlFile.filename}`,
+        exact: true,
+      })
+      .click();
+    await expect.poll(() => fileHeld).toBe(true);
+    current = {
+      ...current,
+      status: "archived",
+      revision: current.revision + 1,
+    };
+    releaseDetail();
+    await expect(
+      manage.getByText("Restore this Board to manage its unattached files."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Permanently delete file?" }),
+    ).toBeHidden();
+    const begin = manage.getByRole("button", {
+      name: "Permanently delete Board",
+      exact: true,
+    });
+    await expect(begin).toBeEnabled();
+    await begin.click();
+    await expect.poll(() => boardHeld).toBe(true);
+    const oldResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/files/${controlFileId}/purge/preview`),
+    );
+    releaseFile();
+    await oldResponse;
+    await expect(
+      manage.getByText("This permanently removes 1 file."),
+    ).toHaveCount(0);
+    await expect(
+      manage.getByText(controlFile.filename, { exact: true }),
+    ).toHaveCount(0);
+    await expect(manage.getByLabel("Type the Board name")).toHaveCount(0);
+    await expect(
+      manage.getByRole("button", { name: "Preparing review…", exact: true }),
+    ).toBeDisabled();
+    releaseBoard();
+    await expect(
+      manage.getByText("This permanently removes 1 Board."),
+    ).toBeVisible();
+    await expect(manage.getByLabel("Type the Board name")).toBeVisible();
+    expect(purges).toBe(0);
+  } finally {
+    releaseDetail();
+    releaseFile();
+    releaseBoard();
+  }
+});

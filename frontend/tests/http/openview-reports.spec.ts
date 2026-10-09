@@ -1890,3 +1890,162 @@ test("Reports correction: a held template cannot restore Reports after same-acco
     release();
   }
 });
+
+async function installArchivedReportPurge(
+  page: Page,
+  role: "admin" | "member" = "admin",
+  failure = false,
+) {
+  await installReportsApi(
+    page,
+    false,
+    { ...report, is_deleted: true },
+    { role },
+  );
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      json: {
+        display_name: "OpenSlate",
+        mark: "OS",
+        logo_file_id: null,
+        revision: 1,
+        today: "2026-09-25",
+        week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
+        purge_enabled: true,
+      },
+    }),
+  );
+  const impact = {
+    target_type: "report",
+    target_id: reportId,
+    operation: "purge",
+    actor_id: userId,
+    rows: [],
+    external_impacts: [],
+    key_strips: [],
+    blockers: [],
+    impact_digest: "a".repeat(64),
+  };
+  let purges = 0;
+  let removed = false;
+  await page.route(`**/api/reports/${reportId}/purge**`, (route) => {
+    if (route.request().url().endsWith("/preview"))
+      return route.fulfill({
+        json: {
+          impact,
+          token: "owned-report-preview",
+          expires_at: "2026-09-26T00:00:00Z",
+          confirmation_name: report.name,
+          last_successful_backup_at: "2026-09-24T00:00:00Z",
+        },
+      });
+    purges += 1;
+    expect(route.request().postDataJSON()).toEqual({
+      token: "owned-report-preview",
+      confirmation_name: report.name,
+      password: "synthetic-report-password",
+    });
+    if (failure)
+      return route.fulfill({
+        status: 404,
+        json: {
+          detail: {
+            code: "challenge_not_found",
+            message: "private report internals",
+          },
+        },
+      });
+    removed = true;
+    return route.fulfill({ json: { impact, operation_id: null } });
+  });
+  await page.route(`**/api/reports/${reportId}`, (route) =>
+    removed
+      ? route.fulfill({ status: 404, json: { detail: "Report not found" } })
+      : route.fallback(),
+  );
+  await page.route("**/api/reports?**", (route) =>
+    removed ? route.fulfill({ json: pageOf([]) }) : route.fallback(),
+  );
+  return {
+    get purges() {
+      return purges;
+    },
+  };
+}
+
+for (const failure of [false, true]) {
+  test(`S04 archived Report purge ${failure ? "keeps its target and offers a fresh review for an unavailable challenge" : "confirms exact name and clears only its deleted selection"}`, async ({
+    page,
+  }) => {
+    const api = await installArchivedReportPurge(page, "admin", failure);
+    await page.goto(`/openview?section=reports&report=${reportId}`);
+    await page.getByRole("button", { name: "Report options" }).click();
+    await page
+      .getByRole("menuitem", { name: "Permanently delete Report", exact: true })
+      .click();
+    const review = page.getByRole("dialog", {
+      name: "Permanently delete Report?",
+    });
+    await expect(review.getByText(/Last successful backup:/)).toBeVisible();
+    await review
+      .getByLabel("Type the Report name")
+      .fill(report.name.toLowerCase());
+    await review
+      .getByLabel("Administrator password")
+      .fill("synthetic-report-password");
+    await expect(
+      review.getByRole("button", {
+        name: "Confirm permanent deletion",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect(api.purges).toBe(0);
+    await review.getByLabel("Type the Report name").fill(report.name);
+    await review
+      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .click();
+    if (failure) {
+      await expect(
+        review.getByText("The review is unavailable. Request a new review."),
+      ).toBeVisible();
+      await expect(review.getByLabel("Administrator password")).toHaveCount(0);
+      await review
+        .getByRole("button", { name: "Review again", exact: true })
+        .click();
+      await expect(review.getByLabel("Administrator password")).toHaveValue("");
+      await review.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Report options" }).click();
+      await expect(
+        page.getByRole("menuitem", { name: "Restore Report", exact: true }),
+      ).toBeVisible();
+    } else {
+      await expect(review).toBeHidden();
+      await expect(page).toHaveURL(/section=reports$/);
+      await expect(
+        page.getByText("Report permanently deleted.", { exact: true }),
+      ).toBeVisible();
+    }
+    expect(api.purges).toBe(1);
+    await expect(page.getByText("private report internals")).toHaveCount(0);
+  });
+}
+
+test("S04 member may restore an archived Report but cannot permanently delete it", async ({
+  page,
+}) => {
+  const api = await installArchivedReportPurge(page, "member");
+  await page.goto(`/openview?section=reports&report=${reportId}`);
+  await page.getByRole("button", { name: "Report options" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Restore Report", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", {
+      name: "Permanently delete Report",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(api.purges).toBe(0);
+});

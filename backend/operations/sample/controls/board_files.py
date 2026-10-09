@@ -1,10 +1,7 @@
-"""Board attachment controls on the authored control anchor Board.
+"""Owned Board file controls on the authored anchor Board.
 
-The six actions follow the Board attachment panel: reserve, upload, attach to a draft
-post and remove it, then attach to an event and remove it. A file has one lifetime
-owner (post or event), so the reserve and upload actions prepare one file for each.
-The author of the post and event acts, so a Board writer's own-content rule applies;
-the administrator acts only when no member authored both.
+Six author actions reserve/upload/attach/detach two temporary files. The final
+administrator action archives and purges those files, preserving authored content.
 """
 
 from __future__ import annotations
@@ -40,6 +37,12 @@ if TYPE_CHECKING:
 BOARD_FILE_ROUTES = frozenset(
     {
         ("POST", "/api/boards/{board_id}/files"),
+        ("GET", "/api/boards/{board_id}/files"),
+        ("GET", "/api/boards/{board_id}/files/{file_id}"),
+        ("GET", "/api/boards/{board_id}/files/{file_id}/content"),
+        ("POST", "/api/boards/{board_id}/files/{file_id}/archive"),
+        ("POST", "/api/boards/{board_id}/files/{file_id}/purge/preview"),
+        ("POST", "/api/boards/{board_id}/files/{file_id}/purge"),
         ("PUT", "/api/boards/{board_id}/files/{file_id}/content"),
         ("GET", "/api/boards/{board_id}/posts/{post_id}/attachments"),
         ("POST", "/api/boards/{board_id}/posts/{post_id}/attachments"),
@@ -53,6 +56,7 @@ BOARD_FILE_ROUTES = frozenset(
 )
 FILE_OPERATIONS = frozenset(
     {
+        "board_files_archive_purge",
         "board_file_reserve",
         "board_file_upload",
         "post_attachment_create",
@@ -123,12 +127,13 @@ def plan_board_file_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         values: Mapping[str, PhaseJsonValue],
         end: Mapping[str, PhaseJsonValue],
         status: int,
+        actor_key: str = actor,
     ) -> PhaseAction:
         return PhaseAction(
             key=f"control:board:{suffix}",
             phase="reorganization",
             kind="board_controls",
-            actor_key=actor,
+            actor_key=actor_key,
             target_key=target,
             values={"operation": operation, "board_key": board_key, **values},
             expected_status=status,
@@ -151,6 +156,8 @@ def plan_board_file_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
                {"listed": True}, 200),
         action("event_attachment_delete", "detach-event-file", _EVENT_FILE, event,
                {"listed": False}, 204),
+        action("board_files_archive_purge", "purge-files", "control:files",
+               {"files": files, "source_actor": actor}, {"files_purged": 2}, 200, "admin"),
     )  # fmt: skip
 
 
@@ -293,6 +300,10 @@ def execute_board_file_action(
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
     operation = action.values.get("operation")
+    if operation == "board_files_archive_purge":
+        from operations.sample.controls.board_file_purge import execute_board_file_purge
+
+        return execute_board_file_purge(action, context, on_substep=on_substep)
     run = _Run(action, context, on_substep)
     if operation == "board_file_reserve":
         run.reserve()
@@ -304,15 +315,24 @@ def execute_board_file_action(
         run.attachment("event", create=operation.endswith("create"))
     else:
         raise SamplePhaseActionError("Unsupported Board file action", step=action.key)
-    return _result(action, context, run.evidence, run.mappings, extra={"operation": operation})
+    return _result(
+        action,
+        context,
+        run.evidence,
+        run.mappings,
+        extra={"operation": operation},
+    )
 
 
 def verify_board_file_controls(
     admin: SampleClient,
     actions: tuple[PhaseAction, ...],
     mappings: Mapping[str, Any],
+    *,
+    actor_ids: Mapping[str, Any],
+    admin_id: str,
 ) -> list[str]:
-    """The control files end ready and detached, so seeded attachment counts stay equal."""
+    """Owned files finish purged and detached; seeded attachments remain untouched."""
     issues: list[str] = []
     files = mappings.get("control_files")
     for action in actions:
@@ -338,4 +358,41 @@ def verify_board_file_controls(
             issues.append("Board file control final-state readback failed")
         elif any(isinstance(row, Mapping) and row.get("id") == file_id for row in rows):
             issues.append("A Board control file is still attached after its planned removal")
+    for action in actions:
+        if action.values.get("operation") != "board_files_archive_purge":
+            continue
+        from operations.sample.controls.board_file_purge import validate_board_file_state
+
+        step = "verify_owned_board_file"
+        try:
+            source_actor = _string(action.values, "source_actor", step=step)
+            bindings = {**actor_ids, "admin": admin_id}
+            creator_id = _id(bindings, source_actor, label="file creator", step=step)
+        except SamplePhaseActionError:
+            issues.append("Owned Board file expected creator binding is missing or invalid")
+            continue
+        board_id = mappings.get("boards", {}).get(action.values.get("board_key"))
+        for key, filename in _files(action):
+            file_id = files.get(key) if isinstance(files, Mapping) else None
+            if not isinstance(file_id, str) or not isinstance(board_id, str):
+                issues.append("Owned Board file identity mapping is missing or invalid")
+                continue
+            path = f"/api/boards/{board_id}/files/{file_id}"
+            try:
+                response = admin.request("GET", path)
+                body = response.json() if response.status_code == 200 else {}
+                validate_board_file_state(
+                    body,
+                    file_id=file_id,
+                    board_id=board_id,
+                    filename=filename,
+                    creator_id=creator_id,
+                    state="purged",
+                    deleted=True,
+                    step=step,
+                )
+                if admin.request("GET", path + "/content").status_code != 404:
+                    issues.append("Owned Board file final purge readback differs")
+            except (SampleClientError, SamplePhaseActionError, ValueError, AttributeError):
+                issues.append("Owned Board file final purge readback failed")
     return issues

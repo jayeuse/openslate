@@ -301,6 +301,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "archiveUnlinkedBoardFile",
+    "method": "POST",
+    "path": "/api/boards/{param}/files/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
     "function": "attachBoardFile",
     "method": "POST",
     "path": "/api/boards/{param}/events/{param}/attachments"
@@ -346,6 +352,24 @@
     "function": "listBoardAttachments",
     "method": "GET",
     "path": "/api/boards/{param}/posts/{param}/attachments"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "listUnlinkedBoardFiles",
+    "method": "GET",
+    "path": "/api/boards/{param}/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "previewBoardFilePurge",
+    "method": "POST",
+    "path": "/api/boards/{param}/files/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",
+    "function": "purgeBoardFile",
+    "method": "POST",
+    "path": "/api/boards/{param}/files/{param}/purge"
   },
   {
     "adapter": "frontend/src/components/systems/boards/adapters/board-files-api.ts",

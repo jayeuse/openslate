@@ -39,6 +39,22 @@ import {
   type BoardManagementBoard,
   type BoardUpdateInput,
 } from "../adapters/board-management-api";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import {
+  listUnlinkedBoardFiles,
+  archiveUnlinkedBoardFile,
+  previewBoardFilePurge,
+  purgeBoardFile,
+  type BoardUnlinkedFile,
+  type BoardUnlinkedFilePage,
+} from "../adapters/board-files-api";
 import { getMyBoardAccess } from "../adapters/board-tools-api";
 import {
   subscribeWorkspaceLifecycleSettings,
@@ -733,11 +749,7 @@ function ManagementInstance(props: Props) {
   const open = props.open ?? internalOpen;
   const setOpen = props.onOpenChange ?? setInternalOpen;
   const client = useQueryClient();
-  const readPurgeSetting =
-    open &&
-    mode === "manage" &&
-    props.isAdmin === true &&
-    incomingBoard?.status === "archived";
+  const readPurgeSetting = open && mode === "manage" && props.isAdmin === true;
   const workspace = useQuery({
     ...workspaceLifecycleQueryOptions(),
     enabled: readPurgeSetting,
@@ -757,6 +769,23 @@ function ManagementInstance(props: Props) {
   const [purgePreview, setPurgePreview] = useState<BoardPurgePreview | null>(
     null,
   );
+  const [purgeFile, setPurgeFile] = useState<BoardUnlinkedFile | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<
+    | ({ boardId: string; revision: number } & (
+        { kind: "board" } | { kind: "file"; fileId: string }
+      ))
+    | null
+  >(null);
+  const previewRequest = useRef<number | null>(null);
+  const [fileStatus, setFileStatus] = useState<"exclude" | "only">("exclude");
+  const [fileOffset, setFileOffset] = useState(0);
+  const [fileRefresh, setFileRefresh] = useState(0);
+  const [filePage, setFilePage] = useState<{
+    key: string;
+    page: BoardUnlinkedFilePage;
+  } | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [purgePreviewLoading, setPurgePreviewLoading] = useState(false);
   const [purgeReviewAgain, setPurgeReviewAgain] = useState(false);
   const [purgeConfirmationName, setPurgeConfirmationName] = useState("");
@@ -789,6 +818,8 @@ function ManagementInstance(props: Props) {
 
   const clearPurgeReview = useCallback(() => {
     setPurgePreview(null);
+    setPurgeFile(null);
+    setPurgeTarget(null);
     setPurgePreviewLoading(false);
     setPurgeReviewAgain(false);
     setPurgeConfirmationName("");
@@ -855,7 +886,15 @@ function ManagementInstance(props: Props) {
       return;
     const changed =
       draftBase !== null && boardUpdateForDraft(draftBase, draft) !== null;
+    if (previewRequest.current !== null) {
+      actionRequest.current += 1;
+      previewRequest.current = null;
+      pendingRef.current = false;
+      setPending(false);
+    }
+    clearPurgeReview();
     setBoard(incomingBoard);
+    setPurgeFile(null);
     setPurgePreview(null);
     setPurgeConfirmationName("");
     setPurgePassword("");
@@ -868,7 +907,7 @@ function ManagementInstance(props: Props) {
       setConflict(false);
       setLatestReady(false);
     }
-  }, [mode, incomingBoard, board, draft, draftBase]);
+  }, [mode, incomingBoard, board, draft, draftBase, clearPurgeReview]);
 
   useEffect(() => {
     if (!open || mode !== "manage" || !incomingBoard || deniedRef.current)
@@ -917,6 +956,237 @@ function ManagementInstance(props: Props) {
     mode === "create"
       ? draft.name !== "" || draft.description !== ""
       : board !== null && boardUpdateForDraft(board, draft) !== null;
+
+  const filesEnabled =
+    open &&
+    mode === "manage" &&
+    props.isAdmin === true &&
+    board?.status === "active" &&
+    access === "ready";
+  const filesKey = `${board?.id}:${fileStatus}:${fileOffset}:${fileRefresh}`;
+  useEffect(() => {
+    if (!filesEnabled || !board || deniedRef.current) {
+      setFilePage(null);
+      setFileLoading(false);
+      setFileError(null);
+      return;
+    }
+    const controller = new AbortController();
+    let current = true;
+    setFileLoading(true);
+    setFileError(null);
+    void listUnlinkedBoardFiles(
+      board.id,
+      { deleted: fileStatus, offset: fileOffset },
+      controller.signal,
+    )
+      .then((page) => {
+        if (current && !deniedRef.current) setFilePage({ key: filesKey, page });
+      })
+      .catch((failure: unknown) => {
+        if (!current || controller.signal.aborted) return;
+        if (handleDenied(failure)) {
+          setFilePage(null);
+          return;
+        }
+        setFileError("Unattached Board files could not be loaded. Try again.");
+      })
+      .finally(() => {
+        if (current) setFileLoading(false);
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [filesEnabled, board?.id, fileStatus, fileOffset, filesKey, handleDenied]);
+
+  async function archiveFile(file: BoardUnlinkedFile) {
+    if (
+      !filesEnabled ||
+      deniedRef.current ||
+      !board ||
+      pendingRef.current ||
+      dirty ||
+      conflict ||
+      file.isDeleted ||
+      file.boardId !== board.id
+    )
+      return;
+    const request = ++actionRequest.current;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    clearPurgeReview();
+    try {
+      await archiveUnlinkedBoardFile(board.id, file.id);
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      setNotice("File archived.");
+      setFileRefresh((value) => value + 1);
+    } catch (failure) {
+      if (
+        mountedRef.current &&
+        !deniedRef.current &&
+        request === actionRequest.current &&
+        !handleDenied(failure)
+      )
+        setError(
+          lifecycleErrorMessage(
+            failure,
+            "The file could not be archived. Refresh and try again.",
+          ),
+        );
+    } finally {
+      pendingRef.current = false;
+      if (mountedRef.current) setPending(false);
+    }
+  }
+
+  async function beginFilePurge(file: BoardUnlinkedFile) {
+    if (
+      !filesEnabled ||
+      deniedRef.current ||
+      !board ||
+      !purgeEnabled ||
+      pendingRef.current ||
+      dirty ||
+      conflict ||
+      !file.isDeleted ||
+      file.boardId !== board.id ||
+      ["deleting", "purged", "uploading"].includes(file.state)
+    )
+      return;
+    const request = ++actionRequest.current;
+    pendingRef.current = true;
+    setPending(true);
+    clearPurgeReview();
+    setError(null);
+    previewRequest.current = request;
+    setPurgeTarget({
+      kind: "file",
+      boardId: board.id,
+      revision: board.revision,
+      fileId: file.id,
+    });
+    setPurgeFile(file);
+    setPurgePreviewLoading(true);
+    try {
+      const preview = await previewBoardFilePurge(board.id, file.id);
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      setPurgePreview(preview);
+    } catch (failure) {
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      if (
+        failure instanceof ApiError &&
+        [401, 404].includes(failure.status) &&
+        failure.code !== "challenge_not_found" &&
+        handleDenied(failure)
+      )
+        return;
+      setError(
+        lifecycleErrorMessage(
+          failure,
+          "The file review could not be prepared. Refresh and review again.",
+        ),
+      );
+    } finally {
+      if (request === actionRequest.current) {
+        previewRequest.current = null;
+        pendingRef.current = false;
+        if (mountedRef.current) {
+          setPending(false);
+          setPurgePreviewLoading(false);
+        }
+      }
+    }
+  }
+
+  async function confirmFilePurge() {
+    if (
+      !filesEnabled ||
+      deniedRef.current ||
+      !board ||
+      !purgeFile ||
+      !purgePreview ||
+      purgeTarget?.kind !== "file" ||
+      purgeTarget.boardId !== board.id ||
+      purgeTarget.revision !== board.revision ||
+      purgeTarget.fileId !== purgeFile.id ||
+      purgePreview.impact.target_type !== "file" ||
+      purgePreview.impact.target_id !== purgeFile.id ||
+      !purgeEnabled ||
+      pendingRef.current ||
+      dirty ||
+      conflict ||
+      purgeFile.boardId !== board.id ||
+      !purgeFile.isDeleted ||
+      purgePreview.impact.blockers.length > 0 ||
+      purgeConfirmationName !== purgePreview.confirmation_name ||
+      !purgePassword
+    )
+      return;
+    const request = ++actionRequest.current;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      await purgeBoardFile(board.id, purgeFile.id, {
+        token: purgePreview.token,
+        confirmationName: purgeConfirmationName,
+        password: purgePassword,
+      });
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      clearPurgeReview();
+      setFileRefresh((value) => value + 1);
+      setNotice("File permanently deleted.");
+      reportDone("File permanently deleted.");
+    } catch (failure) {
+      if (
+        !mountedRef.current ||
+        deniedRef.current ||
+        request !== actionRequest.current
+      )
+        return;
+      if (
+        failure instanceof ApiError &&
+        [401, 404].includes(failure.status) &&
+        failure.code !== "challenge_not_found" &&
+        handleDenied(failure)
+      )
+        return;
+      setError(
+        lifecycleErrorMessage(
+          failure,
+          "The file was not permanently deleted. Request a new review.",
+        ),
+      );
+      setPurgePreview(null);
+      setPurgeConfirmationName("");
+    } finally {
+      pendingRef.current = false;
+      setPurgePassword("");
+      if (mountedRef.current) setPending(false);
+    }
+  }
 
   function close() {
     if (pendingRef.current) return;
@@ -1140,6 +1410,12 @@ function ManagementInstance(props: Props) {
     pendingRef.current = true;
     setPending(true);
     clearPurgeReview();
+    previewRequest.current = request;
+    setPurgeTarget({
+      kind: "board",
+      boardId: board.id,
+      revision: board.revision,
+    });
     setPurgePreviewLoading(true);
     setError(null);
     setNotice(null);
@@ -1170,10 +1446,13 @@ function ManagementInstance(props: Props) {
       setError(boardPurgeFailureMessage(failure, "preview"));
       setPurgeReviewAgain(true);
     } finally {
-      pendingRef.current = false;
-      if (mountedRef.current) {
-        setPending(false);
-        setPurgePreviewLoading(false);
+      if (request === actionRequest.current) {
+        previewRequest.current = null;
+        pendingRef.current = false;
+        if (mountedRef.current) {
+          setPending(false);
+          setPurgePreviewLoading(false);
+        }
       }
     }
   }
@@ -1187,6 +1466,11 @@ function ManagementInstance(props: Props) {
       board.status !== "archived" ||
       access !== "ready" ||
       !purgePreview ||
+      purgeTarget?.kind !== "board" ||
+      purgeTarget.boardId !== board.id ||
+      purgeTarget.revision !== board.revision ||
+      purgePreview.impact.target_type !== "board" ||
+      purgePreview.impact.target_id !== board.id ||
       purgePreview.impact.blockers.length > 0 ||
       purgeConfirmationName !== purgePreview.confirmation_name ||
       purgePassword.length === 0 ||
@@ -1311,7 +1595,15 @@ function ManagementInstance(props: Props) {
             }}
             purgePreviewLoading={purgePreviewLoading}
             purgeReviewAgain={purgeReviewAgain}
-            purgePreview={purgePreview}
+            purgePreview={
+              purgeTarget?.kind === "board" &&
+              purgeTarget.boardId === board?.id &&
+              purgeTarget.revision === board.revision &&
+              purgePreview?.impact.target_type === "board" &&
+              purgePreview.impact.target_id === board.id
+                ? purgePreview
+                : null
+            }
             region={region.data}
             purgeConfirmationName={purgeConfirmationName}
             purgePassword={purgePassword}
@@ -1339,8 +1631,284 @@ function ManagementInstance(props: Props) {
               ) : null
             }
           />
+          {open &&
+            mode === "manage" &&
+            props.isAdmin &&
+            access === "ready" &&
+            board && (
+              <section
+                aria-label="Unattached Board files"
+                className="border-border space-y-4 border-t pt-4"
+              >
+                <h3 className="text-sm font-medium">Unattached Board files</h3>
+                {board.status === "archived" ? (
+                  <p className="text-muted-foreground text-sm">
+                    Restore this Board to manage its unattached files.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-muted-foreground text-sm">
+                      Archive and permanently delete unattached files before
+                      archiving this Board. Linked and published files must be
+                      handled in their original content.
+                    </p>
+                    <label className="flex flex-wrap items-center gap-2 text-sm">
+                      File status
+                      <select
+                        className="border-input bg-card min-h-11 rounded-md border px-3"
+                        value={fileStatus}
+                        disabled={pending}
+                        onChange={(event) => {
+                          setFileStatus(
+                            event.target.value as "exclude" | "only",
+                          );
+                          setFileOffset(0);
+                          clearPurgeReview();
+                        }}
+                      >
+                        <option value="exclude">Active</option>
+                        <option value="only">Archived</option>
+                      </select>
+                    </label>
+                    {fileLoading && (
+                      <p role="status" className="text-sm">
+                        Loading unattached files…
+                      </p>
+                    )}
+                    {fileError && (
+                      <div
+                        role="alert"
+                        className="text-destructive space-y-2 text-sm"
+                      >
+                        <p>{fileError}</p>
+                        <Button
+                          variant="outline"
+                          onClick={() => setFileRefresh((value) => value + 1)}
+                        >
+                          Retry file list
+                        </Button>
+                      </div>
+                    )}
+                    {filePage && (
+                      <>
+                        <p
+                          className="text-muted-foreground text-sm"
+                          role="status"
+                        >
+                          {filePage.page.pagination.total} files · Showing{" "}
+                          {filePage.page.items.length
+                            ? filePage.page.pagination.offset + 1
+                            : 0}
+                          –
+                          {filePage.page.pagination.offset +
+                            filePage.page.items.length}
+                        </p>
+                        {filePage.page.items.length === 0 ? (
+                          <p className="text-muted-foreground text-sm">
+                            No unattached files on this page.
+                          </p>
+                        ) : (
+                          <ul className="space-y-2">
+                            {filePage.page.items.map((file) => (
+                              <li
+                                key={file.id}
+                                className="border-border flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+                              >
+                                <span className="min-w-0 text-sm break-words">
+                                  {file.filename}
+                                </span>
+                                {file.state === "purged" ? (
+                                  <span className="text-muted-foreground text-sm">
+                                    Permanently deleted
+                                  </span>
+                                ) : file.state === "deleting" ||
+                                  file.state === "uploading" ? (
+                                  <span className="text-muted-foreground text-sm">
+                                    File operation requires reconciliation.
+                                  </span>
+                                ) : !file.isDeleted ? (
+                                  <Button
+                                    variant="outline"
+                                    className="min-h-11"
+                                    aria-label={`Archive ${file.filename}`}
+                                    disabled={
+                                      pending ||
+                                      dirty ||
+                                      conflict ||
+                                      fileLoading ||
+                                      filePage.key !== filesKey
+                                    }
+                                    onClick={() => void archiveFile(file)}
+                                  >
+                                    Archive file
+                                  </Button>
+                                ) : purgeEnabled ? (
+                                  <Button
+                                    variant="destructive"
+                                    className="min-h-11"
+                                    aria-label={`Permanently delete ${file.filename}`}
+                                    disabled={
+                                      pending ||
+                                      dirty ||
+                                      conflict ||
+                                      fileLoading ||
+                                      filePage.key !== filesKey
+                                    }
+                                    onClick={() => void beginFilePurge(file)}
+                                  >
+                                    Permanently delete
+                                  </Button>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            className="min-h-11"
+                            disabled={
+                              pending || fileLoading || fileOffset === 0
+                            }
+                            onClick={() =>
+                              setFileOffset((value) => Math.max(0, value - 25))
+                            }
+                          >
+                            Previous files
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="min-h-11"
+                            disabled={
+                              pending ||
+                              fileLoading ||
+                              filePage.key !== filesKey ||
+                              !filePage.page.pagination.hasMore
+                            }
+                            onClick={() => setFileOffset((value) => value + 25)}
+                          >
+                            Next files
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </section>
+            )}
         </SheetContent>
       </Sheet>
+      <Dialog
+        open={
+          purgeFile !== null &&
+          purgeTarget?.kind === "file" &&
+          purgeTarget.boardId === board?.id &&
+          purgeTarget.revision === board.revision &&
+          purgeTarget.fileId === purgeFile.id
+        }
+        dismissible={!pending}
+        onOpenChange={(next) => {
+          if (!next && !pendingRef.current) {
+            clearPurgeReview();
+            setError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Permanently delete file?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the archived file. Review its impact
+              before confirming.
+            </DialogDescription>
+          </DialogHeader>
+          {purgePreviewLoading && <p role="status">Preparing review…</p>}
+          {error && (
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+          )}
+          {purgePreview ? (
+            <>
+              <LifecyclePurgeReview
+                preview={purgePreview}
+                region={region.data}
+              />
+              {purgePreview.impact.blockers.length === 0 && (
+                <form
+                  className="space-y-4"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void confirmFilePurge();
+                  }}
+                >
+                  <p className="text-sm break-words">
+                    File name: <code>{purgePreview.confirmation_name}</code>
+                  </p>
+                  <label className="block space-y-2 text-sm">
+                    Type the file name
+                    <Input
+                      autoComplete="off"
+                      value={purgeConfirmationName}
+                      disabled={pending}
+                      onChange={(event) =>
+                        setPurgeConfirmationName(event.target.value)
+                      }
+                    />
+                  </label>
+                  <label className="block space-y-2 text-sm">
+                    Administrator password
+                    <Input
+                      type="password"
+                      autoComplete="current-password"
+                      value={purgePassword}
+                      disabled={pending}
+                      onChange={(event) => setPurgePassword(event.target.value)}
+                    />
+                  </label>
+                  <Button
+                    variant="destructive"
+                    className="min-h-11"
+                    type="submit"
+                    disabled={
+                      pending ||
+                      purgeConfirmationName !==
+                        purgePreview.confirmation_name ||
+                      !purgePassword ||
+                      !purgeEnabled
+                    }
+                  >
+                    Confirm permanent deletion
+                  </Button>
+                </form>
+              )}
+            </>
+          ) : (
+            purgeFile &&
+            !purgePreviewLoading && (
+              <Button
+                variant="outline"
+                className="min-h-11"
+                disabled={pending || !purgeEnabled}
+                onClick={() => void beginFilePurge(purgeFile)}
+              >
+                Review again
+              </Button>
+            )
+          )}
+          <Button
+            variant="outline"
+            className="min-h-11"
+            disabled={pending}
+            onClick={() => {
+              clearPurgeReview();
+              setError(null);
+            }}
+          >
+            Cancel
+          </Button>
+        </DialogContent>
+      </Dialog>
       <ConfirmAction
         open={discardOpen}
         title="Discard Board changes?"

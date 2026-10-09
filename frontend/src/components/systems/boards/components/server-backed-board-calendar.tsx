@@ -10,6 +10,21 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { authMeOptions } from "../../openview/adapters/openview-queries";
+import { LifecyclePurgeReview } from "../../shared/lifecycle-purge-review";
+import {
+  lifecycleErrorMessage,
+  type LifecyclePurgePreview,
+} from "@/lib/lifecycle";
+import {
+  workspaceLifecycleQueryOptions,
+  subscribeWorkspaceLifecycleSettings,
+} from "../../manage/adapters/workspace-api";
+import {
+  previewBoardEventPurge,
+  purgeBoardEvent,
+} from "../adapters/board-events-api";
 import { Alert } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -38,7 +53,10 @@ import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { reportDone } from "@/lib/feedback";
 import { formatWorkspaceDate } from "@/lib/date-time";
-import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
+import {
+  useVerifiedWorkspaceUserId,
+  useWorkspaceInteractionSuspended,
+} from "@/components/systems/shared/runtime/workspace-identity";
 import {
   archiveBoardEvent,
   createBoardEvent,
@@ -169,6 +187,14 @@ export function ServerBackedBoardCalendar({
   ) => void;
 }) {
   const viewerId = useVerifiedWorkspaceUserId();
+  const suspended = useWorkspaceInteractionSuspended();
+  const queryClient = useQueryClient();
+  const identityQuery = useQuery(authMeOptions());
+  const isPurgeAdmin =
+    identityQuery.isSuccess &&
+    identityQuery.data.id === viewerId &&
+    identityQuery.data.role === "admin" &&
+    !suspended;
   const todayButton = useRef<HTMLButtonElement>(null);
   const [selectedRetry, setSelectedRetry] = useState(0);
   const selectedKey = `${viewerId}:${boardId}:${selectedEventId}:${refreshKey}:${selectedRetry}`;
@@ -240,26 +266,29 @@ export function ServerBackedBoardCalendar({
   const { state, retry, invalidate, loadMore, isLoadingMore, loadMoreError } =
     useServerBoardEvents(boardId, calendarWindow, refreshKey, search);
   const invalidateRef = useRef(invalidate);
-  const accessKey = `${boardId}:${refreshKey}:${boardActive}:${accessVersion}`;
+  const accessKey = `${boardId}:${refreshKey}:${boardActive}:${isPurgeAdmin}:${accessVersion}`;
   const currentAccess =
     access?.key === accessKey && access.status === "ready"
       ? access.value
       : null;
-  const accessDenied = boardActive && blockedBoardId === boardId;
+  const accessDenied = blockedBoardId === boardId;
   const currentSelectedDetail =
     selectedDetail?.key === selectedKey && !accessDenied
       ? selectedDetail
       : null;
   const selectedEvent = currentSelectedDetail?.event ?? null;
-  const accessFailed =
-    boardActive && access?.key === accessKey && access.status === "error";
+  const accessFailed = access?.key === accessKey && access.status === "error";
   const calendarPage = accessDenied ? null : state.data;
   const canEdit = boardActive && currentAccess?.edit === true;
   const canManage =
     boardActive && currentAccess?.manage === true && !accessDenied;
+  const canBrowseArchived =
+    !accessDenied &&
+    currentAccess?.manage === true &&
+    (boardActive || isPurgeAdmin);
   const archivedKey = `${boardId}:${refreshKey}:${archivedOffset}:${archivedVersion}`;
   const archivedPage =
-    canManage &&
+    canBrowseArchived &&
     archivedState?.key === archivedKey &&
     archivedState.status === "ready"
       ? archivedState.page
@@ -416,11 +445,11 @@ export function ServerBackedBoardCalendar({
   }, [refreshKey]);
 
   useEffect(() => {
-    if (!canManage) {
+    if (!canBrowseArchived) {
       setArchivedState(null);
       setLifecycleTarget(null);
     }
-  }, [canManage]);
+  }, [canBrowseArchived]);
 
   useEffect(() => {
     if (!boardActive) {
@@ -428,10 +457,12 @@ export function ServerBackedBoardCalendar({
       setEditorError(null);
       setConflict(null);
       setLifecycleTarget(null);
-      setArchivedState(null);
-      setView((current) => (current === "archived" ? "month" : current));
+      if (!isPurgeAdmin) {
+        setArchivedState(null);
+        setView((current) => (current === "archived" ? "month" : current));
+      }
     }
-  }, [boardActive]);
+  }, [boardActive, isPurgeAdmin]);
 
   useEffect(() => {
     if (
@@ -445,7 +476,7 @@ export function ServerBackedBoardCalendar({
   }, [state.error, state.status]);
 
   useEffect(() => {
-    if (!boardActive) return;
+    if (!boardActive && !isPurgeAdmin) return;
     let active = true;
     setAccess({ key: accessKey, status: "loading", value: null });
     void getMyBoardAccess(boardId)
@@ -478,10 +509,17 @@ export function ServerBackedBoardCalendar({
     return () => {
       active = false;
     };
-  }, [boardActive, boardId, refreshKey, accessVersion, accessKey]);
+  }, [
+    boardActive,
+    isPurgeAdmin,
+    boardId,
+    refreshKey,
+    accessVersion,
+    accessKey,
+  ]);
 
   useEffect(() => {
-    if (view !== "archived" || !canManage) return;
+    if (view !== "archived" || !canBrowseArchived) return;
     const request = ++archivedRequest.current;
     setArchivedState({
       key: archivedKey,
@@ -529,7 +567,131 @@ export function ServerBackedBoardCalendar({
     return () => {
       archivedRequest.current += 1;
     };
-  }, [archivedKey, archivedOffset, boardId, canManage, view]);
+  }, [archivedKey, archivedOffset, boardId, canBrowseArchived, view]);
+
+  const lifecycleSettings = useQuery({
+    ...workspaceLifecycleQueryOptions(),
+    enabled: isPurgeAdmin && view === "archived" && canBrowseArchived,
+  });
+  const purgeEnabled =
+    isPurgeAdmin &&
+    canBrowseArchived &&
+    lifecycleSettings.isSuccess &&
+    lifecycleSettings.data.purge_enabled;
+  const [purgeEvent, setPurgeEvent] = useState<BoardEvent | null>(null);
+  const [purgePreview, setPurgePreview] =
+    useState<LifecyclePurgePreview | null>(null);
+  const [purgeName, setPurgeName] = useState("");
+  const [purgePassword, setPurgePassword] = useState("");
+  const [purgeError, setPurgeError] = useState("");
+  const purgeRequest = useRef(0);
+  useEffect(() => {
+    if (isPurgeAdmin && view === "archived" && canBrowseArchived)
+      return subscribeWorkspaceLifecycleSettings(queryClient);
+  }, [isPurgeAdmin, view, canBrowseArchived, queryClient]);
+  useEffect(() => {
+    purgeRequest.current += 1;
+    setPurgeEvent(null);
+    setPurgePreview(null);
+    setPurgeName("");
+    setPurgePassword("");
+    setPurgeError("");
+    return () => {
+      purgeRequest.current += 1;
+    };
+  }, [boardId, viewerId, refreshKey, purgeEnabled]);
+  function mayPurge(event: BoardEvent) {
+    return (
+      purgeEnabled &&
+      !lifecyclePendingRef.current &&
+      !activeDraft &&
+      event.archived &&
+      event.boardId === boardId &&
+      event.boardRevision === archivedPage?.boardRevision
+    );
+  }
+  async function reviewEventPurge(event: BoardEvent) {
+    if (!mayPurge(event)) return;
+    const request = ++purgeRequest.current;
+    const pendingOwner = ++lifecycleRequest.current;
+    lifecyclePendingRef.current = true;
+    setLifecyclePending(true);
+    setPurgeEvent(event);
+    setPurgePreview(null);
+    setPurgeName("");
+    setPurgePassword("");
+    setPurgeError("");
+    try {
+      const preview = await previewBoardEventPurge(boardId, event.id);
+      if (request === purgeRequest.current) setPurgePreview(preview);
+    } catch (failure) {
+      if (request === purgeRequest.current)
+        setPurgeError(
+          lifecycleErrorMessage(
+            failure,
+            "The event review could not be prepared. Request a new review.",
+          ),
+        );
+    } finally {
+      if (pendingOwner === lifecycleRequest.current) {
+        lifecyclePendingRef.current = false;
+        setLifecyclePending(false);
+      }
+    }
+  }
+  async function confirmEventPurge() {
+    const event = purgeEvent,
+      preview = purgePreview;
+    if (
+      !event ||
+      !preview ||
+      !mayPurge(event) ||
+      preview.impact.blockers.length ||
+      purgeName !== preview.confirmation_name ||
+      !purgePassword ||
+      !archivedPage?.items.some(
+        (row) => row.id === event.id && row.revision === event.revision,
+      )
+    )
+      return;
+    const request = ++purgeRequest.current;
+    const pendingOwner = ++lifecycleRequest.current;
+    lifecyclePendingRef.current = true;
+    setLifecyclePending(true);
+    try {
+      await purgeBoardEvent(boardId, event.id, {
+        token: preview.token,
+        confirmationName: purgeName,
+        password: purgePassword,
+      });
+      if (request !== purgeRequest.current) return;
+      setPurgeEvent(null);
+      setPurgePreview(null);
+      setPurgeName("");
+      setPurgePassword("");
+      reportDone("Event permanently deleted.");
+      invalidate();
+      setArchivedState(null);
+      setArchivedVersion((value) => value + 1);
+      setAccessVersion((value) => value + 1);
+    } catch (failure) {
+      if (request !== purgeRequest.current) return;
+      setPurgeError(
+        lifecycleErrorMessage(
+          failure,
+          "The event was not permanently deleted. Request a new review.",
+        ),
+      );
+      setPurgePreview(null);
+      setPurgeName("");
+    } finally {
+      if (pendingOwner === lifecycleRequest.current) {
+        setPurgePassword("");
+        lifecyclePendingRef.current = false;
+        setLifecyclePending(false);
+      }
+    }
+  }
 
   function beginLifecycle(kind: "archive" | "restore", event: BoardEvent) {
     if (lifecyclePendingRef.current || activeDraft) return;
@@ -1025,7 +1187,7 @@ export function ServerBackedBoardCalendar({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {(canManage || canEdit) && !activeDraft && (
+            {(canBrowseArchived || canEdit) && !activeDraft && (
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -1054,7 +1216,7 @@ export function ServerBackedBoardCalendar({
                       My events
                     </DropdownMenuItem>
                   )}
-                  {canManage && (
+                  {canBrowseArchived && (
                     <DropdownMenuItem
                       className="min-h-11"
                       onClick={() => {
@@ -1524,7 +1686,7 @@ export function ServerBackedBoardCalendar({
             </div>
           </>
         )}
-      {view === "archived" && canManage && archivedPage && (
+      {view === "archived" && canBrowseArchived && archivedPage && (
         <>
           <p className="text-muted-foreground text-sm" role="status">
             {archivedPage.pagination.total} archived events · Showing{" "}
@@ -1544,6 +1706,8 @@ export function ServerBackedBoardCalendar({
               ) !== null
             }
             onRestoreEvent={(event) => beginLifecycle("restore", event)}
+            canPurgeEvent={mayPurge}
+            onPurgeEvent={(event) => void reviewEventPurge(event)}
           />
           <div className="flex flex-wrap gap-2">
             <Button
@@ -1570,7 +1734,7 @@ export function ServerBackedBoardCalendar({
         </>
       )}
       {view === "archived" &&
-        canManage &&
+        canBrowseArchived &&
         archivedState?.key === archivedKey &&
         archivedState.status === "loading" && (
           <p role="status" className="text-muted-foreground py-8 text-sm">
@@ -1578,7 +1742,7 @@ export function ServerBackedBoardCalendar({
           </p>
         )}
       {view === "archived" &&
-        canManage &&
+        canBrowseArchived &&
         archivedState?.key === archivedKey &&
         archivedState.error && (
           <Alert variant="destructive">
@@ -1593,7 +1757,7 @@ export function ServerBackedBoardCalendar({
             </Button>
           </Alert>
         )}
-      {view === "archived" && !canManage && !accessDenied && (
+      {view === "archived" && !canBrowseArchived && !accessDenied && (
         <p role="status" className="text-muted-foreground py-8 text-sm">
           {currentAccess
             ? "Archived events require Board manager access."
@@ -1620,6 +1784,119 @@ export function ServerBackedBoardCalendar({
             description="No events are shown. Retry or ask a Board manager to check your access."
           />
         )}
+      <Dialog
+        open={
+          purgeEvent !== null && purgeEvent.boardId === boardId && purgeEnabled
+        }
+        dismissible={!lifecyclePending}
+        onOpenChange={(open) => {
+          if (!open && !lifecyclePendingRef.current) {
+            purgeRequest.current += 1;
+            setPurgeEvent(null);
+            setPurgePreview(null);
+            setPurgeName("");
+            setPurgePassword("");
+            setPurgeError("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Permanently delete event?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the archived event and its occurrences.
+            </DialogDescription>
+          </DialogHeader>
+          {lifecyclePending && !purgePreview && (
+            <p role="status">Preparing review…</p>
+          )}
+          {purgeError && (
+            <p role="alert" className="text-destructive text-sm">
+              {purgeError}
+            </p>
+          )}
+          {purgePreview ? (
+            <div className="mt-4 space-y-4">
+              <LifecyclePurgeReview
+                preview={purgePreview}
+                region={workspaceCalendar}
+              />
+              {purgePreview.impact.blockers.length === 0 && (
+                <form
+                  className="space-y-4"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void confirmEventPurge();
+                  }}
+                >
+                  <p className="text-sm break-words">
+                    Event name: <code>{purgePreview.confirmation_name}</code>
+                  </p>
+                  <label className="block space-y-2 text-sm">
+                    Type the event name
+                    <Input
+                      autoComplete="off"
+                      value={purgeName}
+                      disabled={lifecyclePending}
+                      onChange={(event) => setPurgeName(event.target.value)}
+                    />
+                  </label>
+                  <label className="block space-y-2 text-sm">
+                    Administrator password
+                    <Input
+                      type="password"
+                      autoComplete="current-password"
+                      value={purgePassword}
+                      disabled={lifecyclePending}
+                      onChange={(event) => setPurgePassword(event.target.value)}
+                    />
+                  </label>
+                  <Button
+                    type="submit"
+                    variant="destructive"
+                    className="min-h-11"
+                    disabled={
+                      lifecyclePending ||
+                      !purgeEnabled ||
+                      purgeName !== purgePreview.confirmation_name ||
+                      !purgePassword
+                    }
+                  >
+                    Confirm permanent deletion
+                  </Button>
+                </form>
+              )}
+            </div>
+          ) : (
+            !lifecyclePending &&
+            purgeEvent && (
+              <Button
+                className="mt-4 min-h-11"
+                variant="outline"
+                onClick={() => {
+                  if (purgeEvent) void reviewEventPurge(purgeEvent);
+                }}
+              >
+                Review again
+              </Button>
+            )
+          )}
+          <Button
+            className="mt-4 min-h-11"
+            variant="outline"
+            disabled={lifecyclePending}
+            onClick={() => {
+              setPurgeEvent(null);
+              setPurgePreview(null);
+              setPurgeName("");
+              setPurgePassword("");
+              setPurgeError("");
+            }}
+          >
+            Cancel
+          </Button>
+        </DialogContent>
+      </Dialog>
       <AlertDialog
         open={
           lifecycleTarget?.boardId === boardId &&

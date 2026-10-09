@@ -108,7 +108,11 @@ def verify_board_controls(
     from operations.sample.controls.board_files import verify_board_file_controls
 
     if isinstance(mappings, Mapping):
-        issues.extend(verify_board_file_controls(admin, actions, mappings))
+        issues.extend(
+            verify_board_file_controls(
+                admin, actions, mappings, actor_ids=actors, admin_id=admin_id
+            )
+        )
     phase = dataset.organization.phases
     source_mappings = mappings.get("boards") if isinstance(mappings, Mapping) else None
     if phase is not None and isinstance(source_mappings, Mapping):

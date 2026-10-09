@@ -122,6 +122,26 @@ import {
   formatReportRunDate,
   type ReportOutputAction,
 } from "./report-run-panels";
+import { Input } from "@/components/ui/input";
+import { reportDone } from "@/lib/feedback";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { LifecyclePurgeReview } from "../../shared/lifecycle-purge-review";
+import {
+  lifecycleErrorMessage,
+  type LifecyclePurgePreview,
+} from "@/lib/lifecycle";
+import {
+  workspaceLifecycleQueryOptions,
+  workspaceCalendarQueryOptions,
+  subscribeWorkspaceLifecycleSettings,
+} from "../../manage/adapters/workspace-api";
+import { previewReportPurge, purgeReport } from "../adapters/reports-api";
 import { SavedReportsPanel } from "./saved-reports-panel";
 
 // The one read of a cached first page that "Load more" pages (and their
@@ -665,6 +685,165 @@ export default function ServerBackedReports({
     runsPageSize,
     runsRefresh,
   ]);
+
+  const [purgeTarget, setPurgeTarget] = useState<{
+    report: OpenViewReport;
+    ownerId: string;
+    sequence: number;
+  } | null>(null);
+  const [purgePreview, setPurgePreview] =
+    useState<LifecyclePurgePreview | null>(null);
+  const [purgeName, setPurgeName] = useState("");
+  const [purgePassword, setPurgePassword] = useState("");
+  const [purgeError, setPurgeError] = useState("");
+  const purgeRequest = useRef(0);
+  const isPurgeAdmin =
+    identityQuery.isSuccess &&
+    currentIdentity?.id === verifiedUserId &&
+    currentIdentity.role === "admin" &&
+    !accessDenied &&
+    !suspended;
+  const lifecycleSettings = useQuery({
+    ...workspaceLifecycleQueryOptions(),
+    enabled: isPurgeAdmin && baselineReport?.isDeleted === true,
+  });
+  const purgeRegion = useQuery({
+    ...workspaceCalendarQueryOptions(),
+    enabled: isPurgeAdmin && baselineReport?.isDeleted === true,
+  });
+  const purgeEnabled =
+    isPurgeAdmin &&
+    lifecycleSettings.isSuccess &&
+    lifecycleSettings.data.purge_enabled;
+  useEffect(() => {
+    if (isPurgeAdmin && baselineReport?.isDeleted)
+      return subscribeWorkspaceLifecycleSettings(queryClient);
+  }, [isPurgeAdmin, baselineReport?.isDeleted, queryClient]);
+  useEffect(() => {
+    purgeRequest.current += 1;
+    setPurgeTarget(null);
+    setPurgePreview(null);
+    setPurgeName("");
+    setPurgePassword("");
+    setPurgeError("");
+  }, [
+    baselineReport?.id,
+    baselineReport?.isDeleted,
+    purgeEnabled,
+    verifiedUserId,
+    suspended,
+  ]);
+
+  async function reviewPurgeReport() {
+    if (
+      !baselineReport?.isDeleted ||
+      !purgeEnabled ||
+      dirty ||
+      !beginAction("purge-preview")
+    )
+      return;
+    const target = {
+      report: baselineReport,
+      ownerId: verifiedUserId,
+      sequence: selectionSequence.current,
+    };
+    const request = ++purgeRequest.current;
+    setPurgeTarget(target);
+    setPurgePreview(null);
+    setPurgeName("");
+    setPurgePassword("");
+    setPurgeError("");
+    try {
+      const preview = await previewReportPurge(target.report.id);
+      if (
+        ownsActionResult(target.ownerId) &&
+        request === purgeRequest.current &&
+        target.sequence === selectionSequence.current
+      )
+        setPurgePreview(preview);
+    } catch (failure) {
+      if (ownsActionResult(target.ownerId) && request === purgeRequest.current)
+        setPurgeError(
+          lifecycleErrorMessage(
+            failure,
+            "The Report review could not be prepared. Request a new review.",
+          ),
+        );
+    } finally {
+      if (ownsActionResult(target.ownerId)) endAction();
+    }
+  }
+
+  async function confirmReportPurge() {
+    const target = purgeTarget,
+      preview = purgePreview;
+    if (
+      !target ||
+      !preview ||
+      !purgeEnabled ||
+      dirty ||
+      !ownsActionResult(target.ownerId) ||
+      target.sequence !== selectionSequence.current ||
+      currentEditor.current.baselineReport?.id !== target.report.id ||
+      !target.report.isDeleted ||
+      preview.impact.blockers.length ||
+      purgeName !== preview.confirmation_name ||
+      !purgePassword ||
+      !beginAction("purge")
+    )
+      return;
+    const request = ++purgeRequest.current;
+    try {
+      await purgeReport(target.report.id, {
+        token: preview.token,
+        confirmationName: purgeName,
+        password: purgePassword,
+      });
+      if (
+        !ownsActionResult(target.ownerId) ||
+        request !== purgeRequest.current ||
+        target.sequence !== selectionSequence.current
+      )
+        return;
+      setPurgeTarget(null);
+      setPurgePreview(null);
+      setPurgeName("");
+      setPurgePassword("");
+      patchReports((current) =>
+        current.filter((item) => item.id !== target.report.id),
+      );
+      refreshReportList();
+      selectionSequence.current += 1;
+      setTarget(null);
+      localSelection.current = "::false";
+      setBaselineReport(null);
+      const empty = emptyReportDraft();
+      setDraft(empty);
+      setBaselineDraft(empty);
+      setRecipeEditorOpen(false);
+      setRuns([]);
+      setRunsTotal(0);
+      router.replace(serializeOpenViewUrl({ section: "reports" }) as Route);
+      setNotice("Report permanently deleted.");
+      reportDone("Report permanently deleted.");
+    } catch (failure) {
+      if (!ownsActionResult(target.ownerId) || request !== purgeRequest.current)
+        return;
+      setPurgeError(
+        lifecycleErrorMessage(
+          failure,
+          "The Report was not permanently deleted. Request a new review.",
+        ),
+      );
+      setPurgePreview(null);
+      setPurgeName("");
+    } finally {
+      if (ownsActionResult(target.ownerId)) {
+        setPurgePassword("");
+        endAction();
+      }
+    }
+  }
 
   function beginAction(name: string): boolean {
     if (actionRef.current) return false;
@@ -1376,6 +1555,15 @@ export default function ServerBackedReports({
                             ? "Restore Report"
                             : "Archive Report"}
                         </DropdownMenuItem>
+                        {baselineReport.isDeleted && purgeEnabled && (
+                          <DropdownMenuItem
+                            variant="destructive"
+                            disabled={dirty || Boolean(actionPending)}
+                            onClick={() => void reviewPurgeReport()}
+                          >
+                            Permanently delete Report
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   ) : null}
@@ -1600,6 +1788,116 @@ export default function ServerBackedReports({
           </div>
         </SheetContent>
       </Sheet>
+      <Dialog
+        open={purgeTarget !== null}
+        dismissible={!actionPending}
+        onOpenChange={(open) => {
+          if (!open && !actionRef.current) {
+            purgeRequest.current += 1;
+            setPurgeTarget(null);
+            setPurgePreview(null);
+            setPurgeName("");
+            setPurgePassword("");
+            setPurgeError("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Permanently delete Report?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the archived Report and its retained
+              outputs.
+            </DialogDescription>
+          </DialogHeader>
+          {actionPending === "purge-preview" && (
+            <p role="status">Preparing review…</p>
+          )}
+          {purgeError && (
+            <p role="alert" className="text-destructive text-sm">
+              {purgeError}
+            </p>
+          )}
+          {purgePreview ? (
+            <div className="mt-4 space-y-4">
+              <LifecyclePurgeReview
+                preview={purgePreview}
+                region={purgeRegion.data}
+              />
+              {purgePreview.impact.blockers.length === 0 && (
+                <form
+                  className="space-y-4"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void confirmReportPurge();
+                  }}
+                >
+                  <p className="text-sm break-words">
+                    Report name: <code>{purgePreview.confirmation_name}</code>
+                  </p>
+                  <label className="block space-y-2 text-sm">
+                    Type the Report name
+                    <Input
+                      autoComplete="off"
+                      value={purgeName}
+                      disabled={Boolean(actionPending)}
+                      onChange={(event) => setPurgeName(event.target.value)}
+                    />
+                  </label>
+                  <label className="block space-y-2 text-sm">
+                    Administrator password
+                    <Input
+                      type="password"
+                      autoComplete="current-password"
+                      value={purgePassword}
+                      disabled={Boolean(actionPending)}
+                      onChange={(event) => setPurgePassword(event.target.value)}
+                    />
+                  </label>
+                  <Button
+                    type="submit"
+                    variant="destructive"
+                    className="min-h-11"
+                    disabled={
+                      Boolean(actionPending) ||
+                      !purgeEnabled ||
+                      purgeName !== purgePreview.confirmation_name ||
+                      !purgePassword
+                    }
+                  >
+                    Confirm permanent deletion
+                  </Button>
+                </form>
+              )}
+            </div>
+          ) : (
+            !actionPending && (
+              <Button
+                className="mt-4 min-h-11"
+                variant="outline"
+                disabled={!purgeEnabled}
+                onClick={() => void reviewPurgeReport()}
+              >
+                Review again
+              </Button>
+            )
+          )}
+          <Button
+            className="mt-4 min-h-11"
+            variant="outline"
+            disabled={Boolean(actionPending)}
+            onClick={() => {
+              setPurgeTarget(null);
+              setPurgePreview(null);
+              setPurgeName("");
+              setPurgePassword("");
+              setPurgeError("");
+            }}
+          >
+            Cancel
+          </Button>
+        </DialogContent>
+      </Dialog>
       <AlertDialog
         open={Boolean(pendingNavigation)}
         onOpenChange={(open) => {
