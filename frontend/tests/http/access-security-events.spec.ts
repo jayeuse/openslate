@@ -5,7 +5,7 @@ import {
   eventOperationId,
   historicalPersonId,
   matchingPageEvents,
-  mockSecurityEvents,
+  mockSecurityEvents as mockAccessSecurityEvents,
   securityEvent,
   unsafeEventCanary,
 } from "./helpers/security-events";
@@ -16,19 +16,12 @@ function feed(page: Page) {
   return page.getByRole("region", { name: "Security events", exact: true });
 }
 function eventRows(page: Page) {
-  return feed(page)
-    .getByRole("table", { name: "Security events", exact: true })
-    .or(feed(page).getByRole("list", { name: "Security events", exact: true }));
+  return feed(page).getByRole("list", { name: "Security events", exact: true });
 }
 async function openFeed(page: Page) {
-  await page.goto("/access?view=security");
+  await page.goto("/manage?view=audit&audit=security-events");
   await expect(feed(page)).toBeVisible();
-  await expect(
-    eventRows(page).getByText("Sign-in accepted", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "End session for Eli", exact: true }),
-  ).toBeEnabled();
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
 }
 async function filters(page: Page) {
   await feed(page)
@@ -107,8 +100,10 @@ test("Events mixed nullable feed and details explain representative and partial 
   await openFeed(page);
   // Times are workspace-local (Asia/Manila); UTC stays out of visible text.
   await expect(feed(page)).not.toContainText("UTC");
-  await expect(feed(page)).toContainText("Unknown person");
-  await expect(feed(page)).toContainText("Address unknown");
+  await expect(feed(page)).toContainText(
+    "Failed sign-in attempts were recorded",
+  );
+  await expect(feed(page)).toContainText("unknown address");
   await expect(feed(page)).toContainText("Other security event");
   await expect(feed(page)).not.toContainText("internal.controlled_check");
   await expect(feed(page)).not.toContainText(unsafeEventCanary);
@@ -144,10 +139,8 @@ test("Events filters serialize workspace-local day bounds and person values befo
 }) => {
   const state = await mockSecurityEvents(page);
   state.events = matchingPageEvents();
-  await page.goto("/access?view=security");
-  await expect(
-    feed(page).getByRole("table", { name: "Security events", exact: true }),
-  ).toBeVisible();
+  await page.goto("/manage?view=audit&audit=security-events");
+  await expect(eventRows(page)).toBeVisible();
   const controls = await filters(page);
   await controls
     .getByLabel("Event type", { exact: true })
@@ -225,9 +218,7 @@ test("Events unknown exact type and historical person UUID work independently of
     .filter({ hasText: "person list could not load" });
   await expect(directoryError).toBeVisible();
   await expect(directoryError).toHaveAttribute("data-variant", "destructive");
-  await expect(
-    eventRows(page).getByText("Sign-in accepted", { exact: true }),
-  ).toBeVisible();
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
   await page.keyboard.press("Escape");
   await controls
     .getByLabel("Event type", { exact: true })
@@ -340,7 +331,7 @@ test("Events detail actor and subject filters use the recorded UUID and include 
     }),
     securityEvent(3),
   ];
-  await page.goto("/access?view=security");
+  await page.goto("/manage?view=audit&audit=security-events");
   await expect(feed(page)).toContainText("4 events");
   let dialog = await details(page, "Sign-in accepted");
   await expect(
@@ -386,11 +377,11 @@ for (const outcome of ["attempt", "partial"] as const) {
         metadata: { stage: "provider_update" },
       }),
     ];
-    await page.goto("/access?view=security");
-    await expect(
-      eventRows(page).getByText("Recovery completion", { exact: true }),
-    ).toBeVisible();
-    await expect(eventRows(page)).not.toContainText("Recovery completed");
+    await page.goto("/manage?view=audit&audit=security-events");
+    await expect(eventRows(page).getByText(/password recovery/i)).toBeVisible();
+    await expect(eventRows(page)).not.toContainText(
+      /completed password recovery/i,
+    );
     const dialog = await details(page, "Recovery completion");
     await expect(dialog).toContainText(
       outcome === "attempt"
@@ -446,18 +437,14 @@ test("Events same-key failed Refresh keeps rows and explicit Retry recovers with
   await expect(feed(page).getByRole("alert")).toContainText(
     "could not be refreshed",
   );
-  await expect(
-    eventRows(page).getByText("Sign-in accepted", { exact: true }),
-  ).toBeVisible();
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
   await expect(feed(page)).not.toContainText(unsafeEventCanary);
   state.listStatus = 200;
   await feed(page)
     .getByRole("button", { name: "Retry security events", exact: true })
     .click();
   await expect(feed(page).getByRole("alert")).toHaveCount(0);
-  await expect(
-    eventRows(page).getByText("Sign-in accepted", { exact: true }),
-  ).toBeVisible();
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
 });
 
 test("Events changed filter loads cold rather than showing old-key rows and distinguishes filtered and unfiltered empty", async ({
@@ -472,9 +459,9 @@ test("Events changed filter loads cold rather than showing old-key rows and dist
       .getByRole("searchbox", { name: "Search security events", exact: true })
       .fill("no-controlled-matches");
     await held.begun;
-    await expect(
-      eventRows(page).getByText("Sign-in accepted", { exact: true }),
-    ).toHaveCount(0);
+    await expect(eventRows(page).getByText(/sign-in was accepted/)).toHaveCount(
+      0,
+    );
     await expect(
       feed(page).getByText("Loading security events…", { exact: true }),
     ).toBeVisible();
@@ -500,20 +487,18 @@ test("Events cold unavailable and detail failure offer explicit recovery with no
 }) => {
   const state = await mockSecurityEvents(page);
   state.listStatus = 503;
-  await page.goto("/access?view=security");
+  await page.goto("/manage?view=audit&audit=security-events");
   await expect(feed(page).getByRole("alert")).toContainText(
     "could not be loaded",
   );
-  await expect(
-    eventRows(page).getByText("Sign-in accepted", { exact: true }),
-  ).toHaveCount(0);
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toHaveCount(
+    0,
+  );
   state.listStatus = 200;
   await feed(page)
     .getByRole("button", { name: "Retry security events", exact: true })
     .click();
-  await expect(
-    eventRows(page).getByText("Sign-in accepted", { exact: true }),
-  ).toBeVisible();
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
   state.detailStatus = 503;
   const dialog = await details(page, "Sign-in failure");
   await expect(dialog.getByRole("alert")).toContainText(
@@ -541,19 +526,19 @@ for (const malformed of [
       items: [{ ...securityEvent(0), ...malformed.patch }],
       pagination: { limit: 10, offset: 0, count: 1, total: 1, has_more: false },
     };
-    await page.goto("/access?view=security");
+    await page.goto("/manage?view=audit&audit=security-events");
     await expect(feed(page).getByRole("alert")).toContainText(
       "could not be loaded",
     );
-    await expect(
-      eventRows(page).getByText("Sign-in accepted", { exact: true }),
-    ).toHaveCount(0);
+    await expect(eventRows(page).getByText(/sign-in was accepted/)).toHaveCount(
+      0,
+    );
     state.malformedList = null;
     await feed(page)
       .getByRole("button", { name: "Retry security events", exact: true })
       .click();
     await expect(
-      eventRows(page).getByText("Sign-in accepted", { exact: true }),
+      eventRows(page).getByText(/sign-in was accepted/),
     ).toBeVisible();
   });
 }
@@ -585,24 +570,41 @@ for (const role of ["member", "guest", "manager"] as const) {
     const state = await mockSecurityEvents(page);
     state.role = role === "guest" ? "guest" : "member";
     state.manager = role === "manager";
-    await page.goto("/access?view=security");
+    await page.goto("/manage?view=audit&audit=security-events");
     await expect(
       page.getByRole("heading", {
-        name: role === "manager" ? "Groups" : "Access",
+        name: "Audit",
         exact: true,
       }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("tab", { name: "Security events", exact: true }),
+    ).toHaveCount(0);
     await expect(feed(page)).toHaveCount(0);
+    expect(state.userReads).toBe(0);
     expect(state.reads).toEqual([]);
     expect(state.details).toEqual([]);
   });
 }
 
-test("Events refresh and held detail leave the existing policy draft and explicit Save owner intact", async ({
+test("S09: Access security links to Audit through the existing draft guard", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
-  await openFeed(page);
+  await page.goto("/access?view=security");
+  await expect(
+    page.getByRole("button", { name: "End session for Eli", exact: true }),
+  ).toBeEnabled();
+  await expect(feed(page)).toHaveCount(0);
+  expect(state.reads).toEqual([]);
+  const link = page.getByRole("link", {
+    name: "View security events in Audit",
+    exact: true,
+  });
+  await expect(link).toHaveAttribute(
+    "href",
+    "/manage?view=audit&audit=security-events",
+  );
   await page.getByRole("button", { name: "Edit policy", exact: true }).click();
   const policy = page.getByRole("dialog", {
     name: "Account policy",
@@ -614,102 +616,68 @@ test("Events refresh and held detail leave the existing policy draft and explici
   await policy
     .getByRole("button", { name: "Close account policy", exact: true })
     .click();
-  await feed(page)
-    .getByRole("button", { name: "Refresh security events", exact: true })
+  await link.click();
+  const leave = page.getByRole("alertdialog", {
+    name: "Discard unsaved changes?",
+    exact: true,
+  });
+  await expect(leave).toBeVisible();
+  await leave
+    .getByRole("button", { name: "Keep editing", exact: true })
     .click();
-  const held = deferredMfaResponse();
-  state.holdDetail = held;
-  try {
-    const event = await details(page, "Sign-in failure");
-    await held.begun;
-    await page.keyboard.press("Escape");
-    await expect(event).toBeHidden();
-    await page
-      .getByRole("button", { name: "Edit policy", exact: true })
-      .click();
-    await expect(
-      policy.getByLabel("Session timeout", { exact: true }),
-    ).toHaveValue("30 minutes");
-    await policy
-      .getByRole("button", { name: "Save settings", exact: true })
-      .click();
-    await expect(
-      policy.getByRole("button", { name: "Save settings", exact: true }),
-    ).toBeDisabled();
-    expect(state.security.policy.session_timeout_minutes).toBe(30);
-    held.release();
-    await expect(event).toBeHidden();
-    expect(state.commands).toEqual([]);
-    expect(state.security.writes).toEqual([
-      {
-        path: "/workspace/security",
-        body: { revision: 1, session_timeout_minutes: 30 },
-      },
-    ]);
-  } finally {
-    held.release();
-  }
+  await expect(page).toHaveURL(/\/access\?view=security$/);
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(
+    policy.getByLabel("Session timeout", { exact: true }),
+  ).toHaveValue("30 minutes");
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
+  await link.click();
+  await leave
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(feed(page)).toBeVisible();
+  await expect(eventRows(page)).toContainText("sign-in was accepted");
+  expect(state.commands).toEqual([]);
+  expect(state.security.writes).toEqual([]);
 });
 
 for (const status of [401, 403]) {
-  test(`Events fresh ${status} refusal conceals all cached privileged reads and detail before explicit recovery`, async ({
+  test(`Events fresh ${status} refusal conceals cached privileged reads across Audit and Access before explicit recovery`, async ({
     page,
   }) => {
-    const consoleErrors: string[] = [];
-    page.on("console", (message) => {
-      if (
-        message.type() === "error" &&
-        !message.text().startsWith("Failed to load resource:")
-      )
-        consoleErrors.push(message.text());
-    });
     const state = await mockSecurityEvents(page);
-    await openFeed(page);
+    await page.goto("/access?view=security");
+    await expect(
+      page.getByRole("table", { name: "Sessions", exact: true }),
+    ).toBeVisible();
+    await visitAuditSecurity(page);
     const native = deferredMfaResponse();
     const repeatedNative = deferredMfaResponse();
     state.auth.holdSession = native;
     state.listStatus = status;
-    state.security.policyReadStatus = 503;
-    state.security.sessionReadStatus = 503;
     const reads = state.sessionReads;
     try {
       await feed(page)
         .getByRole("button", { name: "Refresh security events", exact: true })
         .click();
       await native.begun;
-      await expect(
-        page.getByRole("table", { name: "Sessions", exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        eventRows(page).getByText("Sign-in accepted", { exact: true }),
-      ).toHaveCount(0);
+      await expect(eventRows(page)).toHaveCount(0);
       native.release();
       await expect.poll(() => state.sessionReads).toBeGreaterThan(reads);
       await expect(feed(page).getByRole("alert")).toContainText(
         "Only administrators",
       );
-      await expect(
-        page.getByRole("table", { name: "Sessions", exact: true }),
-      ).toHaveCount(0);
       state.listStatus = 200;
       await feed(page)
         .getByRole("button", { name: "Retry security events", exact: true })
         .click();
-      await expect(
-        eventRows(page).getByText("Sign-in accepted", { exact: true }),
-      ).toBeVisible();
+      await expect(eventRows(page)).toContainText("sign-in was accepted");
+      await visitAccessSecurity(page);
       await expect(
         page.getByRole("table", { name: "Sessions", exact: true }),
       ).toHaveCount(0);
-      state.listStatus = status;
-      await feed(page)
-        .getByRole("button", { name: "Refresh security events", exact: true })
-        .click();
-      await expect(feed(page).getByRole("alert")).toContainText(
-        "Only administrators",
-      );
-      state.security.policyReadStatus = 200;
-      state.security.sessionReadStatus = 200;
       await page
         .getByRole("button", { name: "Edit policy", exact: true })
         .click();
@@ -732,28 +700,33 @@ for (const status of [401, 403]) {
       await expect(
         page.getByRole("table", { name: "Sessions", exact: true }),
       ).toBeVisible();
-      state.listStatus = 200;
-      await feed(page)
-        .getByRole("button", { name: "Retry security events", exact: true })
-        .click();
-      await expect(
-        eventRows(page).getByText("Sign-in accepted", { exact: true }),
-      ).toBeVisible();
+      await visitAuditSecurity(page);
       const recoveredReads = state.sessionReads;
       state.auth.holdSession = repeatedNative;
-      state.listStatus = status;
-      await feed(page)
-        .getByRole("button", { name: "Refresh security events", exact: true })
-        .click();
+      state.detailStatus = status;
+      await details(page, "Sign-in failure");
+      await repeatedNative.begun;
+      await expect(
+        page.getByRole("dialog", {
+          name: "Security event details",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      await expect(eventRows(page)).toHaveCount(0);
+      repeatedNative.release();
       await expect
         .poll(() => state.sessionReads)
         .toBeGreaterThan(recoveredReads);
-      await expect(
-        page.getByRole("table", { name: "Sessions", exact: true }),
-      ).toHaveCount(0);
-      await expect(eventRows(page)).toHaveCount(0);
-      expect(consoleErrors).toEqual([]);
-      repeatedNative.release();
+      await expect(feed(page).getByRole("alert")).toContainText(
+        "Only administrators",
+      );
+      state.detailStatus = 200;
+      await feed(page)
+        .getByRole("button", { name: "Retry security events", exact: true })
+        .click();
+      await expect(eventRows(page)).toContainText("sign-in was accepted");
+      expect(state.commands).toEqual([]);
+      expect(state.security.writes).toEqual([]);
     } finally {
       native.release();
       repeatedNative.release();
@@ -761,7 +734,7 @@ for (const status of [401, 403]) {
   });
 }
 
-test("Events an older held Retry cannot clear a newer policy refusal", async ({
+test("Events an older held Retry cannot clear a newer policy refusal across route changes", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -776,22 +749,13 @@ test("Events an older held Retry cannot clear a newer policy refusal", async ({
   const held = deferredMfaResponse();
   state.holdList = held;
   state.listStatus = 200;
-  const settled = new Promise<void>((resolve) => {
-    const complete = (request: { url: () => string }) => {
-      if (!/\/api\/security-events(?:\?|$)/.test(request.url())) return;
-      page.off("requestfinished", complete);
-      page.off("requestfailed", complete);
-      resolve();
-    };
-    page.on("requestfinished", complete);
-    page.on("requestfailed", complete);
-  });
   try {
     await feed(page)
       .getByRole("button", { name: "Retry security events", exact: true })
       .click();
     await held.begun;
     state.security.policyReadStatus = 403;
+    await visitAccessSecurity(page);
     await page
       .getByRole("button", { name: "Edit policy", exact: true })
       .click();
@@ -807,30 +771,24 @@ test("Events an older held Retry cannot clear a newer policy refusal", async ({
     await expect(
       policy.getByText(
         "Account policy could not be loaded. Retry before saving.",
-        {
-          exact: true,
-        },
+        { exact: true },
       ),
     ).toBeVisible();
     await expect(retryPolicy).toBeEnabled();
     await policy
       .getByRole("button", { name: "Close account policy", exact: true })
       .click();
+    await visitAuditSecurity(page);
     held.release();
-    await settled;
-    const retryEvents = feed(page).getByRole("button", {
-      name: "Retry security events",
-      exact: true,
-    });
-    await expect(retryEvents).toBeEnabled();
     await expect(feed(page).getByRole("alert")).toContainText(
       "Only administrators",
     );
     await expect(eventRows(page)).toHaveCount(0);
-    await retryEvents.click();
-    await expect(
-      eventRows(page).getByText("Sign-in accepted", { exact: true }),
-    ).toBeVisible();
+    await feed(page)
+      .getByRole("button", { name: "Retry security events", exact: true })
+      .click();
+    await expect(eventRows(page)).toContainText("sign-in was accepted");
+    await visitAccessSecurity(page);
     await expect(
       page.getByRole("table", { name: "Sessions", exact: true }),
     ).toHaveCount(0);
@@ -845,6 +803,7 @@ test("Events a policy refusal conceals a cached feed on revisit until its own fr
   await page.clock.install();
   const state = await mockSecurityEvents(page);
   await openFeed(page);
+  await visitAccessSecurity(page);
   await expect(page.getByText(/60-minute timeout$/)).toBeVisible();
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(
@@ -860,36 +819,24 @@ test("Events a policy refusal conceals a cached feed on revisit until its own fr
   await expect(
     page.getByText("Account policy unavailable", { exact: true }),
   ).toBeVisible();
-  await expect(
-    eventRows(page).getByText("Sign-in accepted", { exact: true }),
-  ).toHaveCount(0);
+  await visitAuditSecurity(page);
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toHaveCount(
+    0,
+  );
   await expect(feed(page).getByRole("alert")).toContainText(
     "Only administrators",
   );
   await feed(page)
     .getByRole("button", { name: "Retry security events", exact: true })
     .click();
-  await expect(
-    eventRows(page).getByText("Sign-in accepted", { exact: true }),
-  ).toBeVisible();
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
 });
 
-test("Events curtain clears held detail while preserving only the same-account policy draft", async ({
+test("Events curtain clears held detail and resumes only after fresh same-account role admission", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
   await openFeed(page);
-  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
-  const policy = page.getByRole("dialog", {
-    name: "Account policy",
-    exact: true,
-  });
-  await policy
-    .getByLabel("Session timeout", { exact: true })
-    .selectOption("30 minutes");
-  await policy
-    .getByRole("button", { name: "Close account policy", exact: true })
-    .click();
   const detail = deferredMfaResponse();
   const native = deferredMfaResponse();
   state.holdDetail = detail;
@@ -900,20 +847,13 @@ test("Events curtain clears held detail while preserving only the same-account p
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await native.begun;
-    await expect(
-      eventRows(page).getByText("Sign-in accepted", { exact: true }),
-    ).toHaveCount(0);
+    await expect(eventRows(page)).toHaveCount(0);
     await expect(event).toHaveCount(0);
     detail.release();
     native.release();
     await expect(feed(page)).toBeVisible();
     await expect(event).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Edit policy", exact: true })
-      .click();
-    await expect(
-      policy.getByLabel("Session timeout", { exact: true }),
-    ).toHaveValue("30 minutes");
+    expect(state.commands).toEqual([]);
     expect(state.security.writes).toEqual([]);
   } finally {
     detail.release();
@@ -943,10 +883,10 @@ test("Events late prior-account list cannot populate the next account's feed", a
     ];
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(feed(page)).toContainText("Recovery completion");
+    await expect(feed(page)).toContainText("completed password recovery");
     old.release();
-    await expect(eventRows(page)).not.toContainText("Sign-in accepted");
-    await expect(eventRows(page)).not.toContainText("Sign-in failure");
+    await expect(eventRows(page)).not.toContainText("sign-in was accepted");
+    await expect(eventRows(page)).not.toContainText("Failed sign-in attempts");
     expect(state.security.writes).toEqual([]);
     expect(state.commands).toEqual([]);
   } finally {
@@ -975,9 +915,7 @@ test("Events desktop keyboard Escape returns focus to the invoking detail row at
     document.documentElement.dataset.textSize = "125";
     document.documentElement.dataset.density = "spacious";
   });
-  await expect(
-    feed(page).getByRole("table", { name: "Security events", exact: true }),
-  ).toBeVisible();
+  await expect(eventRows(page)).toBeVisible();
   const opener = feed(page)
     .getByRole("button", { name: /^Details for Sign-in failure/ })
     .first();
@@ -1089,3 +1027,630 @@ test("13b: Events names offpage actors with bounded ID lookup without eager page
   );
   expect(state.commands).toEqual([]);
 });
+
+async function mockAuditHistory(page: Page) {
+  await page.route(/\/api\/audit-logs(?:\?|$)/, (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    return route.fulfill({
+      json: {
+        items: [],
+        pagination: {
+          limit: Number(params.get("limit") ?? 20),
+          offset: Number(params.get("offset") ?? 0),
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      },
+    });
+  });
+  await page.route("**/api/audit-logs/options**", (route) =>
+    route.fulfill({ json: { entity_types: [], actors: [] } }),
+  );
+}
+
+test("S09: Audit exposes Security events only to verified administrators", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  await mockAuditHistory(page);
+  await page.goto("/manage?view=audit");
+  await expect(
+    page.getByRole("heading", { name: "Audit", exact: true }),
+  ).toBeVisible();
+  const securityTab = page.getByRole("tab", {
+    name: "Security events",
+    exact: true,
+  });
+  await expect(securityTab).toBeVisible();
+  expect(state.reads).toEqual([]);
+  await securityTab.click();
+  await expect(page).toHaveURL(/\/manage\?view=audit&audit=security-events$/);
+  await expect(feed(page)).toBeVisible();
+  await expect(eventRows(page)).toContainText("sign-in was accepted");
+  await page
+    .getByRole("tab", { name: "Activity history", exact: true })
+    .click();
+  await expect(feed(page)).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Export audit preview", exact: true }),
+  ).toBeVisible();
+  expect(state.commands).toEqual([]);
+  expect(state.security.writes).toEqual([]);
+});
+
+test("S09: Audit awaits a current-account role and refuses failed or mismatched identity", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  await mockAuditHistory(page);
+  const role = deferredMfaResponse();
+  let response: { id: string; role: string; access: unknown[] } = {
+    id: mfaUserA,
+    role: "admin",
+    access: [],
+  };
+  let status = 200;
+  let hold = true;
+  await page.route("**/api/auth/me", async (route) => {
+    if (hold) {
+      role.start();
+      await role.waiting;
+    }
+    await route.fulfill({
+      status,
+      json: status === 200 ? response : { detail: "Controlled unavailable" },
+    });
+  });
+  try {
+    await page.goto("/manage?view=audit&audit=security-events");
+    await role.begun;
+    await expect(
+      page.getByRole("tab", { name: "Security events", exact: true }),
+    ).toHaveCount(0);
+    expect(state.reads).toEqual([]);
+    hold = false;
+    role.release();
+    await expect(feed(page)).toBeVisible();
+    response = { id: mfaUserB, role: "admin", access: [] };
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "Audit", exact: true }),
+    ).toBeVisible();
+    await expect(feed(page)).toHaveCount(0);
+    const priorReads = state.reads.length;
+    status = 503;
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "Audit", exact: true }),
+    ).toBeVisible();
+    await expect(feed(page)).toHaveCount(0);
+    expect(state.reads).toHaveLength(priorReads);
+  } finally {
+    role.release();
+  }
+});
+
+async function mockSecurityEvents(page: Page) {
+  await mockAuditHistory(page);
+  return mockAccessSecurityEvents(page);
+}
+
+async function visitAccessSecurity(page: Page) {
+  const navigation = page.getByRole("navigation", { name: "Main navigation" });
+  const access = navigation.getByRole("button", {
+    name: "Access",
+    exact: true,
+  });
+  if ((await access.getAttribute("aria-expanded")) !== "true")
+    await access.click();
+  await expect(access).toHaveAttribute("aria-expanded", "true");
+  await navigation.getByRole("link", { name: "Security", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Security", exact: true }),
+  ).toBeVisible();
+}
+
+async function visitAuditSecurity(page: Page) {
+  await page
+    .getByRole("link", { name: "View security events in Audit", exact: true })
+    .click();
+  await expect(feed(page)).toBeVisible();
+}
+
+const emittedSentenceCases: {
+  type: string;
+  sentence: string;
+  patch?: Parameters<typeof securityEvent>[1];
+}[] = [
+  {
+    type: "identity.sign_in",
+    sentence: "Mara's sign-in was accepted from 198.51.100.42.",
+  },
+  {
+    type: "identity.sign_in_failure",
+    sentence: "Failed sign-in attempts were recorded from 198.51.100.42.",
+    patch: { outcome: "failure", actor_id: null, subject_id: null },
+  },
+  {
+    type: "identity.ip_blocked",
+    sentence: "Sign-in was blocked from 198.51.100.42.",
+    patch: { outcome: "denied", actor_id: null, subject_id: null },
+  },
+  {
+    type: "identity.lockout",
+    sentence: "Sign-in was temporarily locked from 198.51.100.42.",
+    patch: { outcome: "denied", actor_id: null, subject_id: null },
+  },
+  {
+    type: "identity.password_change",
+    sentence: "Mara changed their password.",
+  },
+  {
+    type: "identity.recovery_request",
+    sentence: "A password recovery request was accepted.",
+    patch: { actor_id: null, subject_id: null },
+  },
+  {
+    type: "identity.recovery_complete",
+    sentence: "Mara completed password recovery.",
+  },
+  {
+    type: "identity.mfa.enrolled",
+    sentence: "Mara enrolled a two-step verification factor.",
+  },
+  {
+    type: "identity.mfa.verified",
+    sentence: "Mara completed two-step verification.",
+  },
+  {
+    type: "identity.mfa.removed",
+    sentence: "Mara removed a two-step verification factor.",
+  },
+  {
+    type: "identity.mfa.cancelled",
+    sentence: "Mara cancelled two-step verification setup.",
+  },
+  {
+    type: "identity.mfa.removal_incomplete",
+    sentence:
+      "Two-step verification removal for Mara was only partly completed.",
+    patch: { outcome: "partial" },
+  },
+  {
+    type: "identity.recovery",
+    sentence: "Mara requested password recovery for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "identity.mfa_reset",
+    sentence: "Mara reset two-step verification for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "identity.session_revocation",
+    sentence: "Mara ended Jay's other sessions.",
+    patch: { subject_id: mfaUserB, labels: { scope: "others" } },
+  },
+  {
+    type: "identity.local_admin_recovery",
+    sentence: "Local administrator recovery was requested for Jay.",
+    patch: { actor_id: null, subject_id: mfaUserB },
+  },
+  {
+    type: "identity.local_security_recovery",
+    sentence: "Local security recovery completed for Jay.",
+    patch: { actor_id: null, subject_id: mfaUserB },
+  },
+  {
+    type: "user.invitation",
+    sentence: "Mara invited Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.invitation_resend",
+    sentence: "Mara resent an invitation for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.invitation_revocation",
+    sentence: "Mara revoked Jay's invitation.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.invitation_acceptance",
+    sentence: "Jay accepted an invitation.",
+    patch: { actor_id: mfaUserB, subject_id: mfaUserB },
+  },
+  {
+    type: "user.authentication_activation",
+    sentence: "Mara activated authentication for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.authentication_disable",
+    sentence: "Mara disabled authentication for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.authentication_restore",
+    sentence: "Mara restored authentication for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "workspace.security_policy_change",
+    sentence: "Mara changed the account security policy.",
+    patch: { subject_id: null },
+  },
+  {
+    type: "security.retention",
+    sentence: "Session retention removed 4 session records.",
+    patch: {
+      actor_id: null,
+      subject_id: null,
+      metadata: {
+        scope: "identity_sessions",
+        deleted_sessions: 4,
+        retention_days: 30,
+      },
+    },
+  },
+  {
+    type: "backup.export.download",
+    sentence: "Backup export download by Mara was attempted.",
+    patch: {
+      outcome: "attempt",
+      subject_id: eventOperationId,
+      metadata: { size_bytes: 200, backup_run_id: eventOperationId },
+    },
+  },
+  {
+    type: "file.download",
+    sentence: "File download by Mara was attempted.",
+    patch: {
+      outcome: "attempt",
+      subject_id: null,
+      metadata: { file_id: eventOperationId },
+    },
+  },
+  {
+    type: "records.export.authorized",
+    sentence: "Mara was authorized to export 120 records as Excel.",
+    patch: {
+      subject_id: eventOperationId,
+      metadata: { format: "xlsx", row_count: 120, column_count: 3 },
+    },
+  },
+  {
+    type: "records.aggregate_snapshot.authorized",
+    sentence:
+      "Mara was authorized to create an aggregate snapshot with 7 buckets.",
+    patch: { subject_id: eventOperationId, metadata: { bucket_count: 7 } },
+  },
+  {
+    type: "records.aggregate_snapshots.authorized",
+    sentence:
+      "Mara was authorized to create 2 aggregate snapshots with 7 buckets.",
+    patch: {
+      subject_id: null,
+      metadata: {
+        query_count: 2,
+        bucket_count: 7,
+        module_ids: [eventOperationId, historicalPersonId],
+      },
+    },
+  },
+  {
+    type: "lifecycle.record_purge",
+    sentence: "Mara permanently deleted a record.",
+    patch: {
+      subject_id: eventOperationId,
+      metadata: { trigger_history_rows_removed: 3 },
+    },
+  },
+  {
+    type: "job.retry",
+    sentence: "Mara queued a retry for a backup job.",
+    patch: {
+      subject_id: eventOperationId,
+      metadata: { kind: "backup", result_id: historicalPersonId },
+    },
+  },
+];
+
+test("S09: emitted event sentences use recorded facts without claiming unfinished work", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  state.directory.push(
+    person({ id: mfaUserB, username: "jay", display_name: "Jay" }),
+  );
+  state.events = emittedSentenceCases.map((item, index) =>
+    securityEvent(index + 100, {
+      ...item.patch,
+      event_type: item.type,
+      occurred_at: "2026-10-06T12:00:00Z",
+      metadata: {
+        ...(item.patch?.metadata ?? { ip_address: "198.51.100.42" }),
+        internal_note: unsafeEventCanary,
+      },
+    }),
+  );
+  await page.goto("/manage?view=audit&audit=security-events");
+  const controls = await filters(page);
+  for (const item of emittedSentenceCases) {
+    await controls
+      .getByLabel("Event type", { exact: true })
+      .selectOption(item.type);
+    await expect(
+      eventRows(page).getByText(item.sentence, { exact: true }),
+    ).toBeVisible();
+    await expect(eventRows(page)).not.toContainText("Other security event");
+    await expect(eventRows(page)).not.toContainText(unsafeEventCanary);
+    await expect
+      .poll(() => state.reads.at(-1)?.get("event_type"))
+      .toBe(item.type);
+  }
+  expect(state.commands).toEqual([]);
+  expect(state.security.writes).toEqual([]);
+});
+
+test("S09: missing and malformed sentence facts keep non-success outcomes truthful", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  state.events = [
+    securityEvent(0, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "identity.recovery_complete",
+      outcome: "attempt",
+      metadata: {},
+    }),
+    securityEvent(1, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "identity.password_change",
+      outcome: "failure",
+      metadata: {},
+    }),
+    securityEvent(2, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "user.invitation",
+      outcome: "denied",
+      metadata: {},
+    }),
+    securityEvent(3, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "identity.mfa_reset",
+      outcome: "partial",
+      metadata: {},
+    }),
+    securityEvent(4, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "records.export.authorized",
+      metadata: {
+        row_count: true,
+        format: "constructor",
+        module_name: unsafeEventCanary,
+      },
+    }),
+    securityEvent(5, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "records.aggregate_snapshots.authorized",
+      metadata: {
+        bucket_count: -1,
+        query_count: "2",
+        module_ids: [unsafeEventCanary],
+      },
+    }),
+    securityEvent(6, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "job.retry",
+      metadata: { kind: "__proto__", result_id: unsafeEventCanary },
+    }),
+  ];
+  await page.goto("/manage?view=audit&audit=security-events");
+  for (const sentence of [
+    "Password recovery for Unknown person was attempted.",
+    "Password change for Unknown person failed.",
+    "An invitation from Unknown person to Unknown person was denied.",
+    "Two-step verification reset by Unknown person for Unknown person was only partly completed.",
+    "Unknown person was authorized to export records.",
+    "Unknown person was authorized to create aggregate snapshots.",
+    "Unknown person queued a retry for a job.",
+  ])
+    await expect(
+      eventRows(page).getByText(sentence, { exact: true }),
+    ).toBeVisible();
+  await expect(eventRows(page)).not.toContainText(
+    /completed password recovery|changed their password|invited |reset two-step verification|0 records|0 buckets|__proto__|constructor/,
+  );
+  await expect(eventRows(page)).not.toContainText(unsafeEventCanary);
+  expect(state.commands).toEqual([]);
+});
+
+test("S09: role loss closes a held detail and never re-admits cached events", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  await openFeed(page);
+  const held = deferredMfaResponse();
+  const native = deferredMfaResponse();
+  state.holdDetail = held;
+  state.auth.holdSession = native;
+  try {
+    await details(page, "Sign-in failure");
+    await held.begun;
+    state.role = "member";
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await native.begun;
+    await expect(feed(page)).toHaveCount(0);
+    held.release();
+    native.release();
+    await expect(
+      page.getByRole("heading", { name: "Audit", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("tab", { name: "Security events", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("dialog", { name: "Security event details", exact: true }),
+    ).toHaveCount(0);
+    await expect(feed(page)).toHaveCount(0);
+    expect(state.commands).toEqual([]);
+  } finally {
+    held.release();
+    native.release();
+  }
+});
+
+test("S09: the feed's own Retry starts a new session-recheck cycle without clearing other privileged refusals", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  await openFeed(page);
+  const first = deferredMfaResponse();
+  const second = deferredMfaResponse();
+  try {
+    state.auth.holdSession = first;
+    state.listStatus = 403;
+    await feed(page)
+      .getByRole("button", { name: "Refresh security events", exact: true })
+      .click();
+    await first.begun;
+    first.release();
+    await expect(feed(page).getByRole("alert")).toContainText(
+      "Only administrators",
+    );
+    state.listStatus = 200;
+    await feed(page)
+      .getByRole("button", { name: "Retry security events", exact: true })
+      .click();
+    await expect(eventRows(page)).toContainText("sign-in was accepted");
+    const verifiedReads = state.sessionReads;
+    state.auth.holdSession = second;
+    state.listStatus = 403;
+    await feed(page)
+      .getByRole("button", { name: "Refresh security events", exact: true })
+      .click();
+    await expect.poll(() => state.sessionReads).toBeGreaterThan(verifiedReads);
+    await second.begun;
+    await expect(eventRows(page)).toHaveCount(0);
+    second.release();
+    await expect(feed(page).getByRole("alert")).toContainText(
+      "Only administrators",
+    );
+    await visitAccessSecurity(page);
+    await expect(
+      page.getByRole("table", { name: "Sessions", exact: true }),
+    ).toHaveCount(0);
+    expect(state.commands).toEqual([]);
+    expect(state.security.writes).toEqual([]);
+  } finally {
+    first.release();
+    second.release();
+  }
+});
+
+for (const [width, height] of [
+  [1440, 900],
+  [390, 844],
+] as const) {
+  for (const mode of ["light", "dark"] as const) {
+    test(`S09: capture Access and Audit at ${width}x${height} ${mode}`, async ({
+      page,
+    }, testInfo) => {
+      await page.setViewportSize({ width, height });
+      const state = await mockSecurityEvents(page);
+      await page.route(
+        `**/api/users/${state.auth.userId}/preferences`,
+        (route) =>
+          route.fulfill({
+            headers: { "Cache-Control": "no-store" },
+            json: {
+              user_id: state.auth.userId,
+              theme: mode,
+              appearance: { motion: "system", keyboard_shortcuts: true },
+            },
+          }),
+      );
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      state.directory.push(
+        person({ id: mfaUserB, username: "jay", display_name: "Jay" }),
+      );
+      const shownTypes = new Set([
+        "identity.sign_in",
+        "identity.sign_in_failure",
+        "identity.mfa.enrolled",
+        "records.export.authorized",
+        "records.aggregate_snapshots.authorized",
+        "job.retry",
+        "security.retention",
+      ]);
+      state.events = emittedSentenceCases
+        .filter((item) => shownTypes.has(item.type))
+        .map((item, index) =>
+          securityEvent(200 + index, {
+            ...item.patch,
+            event_type: item.type,
+            occurred_at: "2026-10-06T12:00:00Z",
+            metadata: item.patch?.metadata ?? { ip_address: "198.51.100.42" },
+          }),
+        );
+      await page.goto("/access?view=security");
+      await expect(
+        page.getByRole("button", { name: "End session for Eli", exact: true }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("link", {
+          name: "View security events in Audit",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await page
+        .getByRole("link", {
+          name: "View security events in Audit",
+          exact: true,
+        })
+        .scrollIntoViewIfNeeded();
+      if (mode === "dark")
+        await expect(page.locator("html")).toHaveClass(/dark/);
+      else await expect(page.locator("html")).not.toHaveClass(/dark/);
+      await page.screenshot({
+        animations: "disabled",
+        style: "nextjs-portal { visibility: hidden; }",
+        path: testInfo.outputPath(
+          `access-security-${width}x${height}-${mode}.png`,
+        ),
+      });
+      await visitAuditSecurity(page);
+      await expect(eventRows(page)).toContainText(
+        "Mara's sign-in was accepted",
+      );
+      await page
+        .getByRole("heading", { name: "Audit", exact: true })
+        .scrollIntoViewIfNeeded();
+      if (mode === "dark")
+        await expect(page.locator("html")).toHaveClass(/dark/);
+      else await expect(page.locator("html")).not.toHaveClass(/dark/);
+      await page.screenshot({
+        animations: "disabled",
+        style: "nextjs-portal { visibility: hidden; }",
+        path: testInfo.outputPath(
+          `audit-security-events-${width}x${height}-${mode}.png`,
+        ),
+      });
+      expect(state.commands).toEqual([]);
+      expect(state.security.writes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+}

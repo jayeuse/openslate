@@ -1413,7 +1413,22 @@ function ManageContent() {
           ) : null}
 
           {tab === "Audit" ? (
-            <ManageAudit renderHeader={renderPageHeader} />
+            <ManageAudit
+              renderHeader={renderPageHeader}
+              securityEventsAdmitted={verifiedOrganizationRole === "admin"}
+              securityEventsSelected={
+                searchParams.get("audit") === "security-events"
+              }
+              onSecurityEventsSelected={(selected) => {
+                const params = new URLSearchParams(searchParams.toString());
+                params.set("view", "audit");
+                if (selected) params.set("audit", "security-events");
+                else params.delete("audit");
+                router.replace(("/manage?" + params.toString()) as Route, {
+                  scroll: false,
+                });
+              }}
+            />
           ) : null}
 
           {tab === "Updates & licensing" ? (

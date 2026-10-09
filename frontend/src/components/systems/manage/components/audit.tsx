@@ -11,7 +11,15 @@ import {
   PencilLine,
 } from "lucide-react";
 import { Temporal } from "@js-temporal/polyfill";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Alert } from "@/components/ui/alert";
@@ -51,6 +59,12 @@ import {
 } from "@/components/ui/native-select";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { PaginationControls } from "@/components/ui/pagination-controls";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SecurityEventsView } from "../../access/components/security-events-view";
+import {
+  accessKeys,
+  isAccessSecurityDenied,
+} from "../../access/adapters/access-queries";
 import { AccessSearchToolbar } from "../../access/components/access-search-toolbar";
 import {
   DEFAULT_TABLE_PAGE_SIZE,
@@ -98,6 +112,9 @@ const ACTIVITY_SORT_OPTIONS: readonly {
 
 type ManageAuditProps = {
   renderHeader: (actions: ReactNode) => ReactNode;
+  securityEventsAdmitted: boolean;
+  securityEventsSelected: boolean;
+  onSecurityEventsSelected: (selected: boolean) => void;
 };
 
 type ManageAuditEntry = {
@@ -289,9 +306,65 @@ function entityTypeLabel(value: string): string {
   return formatEntityType(value);
 }
 
-export default function ManageAudit({ renderHeader }: ManageAuditProps) {
+export default function ManageAudit({
+  renderHeader,
+  securityEventsAdmitted,
+  securityEventsSelected,
+  onSecurityEventsSelected,
+}: ManageAuditProps) {
   const queryClient = useQueryClient();
   const workspaceSuspended = useWorkspaceInteractionSuspended();
+  const securityActive =
+    securityEventsAdmitted && securityEventsSelected && !workspaceSuspended;
+  const historyActive = !securityEventsAdmitted || !securityEventsSelected;
+  const [, notifySecurityReads] = useReducer(
+    (version: number) => version + 1,
+    0,
+  );
+  const securityAuthority = useRef(false);
+  const refusalRechecked = useRef(false);
+  // This host owns events Retry. Policy/session refusals remain latched for
+  // their Access owners, without suppressing a later events recheck cycle.
+  const securityRefused = isAccessSecurityDenied(queryClient, "events");
+  useLayoutEffect(() => {
+    securityAuthority.current = securityActive;
+    if (!securityActive)
+      void queryClient.cancelQueries({ queryKey: accessKeys.securityEvents() });
+    return () => {
+      securityAuthority.current = false;
+      void queryClient.cancelQueries({ queryKey: accessKeys.securityEvents() });
+    };
+  }, [queryClient, securityActive]);
+  const onSecurityReadChange = useCallback(() => {
+    if (securityAuthority.current) notifySecurityReads();
+  }, []);
+  useEffect(() => {
+    if (!securityActive) return;
+    if (!securityRefused) {
+      refusalRechecked.current = false;
+      return;
+    }
+    for (const [kind, queryKey] of [
+      ["policy", accessKeys.security()],
+      ["sessions", accessKeys.adminSessions()],
+      ["events", accessKeys.securityEvents()],
+    ] as const) {
+      if (isAccessSecurityDenied(queryClient, kind))
+        void queryClient
+          .cancelQueries({ queryKey })
+          .then(() => queryClient.removeQueries({ queryKey }));
+    }
+    let current = true;
+    queueMicrotask(() => {
+      if (!current || !securityAuthority.current || refusalRechecked.current)
+        return;
+      refusalRechecked.current = true;
+      requestSessionRecheck();
+    });
+    return () => {
+      current = false;
+    };
+  }, [queryClient, securityActive, securityRefused]);
   const [auditDenied, setAuditDenied] = useState(() =>
     isManageAuditDenied(queryClient),
   );
@@ -322,7 +395,10 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
   const [notice, setNotice] = useState("");
   const detailTrigger = useRef<HTMLButtonElement | null>(null);
   const exportTrigger = useRef<HTMLButtonElement | null>(null);
-  const workspaceQuery = useQuery(manageWorkspaceOptions());
+  const workspaceQuery = useQuery({
+    ...manageWorkspaceOptions(),
+    enabled: historyActive && !workspaceSuspended,
+  });
   const listRequest = auditRequestFromFilters(
     { ...filters, query: appliedSearch },
     pageSize,
@@ -331,15 +407,15 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
   );
   const listQuery = useQuery({
     ...manageAuditListOptions(listRequest),
-    enabled: !auditDenied && !workspaceSuspended,
+    enabled: historyActive && !auditDenied && !workspaceSuspended,
   });
   const optionsQuery = useQuery({
     ...manageAuditOptionsOptions(appliedActorSearch),
-    enabled: !auditDenied && !workspaceSuspended,
+    enabled: historyActive && !auditDenied && !workspaceSuspended,
   });
   const entityOptionsQuery = useQuery({
     ...manageAuditOptionsOptions(appliedEntitySearch),
-    enabled: !auditDenied && !workspaceSuspended,
+    enabled: historyActive && !auditDenied && !workspaceSuspended,
   });
   const activityDateFormatter = workspaceQuery.data
     ? new Intl.DateTimeFormat(workspaceQuery.data.locale, {
@@ -357,13 +433,15 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
     ...manageAuditExportOptions(exportRequest ?? { sortOrder: "desc" }),
     enabled:
       exportOpen &&
+      historyActive &&
       exportRequest !== null &&
       !auditDenied &&
       !workspaceSuspended,
   });
   const detailQuery = useQuery({
     ...manageAuditDetailOptions(selected?.id ?? ""),
-    enabled: Boolean(selected) && !auditDenied && !workspaceSuspended,
+    enabled:
+      historyActive && Boolean(selected) && !auditDenied && !workspaceSuspended,
   });
   const auditErrors = [
     listQuery.error,
@@ -450,11 +528,15 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
     [],
   );
   useEffect(() => {
-    if (!workspaceSuspended) return;
+    if (!workspaceSuspended && historyActive) return;
     downloadController.current?.abort();
     downloadController.current = null;
     setDownloadPending(false);
-  }, [workspaceSuspended]);
+    if (!historyActive) {
+      setSelected(null);
+      setExportOpen(false);
+    }
+  }, [historyActive, workspaceSuspended]);
   useEffect(() => {
     if (!auditRefused && !admissionRefused) return;
     if (auditRefused) {
@@ -724,592 +806,641 @@ export default function ManageAudit({ renderHeader }: ManageAuditProps) {
   ];
 
   return (
-    <section
-      aria-labelledby="audit-region-label"
-      className="flex min-w-0 flex-col gap-3"
+    <Tabs
+      value={
+        securityEventsAdmitted && securityEventsSelected
+          ? "security"
+          : "history"
+      }
+      onValueChange={(value) => onSecurityEventsSelected(value === "security")}
     >
-      <h2 id="audit-region-label" className="sr-only">
-        Activity history
-      </h2>
-      {renderHeader(
-        <Button
-          ref={exportTrigger}
-          variant="outline"
-          aria-label="Export audit preview"
-          className="min-h-11 gap-2 px-4"
-          onClick={openExport}
-          disabled={Boolean(dateRangeError) || auditConcealed}
-        >
-          <Download data-icon="inline-start" /> Export
-        </Button>,
-      )}
-
-      <AccessSearchToolbar
-        searchLabel="Search activity"
-        placeholder="Search activity, people, or records..."
-        searchMaxLength={100}
-        query={filters.query}
-        onQueryChange={(value) => updateFilter("query", value)}
-        sortLabel="Sort activity"
-        sort={filters.order}
-        sortOptions={ACTIVITY_SORT_OPTIONS}
-        onSortChange={(value) => updateFilter("order", value)}
-        activeFilterCount={activeFilterLabels.length}
-        filtersClassName="xl:grid-cols-5"
-        filtersDisabled={auditConcealed}
+      <section
+        aria-labelledby="audit-region-label"
+        className="flex min-w-0 flex-col gap-3"
       >
-        <SearchSelect
-          id="audit-user"
-          label="Person"
-          value={filters.user}
-          options={[
-            { value: "All users", label: "All people" },
-            ...actorOptions.map((actor) => ({
-              value: actor.id,
-              label: actor.label,
-            })),
-          ]}
-          selectedOption={
-            !auditConcealed && filters.user !== "All users"
-              ? {
-                  value: filters.user,
-                  label:
-                    actorOptions.find((actor) => actor.id === filters.user)
-                      ?.label ?? "Unknown person",
-                }
-              : undefined
-          }
-          search={actorSearch}
-          onSearchChange={setActorSearch}
-          loading={
-            optionsQuery.isPending || actorSearch.trim() !== appliedActorSearch
-          }
-          error={
-            optionsQuery.isError
-              ? "People filters could not be loaded. Try again."
-              : undefined
-          }
-          onRetry={() => void optionsQuery.refetch()}
-          disabled={auditConcealed}
-          onValueChange={(value) => {
-            setChosenActor(
-              actorOptions.find((actor) => actor.id === value) ?? null,
-            );
-            updateFilter("user", value);
-          }}
-        />
-        <SearchSelect
-          id="audit-entity"
-          label="Entity"
-          value={filters.entity}
-          options={[
-            { value: "All entities", label: "All entities" },
-            ...entityTypes.map((value) => ({
-              value,
-              label: entityTypeLabel(value),
-            })),
-          ]}
-          selectedOption={
-            filters.entity !== "All entities" && !auditConcealed
-              ? {
-                  value: filters.entity,
-                  label: entityTypeLabel(filters.entity),
-                }
-              : undefined
-          }
-          search={entitySearch}
-          onSearchChange={setEntitySearch}
-          loading={
-            entityOptionsQuery.isPending ||
-            entitySearch.trim() !== appliedEntitySearch
-          }
-          error={
-            entityOptionsQuery.isError
-              ? "Entity filters could not be loaded. Try again."
-              : undefined
-          }
-          onRetry={() => void entityOptionsQuery.refetch()}
-          disabled={auditConcealed}
-          onValueChange={(value) => updateFilter("entity", value)}
-        />
-        <Field>
-          <FieldLabel htmlFor="audit-action">Action</FieldLabel>
-          <NativeSelect
-            id="audit-action"
-            value={filters.action}
-            className="w-full [&_select]:min-h-11"
-            onChange={(event) => updateFilter("action", event.target.value)}
-          >
-            <NativeSelectOption value="All actions">
-              All actions
-            </NativeSelectOption>
-            {actionOptions.map((action) => (
-              <NativeSelectOption key={action.value} value={action.value}>
-                {action.label}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Field data-invalid={Boolean(dateRangeError)}>
-          <FieldLabel htmlFor="from-date">From</FieldLabel>
-          <Input
-            id="from-date"
-            type="date"
-            value={filters.from}
-            aria-invalid={Boolean(dateRangeError) || undefined}
-            onChange={(event) => updateFilter("from", event.target.value)}
-            disabled={!workspaceQuery.data}
-            className="min-h-11"
-          />
-        </Field>
-        <Field data-invalid={Boolean(dateRangeError)}>
-          <FieldLabel htmlFor="to-date">To</FieldLabel>
-          <Input
-            id="to-date"
-            type="date"
-            min={filters.from || undefined}
-            value={filters.to}
-            aria-invalid={Boolean(dateRangeError) || undefined}
-            onChange={(event) => updateFilter("to", event.target.value)}
-            disabled={!workspaceQuery.data}
-            className="min-h-11"
-          />
-          <FieldError>{dateRangeError}</FieldError>
-        </Field>
-        <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-5">
-          {activeFilterLabels.map((label) => (
-            <Badge key={label} variant="secondary">
-              {label}
-            </Badge>
-          ))}
-          <Button
-            variant="ghost"
-            className="min-h-11 px-3"
-            onClick={clearFilters}
-            disabled={!hasFilters}
-          >
-            Clear filters
-          </Button>
-        </div>
-      </AccessSearchToolbar>
-
-      {(optionsQuery.isError || entityOptionsQuery.isError) &&
-      !auditConcealed ? (
-        <Alert role="alert" variant="destructive">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p>
-              {optionsQuery.error instanceof ApiError &&
-              optionsQuery.error.status === 403
-                ? "Only administrators can load audit filter options."
-                : "Audit filter options could not be loaded. Try again."}
-            </p>
+        <h2 id="audit-region-label" className="sr-only">
+          {securityActive ? "Audit sections" : "Activity history"}
+        </h2>
+        {renderHeader(
+          securityActive ? null : (
             <Button
+              ref={exportTrigger}
               variant="outline"
-              onClick={() => {
-                void optionsQuery.refetch();
-                void entityOptionsQuery.refetch();
-              }}
+              aria-label="Export audit preview"
+              className="min-h-11 gap-2 px-4"
+              onClick={openExport}
+              disabled={Boolean(dateRangeError) || auditConcealed}
             >
-              Retry
+              <Download data-icon="inline-start" /> Export
             </Button>
-          </div>
-        </Alert>
-      ) : null}
-      {workspaceQuery.isError ? (
-        <Alert role="alert" variant="warning">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p>
-              Workspace date settings could not be loaded. Retry to format dates
-              in your organization’s locale and timezone.
-            </p>
-            <Button
-              variant="outline"
-              onClick={() => void workspaceQuery.refetch()}
-            >
-              Retry date settings
-            </Button>
-          </div>
-        </Alert>
-      ) : null}
-      {dateRangeError ? (
-        <Alert role="alert" variant="destructive">
-          {dateRangeError}
-        </Alert>
-      ) : null}
-      {notice ? <Alert variant="success">{notice}</Alert> : null}
+          ),
+        )}
 
-      <Card aria-label="Activity history" className="w-full min-w-0">
-        <CardContent className="p-0">
-          {listQuery.isError || auditConcealed ? (
-            <Alert className="m-4" role="alert" variant="destructive">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p>
-                  {auditRefused
-                    ? "Only administrators can view audit history."
-                    : auditConcealed
-                      ? "Verifying session access…"
-                      : listErrorMessage(listQuery.error)}
-                </p>
-                <Button variant="outline" onClick={() => void retryAudit()}>
-                  Retry
-                </Button>
-              </div>
-            </Alert>
-          ) : (
-            <LoadingRegion
-              loading={listQuery.isPending}
-              label="Loading audit entries…"
-              skeleton={
-                <div className="space-y-3 p-4">
-                  {Array.from({ length: 5 }, (_, index) => (
-                    <Skeleton key={index} className="h-16 w-full" />
-                  ))}
-                </div>
-              }
-            >
-              {total === 0 ? (
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <FileSearch aria-hidden="true" />
-                    </EmptyMedia>
-                    <EmptyTitle>
-                      No audit entries match these filters
-                    </EmptyTitle>
-                    <EmptyDescription>
-                      Clear filters or search for another activity entry.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              ) : (
-                <>
-                  <div className="divide-border divide-y lg:hidden">
-                    {entries.map((entry) => (
-                      <article
-                        key={entry.id}
-                        className="flex flex-col gap-3 p-4"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                            Target
-                          </p>
-                          <p className="mt-1 font-medium break-words">
-                            {entry.target}
-                          </p>
-                        </div>
+        {securityEventsAdmitted ? (
+          <TabsList aria-label="Audit sections">
+            <TabsTrigger value="history" className="min-h-11">
+              Activity history
+            </TabsTrigger>
+            <TabsTrigger value="security" className="min-h-11">
+              Security events
+            </TabsTrigger>
+          </TabsList>
+        ) : null}
 
-                        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                          <div className="min-w-0">
-                            <dt className="text-muted-foreground text-xs">
-                              Person
-                            </dt>
-                            <dd className="mt-0.5 break-words">{entry.user}</dd>
-                          </div>
-                          <div className="min-w-0">
-                            <dt className="text-muted-foreground text-xs">
-                              Action
-                            </dt>
-                            <dd className="mt-0.5 font-medium break-words">
-                              {entry.action}
-                            </dd>
-                          </div>
-                          <div className="min-w-0">
-                            <dt className="text-muted-foreground text-xs">
-                              Entity
-                            </dt>
-                            <dd className="mt-0.5 break-words">
-                              {entry.entity}
-                            </dd>
-                          </div>
-                          <div className="min-w-0">
-                            <dt className="text-muted-foreground text-xs">
-                              Date
-                            </dt>
-                            <dd className="mt-0.5 break-words tabular-nums">
-                              <time dateTime={entry.date}>
-                                {formatActivityDate(entry.date)}
-                              </time>
-                            </dd>
-                          </div>
-                        </dl>
-
-                        <Button
-                          variant="outline"
-                          className="min-h-11 w-full gap-2"
-                          onClick={(event) =>
-                            openDetails(entry, event.currentTarget)
-                          }
-                          aria-label={`View audit ${entry.target}`}
-                        >
-                          <Eye aria-hidden="true" /> View details
-                        </Button>
-                      </article>
-                    ))}
-                  </div>
-                  <div className="hidden lg:block">
-                    <DataTable
-                      ariaLabel="Activity history table"
-                      cellClassName="px-4 py-4 whitespace-normal"
-                      columns={columns}
-                      data={[...entries]}
-                      getRowId={(entry) => entry.id}
-                    />
-                  </div>
-                </>
-              )}
-            </LoadingRegion>
-          )}
-        </CardContent>
-        {!listQuery.isError && !auditConcealed ? (
-          <CardFooter className="bg-card flex flex-wrap items-center justify-between gap-3 border-t p-3">
-            <p
-              className="text-muted-foreground text-sm tabular-nums"
-              role="status"
+        {securityEventsAdmitted && securityEventsSelected ? (
+          <TabsContent value="security" className="min-w-0">
+            <SecurityEventsView
+              active={securityActive}
+              admitted={securityEventsAdmitted && !workspaceSuspended}
+              pending={workspaceSuspended}
+              onReadChange={onSecurityReadChange}
+            />
+          </TabsContent>
+        ) : (
+          <TabsContent value="history" className="flex min-w-0 flex-col gap-3">
+            <AccessSearchToolbar
+              searchLabel="Search activity"
+              placeholder="Search activity, people, or records..."
+              searchMaxLength={100}
+              query={filters.query}
+              onQueryChange={(value) => updateFilter("query", value)}
+              sortLabel="Sort activity"
+              sort={filters.order}
+              sortOptions={ACTIVITY_SORT_OPTIONS}
+              onSortChange={(value) => updateFilter("order", value)}
+              activeFilterCount={activeFilterLabels.length}
+              filtersClassName="xl:grid-cols-5"
+              filtersDisabled={auditConcealed}
             >
-              {listQuery.isPending
-                ? "Loading audit entries…"
-                : total === 0
-                  ? "Showing 0–0 of 0"
-                  : `Showing ${firstVisible}–${lastVisible} of ${total}`}
-            </p>
-            <div className="flex min-w-0 flex-wrap items-center gap-3 sm:justify-end">
-              <div className="flex items-center gap-2">
-                <label
-                  htmlFor="audit-page-size"
-                  className="text-muted-foreground text-sm"
-                >
-                  Rows per page
-                </label>
+              <SearchSelect
+                id="audit-user"
+                label="Person"
+                value={filters.user}
+                options={[
+                  { value: "All users", label: "All people" },
+                  ...actorOptions.map((actor) => ({
+                    value: actor.id,
+                    label: actor.label,
+                  })),
+                ]}
+                selectedOption={
+                  !auditConcealed && filters.user !== "All users"
+                    ? {
+                        value: filters.user,
+                        label:
+                          actorOptions.find(
+                            (actor) => actor.id === filters.user,
+                          )?.label ?? "Unknown person",
+                      }
+                    : undefined
+                }
+                search={actorSearch}
+                onSearchChange={setActorSearch}
+                loading={
+                  optionsQuery.isPending ||
+                  actorSearch.trim() !== appliedActorSearch
+                }
+                error={
+                  optionsQuery.isError
+                    ? "People filters could not be loaded. Try again."
+                    : undefined
+                }
+                onRetry={() => void optionsQuery.refetch()}
+                disabled={auditConcealed}
+                onValueChange={(value) => {
+                  setChosenActor(
+                    actorOptions.find((actor) => actor.id === value) ?? null,
+                  );
+                  updateFilter("user", value);
+                }}
+              />
+              <SearchSelect
+                id="audit-entity"
+                label="Entity"
+                value={filters.entity}
+                options={[
+                  { value: "All entities", label: "All entities" },
+                  ...entityTypes.map((value) => ({
+                    value,
+                    label: entityTypeLabel(value),
+                  })),
+                ]}
+                selectedOption={
+                  filters.entity !== "All entities" && !auditConcealed
+                    ? {
+                        value: filters.entity,
+                        label: entityTypeLabel(filters.entity),
+                      }
+                    : undefined
+                }
+                search={entitySearch}
+                onSearchChange={setEntitySearch}
+                loading={
+                  entityOptionsQuery.isPending ||
+                  entitySearch.trim() !== appliedEntitySearch
+                }
+                error={
+                  entityOptionsQuery.isError
+                    ? "Entity filters could not be loaded. Try again."
+                    : undefined
+                }
+                onRetry={() => void entityOptionsQuery.refetch()}
+                disabled={auditConcealed}
+                onValueChange={(value) => updateFilter("entity", value)}
+              />
+              <Field>
+                <FieldLabel htmlFor="audit-action">Action</FieldLabel>
                 <NativeSelect
-                  id="audit-page-size"
-                  className="w-20 [&_select]:min-h-11"
-                  value={String(pageSize)}
-                  onChange={(event) => {
-                    const nextPageSize = PAGE_SIZE_OPTIONS.find(
-                      (size) => String(size) === event.currentTarget.value,
-                    );
-                    if (nextPageSize === undefined) return;
-                    setPageSize(nextPageSize);
-                    setPageIndex(0);
-                  }}
+                  id="audit-action"
+                  value={filters.action}
+                  className="w-full [&_select]:min-h-11"
+                  onChange={(event) =>
+                    updateFilter("action", event.target.value)
+                  }
                 >
-                  {PAGE_SIZE_OPTIONS.map((size) => (
-                    <NativeSelectOption key={size} value={String(size)}>
-                      {size}
+                  <NativeSelectOption value="All actions">
+                    All actions
+                  </NativeSelectOption>
+                  {actionOptions.map((action) => (
+                    <NativeSelectOption key={action.value} value={action.value}>
+                      {action.label}
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
-              </div>
-              {total > 0 && listQuery.data ? (
-                <PaginationControls
-                  ariaLabel="Activity pages"
-                  className="w-auto sm:justify-end"
-                  pageCount={pageCount}
-                  pageIndex={safePageIndex}
-                  onPageIndexChange={setPageIndex}
+              </Field>
+              <Field data-invalid={Boolean(dateRangeError)}>
+                <FieldLabel htmlFor="from-date">From</FieldLabel>
+                <Input
+                  id="from-date"
+                  type="date"
+                  value={filters.from}
+                  aria-invalid={Boolean(dateRangeError) || undefined}
+                  onChange={(event) => updateFilter("from", event.target.value)}
+                  disabled={!workspaceQuery.data}
+                  className="min-h-11"
                 />
-              ) : null}
-            </div>
-          </CardFooter>
-        ) : null}
-      </Card>
-
-      <p className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
-        <FileSearch aria-hidden="true" className="size-4 shrink-0" />
-        Open details to compare before and after values.
-      </p>
-
-      <Dialog
-        open={selected !== null && !auditConcealed}
-        onOpenChange={(open) => {
-          if (!open) setSelected(null);
-        }}
-      >
-        <DialogContent
-          className="sm:max-w-xl"
-          finalFocus={() => detailTrigger.current}
-        >
-          <DialogHeader>
-            <DialogTitle>
-              {`Audit entry detail · ${selectedDetail?.target ?? selected?.target ?? ""}`}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedDetail
-                ? `${selectedDetail.user} · ${formatActivityDate(selectedDetail.date)}`
-                : "Review the recorded activity change."}
-            </DialogDescription>
-          </DialogHeader>
-          {selected ? (
-            <LoadingRegion
-              loading={detailQuery.isPending}
-              label="Loading audit entry details…"
-              skeleton={
-                <div className="space-y-4">
-                  <Skeleton className="h-20 w-full" />
-                  <Skeleton className="h-36 w-full" />
-                </div>
-              }
-            >
-              {detailQuery.isError ? (
-                <Alert role="alert" variant="destructive">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p>{detailErrorMessage(detailQuery.error)}</p>
-                    <Button
-                      variant="outline"
-                      onClick={() => void detailQuery.refetch()}
-                    >
-                      Retry
-                    </Button>
-                  </div>
-                </Alert>
-              ) : selectedDetail ? (
-                <div className="flex flex-col gap-5">
-                  <div>
-                    <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                      Target
-                    </p>
-                    <p className="mt-1 text-lg font-semibold break-words">
-                      {selectedDetail.target}
-                    </p>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      {selectedDetail.action} · {selectedDetail.entity}
-                    </p>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <Card className="w-full min-w-0">
-                      <CardHeader className="p-4">
-                        <CardTitle className="text-sm">Before</CardTitle>
-                      </CardHeader>
-                      <CardContent className="p-4 pt-0 text-sm whitespace-pre-wrap">
-                        {selectedDetail.before}
-                      </CardContent>
-                    </Card>
-                    <Card className="w-full min-w-0">
-                      <CardHeader className="p-4">
-                        <CardTitle className="text-sm">After</CardTitle>
-                      </CardHeader>
-                      <CardContent className="p-4 pt-0 text-sm whitespace-pre-wrap">
-                        {selectedDetail.after}
-                      </CardContent>
-                    </Card>
-                  </div>
-                </div>
-              ) : null}
-            </LoadingRegion>
-          ) : null}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={() => setSelected(null)}
-            >
-              Close detail
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={exportOpen && !auditConcealed}
-        onOpenChange={(open) => {
-          if (!open) closeExport();
-        }}
-      >
-        <DialogContent
-          className="sm:max-w-3xl"
-          finalFocus={() => exportTrigger.current}
-        >
-          <DialogHeader>
-            <DialogTitle>Audit export preview</DialogTitle>
-            <DialogDescription>
-              {exportCount} filtered {exportCount === 1 ? "entry" : "entries"} ·
-              the download includes every filtered entry across all pages.
-            </DialogDescription>
-          </DialogHeader>
-          {downloadError ? (
-            <Alert role="alert" variant="destructive">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p>
-                  {downloadError instanceof AuditExportLimitError
-                    ? downloadError.message
-                    : "Audit CSV could not be downloaded. Try again."}
-                </p>
+              </Field>
+              <Field data-invalid={Boolean(dateRangeError)}>
+                <FieldLabel htmlFor="to-date">To</FieldLabel>
+                <Input
+                  id="to-date"
+                  type="date"
+                  min={filters.from || undefined}
+                  value={filters.to}
+                  aria-invalid={Boolean(dateRangeError) || undefined}
+                  onChange={(event) => updateFilter("to", event.target.value)}
+                  disabled={!workspaceQuery.data}
+                  className="min-h-11"
+                />
+                <FieldError>{dateRangeError}</FieldError>
+              </Field>
+              <div className="flex flex-wrap items-center gap-2 sm:col-span-2 xl:col-span-5">
+                {activeFilterLabels.map((label) => (
+                  <Badge key={label} variant="secondary">
+                    {label}
+                  </Badge>
+                ))}
                 <Button
-                  variant="outline"
-                  disabled={downloadPending}
-                  onClick={() => void downloadFilteredCsv()}
+                  variant="ghost"
+                  className="min-h-11 px-3"
+                  onClick={clearFilters}
+                  disabled={!hasFilters}
                 >
-                  Retry
+                  Clear filters
                 </Button>
               </div>
-            </Alert>
-          ) : null}
-          {exportQuery.isError ? (
-            <Alert role="alert" variant="destructive">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p>
-                  {exportQuery.error instanceof AuditExportLimitError
-                    ? exportQuery.error.message
-                    : "Audit export preview could not be loaded. Try again."}
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={() => void exportQuery.refetch()}
-                >
-                  Retry
-                </Button>
-              </div>
-            </Alert>
-          ) : (
-            <ScrollArea
-              className="max-h-[50dvh] rounded-md"
-              viewportProps={{
-                className: "max-h-[50dvh]",
-                tabIndex: 0,
-                "aria-label": "CSV preview",
+            </AccessSearchToolbar>
+
+            {(optionsQuery.isError || entityOptionsQuery.isError) &&
+            !auditConcealed ? (
+              <Alert role="alert" variant="destructive">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p>
+                    {optionsQuery.error instanceof ApiError &&
+                    optionsQuery.error.status === 403
+                      ? "Only administrators can load audit filter options."
+                      : "Audit filter options could not be loaded. Try again."}
+                  </p>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      void optionsQuery.refetch();
+                      void entityOptionsQuery.refetch();
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </Alert>
+            ) : null}
+            {workspaceQuery.isError ? (
+              <Alert role="alert" variant="warning">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p>
+                    Workspace date settings could not be loaded. Retry to format
+                    dates in your organization’s locale and timezone.
+                  </p>
+                  <Button
+                    variant="outline"
+                    onClick={() => void workspaceQuery.refetch()}
+                  >
+                    Retry date settings
+                  </Button>
+                </div>
+              </Alert>
+            ) : null}
+            {dateRangeError ? (
+              <Alert role="alert" variant="destructive">
+                {dateRangeError}
+              </Alert>
+            ) : null}
+            {notice ? <Alert variant="success">{notice}</Alert> : null}
+
+            <Card aria-label="Activity history" className="w-full min-w-0">
+              <CardContent className="p-0">
+                {listQuery.isError || auditConcealed ? (
+                  <Alert className="m-4" role="alert" variant="destructive">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p>
+                        {auditRefused
+                          ? "Only administrators can view audit history."
+                          : auditConcealed
+                            ? "Verifying session access…"
+                            : listErrorMessage(listQuery.error)}
+                      </p>
+                      <Button
+                        variant="outline"
+                        onClick={() => void retryAudit()}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  </Alert>
+                ) : (
+                  <LoadingRegion
+                    loading={listQuery.isPending}
+                    label="Loading audit entries…"
+                    skeleton={
+                      <div className="space-y-3 p-4">
+                        {Array.from({ length: 5 }, (_, index) => (
+                          <Skeleton key={index} className="h-16 w-full" />
+                        ))}
+                      </div>
+                    }
+                  >
+                    {total === 0 ? (
+                      <Empty>
+                        <EmptyHeader>
+                          <EmptyMedia variant="icon">
+                            <FileSearch aria-hidden="true" />
+                          </EmptyMedia>
+                          <EmptyTitle>
+                            No audit entries match these filters
+                          </EmptyTitle>
+                          <EmptyDescription>
+                            Clear filters or search for another activity entry.
+                          </EmptyDescription>
+                        </EmptyHeader>
+                      </Empty>
+                    ) : (
+                      <>
+                        <div className="divide-border divide-y lg:hidden">
+                          {entries.map((entry) => (
+                            <article
+                              key={entry.id}
+                              className="flex flex-col gap-3 p-4"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                                  Target
+                                </p>
+                                <p className="mt-1 font-medium break-words">
+                                  {entry.target}
+                                </p>
+                              </div>
+
+                              <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                                <div className="min-w-0">
+                                  <dt className="text-muted-foreground text-xs">
+                                    Person
+                                  </dt>
+                                  <dd className="mt-0.5 break-words">
+                                    {entry.user}
+                                  </dd>
+                                </div>
+                                <div className="min-w-0">
+                                  <dt className="text-muted-foreground text-xs">
+                                    Action
+                                  </dt>
+                                  <dd className="mt-0.5 font-medium break-words">
+                                    {entry.action}
+                                  </dd>
+                                </div>
+                                <div className="min-w-0">
+                                  <dt className="text-muted-foreground text-xs">
+                                    Entity
+                                  </dt>
+                                  <dd className="mt-0.5 break-words">
+                                    {entry.entity}
+                                  </dd>
+                                </div>
+                                <div className="min-w-0">
+                                  <dt className="text-muted-foreground text-xs">
+                                    Date
+                                  </dt>
+                                  <dd className="mt-0.5 break-words tabular-nums">
+                                    <time dateTime={entry.date}>
+                                      {formatActivityDate(entry.date)}
+                                    </time>
+                                  </dd>
+                                </div>
+                              </dl>
+
+                              <Button
+                                variant="outline"
+                                className="min-h-11 w-full gap-2"
+                                onClick={(event) =>
+                                  openDetails(entry, event.currentTarget)
+                                }
+                                aria-label={`View audit ${entry.target}`}
+                              >
+                                <Eye aria-hidden="true" /> View details
+                              </Button>
+                            </article>
+                          ))}
+                        </div>
+                        <div className="hidden lg:block">
+                          <DataTable
+                            ariaLabel="Activity history table"
+                            cellClassName="px-4 py-4 whitespace-normal"
+                            columns={columns}
+                            data={[...entries]}
+                            getRowId={(entry) => entry.id}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </LoadingRegion>
+                )}
+              </CardContent>
+              {!listQuery.isError && !auditConcealed ? (
+                <CardFooter className="bg-card flex flex-wrap items-center justify-between gap-3 border-t p-3">
+                  <p
+                    className="text-muted-foreground text-sm tabular-nums"
+                    role="status"
+                  >
+                    {listQuery.isPending
+                      ? "Loading audit entries…"
+                      : total === 0
+                        ? "Showing 0–0 of 0"
+                        : `Showing ${firstVisible}–${lastVisible} of ${total}`}
+                  </p>
+                  <div className="flex min-w-0 flex-wrap items-center gap-3 sm:justify-end">
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="audit-page-size"
+                        className="text-muted-foreground text-sm"
+                      >
+                        Rows per page
+                      </label>
+                      <NativeSelect
+                        id="audit-page-size"
+                        className="w-20 [&_select]:min-h-11"
+                        value={String(pageSize)}
+                        onChange={(event) => {
+                          const nextPageSize = PAGE_SIZE_OPTIONS.find(
+                            (size) =>
+                              String(size) === event.currentTarget.value,
+                          );
+                          if (nextPageSize === undefined) return;
+                          setPageSize(nextPageSize);
+                          setPageIndex(0);
+                        }}
+                      >
+                        {PAGE_SIZE_OPTIONS.map((size) => (
+                          <NativeSelectOption key={size} value={String(size)}>
+                            {size}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </div>
+                    {total > 0 && listQuery.data ? (
+                      <PaginationControls
+                        ariaLabel="Activity pages"
+                        className="w-auto sm:justify-end"
+                        pageCount={pageCount}
+                        pageIndex={safePageIndex}
+                        onPageIndexChange={setPageIndex}
+                      />
+                    ) : null}
+                  </div>
+                </CardFooter>
+              ) : null}
+            </Card>
+
+            <p className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
+              <FileSearch aria-hidden="true" className="size-4 shrink-0" />
+              Open details to compare before and after values.
+            </p>
+
+            <Dialog
+              open={selected !== null && !auditConcealed}
+              onOpenChange={(open) => {
+                if (!open) setSelected(null);
               }}
             >
-              <LoadingRegion
-                loading={exportQuery.isPending}
-                label="Preparing audit export…"
-                skeleton={<Skeleton className="m-4 h-60 w-[calc(100%-2rem)]" />}
+              <DialogContent
+                className="sm:max-w-xl"
+                finalFocus={() => detailTrigger.current}
               >
-                <pre className="bg-muted rounded-md p-4 text-xs leading-relaxed wrap-anywhere whitespace-pre-wrap">
-                  {auditCsv(exportEntries.slice(0, 10))}
-                </pre>
-              </LoadingRegion>
-            </ScrollArea>
-          )}
-          {exportQuery.isSuccess ? (
-            <p className="text-muted-foreground text-sm">
-              Showing the first {Math.min(10, exportCount)} of {exportCount}{" "}
-              entries. The CSV download includes all {exportCount} entries.
-            </p>
-          ) : null}
-          {downloadPending ? (
-            <p role="status" className="text-muted-foreground text-sm">
-              Downloading audit CSV…
-            </p>
-          ) : null}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={closeExport}
+                <DialogHeader>
+                  <DialogTitle>
+                    {`Audit entry detail · ${selectedDetail?.target ?? selected?.target ?? ""}`}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {selectedDetail
+                      ? `${selectedDetail.user} · ${formatActivityDate(selectedDetail.date)}`
+                      : "Review the recorded activity change."}
+                  </DialogDescription>
+                </DialogHeader>
+                {selected ? (
+                  <LoadingRegion
+                    loading={detailQuery.isPending}
+                    label="Loading audit entry details…"
+                    skeleton={
+                      <div className="space-y-4">
+                        <Skeleton className="h-20 w-full" />
+                        <Skeleton className="h-36 w-full" />
+                      </div>
+                    }
+                  >
+                    {detailQuery.isError ? (
+                      <Alert role="alert" variant="destructive">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p>{detailErrorMessage(detailQuery.error)}</p>
+                          <Button
+                            variant="outline"
+                            onClick={() => void detailQuery.refetch()}
+                          >
+                            Retry
+                          </Button>
+                        </div>
+                      </Alert>
+                    ) : selectedDetail ? (
+                      <div className="flex flex-col gap-5">
+                        <div>
+                          <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                            Target
+                          </p>
+                          <p className="mt-1 text-lg font-semibold break-words">
+                            {selectedDetail.target}
+                          </p>
+                          <p className="text-muted-foreground mt-1 text-sm">
+                            {selectedDetail.action} · {selectedDetail.entity}
+                          </p>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Card className="w-full min-w-0">
+                            <CardHeader className="p-4">
+                              <CardTitle className="text-sm">Before</CardTitle>
+                            </CardHeader>
+                            <CardContent className="p-4 pt-0 text-sm whitespace-pre-wrap">
+                              {selectedDetail.before}
+                            </CardContent>
+                          </Card>
+                          <Card className="w-full min-w-0">
+                            <CardHeader className="p-4">
+                              <CardTitle className="text-sm">After</CardTitle>
+                            </CardHeader>
+                            <CardContent className="p-4 pt-0 text-sm whitespace-pre-wrap">
+                              {selectedDetail.after}
+                            </CardContent>
+                          </Card>
+                        </div>
+                      </div>
+                    ) : null}
+                  </LoadingRegion>
+                ) : null}
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => setSelected(null)}
+                  >
+                    Close detail
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={exportOpen && !auditConcealed}
+              onOpenChange={(open) => {
+                if (!open) closeExport();
+              }}
             >
-              Close preview
-            </Button>
-            <Button
-              className="min-h-11"
-              onClick={() => void downloadFilteredCsv()}
-              aria-busy={downloadPending}
-              disabled={!canDownloadExport}
-            >
-              <Download data-icon="inline-start" /> Download CSV
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </section>
+              <DialogContent
+                className="sm:max-w-3xl"
+                finalFocus={() => exportTrigger.current}
+              >
+                <DialogHeader>
+                  <DialogTitle>Audit export preview</DialogTitle>
+                  <DialogDescription>
+                    {exportCount} filtered{" "}
+                    {exportCount === 1 ? "entry" : "entries"} · the download
+                    includes every filtered entry across all pages.
+                  </DialogDescription>
+                </DialogHeader>
+                {downloadError ? (
+                  <Alert role="alert" variant="destructive">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p>
+                        {downloadError instanceof AuditExportLimitError
+                          ? downloadError.message
+                          : "Audit CSV could not be downloaded. Try again."}
+                      </p>
+                      <Button
+                        variant="outline"
+                        disabled={downloadPending}
+                        onClick={() => void downloadFilteredCsv()}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  </Alert>
+                ) : null}
+                {exportQuery.isError ? (
+                  <Alert role="alert" variant="destructive">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p>
+                        {exportQuery.error instanceof AuditExportLimitError
+                          ? exportQuery.error.message
+                          : "Audit export preview could not be loaded. Try again."}
+                      </p>
+                      <Button
+                        variant="outline"
+                        onClick={() => void exportQuery.refetch()}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  </Alert>
+                ) : (
+                  <ScrollArea
+                    className="max-h-[50dvh] rounded-md"
+                    viewportProps={{
+                      className: "max-h-[50dvh]",
+                      tabIndex: 0,
+                      "aria-label": "CSV preview",
+                    }}
+                  >
+                    <LoadingRegion
+                      loading={exportQuery.isPending}
+                      label="Preparing audit export…"
+                      skeleton={
+                        <Skeleton className="m-4 h-60 w-[calc(100%-2rem)]" />
+                      }
+                    >
+                      <pre className="bg-muted rounded-md p-4 text-xs leading-relaxed wrap-anywhere whitespace-pre-wrap">
+                        {auditCsv(exportEntries.slice(0, 10))}
+                      </pre>
+                    </LoadingRegion>
+                  </ScrollArea>
+                )}
+                {exportQuery.isSuccess ? (
+                  <p className="text-muted-foreground text-sm">
+                    Showing the first {Math.min(10, exportCount)} of{" "}
+                    {exportCount} entries. The CSV download includes all{" "}
+                    {exportCount} entries.
+                  </p>
+                ) : null}
+                {downloadPending ? (
+                  <p role="status" className="text-muted-foreground text-sm">
+                    Downloading audit CSV…
+                  </p>
+                ) : null}
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={closeExport}
+                  >
+                    Close preview
+                  </Button>
+                  <Button
+                    className="min-h-11"
+                    onClick={() => void downloadFilteredCsv()}
+                    aria-busy={downloadPending}
+                    disabled={!canDownloadExport}
+                  >
+                    <Download data-icon="inline-start" /> Download CSV
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </TabsContent>
+        )}
+      </section>
+    </Tabs>
   );
 }
