@@ -333,6 +333,8 @@ test("uses documented version and import endpoints with revision payloads", asyn
         count: 1,
         total: 1,
         hasMore: false,
+        mutableCount: 1,
+        versionCap: 50,
       });
     }
     if (path.endsWith(`/versions/${versionId}`) && init?.method === "DELETE")
@@ -346,6 +348,8 @@ test("uses documented version and import endpoints with revision payloads", asyn
   try {
     await expect(listSandboxVersions()).resolves.toMatchObject({
       items: [expect.objectContaining({ id: versionId })],
+      mutableCount: 1,
+      versionCap: 50,
     });
     await expect(getSandboxVersion(versionId)).resolves.toMatchObject({
       document,
@@ -405,6 +409,8 @@ test("Sandbox history requests only a bounded server-search page", async () => {
       count: 1,
       total: 60,
       hasMore: true,
+      mutableCount: 45,
+      versionCap: 50,
     }),
   );
   try {
@@ -415,7 +421,13 @@ test("Sandbox history requests only a bounded server-search page", async () => {
         search: " migration ",
         kind: "imported",
       }),
-    ).resolves.toMatchObject({ items: [version], total: 60, hasMore: true });
+    ).resolves.toMatchObject({
+      items: [version],
+      total: 60,
+      hasMore: true,
+      mutableCount: 45,
+      versionCap: 50,
+    });
     expect(mock.requests.map(({ input }) => String(input))).toEqual([
       "/api/sandbox/versions?limit=20&offset=20&search=migration&kind=imported",
     ]);

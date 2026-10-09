@@ -403,6 +403,10 @@ def execute_sandbox_control(
     evidence: list[dict[str, object]] = []
     mappings: list[dict[str, str]] = []
     operation = action.values.get("operation")
+    if operation == "prune_versions":
+        from operations.sample.controls.version_prune import execute_version_prune
+
+        return execute_version_prune(action, dataset, context, on_substep=on_substep)
     from operations.sample.controls.lifecycle import execute_lifecycle_control
 
     if operation in OPERATIONS:

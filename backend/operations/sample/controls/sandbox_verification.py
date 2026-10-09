@@ -108,6 +108,7 @@ def verify_sandbox_controls(
         return {"sandbox_test_runs_verified": 0, "sandbox_temporary_versions_removed": 0}, issues
     operations = {action.values.get("operation"): action for action in actions}
     expected_operations = {
+        "prune_versions",
         "create_checkpoint",
         "update_checkpoint",
         "delete_checkpoint",
@@ -197,10 +198,15 @@ def verify_sandbox_controls(
         admin, dataset, actions, results, manifest, admin_id, versions
     )
     issues.extend(lifecycle_issues)
+    from operations.sample.controls.version_prune_verification import verify_version_prune
+
+    prune_counts, prune_issues = verify_version_prune(admin, dataset, manifest, admin_id)
+    issues.extend(prune_issues)
     return {
         "sandbox_test_runs_verified": verified_tests,
         "sandbox_temporary_versions_removed": removed_versions,
         **lifecycle_counts,
+        **prune_counts,
     }, issues
 
 

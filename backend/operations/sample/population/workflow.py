@@ -117,7 +117,7 @@ def run_population(
 
         manifest["stage"] = "sandbox"
         _write_manifest(run_directory, manifest)
-        _publish_sandbox(admin, dataset, admin_password, run_id)
+        prune_fixture = _publish_sandbox(admin, dataset, admin_password, run_id, expected_admin_id)
         (
             departments,
             modules,
@@ -296,6 +296,8 @@ def run_population(
             "mailpit_url": mailpit_url,
             "origin": origin,
         }
+        if prune_fixture is not None:
+            private_values["sandbox_prune_fixture"] = prune_fixture
         if mfa_observer is not None:
             private_values["mfa_observer"] = mfa_observer
         if host_control is not None:
@@ -322,8 +324,8 @@ def run_population(
 
 
 def _publish_sandbox(
-    admin: SampleClient, dataset: SampleDataset, admin_password: str, run_id: str
-) -> int:
+    admin: SampleClient, dataset: SampleDataset, admin_password: str, run_id: str, admin_id: str
+) -> dict[str, Any] | None:
     saved = _api(
         admin,
         "PUT",
@@ -331,6 +333,11 @@ def _publish_sandbox(
         body={"expectedRevision": 1, "document": dataset.document},
     )
     revision = _positive_int(saved.get("revision"), "Sandbox revision")
+    from operations.sample.controls.version_prune import prepare_prune_fixture
+
+    revision, fixture = prepare_prune_fixture(
+        admin, dataset, actor_id=admin_id, run_id=run_id, document_response=saved
+    )
     checkpoint = _api(
         admin,
         "POST",
@@ -402,7 +409,7 @@ def _publish_sandbox(
     if not isinstance(version, Mapping):
         raise SamplePopulationError("Sandbox publication did not return a published version")
     admin.record_mapping("sandbox_versions", "published", _api_id(version))
-    return revision
+    return fixture
 
 
 def _document_field_map(

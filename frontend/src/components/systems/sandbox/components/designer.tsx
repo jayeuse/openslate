@@ -642,18 +642,18 @@ export function Designer({
   function bindingFor(
     target: SandboxInspectorTarget,
   ): SandboxLifecycleBinding | undefined {
-    if (target.kind === "link") return undefined;
+    const kind = target.kind === "link" ? "relationship" : target.kind;
     const field =
       target.kind === "field" ? projectedField(design, target.id) : undefined;
     const id = field?.field.id ?? target.id;
     const parent = field?.moduleId ?? null;
     const binding = bindings?.find(
       (item) =>
-        item.kind === target.kind &&
+        item.kind === kind &&
         item.sandbox_id === id &&
         item.parent_sandbox_id === parent,
     );
-    return binding ? { ...binding, kind: target.kind } : undefined;
+    return binding ? { ...binding, kind } : undefined;
   }
   function lifecycleState(target: SandboxInspectorTarget) {
     const binding = bindingFor(target);
@@ -685,6 +685,40 @@ export function Designer({
           "Load the closed live item and save or cancel your edits before reviewing permanent deletion.",
       };
     return onLifecycle(binding, "purge");
+  }
+  function relationshipLifecycleActions(
+    id: string,
+    name: string,
+    orientation: "outgoing" | "incoming",
+  ) {
+    const target = { kind: "link" as const, id };
+    if (!bindingFor(target)) return null;
+    const state = lifecycleState(target);
+    const verb = state.closed ? "Reopen" : "Close";
+    return (
+      <>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={state.disabled}
+          aria-label={`${verb} ${orientation} relationship ${name}`}
+          onClick={() => void toggleLifecycle(target)}
+        >
+          {verb} relationship
+        </Button>
+        {state.canPurge ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={state.disabled}
+            aria-label={`Permanently delete ${orientation} relationship ${name}`}
+            onClick={() => void purgeLifecycle(target)}
+          >
+            Permanently delete relationship
+          </Button>
+        ) : null}
+      </>
+    );
   }
   async function renameDepartment(
     id: string,
@@ -962,7 +996,11 @@ export function Designer({
     design.departments.length === 0 && design.modules.length === 0;
   const atMinZoom = canvasView.zoom <= SANDBOX_ZOOM.min + 0.001;
   const atMaxZoom = canvasView.zoom >= SANDBOX_ZOOM.max - 0.001;
-  const currentDeleteImpact = deletionImpact(design, deleteTarget);
+  const currentDeleteImpact = deletionImpact(
+    design,
+    deleteTarget,
+    Boolean(deleteTarget && bindingFor(deleteTarget)),
+  );
   function open(kind: string) {
     setEditor(kind);
     setEditingRelationship(null);
@@ -2043,6 +2081,7 @@ export function Designer({
                       >
                         Delete relationship
                       </Button>
+                      {relationshipLifecycleActions(r.id, r.name, "outgoing")}
                     </div>
                   ))}
                 <h4 className="text-xs font-semibold">Incoming</h4>
@@ -2090,6 +2129,7 @@ export function Designer({
                         >
                           Delete relationship
                         </Button>
+                        {relationshipLifecycleActions(r.id, r.name, "incoming")}
                       </div>
                     </div>
                   ))}

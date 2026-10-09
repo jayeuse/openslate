@@ -14346,12 +14346,22 @@
             "title": "Limit",
             "type": "integer"
           },
+          "mutableCount": {
+            "minimum": 0.0,
+            "title": "Mutablecount",
+            "type": "integer"
+          },
           "offset": {
             "title": "Offset",
             "type": "integer"
           },
           "total": {
             "title": "Total",
+            "type": "integer"
+          },
+          "versionCap": {
+            "minimum": 1.0,
+            "title": "Versioncap",
             "type": "integer"
           }
         },
@@ -14361,7 +14371,9 @@
           "offset",
           "count",
           "total",
-          "hasMore"
+          "hasMore",
+          "mutableCount",
+          "versionCap"
         ],
         "title": "VersionListResponse",
         "type": "object"
@@ -14419,6 +14431,21 @@
           "expectedRevision"
         ],
         "title": "VersionMutationRequest",
+        "type": "object"
+      },
+      "VersionPruneResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "deletedCount": {
+            "minimum": 0.0,
+            "title": "Deletedcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deletedCount"
+        ],
+        "title": "VersionPruneResponse",
         "type": "object"
       },
       "ViewCreate": {
@@ -30419,6 +30446,52 @@
           }
         ],
         "summary": "Post Version",
+        "tags": [
+          "sandbox-designs"
+        ]
+      }
+    },
+    "/api/sandbox/versions/prune": {
+      "post": {
+        "operationId": "prune_sandbox_versions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionMutationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionPruneResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Version Prune",
         "tags": [
           "sandbox-designs"
         ]

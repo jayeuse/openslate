@@ -252,6 +252,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("POST", "/api/sandbox/publications"),
         ("POST", "/api/sandbox/tests"),
         ("POST", "/api/sandbox/versions"),
+        ("POST", "/api/sandbox/versions/prune"),
         ("POST", "/api/sandbox/versions/{version_id}/restorations"),
         ("POST", "/api/users/{user_id}/restore"),
         ("POST", "/api/views"),

@@ -69,6 +69,8 @@ def test_versions_search_label_and_note_before_kind_filtered_paging(version_page
             "count": 1,
             "total": 2,
             "hasMore": offset == 0,
+            "mutableCount": 5,
+            "versionCap": 50,
         }
     for kind, expected in (("published", versions[2]), ("imported", versions[3])):
         response = client.get("/api/sandbox/versions", params={"search": "needle", "kind": kind})

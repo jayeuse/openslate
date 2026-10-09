@@ -31,6 +31,13 @@ type SandboxOptions = {
   publicationDelay?: Promise<void>;
   issues?: Array<{ code: string; message: string; targetId: string | null }>;
   versionMutationDelay?: Promise<void>;
+  capacityMetadata?: Record<string, unknown>;
+  versionListFailure?: number;
+  pruneDelay?: Promise<void>;
+  pruneReadbackDelay?: Promise<void>;
+  pruneReadbackFailure?: boolean;
+  pruneFailure?: { status: number; code: string };
+  pruneResponse?: unknown;
   versions?: Array<Record<string, unknown>>;
   previewChanges?: Array<Record<string, string>>;
   bindings?: Array<{
@@ -91,6 +98,10 @@ async function openAuthenticatedSandbox(
   let documentReads = 0;
   let documentWrites = 0;
   let versions = options.versions ?? [];
+  let pruned = false;
+  let pruneReadbackFailure = options.pruneReadbackFailure ?? false;
+  const pruneRequests: unknown[] = [];
+  const checkpointRequests: unknown[] = [];
   let document = sandboxDocumentFromDesign(designFixture);
   let bindings = options.bindings ?? [];
   let bindingFailure = options.bindingFailure;
@@ -108,6 +119,12 @@ async function openAuthenticatedSandbox(
   await page.route("**/api/sandbox/document", async (route) => {
     if (route.request().method() === "GET") {
       documentReads += 1;
+      if (pruned) await options.pruneReadbackDelay;
+      if (pruned && pruneReadbackFailure)
+        return route.fulfill({
+          status: 503,
+          json: { detail: "Readback unavailable" },
+        });
       if (options.discardRefreshDelay && documentReads === 3)
         await options.discardRefreshDelay;
       if (options.discardRefreshFailure && documentReads === 3) {
@@ -187,6 +204,12 @@ async function openAuthenticatedSandbox(
     });
   });
   await page.route("**/api/sandbox/versions?*", async (route) => {
+    if (pruned) await options.pruneReadbackDelay;
+    if (options.versionListFailure || (pruned && pruneReadbackFailure))
+      return route.fulfill({
+        status: options.versionListFailure ?? 503,
+        json: { detail: "History unavailable" },
+      });
     const url = new URL(route.request().url());
     const limit = Number(url.searchParams.get("limit"));
     const offset = Number(url.searchParams.get("offset"));
@@ -211,6 +234,14 @@ async function openAuthenticatedSandbox(
         count: items.length,
         total: filtered.length,
         hasMore: offset + items.length < filtered.length,
+        ...(options.capacityMetadata ?? {
+          mutableCount: versions.filter(
+            (version) =>
+              !version.isDeleted &&
+              (version.kind === "checkpoint" || version.kind === "imported"),
+          ).length,
+          versionCap: 50,
+        }),
       },
     });
   });
@@ -241,6 +272,76 @@ async function openAuthenticatedSandbox(
       contentType: "application/json",
       body: JSON.stringify({ ...updated, document }),
     });
+  });
+  await page.route("**/api/sandbox/versions/prune", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON();
+    pruneRequests.push(body);
+    await options.pruneDelay;
+    if (options.pruneFailure) {
+      if (options.pruneFailure.code === "stale_revision") revision += 1;
+      return route.fulfill({
+        status: options.pruneFailure.status,
+        json: {
+          detail: {
+            code: options.pruneFailure.code,
+            message: "Private failure canary",
+          },
+        },
+      });
+    }
+    if (body.expectedRevision !== revision)
+      return route.fulfill({
+        status: 409,
+        json: { detail: { code: "stale_revision", message: "Changed" } },
+      });
+    const mutable = versions
+      .filter((version) => !version.isDeleted && version.kind !== "published")
+      .sort((a, b) => Number(a.sequence) - Number(b.sequence));
+    const deleted = mutable.slice(0, Math.max(0, mutable.length - 40));
+    const deletedIds = new Set(deleted.map((version) => version.id));
+    versions = versions.filter((version) => !deletedIds.has(version.id));
+    if (deleted.length) revision += 1;
+    pruned = true;
+    await route.fulfill({
+      json: options.pruneResponse ?? { deletedCount: deleted.length },
+    });
+  });
+  await page.route("**/api/sandbox/versions", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON();
+    checkpointRequests.push(body);
+    if (
+      versions.filter(
+        (version) => !version.isDeleted && version.kind !== "published",
+      ).length >= 50
+    )
+      return route.fulfill({
+        status: 409,
+        json: {
+          detail: { code: "version_limit", message: "Private capacity canary" },
+        },
+      });
+    if (body.expectedRevision !== revision)
+      return route.fulfill({
+        status: 409,
+        json: { detail: { code: "stale_revision", message: "Changed" } },
+      });
+    const sequence =
+      Math.max(0, ...versions.map((version) => Number(version.sequence))) + 1;
+    const version = {
+      ...historyVersionFixture(
+        sequence,
+        body.label,
+        "checkpoint",
+        body.note ?? null,
+      ),
+      sourceDocumentRevision: revision,
+      createdAt: "2026-10-01T10:00:00Z",
+    };
+    versions = [...versions, version];
+    revision += 1;
+    await route.fulfill({ json: { ...version, document } });
   });
   await page.route("**/api/sandbox/tests*", async (route) => {
     if (route.request().method() === "DELETE" && options.clearTestsFailure) {
@@ -306,6 +407,12 @@ async function openAuthenticatedSandbox(
     document: () => structuredClone(document),
     documentReads: () => documentReads,
     documentWrites: () => documentWrites,
+    pruneRequests: () => structuredClone(pruneRequests),
+    checkpointRequests: () => structuredClone(checkpointRequests),
+    versions: () => structuredClone(versions),
+    setPruneReadbackFailure: (failed: boolean) => {
+      pruneReadbackFailure = failed;
+    },
     confirmLiveDocument: (next: typeof document) => {
       document = structuredClone(next);
       revision += 1;
@@ -647,6 +754,360 @@ test("cancelling a pending lifecycle preview ignores its late response and prote
   await expect(page.getByLabel("Trigger name")).toBeVisible();
   await expect(dialog).toBeHidden();
   expect(sandbox.documentWrites()).toBe(0);
+});
+
+async function prepareS06Review(page: Page) {
+  if (!process.env.S06_CAPTURE_DIR) return;
+  const theme = process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light";
+  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+  await page.route("**/api/users/*/preferences", (route) =>
+    route.fulfill({
+      json: {
+        user_id: "00000000-0000-4000-8000-000000000001",
+        theme,
+        appearance: { motion: "reduce", keyboard_shortcuts: true },
+      },
+    }),
+  );
+}
+
+async function captureS06Review(page: Page, name: string) {
+  const directory = process.env.S06_CAPTURE_DIR;
+  if (!directory) return;
+  const theme = process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light";
+  await mkdir(directory, { recursive: true });
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(page.locator("html")).toHaveClass(
+      theme === "dark" ? /dark/ : /^(?!.*dark)/,
+    );
+    await expect(
+      page.locator('[data-slot="loading-region"][aria-busy="true"]'),
+    ).toHaveCount(0);
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+    });
+    await page.screenshot({
+      path: join(directory, `${name}-${viewport.width}-${theme}.png`),
+      fullPage: false,
+      animations: "disabled",
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+for (const orientation of ["outgoing", "incoming"] as const) {
+  test(`S06 bound ${orientation} relationship uses Field lifecycle and counts unique record links`, async ({
+    page,
+  }) => {
+    await prepareS06Review(page);
+    const design = configuredDesignWithLegacyMapping();
+    const relationship = design.relationships[0]!;
+    const liveId = "00000000-0000-4000-8000-000000000561";
+    const binding = {
+      kind: "relationship" as const,
+      sandbox_id: relationship.id,
+      parent_sandbox_id: null,
+      live_id: liveId,
+      is_deleted: false,
+    };
+    const requests: Array<{ operation: string; body: unknown }> = [];
+    const externalImpacts = [1, 2].map((endpoint) => ({
+      edge_id: "00000000-0000-4000-8000-000000000562",
+      field_id: liveId,
+      external_record_id: `00000000-0000-4000-8000-00000000056${endpoint + 2}`,
+      external_record_label: `Retained record ${endpoint}`,
+      external_module_id: "00000000-0000-4000-8000-000000000565",
+      external_module_name: "Equipment",
+      external_department_id: "00000000-0000-4000-8000-000000000566",
+      external_department_name: "Operations",
+    }));
+    for (const operation of ["close", "purge"] as const) {
+      await page.route(
+        `**/api/fields/${liveId}/${operation}/preview`,
+        (route) =>
+          route.fulfill({
+            json: {
+              impact: {
+                ...lifecycleImpactFixture("field", liveId, operation),
+                external_impacts: externalImpacts,
+              },
+              token: `owned-relationship-${operation}`,
+              expires_at: "2027-10-01T00:00:00Z",
+              confirmation_name: "Live equipment link",
+              ...(operation === "purge"
+                ? { last_successful_backup_at: null }
+                : {}),
+            },
+          }),
+      );
+    }
+    for (const operation of ["close", "reopen", "purge"] as const) {
+      await page.route(
+        `**/api/fields/${liveId}/${operation}`,
+        async (route) => {
+          requests.push({ operation, body: route.request().postDataJSON() });
+          const confirmed = sandbox.document();
+          if (operation === "purge")
+            confirmed.design.relationships =
+              confirmed.design.relationships.filter(
+                (item) => item.id !== relationship.id,
+              );
+          sandbox.confirmLiveDocument(confirmed);
+          sandbox.confirmBindings(
+            operation === "purge"
+              ? []
+              : [{ ...binding, is_deleted: operation === "close" }],
+          );
+          await route.fulfill({
+            json: {
+              impact: lifecycleImpactFixture("field", liveId, operation),
+              operation_id: null,
+            },
+          });
+        },
+      );
+    }
+    const sandbox = await openAuthenticatedSandbox(page, design, {
+      bindings: [binding],
+    });
+    await page.goto(
+      `/sandbox?module=${orientation === "outgoing" ? relationship.source : relationship.target}`,
+    );
+    const action = (verb: string) =>
+      page.getByRole("button", {
+        name: `${verb} ${orientation} relationship ${relationship.name}`,
+        exact: true,
+      });
+    await action("Close").click();
+    const close = page.getByRole("dialog", {
+      name: "Close relationship",
+      exact: true,
+    });
+    await expect(
+      close.getByText(
+        "1 record link will be closed. Existing records are kept.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    if (orientation === "incoming")
+      await captureS06Review(page, "relationship-close");
+    await close
+      .getByLabel("Type the relationship name")
+      .fill(relationship.name);
+    await close
+      .getByLabel("Administrator password")
+      .fill("owned-test-password");
+    await expect(
+      close.getByRole("button", { name: "Close relationship", exact: true }),
+    ).toBeDisabled();
+    await close
+      .getByLabel("Type the relationship name")
+      .fill("Live equipment link");
+    await close
+      .getByRole("button", { name: "Close relationship", exact: true })
+      .click();
+    await expect(close).toBeHidden();
+    await action("Reopen").click();
+    await page
+      .getByRole("dialog", { name: "Reopen relationship", exact: true })
+      .getByRole("button", { name: "Reopen relationship", exact: true })
+      .click();
+    await expect(action("Close")).toBeVisible();
+    await action("Close").click();
+    await close
+      .getByLabel("Type the relationship name")
+      .fill("Live equipment link");
+    await close
+      .getByLabel("Administrator password")
+      .fill("owned-test-password");
+    await close
+      .getByRole("button", { name: "Close relationship", exact: true })
+      .click();
+    await expect(close).toBeHidden();
+    await action("Permanently delete").click();
+    const purge = page.getByRole("dialog", {
+      name: "Permanently delete relationship",
+      exact: true,
+    });
+    await purge.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(requests.map((item) => item.operation)).toEqual([
+      "close",
+      "reopen",
+      "close",
+    ]);
+    await action("Permanently delete").click();
+    await purge
+      .getByLabel("Type the relationship name")
+      .fill("Live equipment link");
+    await purge
+      .getByLabel("Administrator password")
+      .fill("owned-test-password");
+    await purge
+      .getByRole("button", { name: "Permanently delete", exact: true })
+      .click();
+    await expect(purge).toBeHidden();
+    await expect(action("Close")).toHaveCount(0);
+    expect(requests).toEqual([
+      {
+        operation: "close",
+        body: {
+          token: "owned-relationship-close",
+          confirmation_name: "Live equipment link",
+          password: "owned-test-password",
+        },
+      },
+      { operation: "reopen", body: { confirmed: true } },
+      {
+        operation: "close",
+        body: {
+          token: "owned-relationship-close",
+          confirmation_name: "Live equipment link",
+          password: "owned-test-password",
+        },
+      },
+      {
+        operation: "purge",
+        body: {
+          token: "owned-relationship-purge",
+          confirmation_name: "Live equipment link",
+          password: "owned-test-password",
+        },
+      },
+    ]);
+    expect(sandbox.documentWrites()).toBe(0);
+    expect(sandbox.document().design.modules).toEqual(
+      sandboxDocumentFromDesign(design).design.modules,
+    );
+  });
+}
+
+test("S06 relationship mismatched Field preview refuses confirmation", async ({
+  page,
+}) => {
+  const design = configuredDesignWithLegacyMapping();
+  const relationship = design.relationships[0]!;
+  const liveId = "00000000-0000-4000-8000-000000000571";
+  let commands = 0;
+  await page.route(`**/api/fields/${liveId}/close/preview`, (route) =>
+    route.fulfill({
+      json: {
+        impact: lifecycleImpactFixture(
+          "field",
+          "00000000-0000-4000-8000-000000000572",
+          "close",
+        ),
+        token: "wrong-target",
+        expires_at: "2027-10-01T00:00:00Z",
+        confirmation_name: "Live link",
+      },
+    }),
+  );
+  await page.route(`**/api/fields/${liveId}/close`, (route) => {
+    commands += 1;
+    return route.fulfill({ status: 500, json: {} });
+  });
+  await openAuthenticatedSandbox(page, design, {
+    bindings: [
+      {
+        kind: "relationship",
+        sandbox_id: relationship.id,
+        parent_sandbox_id: null,
+        live_id: liveId,
+        is_deleted: false,
+      },
+    ],
+  });
+  await page.goto(`/sandbox?module=${relationship.source}`);
+  await page
+    .getByRole("button", {
+      name: `Close outgoing relationship ${relationship.name}`,
+      exact: true,
+    })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Close relationship",
+    exact: true,
+  });
+  await expect(dialog.getByRole("alert")).toContainText(
+    "This close could not be confirmed. Request a new review and try again.",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Close relationship", exact: true }),
+  ).toBeDisabled();
+  expect(commands).toBe(0);
+});
+
+test("S06 bound draft deletion explains retained live data while unbound copy remains", async ({
+  page,
+}) => {
+  const design = configuredDesignWithLegacyMapping();
+  const relationship = design.relationships[0]!;
+  await openAuthenticatedSandbox(page, design, {
+    bindings: [
+      {
+        kind: "relationship",
+        sandbox_id: relationship.id,
+        parent_sandbox_id: null,
+        live_id: "00000000-0000-4000-8000-000000000581",
+        is_deleted: false,
+      },
+      {
+        kind: "module",
+        sandbox_id: relationship.source,
+        parent_sandbox_id: null,
+        live_id: "00000000-0000-4000-8000-000000000582",
+        is_deleted: false,
+      },
+    ],
+  });
+  await page.goto(`/sandbox?module=${relationship.source}`);
+  await page
+    .getByRole("button", {
+      name: `Delete outgoing relationship ${relationship.name}`,
+      exact: true,
+    })
+    .click();
+  const deletion = page.getByRole("alertdialog");
+  await expect(deletion).toContainText(
+    "On publish, the live item closes. Its data is kept.",
+  );
+  await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("tab", { name: "Structure", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: `Select module ${design.modules.find((module) => module.id === relationship.source)!.name}`,
+      exact: true,
+    })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Delete module", exact: true })
+    .click();
+  await expect(deletion).toContainText(
+    "On publish, the live item closes. Its data is kept.",
+  );
+  await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.goto(`/sandbox?module=${relationship.target}`);
+  await page.getByRole("tab", { name: "Structure", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: `Select module ${design.modules.find((module) => module.id === relationship.target)!.name}`,
+      exact: true,
+    })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Delete module", exact: true })
+    .click();
+  await expect(deletion).not.toContainText(
+    "On publish, the live item closes. Its data is kept.",
+  );
+  await expect(deletion).toContainText("Undo");
 });
 
 test("bound field lifecycle resolves its parent and preserves dirty settings", async ({
@@ -3368,6 +3829,389 @@ function historyVersionFixture(
   };
 }
 
+function capacityVersions(count: number) {
+  return [
+    ...Array.from({ length: count }, (_, index) => ({
+      ...historyVersionFixture(
+        index + 1,
+        index === 0 ? "Needle checkpoint" : `Owned checkpoint ${index + 1}`,
+        index % 2 ? "imported" : "checkpoint",
+      ),
+      createdAt: "2026-10-01T10:00:00Z",
+    })),
+    {
+      ...historyVersionFixture(100, "Protected publication", "published"),
+      createdAt: "2026-10-01T10:00:00Z",
+    },
+  ];
+}
+
+async function openCheckpointDialog(page: Page) {
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Save checkpoint", exact: true })
+    .click();
+  return page.getByRole("dialog", { name: "Save checkpoint", exact: true });
+}
+
+for (const count of [44, 45, 50]) {
+  test(`S06 capacity ${count} is global in filtered History and checkpoint dialog`, async ({
+    page,
+  }) => {
+    await prepareS06Review(page);
+    await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+      versions: capacityVersions(count),
+    });
+    await page.getByRole("link", { name: "History", exact: true }).click();
+    const timeline = page.getByRole("region", {
+      name: "Version timeline",
+      exact: true,
+    });
+    await timeline.getByLabel("Find a version").fill("Needle");
+    await expect(timeline).toContainText("1 saved version");
+    const text = `${count} of 50 versions used. Delete the oldest unpublished checkpoints to free space.`;
+    if (count < 45)
+      await expect(timeline.getByText(text, { exact: true })).toHaveCount(0);
+    else await expect(timeline.getByText(text, { exact: true })).toBeVisible();
+    if (count === 45) await captureS06Review(page, "capacity-history");
+    const checkpoint = await openCheckpointDialog(page);
+    if (count < 45)
+      await expect(checkpoint.getByText(text, { exact: true })).toHaveCount(0);
+    else
+      await expect(checkpoint.getByText(text, { exact: true })).toBeVisible();
+    if (count === 45) await captureS06Review(page, "capacity-checkpoint");
+  });
+}
+
+for (const fault of ["missing", "malformed", "refused"] as const) {
+  test(`S06 ${fault} capacity is unavailable rather than guessed or usable`, async ({
+    page,
+  }) => {
+    const sandbox = await openAuthenticatedSandbox(
+      page,
+      configuredSandboxDesign,
+      {
+        versions: capacityVersions(50),
+        ...(fault === "refused"
+          ? { versionListFailure: 403 }
+          : {
+              capacityMetadata:
+                fault === "missing"
+                  ? {}
+                  : { mutableCount: "50", versionCap: 50 },
+            }),
+      },
+    );
+    const checkpoint = await openCheckpointDialog(page);
+    await expect(
+      checkpoint.getByText(
+        "Version capacity is unavailable. Retry before deleting old checkpoints.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(
+      checkpoint.getByRole("button", {
+        name: "Delete old checkpoints",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      checkpoint.getByRole("button", { name: "Retry capacity", exact: true }),
+    ).toBeEnabled();
+    expect(sandbox.pruneRequests()).toEqual([]);
+  });
+}
+
+test("S06 prune cancel and pending readback preserve checkpoint input and use refreshed revision", async ({
+  page,
+}) => {
+  let releasePrune!: () => void;
+  let releaseReadback!: () => void;
+  const pruneDelay = new Promise<void>((resolve) => {
+    releasePrune = resolve;
+  });
+  const readbackDelay = new Promise<void>((resolve) => {
+    releaseReadback = resolve;
+  });
+  const versions = capacityVersions(50);
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions, revision: 7, pruneDelay, pruneReadbackDelay: readbackDelay },
+  );
+  const before = sandbox.document();
+  const checkpoint = await openCheckpointDialog(page);
+  await checkpoint
+    .getByLabel("Name", { exact: true })
+    .fill("Retained authored name");
+  await checkpoint.getByLabel("Note (optional)").fill("Retained authored note");
+  const prune = checkpoint.getByRole("button", {
+    name: "Delete old checkpoints",
+    exact: true,
+  });
+  await expect(prune).toBeVisible();
+  await prune.click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete old checkpoints?",
+    exact: true,
+  });
+  await expect(confirmation).toContainText("40");
+  await expect(confirmation).toContainText(
+    "Published versions and the newest version are kept.",
+  );
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  expect(sandbox.pruneRequests()).toEqual([]);
+  await prune.click();
+  await confirmation
+    .getByRole("button", { name: "Delete old checkpoints", exact: true })
+    .click();
+  await expect
+    .poll(() => sandbox.pruneRequests())
+    .toEqual([{ expectedRevision: 7 }]);
+  await expect(
+    confirmation.getByRole("button", { name: "Deleting…", exact: true }),
+  ).toBeDisabled();
+  releasePrune();
+  await expect.poll(() => sandbox.versions().length).toBe(41);
+  await expect(
+    confirmation.getByRole("button", { name: "Deleting…", exact: true }),
+  ).toBeDisabled();
+  expect(sandbox.checkpointRequests()).toEqual([]);
+  releaseReadback();
+  await expect(confirmation).toBeHidden();
+  await expect(
+    checkpoint.getByRole("button", {
+      name: "Delete old checkpoints",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
+    "Retained authored name",
+  );
+  await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
+    "Retained authored note",
+  );
+  await checkpoint
+    .getByRole("button", { name: "Save checkpoint", exact: true })
+    .click();
+  await expect(checkpoint).toBeHidden();
+  expect(sandbox.checkpointRequests()).toEqual([
+    {
+      expectedRevision: 8,
+      kind: "checkpoint",
+      label: "Retained authored name",
+      note: "Retained authored note",
+    },
+  ]);
+  expect(sandbox.pruneRequests()).toHaveLength(1);
+  expect(sandbox.document()).toEqual(before);
+  expect(sandbox.documentWrites()).toBe(0);
+  expect(
+    sandbox.versions().some((version) => version.id === versions.at(-1)!.id),
+  ).toBe(true);
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Version timeline", exact: true }),
+  ).toContainText("42 saved versions");
+});
+
+test("S06 filtered History readback completes before prune unlocks commands", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions: capacityVersions(50), revision: 7 },
+  );
+  let release!: () => void;
+  let readbackStarted = false;
+  const delay = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/sandbox/versions?*", async (route) => {
+    if (
+      sandbox.pruneRequests().length &&
+      new URL(route.request().url()).searchParams.get("search") === "Needle"
+    ) {
+      readbackStarted = true;
+      await delay;
+    }
+    await route.fallback();
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const timeline = page.getByRole("region", {
+    name: "Version timeline",
+    exact: true,
+  });
+  await timeline.getByLabel("Find a version").fill("Needle");
+  await expect(timeline).toContainText("1 saved version");
+  await timeline
+    .getByRole("button", { name: "Delete old checkpoints", exact: true })
+    .click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete old checkpoints?",
+    exact: true,
+  });
+  await confirmation
+    .getByRole("button", { name: "Delete old checkpoints", exact: true })
+    .click();
+  try {
+    await expect.poll(() => readbackStarted).toBe(true);
+    await expect(
+      confirmation.getByRole("button", { name: "Deleting…", exact: true }),
+    ).toBeDisabled();
+  } finally {
+    release();
+  }
+  await expect(confirmation).toBeHidden();
+  await expect(timeline).toContainText("0 saved versions");
+  await expect(
+    timeline.getByRole("button", {
+      name: "Delete old checkpoints",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(sandbox.pruneRequests()).toEqual([{ expectedRevision: 7 }]);
+});
+
+for (const failure of [
+  "stale",
+  "unavailable",
+  "malformed",
+  "readback",
+] as const) {
+  test(`S06 ${failure} prune preserves input and refuses another write until authoritative Retry`, async ({
+    page,
+  }) => {
+    const sandbox = await openAuthenticatedSandbox(
+      page,
+      configuredSandboxDesign,
+      {
+        versions: capacityVersions(50),
+        revision: 7,
+        ...(failure === "stale"
+          ? { pruneFailure: { status: 409, code: "stale_revision" } }
+          : {}),
+        ...(failure === "unavailable"
+          ? { pruneFailure: { status: 503, code: "unavailable" } }
+          : {}),
+        ...(failure === "malformed"
+          ? { pruneResponse: { deletedCount: "10" } }
+          : {}),
+        ...(failure === "readback" ? { pruneReadbackFailure: true } : {}),
+      },
+    );
+    const before = sandbox.document();
+    const checkpoint = await openCheckpointDialog(page);
+    await checkpoint
+      .getByLabel("Name", { exact: true })
+      .fill("Keep this label");
+    await checkpoint.getByLabel("Note (optional)").fill("Keep this note");
+    await expect(
+      checkpoint.getByRole("button", {
+        name: "Delete old checkpoints",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await checkpoint
+      .getByRole("button", { name: "Delete old checkpoints", exact: true })
+      .click();
+    const confirmation = page.getByRole("alertdialog", {
+      name: "Delete old checkpoints?",
+      exact: true,
+    });
+    await confirmation
+      .getByRole("button", { name: "Delete old checkpoints", exact: true })
+      .click();
+    const error =
+      failure === "stale"
+        ? "This item changed. Refresh it and try again."
+        : failure === "malformed"
+          ? "The server returned an unexpected response. Refresh and try again."
+          : "This service is temporarily unavailable. Try again.";
+    await expect(confirmation.getByRole("alert")).toContainText(error);
+    await confirmation
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
+    await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
+      "Keep this label",
+    );
+    await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
+      "Keep this note",
+    );
+    await expect(
+      checkpoint.getByRole("button", { name: "Save checkpoint", exact: true }),
+    ).toBeDisabled();
+    expect(sandbox.pruneRequests()).toEqual([{ expectedRevision: 7 }]);
+    expect(sandbox.checkpointRequests()).toEqual([]);
+    expect(sandbox.document()).toEqual(before);
+    await expect(page.getByText("Private failure canary")).toHaveCount(0);
+    if (failure === "malformed" || failure === "readback") {
+      sandbox.setPruneReadbackFailure(false);
+      await checkpoint
+        .getByRole("button", { name: "Retry capacity", exact: true })
+        .click();
+      await expect(
+        checkpoint.getByRole("button", {
+          name: "Save checkpoint",
+          exact: true,
+        }),
+      ).toBeEnabled();
+      await checkpoint
+        .getByRole("button", { name: "Save checkpoint", exact: true })
+        .click();
+      await expect(checkpoint).toBeHidden();
+      expect(sandbox.checkpointRequests()).toEqual([
+        {
+          expectedRevision: 8,
+          kind: "checkpoint",
+          label: "Keep this label",
+          note: "Keep this note",
+        },
+      ]);
+    }
+  });
+}
+
+test("S06 full history checkpoint reports authored version_limit copy and preserves inputs", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions: capacityVersions(50) },
+  );
+  const checkpoint = await openCheckpointDialog(page);
+  await checkpoint
+    .getByLabel("Name", { exact: true })
+    .fill("Preserved full-cap label");
+  await checkpoint
+    .getByLabel("Note (optional)")
+    .fill("Preserved full-cap note");
+  await checkpoint
+    .getByRole("button", { name: "Save checkpoint", exact: true })
+    .click();
+  await expect(
+    checkpoint.getByText(
+      "Version history is full. Delete old checkpoints in History.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
+    "Preserved full-cap label",
+  );
+  await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
+    "Preserved full-cap note",
+  );
+  expect(sandbox.checkpointRequests()).toHaveLength(1);
+  expect(sandbox.documentWrites()).toBe(0);
+  await expect(page.getByText("Private capacity canary")).toHaveCount(0);
+});
+
 test("History timeline filters preserve the selected action target and published protections", async ({
   page,
 }) => {
@@ -3598,6 +4442,9 @@ test("History deletion failure retains its target and successful deletion select
         count: items.length,
         total: sorted.length,
         hasMore: offset + items.length < sorted.length,
+        mutableCount: versions.filter((version) => version.kind !== "published")
+          .length,
+        versionCap: 50,
       },
     });
   });

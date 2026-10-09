@@ -110,8 +110,18 @@ function affectedRuleReferences(
 export function deletionImpact(
   design: Design,
   target: SandboxDesignTarget | null,
+  bound = false,
 ): { title: string; detail: string } | null {
   if (!target) return null;
+  if (bound) {
+    const impact = deletionImpact(design, target);
+    return impact
+      ? {
+          ...impact,
+          detail: "On publish, the live item closes. Its data is kept.",
+        }
+      : null;
+  }
   if (target.kind === "link") {
     const relationship = design.relationships.find(
       (item) => item.id === target.id,

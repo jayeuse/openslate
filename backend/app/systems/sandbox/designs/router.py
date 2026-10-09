@@ -13,6 +13,7 @@ from app.common.dependencies import require_admin
 from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.sandbox.designs.bindings import read_bindings
+from app.systems.sandbox.designs.pruning import prune_versions
 from app.systems.sandbox.designs.schemas import (
     DocumentReplaceRequest,
     DocumentResponse,
@@ -23,6 +24,7 @@ from app.systems.sandbox.designs.schemas import (
     VersionListResponse,
     VersionMetadataUpdateRequest,
     VersionMutationRequest,
+    VersionPruneResponse,
 )
 from app.systems.sandbox.designs.service import (
     SandboxDesignError,
@@ -116,6 +118,18 @@ def post_version(
 )
 def get_version(version_id: UUID, _actor: ReadActor, db: Database) -> VersionDetailResponse:
     return _run(db, lambda: read_version(db, version_id))
+
+
+@router.post(
+    "/versions/prune", response_model=VersionPruneResponse, operation_id="prune_sandbox_versions"
+)
+def post_version_prune(
+    payload: VersionMutationRequest, actor: WriteActor, db: Database
+) -> VersionPruneResponse:
+    return _run(
+        db,
+        lambda: prune_versions(db, actor_id=actor.id, expected_revision=payload.expected_revision),
+    )
 
 
 @router.patch(

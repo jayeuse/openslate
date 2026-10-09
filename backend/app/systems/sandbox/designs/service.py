@@ -109,6 +109,7 @@ def create_version(
 def list_versions(
     db: Session, *, limit: int, offset: int, search: str | None = None, kind: str | None = None
 ) -> VersionListResponse:
+    document = _document_row(db, lock=False)
     statement = (
         select(SandboxVersion)
         .where(SandboxVersion.is_deleted.is_(False))
@@ -133,6 +134,8 @@ def list_versions(
         count=len(items),
         total=total,
         has_more=offset + len(items) < total,
+        mutable_count=_active_version_count(db, document.id, mutable_only=True),
+        version_cap=MAX_ACTIVE_VERSIONS,
     )
 
 

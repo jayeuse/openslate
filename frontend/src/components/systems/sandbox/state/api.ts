@@ -66,6 +66,8 @@ export type SandboxVersionPage = {
   count: number;
   total: number;
   hasMore: boolean;
+  mutableCount: number;
+  versionCap: number;
 };
 
 export type SandboxExport = {
@@ -421,6 +423,8 @@ const versionPageSchema = z.strictObject({
   count: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
   hasMore: z.boolean(),
+  mutableCount: z.number().int().nonnegative(),
+  versionCap: z.literal(50),
 });
 
 function jsonBody(value: unknown): string {
@@ -659,6 +663,21 @@ export function createSandboxVersion(
     }),
     signal: request.signal,
   });
+}
+
+export function pruneSandboxVersions(
+  request: RevisionRequest,
+): Promise<{ deletedCount: number }> {
+  return apiFetch(
+    "/sandbox/versions/prune",
+    z.strictObject({ deletedCount: z.number().int().nonnegative() }),
+    {
+      method: "POST",
+      cache: "no-store",
+      body: jsonBody({ expectedRevision: request.expectedRevision }),
+      signal: request.signal,
+    },
+  );
 }
 
 export function updateSandboxVersion(

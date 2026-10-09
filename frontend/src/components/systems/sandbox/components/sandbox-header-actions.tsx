@@ -35,8 +35,13 @@ import type { SandboxOrganizationTemplate } from "../domain/templates";
 import { exportSandboxBundle } from "../state/api";
 import type { SandboxCommandResult } from "../state/commands";
 import { OrganizationTemplateDialog } from "./organization-template-dialog";
+import {
+  VersionCapacityBanner,
+  type VersionCapacityActions,
+} from "./version-capacity-banner";
 
 type Props = {
+  versionCapacity: VersionCapacityActions;
   pending: boolean;
   /** The page owns the template dialog so the empty canvas can open it too. */
   templatesOpen: boolean;
@@ -72,6 +77,7 @@ function download(name: string, document: SandboxDocumentV4) {
 }
 
 export function SandboxHeaderActions({
+  versionCapacity,
   pending,
   templatesOpen,
   onTemplatesOpenChange,
@@ -217,6 +223,10 @@ export function SandboxHeaderActions({
               Save this draft so you can compare or restore it later.
             </DialogDescription>
           </DialogHeader>
+          <VersionCapacityBanner
+            {...versionCapacity}
+            pending={versionCapacity.pending || busy}
+          />
           {error ? <Alert variant="destructive">{error}</Alert> : null}
           <Field>
             <FieldLabel htmlFor="sandbox-checkpoint-label">Name</FieldLabel>

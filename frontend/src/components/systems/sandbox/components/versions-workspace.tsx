@@ -15,6 +15,10 @@ import {
 } from "../state/sandbox-queries";
 import { ArrowRight } from "lucide-react";
 import { VersionComparison } from "./version-comparison";
+import {
+  VersionCapacityBanner,
+  type VersionCapacityActions,
+} from "./version-capacity-banner";
 import { SearchField } from "@/components/ui/search-field";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +51,7 @@ import type {
 } from "../state/api";
 
 type Props = {
+  versionCapacity: VersionCapacityActions;
   refreshKey: number;
   getVersion: (
     id: string,
@@ -218,6 +223,7 @@ export function versionCompareHint(
 }
 
 export function VersionsWorkspace({
+  versionCapacity,
   refreshKey,
   getVersion,
   updateVersion,
@@ -507,6 +513,7 @@ export function VersionsWorkspace({
             </div>
 
             <div className="grid gap-3">
+              <VersionCapacityBanner {...versionCapacity} />
               <SearchField
                 label="Find a version"
                 value={search}

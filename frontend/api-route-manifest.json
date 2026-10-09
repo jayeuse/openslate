@@ -1339,6 +1339,12 @@
   },
   {
     "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
+    "function": "pruneSandboxVersions",
+    "method": "POST",
+    "path": "/api/sandbox/versions/prune"
+  },
+  {
+    "adapter": "frontend/src/components/systems/sandbox/state/api.ts",
     "function": "publishSandbox",
     "method": "POST",
     "path": "/api/sandbox/publications"

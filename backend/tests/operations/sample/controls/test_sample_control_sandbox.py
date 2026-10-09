@@ -72,6 +72,8 @@ def test_sandbox_control_plan_is_stable_and_preserves_dataset(pack_key: str) -> 
     actions = plan_sandbox_controls(dataset)
 
     assert actions == plan_sandbox_controls(dataset)
+    # Prune owns separate planning/journey proof; retain this family's original contracts.
+    actions = tuple(row for row in actions if row.values["operation"] != "prune_versions")
     assert [action.values["operation"] for action in actions] == [
         "create_checkpoint",
         "update_checkpoint",

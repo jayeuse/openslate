@@ -86,6 +86,13 @@ export function SandboxLifecycleDialog({
   if (!request) return null;
   const { operation, binding } = request;
   const title = `${operation === "purge" ? "Permanently delete" : operation === "close" ? "Close" : "Reopen"} ${binding.kind}`;
+  const recordLinkCount = preview
+    ? new Set(
+        preview.impact.external_impacts
+          .map((impact) => impact.edge_id)
+          .filter((id) => id !== null),
+      ).size
+    : 0;
   const blocked = Boolean(preview?.impact.blockers.length);
   const cancel = () => {
     if (confirming.current) return;
@@ -167,6 +174,13 @@ export function SandboxLifecycleDialog({
                 This close affects {preview.impact.rows.length} items. Existing
                 records are kept.
               </p>
+              {binding.kind === "relationship" ? (
+                <p>
+                  {recordLinkCount} record link
+                  {recordLinkCount === 1 ? "" : "s"} will be closed. Existing
+                  records are kept.
+                </p>
+              ) : null}
               {binding.kind === "field" ? (
                 <p>
                   Closing this field removes its relationship field mappings
