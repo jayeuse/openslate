@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from app.core.database.session import AuditSession
 from app.systems.manage.workspace import router
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.platform.files import service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable
 from app.systems.platform.files.storage import get_storage
@@ -61,7 +60,9 @@ def logo_world(policy_world, monkeypatch):
         }
     world.client.app.dependency_overrides[get_storage] = lambda: world.storage
     monkeypatch.setattr(router, "get_storage", lambda: world.storage)
-    monkeypatch.setattr(service, "append_committed_security_event", lambda payload: None)
+    monkeypatch.setattr(
+        "app.systems.platform.files.delivery.append_committed_security_event", lambda payload: None
+    )
     try:
         yield world
     finally:
@@ -284,7 +285,10 @@ def test_admitted_cleanup_finishes_after_actor_role_loss_but_new_reconcile_refus
     )
 
 
-def test_manual_origin_reconciliation_stays_disabled_and_origin_is_private(logo_world):
+def test_manual_origin_reconciliation_stays_disabled_and_origin_is_private(logo_world, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "lifecycle_purge_enabled", False)
     world = logo_world
     identity, key = ready_logo(world, is_deleted=True)
     with Session(world.owner) as db:

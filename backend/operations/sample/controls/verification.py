@@ -179,6 +179,12 @@ def _run_final_verifiers(
         verifiers += (("Host", lambda: verify_host_controls(client, dataset, manifest, admin_id)),)
     if "real_mfa_reset" in operations:
         verifiers += (("MFA", lambda: verify_mfa_controls(client, dataset, manifest, admin_id)),)
+    if "self_profile" in operations:
+        from operations.sample.controls.profile_verification import verify_profile_controls
+
+        verifiers += (
+            ("Profile", lambda: verify_profile_controls(client, dataset, manifest, admin_id)),
+        )
     if "generic_record_file" in operations:
         verifiers += (
             ("Files", lambda: verify_file_controls(client, dataset, manifest, admin_id=admin_id)),

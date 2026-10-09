@@ -3,6 +3,13 @@ import { expect, test, type Page, type Route } from "./helpers/test";
 const userA = "00000000-0000-4000-8000-000000000001";
 const userB = "00000000-0000-4000-8000-000000000002";
 const preferencePath = (user: string) => `/api/users/${user}/preferences`;
+const defaultRegionalAppearance = {
+  timezone: null,
+  date_format: "organization",
+  time_format: "organization",
+  week_start: "organization",
+  start_page: "automatic",
+} as const;
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
 function deferred() {
@@ -123,7 +130,11 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
         json: {
           user_id: userA,
           theme: "dark",
-          appearance: { motion: "reduce", keyboard_shortcuts: true },
+          appearance: {
+            ...defaultRegionalAppearance,
+            motion: "reduce",
+            keyboard_shortcuts: true,
+          },
         },
       });
   });
@@ -211,7 +222,11 @@ test("Appearance and Account share only confirmed theme saves, preserve route ch
       json: {
         user_id: userA,
         theme,
-        appearance: { motion: "system", keyboard_shortcuts: true },
+        appearance: {
+          ...defaultRegionalAppearance,
+          motion: "system",
+          keyboard_shortcuts: true,
+        },
       },
     });
   });
@@ -297,7 +312,11 @@ test("a failed save retains the confirmed mode and Retry reloads without repeati
         json: {
           user_id: userA,
           theme: "light",
-          appearance: { motion: "system", keyboard_shortcuts: true },
+          appearance: {
+            ...defaultRegionalAppearance,
+            motion: "system",
+            keyboard_shortcuts: true,
+          },
         },
       });
     }
@@ -335,7 +354,11 @@ for (const fault of ["identity", "denied", "unauthorized"] as const) {
           json: {
             user_id: userA,
             theme: "light",
-            appearance: { motion: "system", keyboard_shortcuts: true },
+            appearance: {
+              ...defaultRegionalAppearance,
+              motion: "system",
+              keyboard_shortcuts: true,
+            },
           },
         });
       writes += 1;
@@ -344,7 +367,11 @@ for (const fault of ["identity", "denied", "unauthorized"] as const) {
             json: {
               user_id: userB,
               theme: "dark",
-              appearance: { motion: "system", keyboard_shortcuts: true },
+              appearance: {
+                ...defaultRegionalAppearance,
+                motion: "system",
+                keyboard_shortcuts: true,
+              },
             },
           })
         : route.fulfill({
@@ -386,7 +413,11 @@ for (const delayed of ["GET", "PATCH"] as const) {
           json: {
             user_id: userB,
             theme: "light",
-            appearance: { motion: "system", keyboard_shortcuts: true },
+            appearance: {
+              ...defaultRegionalAppearance,
+              motion: "system",
+              keyboard_shortcuts: true,
+            },
           },
         });
       if (route.request().method() === delayed) {
@@ -397,7 +428,11 @@ for (const delayed of ["GET", "PATCH"] as const) {
             json: {
               user_id: userA,
               theme: "dark",
-              appearance: { motion: "system", keyboard_shortcuts: true },
+              appearance: {
+                ...defaultRegionalAppearance,
+                motion: "system",
+                keyboard_shortcuts: true,
+              },
             },
           })
           .catch(() => {});
@@ -407,7 +442,11 @@ for (const delayed of ["GET", "PATCH"] as const) {
           json: {
             user_id: userA,
             theme: "light",
-            appearance: { motion: "system", keyboard_shortcuts: true },
+            appearance: {
+              ...defaultRegionalAppearance,
+              motion: "system",
+              keyboard_shortcuts: true,
+            },
           },
         });
     });
@@ -480,12 +519,20 @@ for (const fault of ["malformed", "identity"] as const) {
           ? {
               user_id: fault === "identity" ? userB : userA,
               theme: fault === "malformed" ? "sepia" : "dark",
-              appearance: { motion: "system", keyboard_shortcuts: true },
+              appearance: {
+                ...defaultRegionalAppearance,
+                motion: "system",
+                keyboard_shortcuts: true,
+              },
             }
           : {
               user_id: userA,
               theme: "dark",
-              appearance: { motion: "system", keyboard_shortcuts: true },
+              appearance: {
+                ...defaultRegionalAppearance,
+                motion: "system",
+                keyboard_shortcuts: true,
+              },
             },
       });
     });
@@ -542,7 +589,11 @@ test("confirmed theme saves preserve applied motion and organization look when b
       json: {
         user_id: userA,
         theme,
-        appearance: { motion, keyboard_shortcuts: true },
+        appearance: {
+          ...defaultRegionalAppearance,
+          motion,
+          keyboard_shortcuts: true,
+        },
       },
     });
   });
@@ -619,8 +670,65 @@ test("confirmed theme saves preserve applied motion and organization look when b
 
 const fullPreference = (
   theme = "light",
-  appearance: unknown = { motion: "system", keyboard_shortcuts: true },
+  appearance: unknown = {
+    ...defaultRegionalAppearance,
+    motion: "system",
+    keyboard_shortcuts: true,
+  },
 ) => ({ user_id: userA, theme, appearance });
+
+test("additive regional appearance remains display-only while partial theme and motion saves preserve it", async ({
+  page,
+}) => {
+  await installIdentity(page, "member");
+  const regional = {
+    timezone: "Europe/London",
+    date_format: "dmy",
+    time_format: "24h",
+    week_start: "sunday",
+    start_page: "manage",
+  };
+  let appearance = { motion: "system", keyboard_shortcuts: true, ...regional };
+  let theme = "light";
+  const writes: unknown[] = [];
+  await page.route(`**${preferencePath(userA)}`, (route) => {
+    if (route.request().method() === "PATCH") {
+      const patch = route.request().postDataJSON() as {
+        theme?: string;
+        appearance?: Partial<typeof appearance>;
+      };
+      writes.push(patch);
+      if (patch.theme !== undefined) theme = patch.theme;
+      appearance = { ...appearance, ...patch.appearance };
+    }
+    return route.fulfill({ json: fullPreference(theme, appearance) });
+  });
+  await page.goto("/settings/appearance");
+  await expect(light(page)).toBeChecked();
+  await expect(dark(page)).toBeEnabled();
+  await expect(page).toHaveURL(/\/settings\/appearance$/);
+  await dark(page).click();
+  await expect(dark(page)).toBeChecked();
+  await page.getByRole("switch", { name: "Reduce motion" }).click();
+  await expect(
+    page.getByRole("switch", { name: "Reduce motion" }),
+  ).toBeChecked();
+  expect(writes).toEqual([
+    { theme: "dark" },
+    { appearance: { motion: "reduce" } },
+  ]);
+  expect(appearance).toEqual({
+    motion: "reduce",
+    keyboard_shortcuts: true,
+    ...regional,
+  });
+  await page.reload();
+  await expect(dark(page)).toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: "Reduce motion" }),
+  ).toBeChecked();
+  await expect(page).toHaveURL(/\/settings\/appearance$/);
+});
 
 test("System follows OS color without writes and explicit color stays fixed", async ({
   page,
@@ -665,6 +773,19 @@ for (const malformed of [
     density: "compact",
   }),
   { ...fullPreference("dark"), density: "compact" },
+  ...[
+    { timezone: 42 },
+    { date_format: "locale" },
+    { time_format: null },
+    { week_start: "tuesday" },
+    { start_page: "profile" },
+  ].map((invalid) =>
+    fullPreference("dark", {
+      motion: "system",
+      keyboard_shortcuts: true,
+      ...invalid,
+    }),
+  ),
 ]) {
   test(`strict preferences refuse malformed shape ${JSON.stringify(malformed)}`, async ({
     page,
@@ -686,6 +807,7 @@ test("account motion and shortcut commands are partial and confirmed before prev
   page,
 }) => {
   await installIdentity(page);
+  // Retain the legacy omission case: the current reader supplies regional defaults.
   let appearance = { motion: "system", keyboard_shortcuts: true };
   const writes: unknown[] = [];
   const hold = deferred();

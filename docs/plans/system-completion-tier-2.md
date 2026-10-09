@@ -426,8 +426,8 @@ Consequence: a record time can show 23:30 in the person's timezone and still sit
    - `time_format`: `organization`, `12h`, or `24h`.
    - `week_start`: `organization`, `monday`, or `sunday`.
    - `start_page`: `automatic` or a workspace route key.
-3. **Profile route.** Add `PATCH /auth/me/profile` for `display_name`, `job_title`, `phone`, `bio`, and `avatar_file_id`. It is limited to the caller's own account and audited.
-4. **Avatar.** Model it on `workspace_logo`: PNG or JPEG, 2 MiB or less, `GET /users/{id}/avatar`, and purge of the old file after a replacement. Update `files/access.py:52` and `files/quota.py:33,41`.
+3. **Profile route and private self read (D27).** Add `PATCH /auth/me/profile` for `display_name`, `job_title`, `phone`, `bio`, and `avatar_file_id`. It is limited to the caller's own account and audited for actual edits. Extend only `AuthMeResponse` on existing `GET /auth/me` with nullable `phone`, `bio`, and `avatar_file_id`, so members and guests can reload their own values without shared access. Keep directory, candidate, and other-person response shapes unchanged; the Profile page reads private self values from this route, not a person card or an empty mutation.
+4. **Avatar.** Model it on `workspace_logo`: PNG or JPEG, 2 MiB or less, `GET /users/{id}/avatar`, and purge of the old file after a replacement. The authenticated caller may read their own avatar without shared access; a different person requires the same visibility rule as their person card. Preserve private storage and file type, ownership, and readiness safeguards. Update `files/access.py:52` and `files/quota.py:33,41`.
 5. **Person card.** Add `GET /users/{id}/card`. It returns `display_name`, `job_title`, and the avatar URL. For members and admins it also returns `email`, `phone`, and `bio`. A guest viewer gets name, photo, and title only. The caller must already be able to see the person: the person shares a module, a Board, or a group with the caller, or the caller is an administrator. Return 404 otherwise.
 6. **MFA for everyone.** The `/auth/mfa*` routes already serve the caller. Confirm a member who is not forced can enroll and remove a factor.
 
@@ -802,6 +802,7 @@ The owner answered the Tier 2 questions on 2026-10-08. Rows marked "Owner" are t
 | D24 | Job timestamps | Add nullable `scheduled_work.last_attempt_started_at` (set when a worker claims the row) and `scheduled_work.finished_at` (set on success, failure, or cancel). Existing rows stay null and show "Not recorded". A manual retry clears `finished_at` and keeps `last_attempt_started_at`. Backups use `backup_runs.started_at` and `finished_at`. `last_run.finished_at` on a schedule reads `finished_at`. | Default (amendment) | S13 |
 | D25 | Export with no columns | Return 422 `export_no_columns` when no column remains after `include_record_id`. The export dialog requires at least one column. | Default (amendment) | S15, S16 |
 | D26 | Temporal min and max | Deferred to after Tier 2. In Tier 2, `min` and `max` take numeric fields only. Null display is defined in W12a step 5. | Default (amendment); reduces D5 | S25 |
+| D27 | Private self-profile read and own avatar | Extend only existing `GET /auth/me` / `AuthMeResponse` with nullable `phone`, `bio`, and `avatar_file_id`. Permit authenticated own-avatar reads without shared access. Preserve other-person card/avatar visibility, guest field omission, directory/candidate payloads, private storage and file safeguards. Self-only profile edits remain audited and reload through `GET /auth/me`. | Owner approved on 2026-10-09 | S20, S21 |
 
 ## 8. Possible bugs found during the traces
 

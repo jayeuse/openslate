@@ -1,10 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
-import type {
-  AppearanceMode,
-  MotionPreference,
-} from "@/lib/appearance-preferences";
+import type { AppearanceMode } from "@/lib/appearance-preferences";
 
 const preferenceSchema = z
   .object({
@@ -14,6 +11,28 @@ const preferenceSchema = z
       .object({
         motion: z.enum(["system", "reduce"]),
         keyboard_shortcuts: z.boolean(),
+        timezone: z.string().nullable().default(null),
+        date_format: z
+          .enum(["organization", "dmy", "mdy", "ymd"])
+          .default("organization"),
+        time_format: z
+          .enum(["organization", "12h", "24h"])
+          .default("organization"),
+        week_start: z
+          .enum(["organization", "monday", "sunday"])
+          .default("organization"),
+        start_page: z
+          .enum([
+            "automatic",
+            "sandbox",
+            "boards",
+            "comms",
+            "access",
+            "openview",
+            "manage",
+            "platform",
+          ])
+          .default("automatic"),
       })
       .strict(),
   })
@@ -22,7 +41,7 @@ const preferenceSchema = z
 export type UserPreferences = z.infer<typeof preferenceSchema>;
 export type UserPreferencesPatch = {
   theme?: AppearanceMode;
-  appearance?: { motion?: MotionPreference; keyboard_shortcuts?: boolean };
+  appearance?: Partial<UserPreferences["appearance"]>;
 };
 export const userPreferencesKey = (userId: string) =>
   ["platform", "user-preferences", userId] as const;

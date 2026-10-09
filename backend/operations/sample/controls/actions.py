@@ -64,6 +64,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.openview import plan_openview_controls
     from operations.sample.controls.people_security import plan_people_security_controls
     from operations.sample.controls.platform import plan_platform_controls
+    from operations.sample.controls.profile import plan_profile_controls
     from operations.sample.controls.read_reviews import plan_read_reviews
     from operations.sample.controls.reads import plan_read_controls
     from operations.sample.controls.sandbox import plan_sandbox_controls
@@ -93,6 +94,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     return (
         prune,
         *plan_account_controls(dataset),
+        *plan_profile_controls(dataset),
         *plan_mfa_controls(dataset),
         *plan_people_security_controls(dataset),
         *plan_board_controls(dataset),
@@ -321,11 +323,14 @@ def execute_control_action(
     from operations.sample.controls.openview import execute_openview_control
     from operations.sample.controls.people_security import execute_people_security_control
     from operations.sample.controls.platform import execute_platform_control
+    from operations.sample.controls.profile import execute_profile_control
     from operations.sample.controls.read_reviews import execute_read_review
     from operations.sample.controls.reads import execute_read_control
     from operations.sample.controls.sandbox import execute_sandbox_control
 
     operation = action.values.get("operation")
+    if operation == "self_profile":
+        return execute_profile_control(action, dataset, context, on_substep=on_substep)
     if operation == "physical_backup_export":
         callback = context.private_values.get("host_control")
         if not callable(callback):

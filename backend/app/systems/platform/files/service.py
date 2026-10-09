@@ -13,12 +13,6 @@ from uuid6 import uuid7
 from app.common.dependencies import require_fresh_exact_admin
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
-from app.systems.manage.audit.models import SecurityEventOutcome
-from app.systems.manage.audit.schemas import SecurityEventIngestRequest
-from app.systems.manage.audit.service import (
-    SecurityEventPersistenceError,
-    append_committed_security_event,
-)
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.access import (
     authorize,
@@ -28,8 +22,10 @@ from app.systems.platform.files.access import (
     fresh_user,
     load,
     parent,
+    require_avatar_unbound,
     require_unlinked,
 )
+from app.systems.platform.files.delivery import download as download
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import (
     ProviderRejected,
@@ -136,6 +132,9 @@ def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
     )
     require_capacity(db, payload.purpose, payload.expected_size)
     parent(db, payload.record_id, active=True, lock=True, department_id=payload.department_id)
+    if payload.purpose == "user_avatar":
+        db.refresh(user, with_for_update={"nowait": True})
+        authorize(db, user, "user_avatar", write=True)
     file = File(
         **payload.model_dump(), creator_id=user.id, object_key=uuid4().hex, state="awaiting_upload"
     )
@@ -205,7 +204,7 @@ def upload(
     require_live_reservation(file)
     if len(content) != file.expected_size:
         raise error("file_size_mismatch", "Uploaded size differs from reserved size", 422)
-    filename, logo = file.filename, file.purpose == "workspace_logo"
+    filename, logo = file.filename, file.purpose in {"workspace_logo", "user_avatar"}
     db.rollback()
     validated = validate_bounded(filename, content, logo=logo)
     candidate = load(db, file_id)
@@ -284,73 +283,6 @@ def _finish_ready(file: File) -> None:
     file.failure_code = None
 
 
-def download(
-    db: Session,
-    actor_id: UUID,
-    file_id: UUID,
-    storage: StorageBackend,
-    *,
-    current_logo: bool = False,
-) -> tuple[bytes, str, str]:
-    candidate = load(db, file_id)
-    user = fresh_user(db, actor_id)
-    if current_logo:
-        # Caller must check the profile reference under its lock first.
-        if candidate.purpose != "workspace_logo" or candidate.is_deleted:
-            raise error("file_not_found", "Logo not found", 404)
-    else:
-        authorize(
-            db,
-            user,
-            candidate.purpose,
-            record_id=candidate.record_id,
-            department_id=candidate.department_id,
-        )
-    file = load(db, file_id, lock=True, shared_lock=True)
-    if file.state != "ready":
-        raise error("file_not_ready", "File is not available")
-    key, digest, size = file.object_key, file.digest, file.actual_size
-    filename, media_type = file.filename, file.media_type or "application/octet-stream"
-    db.commit()
-    try:
-        content = storage.download(key)
-    except ProviderUnavailable as exc:
-        raise error("storage_unavailable", "File content is unavailable", 503) from exc
-    if content is None or sha256(content).hexdigest() != digest or len(content) != size:
-        raise error("file_integrity_error", "File content is unavailable", 503)
-    # Recheck after provider latency, including a concurrent deletion/admission change.
-    candidate = load(db, file_id)
-    fresh_actor = fresh_user(db, actor_id)
-    if not current_logo:
-        authorize(
-            db,
-            fresh_actor,
-            candidate.purpose,
-            record_id=candidate.record_id,
-            department_id=candidate.department_id,
-        )
-    file = load(db, file_id, lock=True, shared_lock=True)
-    if current_logo and file.is_deleted:
-        raise error("file_not_found", "Logo not found", 404)
-    if file.state != "ready":
-        raise error("file_not_ready", "File is not available")
-    db.commit()
-    try:
-        append_committed_security_event(
-            SecurityEventIngestRequest(
-                event_type="file.download",
-                outcome=SecurityEventOutcome.ATTEMPT,
-                source="files",
-                operation_id=uuid4(),
-                actor_id=actor_id,
-                metadata={"file_id": str(file_id)},
-            )
-        )
-    except SecurityEventPersistenceError as exc:
-        raise error("file_event_unavailable", "Unable to record file access", 503) from exc
-    return content, media_type, filename
-
-
 def archive(
     db: Session,
     actor_id: UUID,
@@ -369,6 +301,7 @@ def archive(
         manage=candidate.purpose == "library_document",
     )
     file = load(db, file_id, active_parent=reopen, lock=True)
+    require_avatar_unbound(db, file)
     authorize_contextual_file(
         db,
         fresh_user(db, actor_id),
@@ -411,6 +344,7 @@ def reconcile(
         if profile.logo_file_id == file_id:
             raise error("file_current_logo", "Replace or remove the current logo before purging")
     file = load(db, file_id, lock=True)
+    require_avatar_unbound(db, file)
     if file.purpose == "board_attachment":
         if board_id is None or file.board_id != board_id:
             raise error("file_not_found", "File not found", 404)
@@ -424,7 +358,7 @@ def reconcile(
             purge_confirmed,
         )
 
-        if file.deletion_origin == "logo_replacement":
+        if file.deletion_origin in {"logo_replacement", "avatar_replacement"}:
             if not file.is_deleted or file.operation_id is None:
                 raise error("file_operation_stale", "File operation changed; refresh its status")
             if file.operation_expires_at is not None and file.operation_expires_at > datetime.now(

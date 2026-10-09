@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from pathlib import PurePosixPath
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -12,6 +13,7 @@ class FilePurpose(StrEnum):
     BOARD_ATTACHMENT = "board_attachment"
     LIBRARY_DOCUMENT = "library_document"
     WORKSPACE_LOGO = "workspace_logo"
+    USER_AVATAR = "user_avatar"
 
 
 class FileState(StrEnum):
@@ -48,6 +50,11 @@ class FileCreate(BaseModel):
             raise ValueError("Only library documents require a department")
         if self.purpose == FilePurpose.WORKSPACE_LOGO and self.expected_size > 2 * 1024 * 1024:
             raise ValueError("Logos must not exceed 2 MiB")
+        if self.purpose == FilePurpose.USER_AVATAR:
+            if self.expected_size > 2 * 1024 * 1024:
+                raise ValueError("Avatars must not exceed 2 MiB")
+            if PurePosixPath(self.filename).suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+                raise ValueError("Avatars must be PNG or JPEG")
         return self
 
 

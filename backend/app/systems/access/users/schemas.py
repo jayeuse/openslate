@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
@@ -65,6 +66,31 @@ class AccessEntryResponse(BaseModel):
 
 class AuthMeResponse(UserResponse):
     access: list[AccessEntryResponse]
+    phone: str | None = None
+    bio: str | None = None
+    avatar_file_id: UUID | None = None
+
+
+class SelfProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, max_length=200)
+    job_title: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=32)
+    bio: str | None = Field(default=None, max_length=280)
+    avatar_file_id: UUID | None = None
+
+
+class PersonCardPublicResponse(BaseModel):
+    display_name: str
+    job_title: str | None
+    avatar_url: str | None
+
+
+class PersonCardResponse(PersonCardPublicResponse):
+    email: str | None
+    phone: str | None
+    bio: str | None
 
 
 class AppearancePreferences(BaseModel):
@@ -72,11 +98,26 @@ class AppearancePreferences(BaseModel):
 
     motion: Literal["system", "reduce"]
     keyboard_shortcuts: StrictBool
+    timezone: str | None = None
+    date_format: Literal["organization", "dmy", "mdy", "ymd"] = "organization"
+    time_format: Literal["organization", "12h", "24h"] = "organization"
+    week_start: Literal["organization", "monday", "sunday"] = "organization"
+    start_page: Literal[
+        "automatic", "sandbox", "boards", "comms", "access", "openview", "manage", "platform"
+    ] = "automatic"
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                ZoneInfo(value)
+            except (ZoneInfoNotFoundError, ValueError):
+                raise ValueError("Timezone must be an IANA name") from None
+        return value
 
 
-class AppearancePreferencesUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class AppearancePreferencesUpdate(AppearancePreferences):
     motion: Literal["system", "reduce"] = "system"
     keyboard_shortcuts: StrictBool = True
 

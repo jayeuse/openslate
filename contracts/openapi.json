@@ -582,6 +582,17 @@
       "AppearancePreferences": {
         "additionalProperties": false,
         "properties": {
+          "date_format": {
+            "default": "organization",
+            "enum": [
+              "organization",
+              "dmy",
+              "mdy",
+              "ymd"
+            ],
+            "title": "Date Format",
+            "type": "string"
+          },
           "keyboard_shortcuts": {
             "title": "Keyboard Shortcuts",
             "type": "boolean"
@@ -592,6 +603,52 @@
               "reduce"
             ],
             "title": "Motion",
+            "type": "string"
+          },
+          "start_page": {
+            "default": "automatic",
+            "enum": [
+              "automatic",
+              "sandbox",
+              "boards",
+              "comms",
+              "access",
+              "openview",
+              "manage",
+              "platform"
+            ],
+            "title": "Start Page",
+            "type": "string"
+          },
+          "time_format": {
+            "default": "organization",
+            "enum": [
+              "organization",
+              "12h",
+              "24h"
+            ],
+            "title": "Time Format",
+            "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "week_start": {
+            "default": "organization",
+            "enum": [
+              "organization",
+              "monday",
+              "sunday"
+            ],
+            "title": "Week Start",
             "type": "string"
           }
         },
@@ -605,6 +662,17 @@
       "AppearancePreferencesUpdate": {
         "additionalProperties": false,
         "properties": {
+          "date_format": {
+            "default": "organization",
+            "enum": [
+              "organization",
+              "dmy",
+              "mdy",
+              "ymd"
+            ],
+            "title": "Date Format",
+            "type": "string"
+          },
           "keyboard_shortcuts": {
             "default": true,
             "title": "Keyboard Shortcuts",
@@ -617,6 +685,52 @@
               "reduce"
             ],
             "title": "Motion",
+            "type": "string"
+          },
+          "start_page": {
+            "default": "automatic",
+            "enum": [
+              "automatic",
+              "sandbox",
+              "boards",
+              "comms",
+              "access",
+              "openview",
+              "manage",
+              "platform"
+            ],
+            "title": "Start Page",
+            "type": "string"
+          },
+          "time_format": {
+            "default": "organization",
+            "enum": [
+              "organization",
+              "12h",
+              "24h"
+            ],
+            "title": "Time Format",
+            "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "week_start": {
+            "default": "organization",
+            "enum": [
+              "organization",
+              "monday",
+              "sunday"
+            ],
+            "title": "Week Start",
             "type": "string"
           }
         },
@@ -1051,6 +1165,29 @@
             "title": "Access",
             "type": "array"
           },
+          "avatar_file_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar File Id"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1138,6 +1275,17 @@
               }
             ],
             "title": "Performed By"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
           },
           "role": {
             "$ref": "#/components/schemas/UserRole"
@@ -5545,7 +5693,8 @@
           "record_attachment",
           "board_attachment",
           "library_document",
-          "workspace_logo"
+          "workspace_logo",
+          "user_avatar"
         ],
         "title": "FilePurpose",
         "type": "string"
@@ -7929,6 +8078,116 @@
           "password"
         ],
         "title": "PasswordChangeRequest",
+        "type": "object"
+      },
+      "PersonCardPublicResponse": {
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Title"
+          }
+        },
+        "required": [
+          "display_name",
+          "job_title",
+          "avatar_url"
+        ],
+        "title": "PersonCardPublicResponse",
+        "type": "object"
+      },
+      "PersonCardResponse": {
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Title"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "display_name",
+          "job_title",
+          "avatar_url",
+          "email",
+          "phone",
+          "bio"
+        ],
+        "title": "PersonCardResponse",
         "type": "object"
       },
       "PortableAggregateConfig": {
@@ -13469,6 +13728,73 @@
         "title": "SelectOption",
         "type": "object"
       },
+      "SelfProfileUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "avatar_file_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar File Id"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "maxLength": 280,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Title"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "title": "SelfProfileUpdate",
+        "type": "object"
+      },
       "SetFieldAction": {
         "additionalProperties": false,
         "properties": {
@@ -18950,6 +19276,52 @@
           }
         ],
         "summary": "Me",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/me/profile": {
+      "patch": {
+        "operationId": "update_profile_api_auth_me_profile_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelfProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthMeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Profile",
         "tags": [
           "auth"
         ]
@@ -33169,6 +33541,108 @@
           }
         ],
         "summary": "Get User Access",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/avatar": {
+      "get": {
+        "operationId": "get_person_avatar_api_users__user_id__avatar_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Person Avatar",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/card": {
+      "get": {
+        "operationId": "get_person_card_api_users__user_id__card_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/PersonCardResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PersonCardPublicResponse"
+                    }
+                  ],
+                  "title": "Response Get Person Card Api Users  User Id  Card Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Person Card",
         "tags": [
           "users"
         ]

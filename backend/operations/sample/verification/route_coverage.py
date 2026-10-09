@@ -20,6 +20,9 @@ Route = tuple[str, str]
 # must acquire an executor and verification before it can be added here.
 SEEDER_ROUTES: frozenset[Route] = frozenset(
     {
+        ("PATCH", "/api/auth/me/profile"),
+        ("GET", "/api/users/{user_id}/card"),
+        ("GET", "/api/users/{user_id}/avatar"),
         ("POST", "/api/charts"),
         ("GET", "/api/charts"),
         ("GET", "/api/charts/{chart_id}"),

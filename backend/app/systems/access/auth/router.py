@@ -31,6 +31,7 @@ from app.systems.access.auth.cookies import (
 from app.systems.access.auth.cookies import (
     set_browser_session as _set_browser_session,
 )
+from app.systems.access.auth.profile_router import router as profile_router
 from app.systems.access.auth.request_security import (
     bearer_credentials as _bearer_credentials,
 )
@@ -67,7 +68,6 @@ from app.systems.access.identity.schemas import (
     TokenResponse,
 )
 from app.systems.access.identity.session_revocation import revoke_session
-from app.systems.access.policy.scope import effective_levels
 from app.systems.access.users.acceptance import (
     begin_invitation_acceptance,
     record_invitation_acceptance_failure,
@@ -75,6 +75,7 @@ from app.systems.access.users.acceptance import (
 from app.systems.access.users.account_operations import router as account_operations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
 from app.systems.access.users.models import User
+from app.systems.access.users.profile import self_profile_response
 from app.systems.access.users.router import router as users_router
 from app.systems.access.users.schemas import (
     AuthMeResponse,
@@ -302,16 +303,7 @@ def me(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> AuthMeResponse:
-    access = effective_levels(db, user)
-    return AuthMeResponse.model_validate(
-        {
-            **UserResponse.model_validate(user).model_dump(),
-            "access": [
-                {"department_id": department_id, "module_id": module_id, "level": level}
-                for department_id, module_id, level in access.entries()
-            ],
-        }
-    )
+    return self_profile_response(db, user)
 
 
 @auth_router.get("/session")
@@ -492,6 +484,7 @@ def complete_invitation(
 
 
 router.include_router(auth_router)
+router.include_router(profile_router)
 router.include_router(template_router)
 router.include_router(users_router)
 router.include_router(account_operations_router)
