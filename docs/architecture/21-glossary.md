@@ -38,11 +38,12 @@ The Sandbox is where an administrator designs the organization: departments, mod
 | Publish | `publishSandbox`, `SandboxPublication`, "Review and publish" | The only way to create or change live departments, modules, and fields. It needs a preview, a matching revision, and the administrator password. | Customer |
 | Binding | `SandboxBinding` | The map from a design item ID to the live department, module, or field that publish created. | Internal |
 | History (Sandbox) | `SandboxVersion`, `versions`, legacy `?section=versions`, "Saved versions" | The list of design versions. A version kind is `checkpoint`, `published`, or `imported`. You can restore a version into the draft. | Customer |
-| Organization template | `SandboxOrganizationTemplate`, "Start from template" | A starting design for one kind of organization. Applying one replaces the draft. It is not a sample pack. | Customer |
+| Organization template | `SandboxOrganizationTemplate`, "Start from a template" | A starting design for one kind of organization. Applying one replaces the draft. It is not a sample pack. | Customer |
 | Department | `Department` | The top unit of the organization. It owns modules, one department Board, and dashboards. | Customer |
 | Module | `Module`, "Data source" (OpenView, Platform, Boards record links) | One kind of record inside a department, for example "Orders". A module accepts new records while it has at least one active field. | Internal |
 | Field | `Field`, `FieldType` | One value on a record. Types: text, long text, email, URL, number, decimal, integer (`int`), checkbox (`boolean`), date, date and time, select, user, relationship. | Customer |
 | Record | `Record`, `Record.data` | One entry in a module. Its values are stored by field ID. | Customer |
+| Batch update | `POST /api/records/batch-update`, `RecordBatchUpdate` | An explicit update of up to 100 selected records in one module, each with its own revision and one field or a pair of field changes. Each record is atomic; results separately report updated, stale, invalid, or forbidden items. It is not an update of every record matching a query. | Internal |
 | Relationship | field type `relationship`, `RelationshipEdge`, UI kind `link`, "cross-department link" | A field that links records of one module to records of one target module, in the same or another department. Cardinality: one-to-one, one-to-many, or many-to-many. A person sees a link only when they can read both modules. | Customer |
 | Record link | `BoardRecordLink`, "Record links" | A Board post or event that points to a record. It is not a relationship. | Customer |
 | Trigger | `SandboxTrigger`, record trigger, `?rule=`, "rule", "automation" | A rule that changes a field on its own record when an event occurs. Events: record created, field changed, threshold crossed, schedule. **Status:** partially implemented. Only the set-field action publishes. Actions on other records or messages are deferred. | Customer |
@@ -84,7 +85,8 @@ OpenView is for reading records and reports. Its content belongs to departments 
 | Saved view | `SavedView` | A view that is stored for the module. Every reader of the module sees it; `manage` on the module changes it. | Customer |
 | Default view | `defaultViewId`, "Module default" | The one saved view that a module opens with. Making a new default clears the old one. | Customer |
 | Dashboard | `Dashboard` | A page of widgets that belongs to one department. Each widget reads a module of that department. | Customer |
-| Chart | `?section=charts` | A chart that you build for the open page only. Chart settings are not saved. | Customer |
+| Chart | `?section=charts`, `ChartDefinition` | A visualization of a module query. Unsaved editing and preview stay local; Save creates a shared saved chart. | Customer |
+| Saved chart | `Chart`, `/api/charts`, widget `chart_id` | A revisioned query and presentation definition for one source module. Reading requires `read` on that module; creating, editing, archiving and restoring require `manage` on the chart's department plus `read` on its source module. Module-level `manage` alone is insufficient. It owns no materialized Record results; Dashboard and Board consumers recheck current source access. | Customer |
 | Report | `Report` | A saved query recipe for one module that you run on demand or on a schedule. | Customer |
 | Report run | `ReportRun`, "Run now" | One unchangeable result of a report. | Customer |
 | Eligible readers | `ReportRunEligibleUser` | The module readers at the time of a report run. To open the run, a person must be an eligible reader and still read the module now. | Internal |
@@ -97,6 +99,7 @@ Access decides who can see and change what. Backend package: `app/systems/access
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
 | Person | `User`, `AccessUser`, "People" | One account in the organization. Status: pending, active, or disabled. | Customer |
+| Person card | `PersonCardPopover`, `/api/users/{id}/card` | A read-only disclosure for a person identified by an authorized source, not a searchable directory. Guests see display name, job title and avatar only; authorized members/admins also receive contact details and biography. | Customer |
 | Account role | `UserRole`: `admin`, `member`, `guest`; "Administrator", "Member", "Guest" | The role of a person. An administrator manages everything. A guest has a sponsor and an end date, and can only read. | Customer |
 | Group | `Group`, `GroupMember` | A named set of people. Groups get access levels on departments, modules, and project Boards. | Customer |
 | Access level | `AccessLevel`: `read`, `write`, `manage` | What a group can do on a department, module, or Board. `read` < `write` < `manage`. | Customer |
@@ -104,13 +107,15 @@ Access decides who can see and change what. Backend package: `app/systems/access
 | Effective level | `effective_levels`, `EffectiveAccess` | The level that a person has after all rows are resolved: the most specific row in each group, then the highest level across groups. No row means no access. | Internal |
 | Invitation | `pending` user, `/auth/invitations` | An email that asks a person to set a password and join. | Customer |
 | Password recovery | `/auth/recovery/*`, "Send recovery email" | The email flow that lets a person set a new password. | Customer |
+| Email change | `POST /api/auth/me/email`, "Change email" | A current-password-verified request for confirmation at both the current and new addresses. Request acceptance does not change or reserve the saved email; only protected admission of the bound subject's current confirmed provider email updates it. See [confirmed email change](08-authentication-authorization.md#confirmed-email-change). | Customer |
+| Email-change confirmation | `POST /api/auth/email/complete`, `/auth/email-change`, action type `email_change` | An explicit signed-out-browser use of a one-time email link. The first address's acknowledgment does not sign anyone in; final confirmation enters protected application admission and any required two-step verification. Provider success with a local conflict remains application-incomplete, without a new cookie or account merge. | Customer |
 | Administrator recovery | `admin_recovery.py`, `operations/recover_local_admin.py` | An operator command that gives back access when no administrator can sign in. | Internal |
 | Security recovery | `security_recovery.py`, `operations/recover_workspace_security.py` | An operator command that resets organization-wide sign-in security, such as two-step or IP rules. | Internal |
 | Two-step verification | "MFA", "authenticator" | A second sign-in check with an authenticator app. Use "two-step verification" in customer copy. | Customer |
 
 ## Manage
 
-Organization settings and the audit log. Backend package: `app/systems/manage/`.
+Organization settings, audit/security events, backups and job monitoring. Backend package: `app/systems/manage/`.
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
@@ -118,6 +123,7 @@ Organization settings and the audit log. Backend package: `app/systems/manage/`.
 | Organization mark | `workspace_logo`, "logo" | The image that represents the organization in the app. | Customer |
 | Audit log | `AuditLog`, `/api/audit-logs`, "Audit", "Record history" | The record of who changed what in application data. `AuditSession` writes it in the same transaction as the change. Alembic and direct SQL are outside it. | Customer ("Audit") |
 | Security event | `SecurityEvent` | A sign-in or security action, kept in a table separate from the audit log. | Internal |
+| Job | `/api/jobs`, Manage → Jobs, `JobResponse` | Administrator-visible work metadata for report runs, scheduled post publication, event reminders and backups. Manual Retry is available only for eligible failed work and is not automatic replay of an uncertain command. | Customer |
 | Backup | `/api/backups`, "Backup history", "Encrypted export" | An encrypted copy of the installation data. **Status:** partially implemented. A guarded backup and manual restore exist; customer restore and automatic schedules are pending. | Customer |
 | Updates & licensing | `updates`, `licensing` | The page for license state. **Status:** partially implemented. It shows that no license is required; it has no update check. Backup shows the server version from `/api/version`. | Customer |
 
@@ -129,7 +135,7 @@ Shared services for every workspace. Backend package: `app/systems/platform/`. "
 | --- | --- | --- | --- |
 | File | `File`, file purpose `record_attachment`, `board_attachment`, `library_document`, `workspace_logo` | Metadata in PostgreSQL for bytes in the private Storage bucket. FastAPI checks access on each download. | Customer |
 | File state | `awaiting_upload`, `uploading`, `ready`, `rejected`, `deleting`, `purged` | The upload and delete progress of a file. Only `ready` permits download. There is no virus-scan state. | Internal |
-| File library | "Department file library" | The files that belong to a department, outside any record. | Customer |
+| File library | "Department file library", `purpose='library_document'`, `department_id`, `/platform?section=files` | The private files belonging directly to a department, outside any record or Board. Department read permits listing/download, write permits upload, and manage permits archive/reopen; module-only access grants none of these library rights. | Customer |
 | Notification | `InAppNotification`, `NotificationKind` | A message in the app, for example a report run, a reminder, or a published design. | Customer |
 | Scheduled work | `ScheduledWork`, `WorkKind`, `WorkState` | A queued background job: a report run, a scheduled post publish, or an event reminder. | Internal |
 | Import & export | `record-import-api` | CSV import and export of records for one module. | Customer |

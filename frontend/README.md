@@ -8,7 +8,7 @@ FastAPI must be running for identity actions. Invitation onboarding uses the pro
 
 Frontend-specific commands and architecture are documented in the repository root [`README.md`](../README.md).
 
-Workspace pages use `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`. OpenComms is the only route that mounts the local sample runtime.
+Workspace pages use `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`. `/profile` owns the signed-in person's identity, security and personal preferences. OpenComms is the only route that mounts the local sample runtime.
 
 The active workspace implementation lives in `src/components/systems/`.
 The sidebar owns top-level section navigation for Sandbox, Boards, Access,
@@ -17,9 +17,9 @@ bottom of the navigation area, above the footer divider. The
 group labels expand or collapse their child links without navigating; choose a
 child link to open a section. The selected section is encoded in each page's
 existing `view` or `section` query parameter, including `section` on Sandbox and
-Platform. Existing Platform account/notification hash links remain supported. Retired File library links resolve to Search until a real library is implemented.
+Platform. Existing Platform account/notification hash links remain supported. The department File library uses `/platform?section=files&department=<uuid>` and the server-backed `library-files-api.ts`; it is distinct from record attachments.
 
-Live features share authenticated SSE invalidations through `subscribeWorkspaceInvalidations` in the shared adapter; events ask for authorized refetches and contain no row snapshots. The shell holds one notification listener across workspace routes, alongside the existing OpenView cache bridge, Boards, Manage and Platform Files listeners. When the stream is unavailable, an explicit focus fallback refreshes only the unread count; global focus/reconnect reads remain disabled.
+Live features share authenticated SSE invalidations through `subscribeWorkspaceInvalidations` in the shared adapter; events ask for authorized refetches and contain no row snapshots. The shell holds one notification listener across signed-in routes, alongside OpenView Views/Dashboards/Charts/Reports and saved-chart editors, Boards, Manage audit/jobs/maintenance and branding, Platform Files, and open Help contacts. When the stream is unavailable, an explicit focus fallback refreshes only the unread count; global focus/reconnect reads remain disabled.
 
 The bell uses the authoritative unread count and opens the latest ten notices. View all opens the cached, server-paged All/Unread inbox. Mark-one and read-all share a pending-command guard and explicitly refetch count/pages after confirmation. Displayed titles come from bounded authorized source reads, with safe retry or unavailable states; notification references retain no private content. Links open exact Board posts/events or `/openview?section=reports&report=<uuid>&run=<uuid>`. A run requires its Report, and Report-only links select that exact Report. Missing, denied or mismatched targets never open a default output.
 

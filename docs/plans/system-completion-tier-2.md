@@ -902,7 +902,7 @@ Do the slices in this order. A slice starts only when the slices it depends on a
 | S17 | Batch update route (D10) | W10a | – |
 | S18 | Drag foundation and Kanban (D11) | W10b, W10c | S17 |
 | S19 | Calendar and Timeline drag, results; atomic two-field batch item extension | W10a, W10b, W10d, W10e, D10 | S18 |
-| S20 | Profile backend: columns, appearance keys, profile route, avatar, person card route | W7a | S03 |
+| S20 | Profile backend: columns, appearance keys, profile route, private self read, avatar, person card route | W7a, D27 | S03 |
 | S21 | `/profile` page, redirects, personal formatting, start page, MFA for members (D13, D14) | W7b | S02, S20 |
 | S22 | Person card in People, posts, assignees, events, search (D15) | W7c | S08, S21 |
 | S23 | Help panel and shortcut registry | W2c | S21 |

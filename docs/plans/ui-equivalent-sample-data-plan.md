@@ -1,16 +1,16 @@
 # UI-equivalent sample data plan
 
-> **Frontend rollback, 2026-09-30.** At the user's direction the frontend is exactly `main` (`bf64d2f`). The OpenView record and relationship controls and the API-backed Manage and Platform pages that this task added were removed; a backup is in `.agent-runtime/frontend-rollback-2026-09-30/`. The frontend design in `main` takes priority over sample-data needs. Until a design-led frontend task adds record and relationship controls, the seeder still writes records and relationships through the same authenticated APIs, but no current UI control exposes those two operations; Manage and Platform in `main` are local examples, so workspace settings set by a run are visible through the API, not in Manage.
+> **Current authority:** record editing, relationships, Platform import/export and the department library are server-backed controls. The earlier frontend rollback and subsequent authoring proposal are historical, not current feature limits. Sample admission follows the reachable controls and [sample-pack contract](sample-pack-contract.md); it is not authority to add UI or expand a run.
 
-> Implementation plan revalidated against the schema redesign at `bf64d2f`. The user authorized population and minimal API-backed record and relationship controls after the redesign. Resetting or replacing an existing installation still requires its own confirmation.
+> The schema-redesign population proposal below explains the original workflow. Later [Tier 1](system-completion-tier-1.md) and [Tier 2](system-completion-tier-2.md) contracts supersede its former UI gaps. Resetting or replacing an existing installation still requires its own confirmation.
 
 ## Contract and current limit
 
-File scanning was removed on 2026-10-05: an upload is ready when its request finishes. Sample runs therefore include the Board attachment controls (reserve, upload, attach, download, remove) with generated blank-but-valid dummy files, and the Harbor and School packs seed named attachments on posts and events. The `/api/files` routes have no UI control, so sample runs do not seed them. Existing partial uploads are cleaned through the guarded reset.
+There is no file scanning: an accepted upload is ready when its request finishes. Sample runs include the Board attachment controls (reserve, upload, attach, download, remove) with generated blank-but-valid dummy files, and the Harbor and School packs seed named attachments on posts and events. Record attachments and the Platform department library now use `/api/files` through reachable UI controls. Their existence is not a claim that every historical sample phase seeded those files; each run must follow its admitted control contract. Existing partial uploads are cleaned through the guarded reset.
 
 Every populated value must be enterable through an existing supported UI control. Population must use that control's authenticated API operation with the same validation, authorization, concurrency, and audit behavior. Do not insert application rows directly, call internal services, provision identities through provider-admin APIs, or fabricate audit entries.
 
-Current OpenView record inspection is read-only. Add New Record to the selected module's Views results, Edit to its inspector, and relationship assignment/link/unlink controls. These controls establish UI equivalence for the existing record and relationship APIs before operational population. Sandbox Test inputs remain temporary simulations; Platform's local sample controls do not establish live authoring eligibility.
+The current [live Record inspector](../../frontend/src/components/systems/openview/components/live-record-inspector.tsx) exposes Edit, linked-record and attachment actions for eligible writers. Platform [Import & export](../../frontend/src/components/systems/platform/components/import-export.tsx) uses real module import/export APIs, and [Files](../../frontend/src/components/systems/platform/components/files.tsx) is the department library. Sandbox Test inputs remain temporary simulations; they never establish operational-record population.
 
 The authorized operational target is the counts the run manifest records for the selected organization pack and profile. Populate only after the authoring controls are implemented and verified. Empty results and failures must remain honest; no fallback examples may stand in for seeded records.
 
@@ -53,9 +53,9 @@ Retain Harbor Operations Group with six departments and 24 modules. Use the exis
 | Files | Board post and event attachments from the pack's named entries, uploaded through the Board attachment controls with generated dummy files |
 | History | Genuine user-attributed mutations and supported publication, scheduling, notification, and report-run history |
 
-Counts are proposed targets, not evidence of created data. `plan` must report the exact admitted counts and exclusions before any future population. Chart settings are page-local and are not persistent sample entities. Report runs against empty modules may demonstrate empty-output behavior, not populated business results.
+Counts are planning inputs, not evidence of created data. `plan` must report the exact admitted counts and exclusions before population. Shared saved Charts now exist; only unsaved preview settings remain page-local. A run may claim only entities/controls included in its actual admission. Report runs against empty modules demonstrate empty-output behavior, not populated business results.
 
-Exclude `/api/files` record, library, and logo uploads (no UI control), removed custom roles, service identities, access rules/defaults/deny policies, Board grants/templates/favorites/homes/personal read or bookmark states, content audiences, private Dashboards, and saved chart preferences. Workspace execution is not represented as a fabricated service account. Include real record links, live record-trigger scenarios, populated CSV/report outputs, and cross-module business journeys after the authoring prerequisite passes.
+Removed custom roles, service identities, access rules/defaults/deny policies, Board grants/templates/favorites/homes/personal read or bookmark states, content audiences, private Dashboards and personal chart preferences are not current sample entities. Department/project group levels and shared Charts use their current contracts instead. Do not exclude current record/library/logo upload controls merely because the original plan had no UI for them; admit them only under the approved pack/control scope. Workspace execution is not a fabricated service account. Include real record links, live record-trigger scenarios, populated exports/reports and cross-module journeys through admitted APIs.
 
 Use the counts the run manifest records. Harbor Standard uses each old module count divided by four and rounded upward (5,001 records). Small uses each Standard count divided by five and rounded upward, with a minimum of one (1,001 records). Large uses four times each Standard count (20,004 records) and remains opt-in. The table below records the frozen version 1 distribution: Small used five percent rounded upward, Standard used 20,000, and Large used five times Standard. Retain deterministic business values with seed 42 and an explicit pack-local business-date anchor; server IDs, passwords and authentication timestamps remain newly generated.
 
@@ -107,9 +107,9 @@ The frontend request builders under `systems/boards/adapters` and `systems/openv
 - Invitations and account actions through the Access UI's endpoints. Complete selected invitations using matching messages in the owned Mailpit instance and the normal invitation-completion endpoint.
 - Groups through `/api/access/groups`; use the dedicated member and access replacement operations with `If-Match`. Administrators set access; eligible department managers may change membership within the existing policy.
 - Boards through their existing scope, project-group, post, event, widget, and lifecycle controls. Use record-link controls after live records exist through the admitted workflow.
-- Shared Views, department Dashboards, and module Reports through their existing editors. Add only the explicitly authorized live record and relationship authoring controls.
-- Manage: connect organization name, locale and timezone to Workspace, and audit/session views to their existing APIs. Show unsupported backup, licensing, update and global security controls as unavailable. Do not reinterpret the bundled mark as an uploaded logo.
-- Platform: replace local people, records and supported files with authorized API reads, route record editing to OpenView, preserve connected notifications and genuine authentication/session flows. Disable simulated import and use supported export. Preserve legitimate device appearance settings and OpenComms owners/defaults.
+- Shared Views/Charts, department Dashboards and module Reports use their existing editors; record and relationship actions use the live inspector.
+- Manage Organization and Audit use their real APIs; Backup includes supported policy/history/export controls. Security policy lives in Access. Do not reinterpret the bundled mark as an uploaded logo or claim update/licensing activation from unavailable controls.
+- Platform uses authorized reads, real import/export and department files; record editing routes to OpenView. Preserve connected notifications, authentication/session flows, legitimate device appearance settings and OpenComms' example-only boundary.
 
 The user reauthorized these Manage/Platform connections after the source audit. No new services, API contracts, import system, presence, following or preference APIs are included. OpenComms remains excluded.
 
@@ -127,7 +127,7 @@ Rebuild the retired sample tool under `backend/operations/`: `plan` performs rea
 2. Author and publish the Sandbox design with normal controls' preconditions. Resolve server-issued IDs through authorized reads.
 3. Invite people, complete only the selected invitations, configure groups and access, and exercise allowed and denied users through separate sessions.
 4. Create operational records through the new editor's API contract under the six designated sample actors, then resolve and create relationship edges. Exercise genuine updates and record triggers with independently specified expected outcomes. (Current behavior. The proposed simulated activity runs below replace this step with interleaved episodes.)
-5. Configure Boards, posts, events, reminder settings, and widgets; do not insert attachments. Preserve author archiving. Reminders use start, 15 minutes, or one day, with delivery permitted up to 15 minutes late.
+5. Configure Boards, posts, events, reminder settings, widgets and the admitted attachment actions through their APIs; never insert attachment rows directly. Preserve author archiving. Reminders use start, 15 minutes, or one day, with delivery permitted up to 15 minutes late.
 6. Configure shared Views, Dashboards, and Reports. Record empty results honestly. Keep scheduled triggers/reports disabled at completion unless a bounded real scheduling scenario explicitly requires otherwise.
 7. Verify every admitted count and result. Report any incomplete operation separately.
 
@@ -152,7 +152,7 @@ limited to the development overlay; production mail settings are unchanged.
 
 ## Proposed: simulated activity runs with natural content
 
-Status: **implemented for Harbor.** A live Small run (`ed0901e2…`) and a live 20,000-record run (`f10919cc…`) completed with all verification passing, including record history, planned rejections and interleaved Board work. This section replaces the phase-block population order (records, then all edges, then content) for future Small and Standard runs. The UI-equivalence contract above does not change: every write still uses a reachable control's authenticated API as a real sample user.
+Status: **implemented for Harbor.** This workflow replaces the original phase-block population order (records, then all edges, then content) with interleaved episodes. The UI-equivalence contract does not change: every write uses a reachable control's authenticated API as a real sample user. Run-specific results belong in runtime evidence, not this plan.
 
 ### Outcome
 
@@ -274,7 +274,7 @@ Backend files keep the 500-line limit. `sample/population/people.py`, `sample/sc
 
 ## Proposed: run sizes and organization packs
 
-Status: **Harbor and School pack data are implemented.** Organization extraction, run sizes and manifest version 2 are complete. School has offline admission checks. Its live Small run and user check are pending. No live run was performed for these changes. Decided with the user on 2026-09-30.
+Status: **Harbor and School are implemented through Phase G.** Organization extraction, run sizes, manifest version 2 and reference-pack admission are complete, including School Standard. The remaining organization packs are proposals, not populated installations. Later control changes require their own admission under the current sample-pack contract.
 
 ### Run sizes
 
@@ -334,7 +334,7 @@ Offline admission uses the server's schemas and validators across 20 fixed seeds
 
 ### Product gaps found
 
-- The Manage workspace screen in `main` is a local example ("Settings here are examples"). It does not read or save the workspace through the API, so a pack's locale and time zone are set and checked through `PATCH`/`GET /api/workspace` only. Connecting the designed Manage page to the API is a separate, design-led frontend task.
+- Manage Organization reads and saves locale and time zone through `GET`/`PATCH /api/workspace`. A pack uses that same API contract; personal Profile regional display preferences do not change its organization calendar or schedules.
 - The six Sandbox organization templates are all business types.
 
 ## Cleanup and acceptance

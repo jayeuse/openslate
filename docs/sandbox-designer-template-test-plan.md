@@ -18,7 +18,7 @@ matters, export it first from **More Sandbox actions → Import or export**.
 3. Confirm the only main work areas are **Build**, **Triggers**, **Test**, and
    **History**.
 4. Confirm the primary action is **Review & Publish**. The secondary menu should
-   contain **Start from template**, **Save checkpoint**, **Import or export**,
+    contain **Start from a template**, **Save checkpoint**, **Import or export**,
    and **Discard draft changes**.
 5. Reload the page. The empty state must remain empty; no sample organization or
    sample records may appear.
@@ -76,7 +76,7 @@ Before and after this section, compare operational `records` and
 | Save a second checkpoint after changing a field, then compare the two checkpoints. | The comparison names the changed item and property. |
 | Restore the checkpoint. | A new draft revision is created with the checkpoint content. |
 | Rename or delete a checkpoint. | The change persists; a published version remains immutable. |
-| Export JSON. | The downloaded file is formatted, schema version 3, and contains structure and triggers but no business records. |
+| Export JSON. | The downloaded file is formatted, schema version 4 (`DOCUMENT_SCHEMA_VERSION`), and contains structure and triggers but no business records. |
 | Import the same JSON. | The draft is replaced atomically and an imported history entry is created. |
 | Discard draft changes. | A safety checkpoint is created first; the latest published design is restored, or an empty draft is used when nothing has been published. |
 
@@ -86,16 +86,16 @@ Repeat this for Inventory & procurement; Finance, accounting & sales; Retail &
 commerce; Professional services; Field service & maintenance; and Light
 manufacturing.
 
-1. Open **Start from template**, select a card, and inspect the displayed
+1. Open **Start from a template**, select a card, and inspect the displayed
    department, module, field, relationship, and trigger counts. Selection
    alone must not modify the shared draft.
 2. Choose **Use template**. Confirm the draft changes and an imported history
    entry appears.
 3. Reload and inspect at least one field, relationship, and trigger.
 4. Run one temporary test.
-5. Complete **Review & Publish**. Every built-in template must be publishable;
-   template relationships must remain inside their department because that is
-   the live relationship boundary.
+5. Complete **Review & Publish**. Every built-in template must be publishable.
+   A relationship may target a module in the same or another department;
+   cross-department placement alone must not block publication.
 6. Confirm no operational records or relationship edges were created.
 
 ## 7. Review and publish
@@ -114,7 +114,7 @@ manufacturing.
    record trigger changes the record when conditions match, produces one
    recent run, and writes audit history with no user and the actor label
    `Trigger: <name>`.
-7. Disable the publisher or remove `records.write`, then trigger another run.
+7. Disable the publisher or remove the publisher's module write access, then trigger another run.
    The trigger must still run, because record triggers run as the workspace.
 
 ## 8. Expected failures and data guarantees
@@ -122,17 +122,19 @@ manufacturing.
 | Condition | Expected response | Data guarantee |
 | --- | --- | --- |
 | Blank name, invalid select options, invalid field settings, duplicate ID, or missing reference. | The relevant form or review identifies what must be fixed. | No partial live write. |
-| Relationship crosses departments, points to the same module, or conflicts with unmanaged live fields. | Review blocks publishing and names the affected item. | Existing live structure remains unchanged. |
+| Relationship points to the same module, has a missing endpoint, or conflicts with unmanaged live fields. | Review blocks publishing and names the affected item. Cross-department relationships with valid endpoints are supported. | Existing live structure remains unchanged on rejection. |
 | Trigger has no action, crosses modules, uses a relationship-based field reference, or contains an unsupported action. | Review blocks publishing with plain-language guidance. | No trigger definition is silently flattened or partially published. |
 | Another user saves first. | A conflict prompt offers reload or reapply. | The newer revision is never overwritten silently. |
 | Preview expires, live structure changes, or the same token/key is reused differently. | Publish returns the documented conflict and asks for a fresh review. | No duplicate or stale publication. |
-| Password is missing or wrong, or the user lacks the required structure and records write access. | Publish is rejected without revealing credential details. | No publication or live mutation. |
+| Password is missing or wrong, or the user is not an eligible administrator. | Publish is rejected without revealing credential details. | No publication or live mutation. |
 | A field/module/department with live dependencies is closed. | Review blocks the close and explains that dependencies must be handled first. | Records and links are preserved. |
 | Malformed/future-schema/over-5-MiB JSON is imported. | Import is rejected before replacement. | Current draft and history remain unchanged. |
 | Test input is invalid or the server/network fails. | The current draft stays available; the error is recoverable. | No operational record or relationship edge is created. |
 | A trigger retries after an execution failure. | It uses a lease and backoff, then ends after five attempts. | One event/trigger pair produces at most one run; depth and root action budget remain bounded. |
 
 ## Automated evidence
+
+The [document schema](../backend/app/systems/sandbox/designs/schemas.py) owns version 4. Cross-department publication is covered in [`test_publication_cross_department_integration.py`](../backend/tests/sandbox_publications/test_publication_cross_department_integration.py), including `test_new_cross_department_relationship_publishes_a_field_between_departments` and moving a connected module without losing its relationship.
 
 - Frontend isolated Sandbox tests cover document parsing, templates, API
   contracts, conflict-safe sessions, Build controls, Triggers, Test, and

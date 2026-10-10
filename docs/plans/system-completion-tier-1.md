@@ -2,9 +2,9 @@
 
 Base revision: `main` at `d34360aa`. OpenComms is out of scope.
 
-Status: approved for delegation. The decisions in section 7 are accepted. Section 11 is the execution order.
+Status: delivered implementation scope. S01–S29 are delivered; S30's architecture reconciliation is present, while whole-branch/release acceptance remains a separate gate. [Tier 2](system-completion-tier-2.md) is current continuation authority and supersedes D4 and the personal regional exclusions identified below. The execution order here is historical, not a request to dispatch or repeat work.
 
-This plan covers the work that makes OpenSlate complete before OpenComms starts. The evidence comes from static reads of the source. Nothing was executed. Section 9 lists the claims that are not tested yet.
+This plan preserves the original baseline and workstream rationale. "Today", gap inventories and implementation steps below describe that planning baseline, not current missing features. Current architecture is in [the architecture index](../architecture/README.md); substantive unresolved acceptance work is in [known gaps](../reviews/known-gaps.md). No dated test-run results or release approval are implied by delivered status.
 
 ## 1. Intent
 
@@ -164,10 +164,10 @@ Pain point: a clean browser shows Slate for one load before the endpoint answers
 - A readable-font override.
 - A 12-hour or 24-hour clock. This needs one central date formatter first.
 
-**Do not add:**
+**Original exclusions (superseded where noted):**
 
-- Personal timezone. It breaks the workspace-day rules.
-- Personal first day of the week.
+- Personal timezone: superseded by Tier 2 W7. Profile supports a display-only override; it never changes workspace-day rules, stored values or schedules.
+- Personal first day of the week: superseded by Tier 2 W7's display-only regional preferences. Workspace calendar/scheduling authority remains unchanged.
 - Interface language. The UI is English only.
 - A focus-ring setting. The current ring meets 2.4.7.
 
@@ -507,7 +507,7 @@ The owner accepted these decisions on 2026-10-05. To change one, edit this table
 | D1 | Move the security policy from Manage to Access | Yes, with a redirect | S22 |
 | D2 | Name of the Manage tab: "Organization" or "Workspace settings" | Keep "Organization". "Workspace settings" is already the Comms dialog name. | S19 |
 | D3 | Comms links to example records | Show "This example record is not in OpenView" | S02 |
-| D4 | Permanent delete (purge) is off by default in Boards, OpenView, Sandbox, and files | Keep it off. Add a read-only `purge_enabled` field to `GET /workspace`, and hide the purge controls while it is false. | S07 |
+| D4 | Permanent delete (purge) default | Superseded by Tier 2 W5: new-installation examples enable purge; existing installations retain their required configured value. The workspace `purge_enabled` projection and disabled-installation UI guard remain. | S07 delivered; default superseded |
 | D5 | Personal preferences: one JSONB column or one column per setting | JSONB | S17 |
 | D6 | Text size and density: per account or per device | Per device. They depend on the screen. | S18 |
 | D7 | Color mode for new people | System. Existing people keep their value. | S17 |
@@ -530,7 +530,7 @@ The audit found these from source reads. Test each one first, then fix it as a s
 3. **The reset does not restore four settings.** The application-data reset does not restore `currency`, `week_start`, `business_hours`, or `mark`.
 4. **`/auth/token` returns 401 for a rate-limited sign-in.** `/auth/login` returns 429 for the same condition.
 
-## 9. Not verified
+## 9. Original verification inventory (historical)
 
 - All six reports come from static reads. No test, build, or browser run was done.
 - Not tested: the items in section 8, rendering at 125% text, the density mechanism, forced-colors rendering, client IP resolution behind Caddy, Restic `copy` behavior, and whether the server image has timezone data.
@@ -575,6 +575,16 @@ A slice is done when all of these are true:
 7. The slice is committed, and the run record shows the evidence.
 
 ### 11.3 Slices
+
+Delivery classification: S01–S07 sample-boundary/guard work, S08 feedback,
+S09–S12 files/library, S13–S15 notifications, S16–S21 appearance/organization,
+S22–S28 Access security and S29 backup export are delivered. S30's documentation
+portion is delivered; release and whole-branch acceptance are not inferred from
+that status. Current source boundaries are linked from the
+[frontend architecture](../architecture/05-frontend-architecture.md),
+[security architecture](../architecture/14-security-architecture.md) and
+[deployment architecture](../architecture/12-deployment-architecture.md).
+The rows below retain the original dependency order; do not rerun them as new work.
 
 Do the slices in this order. A slice starts only when the slices it depends on are done.
 

@@ -1,6 +1,6 @@
 # Sample-pack contract for UI control runs
 
-This document records the organization data each sample pack must provide so the generic runner can exercise the controls completed through Phase E using the same authenticated APIs as the UI. Harbor and School are the only packs in scope through Phase G. New packs start after Phase G, one at a time, using Harbor and School as references.
+This document records the organization data each sample pack must provide so the generic runner can exercise the implemented controls through the same authenticated APIs as the UI. Phases A–G are complete for the Harbor/School reference scope, including Phase G's School Standard admission. Additional packs remain proposed and proceed one at a time; completing Phase G does not implement them or accept a later changed control.
 
 The contract follows the current action composition in `backend/operations/sample/controls/actions.py::plan_controls`. The action planners are `sample/controls/account.py::plan_account_controls`, `sample/controls/boards.py::plan_board_controls`, `sample/controls/openview.py::plan_openview_controls`, `sample/controls/access.py::plan_access_controls`, `sample/controls/sandbox.py::plan_sandbox_controls`, `sample/controls/platform.py::plan_platform_controls`, `sample/controls/read_reviews.py::plan_read_reviews`, `sample/controls/manage.py::plan_manage_controls`, and `sample/controls/reads.py::plan_read_controls`. Audit review is planned and executed in `sample/controls/actions.py`.
 
