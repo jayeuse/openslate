@@ -87,6 +87,22 @@ async function openAccount(
   await expect(page).toHaveURL(/\/profile#security$/);
 }
 
+// A revoked current session is signed out, so /login keeps the sign-in form
+// instead of sending a still-authenticated session to its start page.
+async function signedOutAfter(page: Page, revoked: () => boolean) {
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: revoked()
+        ? { authenticated: false }
+        : {
+            authenticated: true,
+            user_id: "00000000-0000-4000-8000-000000000001",
+            setup_required: false,
+          },
+    }),
+  );
+}
+
 test("loads own sessions and exposes a retryable denied and empty state", async ({
   page,
 }) => {
@@ -523,6 +539,7 @@ test("warns before ending the current session and routes to sign-in after confir
     await route.fulfill({ status: 204 });
   });
   await openAccount(page);
+  await signedOutAfter(page, () => requests.length > 0);
 
   const current = page
     .getByRole("listitem")
@@ -577,6 +594,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
     };
   });
   await openAccount(page);
+  await signedOutAfter(page, () => revocations > 0);
   await page.goto("/comms");
   await page
     .getByRole("textbox", { name: "Message", exact: true })

@@ -1018,7 +1018,10 @@ test("S28 mobile keyboard Save form rejects empty name and captures saved Charts
     route.fulfill({ json: listed([{ ...chart(), name: "Weekly intake" }]) }),
   );
   await page.goto("/openview?section=charts");
-  await page.getByRole("button", { name: "Save chart", exact: true }).focus();
+  const save = page.getByRole("button", { name: "Save chart", exact: true });
+  // A disabled button takes no focus, so wait until the draft can be saved.
+  await expect(save).toBeEnabled();
+  await save.focus();
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Save chart", exact: true });
   await dialog.getByLabel("Chart name", { exact: true }).fill("   ");

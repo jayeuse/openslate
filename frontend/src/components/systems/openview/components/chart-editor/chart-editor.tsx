@@ -457,7 +457,10 @@ export function ChartEditor({
                     ["line", "Line (date series)"],
                     ["pie", "Pie"],
                   ]}
-                  disabled={queryLoading}
+                  // The type picks its default fields, so it waits for them.
+                  disabled={
+                    queryLoading || sourcesLoading || fieldsLoading || !moduleId
+                  }
                   onValueChange={(next) => setChartType(next as ChartType)}
                 />
               ) : null}
