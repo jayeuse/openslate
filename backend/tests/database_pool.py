@@ -11,9 +11,13 @@ calls ``dispose_pooled_engines`` first.
 
 from __future__ import annotations
 
+from threading import Lock
+
 from sqlalchemy import Engine, create_engine, event
 
 _ENGINES: dict[str, Engine] = {}
+# Race tests create guarded engines from several threads at once.
+_ENGINES_LOCK = Lock()
 
 
 def _discard_session_state(dbapi_connection, connection_record) -> None:
@@ -33,15 +37,18 @@ def _discard_session_state(dbapi_connection, connection_record) -> None:
 
 def pooled_engine(database_url: str) -> Engine:
     """Return this process's pooled engine for *database_url*; callers guard it first."""
-    engine = _ENGINES.get(database_url)
-    if engine is None:
-        engine = create_engine(database_url, pool_pre_ping=True)
-        event.listen(engine, "checkin", _discard_session_state)
-        _ENGINES[database_url] = engine
-    return engine
+    with _ENGINES_LOCK:
+        engine = _ENGINES.get(database_url)
+        if engine is None:
+            engine = create_engine(database_url, pool_pre_ping=True)
+            event.listen(engine, "checkin", _discard_session_state)
+            _ENGINES[database_url] = engine
+        return engine
 
 
 def dispose_pooled_engines() -> None:
     """Close every idle pooled connection, for tests that need to be the sole consumer."""
-    for engine in _ENGINES.values():
+    with _ENGINES_LOCK:
+        engines = list(_ENGINES.values())
+    for engine in engines:
         engine.dispose()
