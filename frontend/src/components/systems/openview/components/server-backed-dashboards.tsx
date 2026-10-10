@@ -212,6 +212,12 @@ export default function ServerBackedDashboards() {
     Boolean(
       routeDashboardId && !routeClearPending && resource.detail.isPending,
     );
+  const dashboardPickerBusy =
+    dashboardLoading ||
+    routeClearPending ||
+    savePending ||
+    archivePending ||
+    Boolean(restorePendingId);
 
   useEffect(() => {
     let active = true;
@@ -1152,19 +1158,18 @@ export default function ServerBackedDashboards() {
                 </h2>
                 <Field className="min-w-0">
                   <FieldLabel htmlFor="dashboard-context">Dashboard</FieldLabel>
+                  {/* Native disabled only before the first list; a busy picker
+                      keeps keyboard focus (disabling a focused control drops it)
+                      and ignores changes until the pending work ends. */}
                   <Select
                     id="dashboard-context"
-                    className="min-h-11 w-full"
+                    className="min-h-11 w-full aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                     value={selectedDashboard?.id ?? ""}
-                    disabled={
-                      dashboardListLoading ||
-                      dashboardLoading ||
-                      routeClearPending ||
-                      savePending ||
-                      archivePending ||
-                      Boolean(restorePendingId)
-                    }
-                    onValueChange={chooseDashboard}
+                    disabled={dashboardListLoading}
+                    aria-disabled={dashboardPickerBusy || undefined}
+                    onValueChange={(id) => {
+                      if (!dashboardPickerBusy) chooseDashboard(id);
+                    }}
                   >
                     <option value="">
                       {showArchived
