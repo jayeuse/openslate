@@ -620,6 +620,48 @@ test("post editor retains a canceled close and discards only on confirmation", a
   );
 });
 
+test("a live refresh keeps an open post draft mounted and editable", async ({
+  page,
+}) => {
+  await installOpenViewEventSource(page);
+  await installBoardApi(page, () => true);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "New post", exact: true }).click();
+  const editor = page.getByRole("dialog", {
+    name: "Post editor",
+    exact: true,
+  });
+  const title = editor.getByLabel("Title", { exact: true });
+  await title.fill("Draft");
+
+  // Hold the editor's access re-check so the live refresh stays in flight.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = () => {};
+  const begun = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  await page.route(`**/api/boards/${boardId}/my-access`, async (route) => {
+    started();
+    await held;
+    await route.fallback();
+  });
+  await sendOpenViewEvent(page, "resync");
+  await begun;
+
+  // The form stays mounted and focused, and typing continues mid-refresh.
+  await expect(title).toBeFocused();
+  await title.press("End");
+  await title.pressSequentially(" to keep");
+  release();
+  await expect(title).toHaveValue("Draft to keep");
+  await expect(
+    editor.getByText("Loading editable posts…", { exact: true }),
+  ).toHaveCount(0);
+});
+
 test("the post editor has no audience choice", async ({ page }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=posts`);

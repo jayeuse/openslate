@@ -120,7 +120,9 @@ export function ServerBoardPostEditorDisplay({
       ),
     );
   }
-  if (view.status === "loading" || view.status === "error") {
+  // A live refresh keeps the confirmed access and the open draft, so the form
+  // stays mounted while it runs; only a first load or a failure replaces it.
+  if ((view.status === "loading" && !view.canEdit) || view.status === "error") {
     return createElement(
       "section",
       { "aria-label": "Manage posts", className: "min-w-0" },
