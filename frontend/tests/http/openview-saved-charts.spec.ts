@@ -974,6 +974,14 @@ for (const recover of [false, true]) {
       denied = true;
       await sendOpenViewEvent(page, "invalidate", { entity: "charts" });
       await expect.poll(() => deniedReads).toBeGreaterThan(0);
+      // The app must observe the refusal before recovery; on a slow runner the
+      // fresh read could otherwise supersede the refused one unseen.
+      await expect(
+        page.getByText(
+          "Saved charts are unavailable. Refresh to check current access.",
+          { exact: false },
+        ),
+      ).toBeVisible();
       if (recover) {
         denied = false;
         const fresh = page.waitForResponse(

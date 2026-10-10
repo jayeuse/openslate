@@ -520,9 +520,9 @@ test("Board overview keeps null date positions as separate SVG segments with exa
     .getByRole("heading", { name: "Nullable trend", exact: true })
     .locator("..")
     .locator("..");
-  await expect(
-    card.getByText("2026-10-15", { exact: true }).locator(".."),
-  ).toHaveText("2026-10-15—");
+  // The exact-values row shows the missing day; an axis tick may show its date
+  // too, depending on the width the chart has for tick labels.
+  await expect(card.getByText("2026-10-15—", { exact: true })).toBeVisible();
   // The shared renderer draws one path that restarts after the missing day.
   await expect
     .poll(

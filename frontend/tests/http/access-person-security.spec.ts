@@ -18,18 +18,25 @@ const recovery = (userId = ids.ben, revoke = false) => ({
 });
 async function setup(page: Page) {
   const api = await mockAccessApi(page);
+  // A self recovery that signs out everywhere ends the signed-in session, so
+  // /login keeps its form instead of sending a live session to its start page.
+  let signedOut = false;
+  api.on("GET", "/api/auth/session", (route) =>
+    signedOut
+      ? route.fulfill({ json: { authenticated: false } })
+      : Promise.resolve("next" as const),
+  );
   for (const userId of [ids.ben, ids.rosa, ids.ana]) {
     api.on("GET", `/api/users/${userId}/security`, (route) =>
       route.fulfill({ json: status(userId) }),
     );
-    api.on("POST", `/api/users/${userId}/recovery`, (route, call) =>
-      route.fulfill({
-        json: recovery(
-          userId,
-          Boolean((call.body as { revoke_sessions?: boolean }).revoke_sessions),
-        ),
-      }),
-    );
+    api.on("POST", `/api/users/${userId}/recovery`, (route, call) => {
+      const revoke = Boolean(
+        (call.body as { revoke_sessions?: boolean }).revoke_sessions,
+      );
+      if (revoke && userId === ids.rosa) signedOut = true;
+      return route.fulfill({ json: recovery(userId, revoke) });
+    });
     api.on("POST", `/api/users/${userId}/mfa/reset`, (route) =>
       route.fulfill({
         json: {
