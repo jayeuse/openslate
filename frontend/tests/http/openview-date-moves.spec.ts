@@ -731,9 +731,15 @@ test("S19 Calendar drops an undated card on a visible day without an eager read 
   });
   // The loaded move list shifts the grid. Measure only after its source exists.
   await expect(source).toBeVisible();
-  const target = await page
-    .getByRole("group", { name: "Move to 2026-03-09", exact: true })
-    .boundingBox();
+  const day = page.getByRole("group", {
+    name: "Move to 2026-03-09",
+    exact: true,
+  });
+  // A drop point below the viewport starts auto-scroll, which moves the grid
+  // under the pointer by a timing-dependent amount; drop on a visible point.
+  await day.scrollIntoViewIfNeeded();
+  await expect(source).toBeInViewport();
+  const target = await day.boundingBox();
   await drag(page, source, {
     x: target!.x + target!.width / 2,
     y: target!.y + target!.height / 2,
