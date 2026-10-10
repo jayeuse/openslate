@@ -28,9 +28,10 @@ const routeTitles = [
   ["/setup", "Setup guide | OpenSlate"],
 ] as const;
 
-test("each route names itself in the browser tab", async ({ page }) => {
-  await signIn(page);
-  for (const [path, title] of routeTitles) {
+// One test per route: each navigation gets its own time budget.
+for (const [path, title] of routeTitles) {
+  test(`${path} names itself in the browser tab`, async ({ page }) => {
+    await signIn(page);
     if (path === "/login") {
       await page.route("**/api/auth/session", (route) =>
         route.fulfill({ json: { authenticated: false } }),
@@ -41,8 +42,8 @@ test("each route names itself in the browser tab", async ({ page }) => {
     }
     await page.goto(path);
     await expect(page, path).toHaveTitle(title);
-  }
-});
+  });
+}
 
 test("the breadcrumb names the workspace and its open section", async ({
   page,

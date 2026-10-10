@@ -8,20 +8,28 @@ const draftA = accessDraftStorageKey(userA, "identity");
 const draftB = accessDraftStorageKey(userB, "identity");
 
 async function mockSession(page: Page, verifiedUser: () => string) {
+  // A completed logout ends the session, so /login keeps its form instead of
+  // sending a still-authenticated session back to its start page.
+  let signedOut = false;
   await page.route("**/api/**", async (route) => {
     const { pathname } = new URL(route.request().url());
     if (pathname === "/api/auth/session") {
       await route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({
-          authenticated: true,
-          user_id: verifiedUser(),
-          setup_required: false,
-        }),
+        body: JSON.stringify(
+          signedOut
+            ? { authenticated: false }
+            : {
+                authenticated: true,
+                user_id: verifiedUser(),
+                setup_required: false,
+              },
+        ),
       });
       return;
     }
     if (pathname === "/api/auth/logout") {
+      signedOut = true;
       await route.fulfill({ status: 204, body: "" });
       return;
     }
