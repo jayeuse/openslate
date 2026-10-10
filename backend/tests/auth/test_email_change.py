@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -30,11 +31,16 @@ def email_boundary(monkeypatch, unit_workspace_policy):
     from app.common.dependencies import auth as dependencies
     from app.core.database import get_db
     from app.core.integrations import supabase_auth
+    from app.systems.access.auth import request_security
     from app.systems.access.auth.aggregate_router import router
     from app.systems.access.identity import provider_actions
     from app.systems.manage.audit import service as audit_service
     from app.systems.manage.workspace.models import WorkspaceProfile
 
+    # Pin the browser origin so the strict test environment matches this client.
+    monkeypatch.setattr(
+        request_security, "get_settings", lambda: SimpleNamespace(public_origin=ORIGIN)
+    )
     now = datetime.now(UTC)
     provider_id, provider_session_id = uuid4(), uuid4()
     key = ec.generate_private_key(ec.SECP256R1())
