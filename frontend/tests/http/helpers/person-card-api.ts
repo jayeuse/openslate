@@ -394,8 +394,9 @@ export async function installPersonCardApi(
   });
   await page.route("**/api/users/*/avatar", async (route) => {
     state.avatarReads.push(new URL(route.request().url()).pathname);
+    // Every read waits while the gate is closed: a Strict Mode remount can
+    // abort the first read and send a second one.
     const hold = state.holdAvatar;
-    state.holdAvatar = null;
     hold?.start();
     if (hold) await hold.waiting;
     await route.fulfill({

@@ -56,6 +56,10 @@ export const test = base.extend({
     await context.route("**/api/notifications/unread-count", (route) =>
       route.fulfill({ json: { unread_count: 0 } }),
     );
+    // The synthetic server has no event stream: proxied, it fails at a random
+    // moment and the resync reloads whatever the journey is doing. Holding the
+    // request keeps it connecting; specs that drive the stream override it.
+    await context.route("**/api/events", () => undefined);
     // Preferences are read under the verified session ID, which individual
     // journeys may override independently of this default navigation identity.
     // Full preferences mirror the separate strict9a DTO; each context owns its state.
