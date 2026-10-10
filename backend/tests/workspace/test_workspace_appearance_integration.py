@@ -1,4 +1,4 @@
-"""Organization appearance through real Auth and the guarded runtime database."""
+"""Organization appearance through the real login route (fake provider) and the runtime DB."""
 
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -15,7 +15,7 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
 _FIELDS = (
     "revision",

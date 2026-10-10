@@ -1,4 +1,4 @@
-"""Organization profile privacy through real provider identities and runtime-role requests."""
+"""Organization profile privacy through signed sessions (fake provider) and the runtime role."""
 
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -15,7 +15,7 @@ from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import WorkspaceProfile
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
 CONTACT_FIELDS = {"contact_email", "contact_phone", "postal_address"}
 PROFILE_VALUES = {

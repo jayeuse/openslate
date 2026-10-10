@@ -1,4 +1,4 @@
-"""Partial preferences through real Auth, CSRF, runtime PostgreSQL and audit."""
+"""Partial preferences through signed sessions (fake provider), CSRF, runtime PostgreSQL, audit."""
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -15,7 +15,7 @@ from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
-from tests.auth.test_provider_auth_integration import provider_account  # noqa: F401
+from tests.fake_provider_support import fake_provider, provider_account  # noqa: F401
 
 pytestmark = pytest.mark.integration
 DEFAULT_APPEARANCE = {"motion": "system", "keyboard_shortcuts": True}

@@ -1,4 +1,4 @@
-"""Workspace security contracts through real provider auth and the runtime DB role."""
+"""Workspace security contracts through signed sessions (fake provider) and the runtime DB role."""
 
 from datetime import datetime
 from uuid import UUID
@@ -16,7 +16,7 @@ from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import WorkspaceProfile
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
 
 _FIELDS = (

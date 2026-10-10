@@ -11,6 +11,9 @@ from tests.record_queries.export_http_support import (
     export_world as export_world,
 )
 from tests.record_queries.export_http_support import (
+    fake_provider as fake_provider,
+)
+from tests.record_queries.export_http_support import (
     provider_account as provider_account,
 )
 

@@ -14,14 +14,15 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from tests.access.test_user_security_http_integration import world as _world_fixture
-from tests.auth.test_provider_auth_integration import provider_account as _provider_account
+from tests.fake_provider_support import fake_provider as fake_provider
+from tests.fake_provider_support import owned_account
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def provider_account():
-    yield from _provider_account.__wrapped__()
+def provider_account(fake_provider):
+    yield from owned_account(fake_provider)
 
 
 @pytest.fixture
@@ -243,7 +244,7 @@ def test_unconfirmed_revocation_commit_does_not_send_email_or_claim_success(
     assert "Private persistence detail" not in response.text
 
 
-def test_reciprocal_administrators_use_real_sessions_without_deadlock(world):
+def test_reciprocal_administrators_use_real_sessions_without_deadlock(world, fake_provider):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
@@ -255,7 +256,7 @@ def test_reciprocal_administrators_use_real_sessions_without_deadlock(world):
     from app.core.integrations.supabase_auth import get_supabase_auth_client
     from app.main import create_app
 
-    owned = _provider_account.__wrapped__()
+    owned = owned_account(fake_provider)
     email, password, provider_id, local_id, owner = next(owned)
     provider = get_supabase_auth_client()
     transport = provider._transport
@@ -266,7 +267,11 @@ def test_reciprocal_administrators_use_real_sessions_without_deadlock(world):
             actor = db.get(User, local_id)
             actor.supabase_user_id, actor.role = provider_id, "admin"
             db.commit()
-        provider._transport = None
+        # The second administrator signs in through the fake provider, then requests use
+        # the world's own provider boundary again.
+        provider._transport = httpx.MockTransport(fake_provider.respond)
+        provider._jwks = {}
+        provider._jwks_expires_at = provider._next_jwks_fetch_at = 0
         assert (
             client.post("/api/auth/login", json={"email": email, "password": password}).status_code
             == 200

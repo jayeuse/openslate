@@ -1,4 +1,8 @@
-"""Owned export journeys through actual Auth, policy, runtime role and PostgreSQL."""
+"""Owned export journeys through signed Auth, policy, runtime role and PostgreSQL.
+
+The reader signs in through the real login route against the fake provider: these tests
+check export authorization and output, not Supabase Auth.
+"""
 
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -22,7 +26,8 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from tests.auth.test_provider_auth_integration import provider_account as provider_account
+from tests.fake_provider_support import fake_provider as fake_provider
+from tests.fake_provider_support import provider_account as provider_account
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 

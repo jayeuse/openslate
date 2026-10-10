@@ -21,8 +21,8 @@ from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
-from tests.auth.test_provider_auth_integration import provider_account  # noqa: F401
 from tests.auth.test_supabase_auth_core import _signed_access
+from tests.fake_provider_support import fake_provider, provider_account  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -103,8 +103,8 @@ def world(provider_account, monkeypatch):  # noqa: F811
             )
         )
         db.commit()
-    # A real disposable Auth login creates its real provider session row. No
-    # get_current_identity/user override or fabricated auth.sessions admission.
+    # The real login route admits a real auth.sessions row through the fake provider.
+    # No get_current_identity/user override or fabricated auth.sessions admission.
     client = TestClient(create_app(), base_url=settings.public_origin)
     client.headers["Origin"] = settings.public_origin
     try:

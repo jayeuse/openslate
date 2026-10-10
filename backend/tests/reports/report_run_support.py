@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
 from uuid import UUID
 
-import httpx
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -17,8 +16,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
-from app.core.config import get_settings
-from app.core.config.provider_instance import assert_provider_instance
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.core.integrations.supabase_auth import get_supabase_auth_client
@@ -35,6 +32,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_router import router as record_query_router
 from tests.conftest import _guard_integration_database, guarded_create_engine
+from tests.fake_provider_support import install_fake_provider, real_session_pool
 from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -64,7 +62,7 @@ class _RunFixture:
 
 
 @pytest.fixture
-def report_run_fixture() -> Generator[_RunFixture, None, None]:
+def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture, None, None]:
     owner_url = os.environ["MIGRATION_DATABASE_URL"]
     runtime_url = os.environ["TEST_DATABASE_URL"]
     _guard_integration_database(owner_url)
@@ -91,35 +89,18 @@ def report_run_fixture() -> Generator[_RunFixture, None, None]:
     ]
     client: TestClient | None = None
     resources = ExitStack()
-    settings = get_settings()
-    assert_provider_instance(
-        dict(os.environ), database_url=runtime_url, expected_user="openslate_runtime"
-    )
     provider = get_supabase_auth_client()
     identities = []
     try:
-        admin = resources.enter_context(
-            httpx.Client(
-                base_url=settings.supabase_url.rstrip("/") + "/auth/v1/",
-                headers={"apikey": settings.supabase_secret_key.get_secret_value()},
-                timeout=15,
-            )
+        # Report runs are the subject, not Supabase Auth: the three actors sign in against
+        # the fake provider, and OpenSlate's real admission issues their sessions.
+        fake = install_fake_provider(
+            resources.enter_context(pytest.MonkeyPatch.context()), real_session_pool(request.config)
         )
-
-        def remove_provider_user(provider_id: UUID) -> None:
-            response = admin.delete(f"admin/users/{provider_id}")
-            assert response.status_code in {200, 204, 404}
-
         for actor_id in actor_ids:
             email = f"report-run-{actor_id.hex}@example.test"
             password = token_urlsafe(32)
-            response = admin.post(
-                "admin/users", json={"email": email, "password": password, "email_confirm": True}
-            )
-            assert response.status_code in {200, 201}
-            provider_id = UUID(response.json()["id"])
-            resources.callback(remove_provider_user, provider_id)
-            identities.append((provider_id, email, password))
+            identities.append((fake.add(email, password), email, password))
         with AuditSession(owner_engine) as setup:
             setup.info[AUDIT_CONTEXT_KEY] = AuditContext(
                 request_id=uuid7(),
