@@ -1,6 +1,7 @@
 """MFA sample orchestration faults; real provider acceptance remains a separate boundary."""
 
 import json
+import re
 from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import replace
@@ -380,12 +381,14 @@ def test_mfa_success_requires_real_step_up_revocation_and_exact_restoration(
     for secret in (
         PASSWORD,
         SEED,
-        OTP,
         "private-qr",
         "private-otpauth-uri",
         "private-fixture-csrf",
     ):
         assert secret not in serialized
+    # The six-digit code can occur by chance inside a random ID or a timestamp's
+    # microseconds, so it must not appear as a value of its own.
+    assert not re.search(rf"(?<![0-9A-Za-z.]){OTP}(?![0-9A-Za-z])", serialized)
 
 
 @pytest.mark.parametrize(

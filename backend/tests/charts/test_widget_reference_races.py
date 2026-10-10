@@ -1,9 +1,7 @@
 """Independent runtime HTTP sessions prove source contention and reference serialization."""
 
-import json
 import threading
 import time
-from pathlib import Path
 
 import pytest
 from sqlalchemy import event, text
@@ -12,15 +10,6 @@ from tests.charts.widget_reference_support import reference_race_world as refere
 
 pytestmark = pytest.mark.integration
 _WAIT = 10.0
-
-
-def _lineage(**values):
-    path = (
-        Path(__file__).parents[3]
-        / ".agent-runtime/system-completion-tier-2/Resume-1/S26/stage-b2/lock-lineage.jsonl"
-    )
-    with path.open("a") as output:
-        output.write(json.dumps(values) + "\n")
 
 
 class _Pause:
@@ -99,7 +88,7 @@ def test_attachment_wins_then_archive_observes_committed_reference(reference_rac
         try:
             assert pause.ready.wait(_WAIT)
             second, second_results = _start(lambda: _archive(world, archiver))
-            waiting = _blocked(world.owner, pause.pid)
+            _blocked(world.owner, pause.pid)
         finally:
             pause.release.set()
             attached = _join(first, first_results)
@@ -108,14 +97,6 @@ def test_attachment_wins_then_archive_observes_committed_reference(reference_rac
     assert attached.status_code == (201 if kind == "board" else 200)
     assert archived is not None and archived.status_code == 409
     assert archived.json()["detail"]["code"] == "chart_in_use"
-    _lineage(
-        case="attach-first",
-        kind=kind,
-        holder=pause.pid,
-        blocked=waiting,
-        attachment=attached.status_code,
-        archive=archived.status_code,
-    )
 
 
 @pytest.mark.parametrize("kind", ["board", "dashboard"])
@@ -145,14 +126,6 @@ def test_archive_wins_attachment_busy_then_committed_archive_is_invalid(referenc
             )
             == 0
         )
-    _lineage(
-        case="archive-first",
-        kind=kind,
-        holder=pause.pid,
-        busy=503,
-        archive=204,
-        committed_attachment=409,
-    )
 
 
 @pytest.mark.parametrize("held", ["module", "chart", "board", "dashboard", "widget"])
@@ -176,7 +149,6 @@ def test_nowait_busy_refusal_releases_earlier_locks_without_partial_writes(
             revision = 2
         with world.owner.connect() as holder:
             transaction = holder.begin()
-            holder_pid = holder.scalar(text("SELECT pg_backend_pid()"))
             holder.execute(
                 text(f"SELECT id FROM {table} WHERE id = :id FOR UPDATE"), {"id": identifier}
             )
@@ -237,14 +209,6 @@ def test_nowait_busy_refusal_releases_earlier_locks_without_partial_writes(
                     )
                     == "S"
                 )
-        _lineage(
-            case="busy-release",
-            held=held,
-            holder=holder_pid,
-            status=503,
-            parent_revision=revision,
-            earlier_locks_released=True,
-        )
 
 
 def test_source_nowait_breaks_publication_and_board_group_reverse_edges(reference_race_world):
@@ -284,7 +248,7 @@ def test_source_nowait_breaks_publication_and_board_group_reverse_edges(referenc
                 return True
 
             publication, published_results = _start(publication_lock_order)
-            publication_pid = _blocked(world.owner, group_pid)
+            _blocked(world.owner, group_pid)
         finally:
             pause.release.set()
             attachment.join(_WAIT)
@@ -311,15 +275,6 @@ def test_source_nowait_breaks_publication_and_board_group_reverse_edges(referenc
             )
             == 0
         )
-    _lineage(
-        case="reverse-edges",
-        source=pause.pid,
-        group=group_pid,
-        publication=publication_pid,
-        busy=503,
-        group_status=200,
-        partial_widgets=0,
-    )
 
 
 def test_module_move_after_unlocked_discovery_refuses_the_source(reference_race_world):
@@ -354,7 +309,6 @@ def test_module_move_after_unlocked_discovery_refuses_the_source(reference_race_
             )
             == 1
         )
-    _lineage(case="discovery-move", holder=pause.pid, status=409, partial_widgets=0)
 
 
 def test_opposite_widget_order_uses_the_same_current_chart_lock_order(reference_race_world):
@@ -390,4 +344,3 @@ def test_opposite_widget_order_uses_the_same_current_chart_lock_order(reference_
             assert first == acquired == expected
     finally:
         event.remove(world.runtime, "before_cursor_execute", observe)
-    _lineage(case="deterministic-order", chart_ids=expected, order_same=True)
