@@ -399,7 +399,7 @@ def transfer_and_clear(
         "delete_board_chart",
         204,
         admin=True,
-        body={"revision": attached.board_revision},
+        params={"revision": attached.board_revision},
         entity="board_widgets",
         entity_id=str(attached.widget.id),
         mutation="delete",

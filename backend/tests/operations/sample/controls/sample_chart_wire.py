@@ -413,7 +413,9 @@ class ChartWire:
                     row["revision"] += 1
                     return reply(201, {"widget": added, "board_revision": row["revision"]})
                 if method == "DELETE":
-                    assert body == {"revision": row["revision"]}
+                    # The router reads the Board revision from the query, like the frontend.
+                    assert body is None
+                    assert int(request.url.params["revision"]) == row["revision"]
                     self.widgets[key] = [
                         item for item in self.widgets[key] if item["id"] != path.split("/")[-1]
                     ]
