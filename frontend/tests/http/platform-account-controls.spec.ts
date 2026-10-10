@@ -1080,9 +1080,9 @@ test.describe("U4 evidence-only Account directory cache", () => {
       primedAt = Date.now();
       await page.getByRole("button", { name: "Account", exact: true }).click();
       await page
-        .getByRole("menuitem", { name: "Account settings", exact: true })
+        .getByRole("menuitem", { name: "Your profile", exact: true })
         .click();
-      await expect(page).toHaveURL(/\/platform\?section=account$/);
+      await expect(page).toHaveURL(/\/profile$/);
       const sessions = page.getByRole("list", {
         name: "Active sessions",
         exact: true,

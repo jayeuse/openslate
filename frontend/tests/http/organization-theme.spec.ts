@@ -588,10 +588,11 @@ test("Organization preview survives personal storage events and Save when storag
   expect(api.writes).toEqual([{ revision: 4, theme: "stockroom" }]);
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Account settings", exact: true })
+    .getByRole("menuitem", { name: "Your profile", exact: true })
     .click();
+  await expect(page).toHaveURL(/\/profile$/);
   await expect(
-    page.getByRole("combobox", { name: "Theme", exact: true }),
+    page.getByRole("radiogroup", { name: "Color mode", exact: true }),
   ).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "stockroom");
 });

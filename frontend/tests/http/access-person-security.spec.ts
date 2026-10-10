@@ -271,7 +271,7 @@ test("pending security blocks close, tab and route while preserving an existing 
   await page.getByRole("link", { name: "People", exact: true }).first().click();
   await page
     .getByRole("table", { name: "People" })
-    .getByRole("button", { name: /^Ben Cruz/ })
+    .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
   const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
   await sheet.getByLabel("Job title").fill("Retained draft");
@@ -484,7 +484,7 @@ test("browser Back safely departs and delayed command cannot overwrite its new o
   await page.getByRole("link", { name: "People", exact: true }).first().click();
   await page
     .getByRole("table", { name: "People" })
-    .getByRole("button", { name: /^Ben Cruz/ })
+    .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
   await page
     .getByRole("dialog", { name: "Ben Cruz", exact: true })
@@ -507,7 +507,7 @@ test("browser Back safely departs and delayed command cannot overwrite its new o
   else {
     await page
       .getByRole("table", { name: "People" })
-      .getByRole("button", { name: /^Ben Cruz/ })
+      .getByRole("button", { name: "Manage Ben Cruz", exact: true })
       .click();
     await sheet.getByRole("tab", { name: "Security", exact: true }).click();
   }
