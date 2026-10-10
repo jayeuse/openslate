@@ -918,7 +918,7 @@ export function ServerBackedBoardPostEditor({
     [boardId, onDraftStateChange],
   );
   const view = editor.view;
-  const canEdit = view.active && view.status === "ready" && view.canEdit;
+  const canEdit = view.active && view.canEdit;
   const hasUnsavedChanges = view.dirty || view.scheduleDirty;
 
   function requestClose() {

@@ -227,9 +227,11 @@ export function useServerBoardPostEditor({
   ]);
 
   const access = current.access;
+  // A background re-check keeps this Board's last confirmed access, so open menus
+  // and editors stay mounted; a denial or failure clears it.
   const canEdit =
     boardStatus === "active" &&
-    current.status === "ready" &&
+    (current.status === "ready" || current.status === "loading") &&
     access?.edit === true;
   const canManage = access?.manage === true;
   const canArchiveSelected =
