@@ -5014,8 +5014,18 @@ test("Dashboard cadence counts from fetch completion and resumes overdue reads o
     name: "Complete data for Count by Category",
   });
   const refresh = page.getByRole("button", { name: "Refresh now" });
+  // Count, never wait: while a read runs the button is named "Refreshing…",
+  // and a waiting read would block the paused clock that read needs.
+  const ready = page.getByRole("button", {
+    name: "Refresh now",
+    disabled: false,
+  });
   const settle = async () => {
-    await settleDashboardClock(page, () => refresh.isEnabled(), true);
+    await settleDashboardClock(
+      page,
+      async () => (await ready.count()) === 1,
+      true,
+    );
     await expect(refresh).toBeEnabled();
   };
   const setVisibility = async (state: DocumentVisibilityState) => {
