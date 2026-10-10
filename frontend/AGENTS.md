@@ -58,7 +58,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Follow the root test workflow: focused cases during repair, one relevant batch when the work unit stabilizes, and the canonical gate only right before a push. Reuse valid passing evidence until relevant inputs change.
 - Playwright Test runs retained `tests/isolated/` protection and `tests/http/` browser journeys. Prefer HTTP/E2E behavior coverage; admit a new isolated case only for an important failure that is impractical to exercise end to end under `tdd-workflow`. Targeted HTTP contracts use the pinned Chromium project against the loopback `next dev` HMR server without generated frontend runtime configuration.
-- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref>` command. Its frontend lane runs formatting, lint, type checking, all retained isolated and HTTP tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Production contains only FastAPI and static frontend assets; Node is a development and build-time dependency.
+- When preparing to push, use the root `python3 scripts/prepush.py --base <base-ref> --serial` command. Its frontend lane runs formatting, lint, type checking, all retained isolated and HTTP tests, and one native-or-container production build. Use `npm run verify` to repair a failed frontend gate. Production contains only FastAPI and static frontend assets; Node is a development and build-time dependency.
 - `tooling/` contains frontend-owned Node launchers. Developers invoke them through `npm` scripts; repository-wide automation remains in the root `scripts/` directory.
 
 ## TDD and acceptance

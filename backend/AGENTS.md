@@ -58,5 +58,5 @@ The deployment profile is one full stack per client (single tenant, micro–medi
 
 ## Verification and references
 
-- Use the root `python3 scripts/prepush.py --base <base-ref>` command for the final pre-push gate. Its backend lane runs Ruff, mypy, tooling checks, the backend-only coverage command, applicable container checks, and full-stack acceptance without repeating backend regression. Use the lower-level commands above only for focused repair. The disposable runner applies migrations, checks Alembic drift, rejects required-test skips, and writes overall/changed coverage evidence under `test-results/coverage/`.
+- Use the root `python3 scripts/prepush.py --base <base-ref> --serial` command for the final pre-push gate. Its backend lane runs Ruff, mypy, tooling checks, the backend-only coverage command, applicable container checks, and full-stack acceptance without repeating backend regression. Use the lower-level commands above only for focused repair. The disposable runner applies migrations, checks Alembic drift, rejects required-test skips, and writes overall/changed coverage evidence under `test-results/coverage/`.
 - See `../AGENTS.md` for global rules, `migrations/AGENTS.md` for schema workflow, and `../docs/architecture/README.md` for deeper architecture.
