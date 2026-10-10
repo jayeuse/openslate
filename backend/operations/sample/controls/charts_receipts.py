@@ -40,7 +40,9 @@ def _facts(
     if len(rows) != 1:
         raise ValueError("Chart action result is not unique")
     result = rows[0]
-    actors, mappings = manifest["actor_ids"], manifest["mappings"]
+    # The manifest lists sample people only; the administrator is recorded as admin_id.
+    actors = {**manifest["actor_ids"], "admin": admin_id}
+    mappings = manifest["mappings"]
     if (
         result["action_key"],
         result["target_key"],

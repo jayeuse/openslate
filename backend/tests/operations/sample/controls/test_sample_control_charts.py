@@ -155,7 +155,8 @@ def test_chart_lifecycle_uses_real_client_and_preserves_owned_sources(chart_setu
 def _manifest(context, result):
     return {
         "control_results": [result],
-        "actor_ids": context.user_ids,
+        # A real manifest lists sample people only; the administrator is admin_id.
+        "actor_ids": {k: v for k, v in context.user_ids.items() if k != "admin"},
         "mappings": {
             **context.runtime_mappings,
             "departments": context.department_ids,
