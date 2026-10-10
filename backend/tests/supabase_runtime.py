@@ -180,8 +180,10 @@ class DisposablePostgres:
         values = {
             **self.keys,
             "OPENSLATE_INSTANCE_ID": self.project,
-            # Exercise expiry and real provider rotation within the backend gate.
-            "JWT_EXPIRY": "60",
+            # Exercise expiry and real provider rotation within the backend gate. Refresh
+            # reuses an access token with more than 30 s left (provider_sessions.py), and
+            # fresh-token refresh tests must keep that path, so stay well above 30 s.
+            "JWT_EXPIRY": "45",
             "SUPABASE_DB_PORT": str(self.port),
             "SUPABASE_API_PORT": str(self.api_port),
             "SUPABASE_MAIL_PORT": str(self.mail_port),

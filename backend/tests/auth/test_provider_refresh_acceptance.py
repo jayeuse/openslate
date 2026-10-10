@@ -24,7 +24,7 @@ from app.systems.access.users.models import User
 pytest_plugins = ("tests.auth.test_provider_auth_integration",)
 pytestmark = pytest.mark.integration
 
-_MAX_PROVIDER_JWT_WAIT_SECONDS = 90
+_MAX_PROVIDER_JWT_WAIT_SECONDS = 60
 
 
 def _cookie_has_flag(headers: list[str], name: str, flag: str) -> bool:
@@ -66,8 +66,8 @@ def _wait_for_provider_expiry(expiry: int) -> None:
         return
     if remaining > _MAX_PROVIDER_JWT_WAIT_SECONDS:
         pytest.fail(
-            "Disposable Supabase Auth JWT lifetime exceeds 90 seconds; "
-            "start the acceptance stack with JWT_EXPIRY=60",
+            f"Disposable Supabase Auth JWT lifetime exceeds {_MAX_PROVIDER_JWT_WAIT_SECONDS} "
+            "seconds; start the acceptance stack with JWT_EXPIRY=45",
             pytrace=False,
         )
 
@@ -79,7 +79,11 @@ def _wait_for_provider_expiry(expiry: int) -> None:
             return
         budget = deadline - monotonic()
         if budget <= 0:
-            pytest.fail("Provider access JWT did not expire within 90 seconds", pytrace=False)
+            pytest.fail(
+                "Provider access JWT did not expire within "
+                f"{_MAX_PROVIDER_JWT_WAIT_SECONDS} seconds",
+                pytrace=False,
+            )
         wake.wait(min(remaining + 0.01, budget))
 
 
