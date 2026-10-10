@@ -53,8 +53,8 @@ def test_public_appearance_is_anonymous_theme_only_and_no_store():
 
 
 @pytest.fixture
-def appearance_workspace(provider_account):
-    email, password, provider_id, local_id, owner = provider_account
+def appearance_workspace(fake_provider_account):
+    email, password, provider_id, local_id, owner = fake_provider_account
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None

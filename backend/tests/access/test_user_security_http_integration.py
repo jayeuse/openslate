@@ -22,7 +22,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from tests.auth.test_supabase_auth_core import _signed_access
-from tests.fake_provider_support import fake_provider, provider_account  # noqa: F401
+from tests.fake_provider_support import fake_provider, fake_provider_account  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -71,8 +71,8 @@ class SecurityWorld:
 
 
 @pytest.fixture
-def world(provider_account, monkeypatch):  # noqa: F811
-    email, password, provider_id, actor_id, owner = provider_account
+def world(fake_provider_account, monkeypatch):  # noqa: F811
+    email, password, provider_id, actor_id, owner = fake_provider_account
     settings = get_settings()
     with Session(owner) as db:
         actor = db.get(User, actor_id)

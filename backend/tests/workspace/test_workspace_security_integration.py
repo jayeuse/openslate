@@ -41,8 +41,8 @@ _FIELDS = (
 
 
 @pytest.fixture
-def security_workspace(provider_account):
-    email, password, provider_id, local_id, owner = provider_account
+def security_workspace(fake_provider_account):
+    email, password, provider_id, local_id, owner = fake_provider_account
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None

@@ -28,8 +28,8 @@ PROFILE_VALUES = {
 
 
 @pytest.fixture
-def profile_client(provider_account):
-    email, password, provider_id, actor_id, owner = provider_account
+def profile_client(fake_provider_account):
+    email, password, provider_id, actor_id, owner = fake_provider_account
     with Session(owner) as db:
         user = db.get(User, actor_id)
         assert user is not None

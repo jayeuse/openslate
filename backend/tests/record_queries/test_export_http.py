@@ -35,7 +35,7 @@ from tests.record_queries.export_http_support import (
     fake_provider as fake_provider,
 )
 from tests.record_queries.export_http_support import (
-    provider_account as provider_account,
+    fake_provider_account as fake_provider_account,
 )
 
 pytestmark = pytest.mark.integration

@@ -27,7 +27,7 @@ from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.fake_provider_support import fake_provider as fake_provider
-from tests.fake_provider_support import provider_account as provider_account
+from tests.fake_provider_support import fake_provider_account as fake_provider_account
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 
@@ -99,8 +99,8 @@ class ExportWorld:
 
 
 @pytest.fixture
-def export_world(provider_account) -> Iterator[ExportWorld]:
-    email, password, provider_id, actor_id, owner = provider_account
+def export_world(fake_provider_account) -> Iterator[ExportWorld]:
+    email, password, provider_id, actor_id, owner = fake_provider_account
     with Session(owner) as db:
         actor = db.get(User, actor_id)
         assert actor is not None

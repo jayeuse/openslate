@@ -15,7 +15,7 @@ from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
-from tests.fake_provider_support import fake_provider, provider_account  # noqa: F401
+from tests.fake_provider_support import fake_provider, fake_provider_account  # noqa: F401
 
 pytestmark = pytest.mark.integration
 DEFAULT_APPEARANCE = {"motion": "system", "keyboard_shortcuts": True}
@@ -48,8 +48,8 @@ def _login(account):
 
 
 @pytest.fixture
-def preferences_client(provider_account):  # noqa: F811
-    _, _, provider_id, local_id, owner = provider_account
+def preferences_client(fake_provider_account):  # noqa: F811
+    _, _, provider_id, local_id, owner = fake_provider_account
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None
@@ -57,9 +57,9 @@ def preferences_client(provider_account):  # noqa: F811
         # An existing explicit choice isolates transport tests from the new-user default.
         user.theme_preference = "light"
         db.commit()
-    client = _login(provider_account)
+    client = _login(fake_provider_account)
     try:
-        yield client, provider_account, f"/api/users/{local_id}/preferences"
+        yield client, fake_provider_account, f"/api/users/{local_id}/preferences"
     finally:
         client.close()
 

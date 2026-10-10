@@ -18,7 +18,7 @@ from app.systems.sandbox.records.models import Record
 from tests.record_queries.export_http_support import ExportWorld
 from tests.record_queries.export_http_support import export_world as export_world
 from tests.record_queries.export_http_support import fake_provider as fake_provider
-from tests.record_queries.export_http_support import provider_account as provider_account
+from tests.record_queries.export_http_support import fake_provider_account as fake_provider_account
 
 pytestmark = pytest.mark.integration
 PATH = "/api/records/aggregate-snapshots"

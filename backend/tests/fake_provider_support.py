@@ -309,7 +309,7 @@ def fake_provider(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureReques
 
 
 def owned_account(fake: FakeProvider, *, prefix: str = "auth-journey") -> Iterator[tuple]:
-    """``(email, password, provider_id, local_id, owner)``, like the real ``provider_account``.
+    """``(email, password, provider_id, local_id, owner)``, like the real ``fake_provider_account``.
 
     The local row starts unbound: tests bind ``supabase_user_id`` themselves.
     """
@@ -351,5 +351,5 @@ def owned_account(fake: FakeProvider, *, prefix: str = "auth-journey") -> Iterat
 
 
 @pytest.fixture
-def provider_account(fake_provider: FakeProvider) -> Iterator[tuple]:
+def fake_provider_account(fake_provider: FakeProvider) -> Iterator[tuple]:
     yield from owned_account(fake_provider)
