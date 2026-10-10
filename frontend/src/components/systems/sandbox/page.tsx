@@ -1,5 +1,7 @@
 "use client";
 
+import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -835,7 +837,12 @@ export default function SandboxPage() {
       if (section !== "Build" || commandBusy || conflict) return;
       if (
         (!event.metaKey && !event.ctrlKey) ||
-        !["z", "y"].includes(event.key.toLowerCase())
+        !(
+          [
+            SANDBOX_SHORTCUTS.undo.key,
+            SANDBOX_SHORTCUTS.redo.key,
+          ] as readonly string[]
+        ).includes(event.key.toLowerCase())
       )
         return;
       if (
@@ -848,7 +855,9 @@ export default function SandboxPage() {
       if (document.querySelector("[role='dialog'], [role='alertdialog']"))
         return;
       event.preventDefault();
-      void (event.key.toLowerCase() === "y" || event.shiftKey
+      void (event.key.toLowerCase() === SANDBOX_SHORTCUTS.redo.key ||
+      (event.key.toLowerCase() === SANDBOX_SHORTCUTS.redo.alternate.key &&
+        event.shiftKey === SANDBOX_SHORTCUTS.redo.alternate.shift)
         ? redo()
         : undo());
     }

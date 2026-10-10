@@ -5062,6 +5062,180 @@ test("disabled convenience shortcuts preserve canvas buttons and essential arrow
   ).toContainText("Convenience shortcuts are off in Appearance");
 });
 
+for (const preference of ["off", "pending"] as const) {
+  test(`S23 registered shortcuts ${preference} block Delete and F2 without disabling essential controls`, async ({
+    page,
+  }) => {
+    let release = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/users/*/preferences", async (route) => {
+      if (preference === "pending") await waiting;
+      await route.fulfill({
+        json: {
+          user_id: "00000000-0000-4000-8000-000000000001",
+          theme: "light",
+          appearance: {
+            motion: "reduce",
+            keyboard_shortcuts: preference !== "off",
+          },
+        },
+      });
+    });
+    try {
+      const sandbox = await openAuthenticatedSandbox(page);
+      const canvas = page.getByRole("region", { name: "Organization canvas" });
+      const node = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
+      await node.locator("text").first().click();
+      await canvas.focus();
+      await page.keyboard.press("F2");
+      await expect(
+        page.getByRole("textbox", { name: "Canvas name editor" }),
+      ).toHaveCount(0);
+      await page.keyboard.press("Delete");
+      await expect(page.getByRole("alertdialog")).toHaveCount(0);
+      await page.keyboard.press("?");
+      await expect(
+        page.getByRole("heading", { name: "Canvas controls", exact: true }),
+      ).toBeHidden();
+      await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+      const zoom = await page
+        .getByRole("status", { name: "Canvas zoom" })
+        .innerText();
+      await canvas.focus();
+      await page.keyboard.press("0");
+      await expect(
+        page.getByRole("status", { name: "Canvas zoom" }),
+      ).toHaveText(zoom);
+      const field = node.getByRole("button", {
+        name: "Title, Text, optional",
+        exact: true,
+      });
+      await field.focus();
+      await page.keyboard.press("Enter");
+      await expect(field).toHaveAttribute("aria-pressed", "true");
+      const status = node.getByRole("button", {
+        name: "Status, Select, optional",
+        exact: true,
+      });
+      await status.focus();
+      await page.keyboard.press("Space");
+      await expect(status).toHaveAttribute("aria-pressed", "true");
+      expect(sandbox.document().design.modules).toHaveLength(3);
+    } finally {
+      release();
+    }
+  });
+}
+
+test("S23 registered shortcuts enabled retain real help fit rename and removal review", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const node = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
+  await node.locator("text").first().click();
+  await canvas.focus();
+  await page.keyboard.press("?");
+  await expect(
+    page.getByRole("heading", { name: "Canvas controls", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  const zoom = await page
+    .getByRole("status", { name: "Canvas zoom" })
+    .innerText();
+  await canvas.focus();
+  await page.keyboard.press("0");
+  await expect(
+    page.getByRole("status", { name: "Canvas zoom" }),
+  ).not.toHaveText(zoom);
+  await canvas.focus();
+  await page.keyboard.press("F2");
+  const editor = page.getByRole("textbox", { name: "Canvas name editor" });
+  await expect(editor).toHaveValue("Service requests");
+  await editor.fill("Retained rename draft");
+  await editor.press("Escape");
+  await expect(editor).toHaveCount(0);
+  expect(
+    sandbox
+      .document()
+      .design.modules.find((item) => item.id === "sample-requests")?.name,
+  ).toBe("Service requests");
+  await canvas.focus();
+  await page.keyboard.press("Delete");
+  const review = page.getByRole("alertdialog");
+  await expect(review).toContainText("Service requests");
+  await expect(
+    review.getByRole("button", { name: "Confirm delete", exact: true }),
+  ).toBeVisible();
+  await review.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(sandbox.document().design.modules).toHaveLength(3);
+});
+
+test("S23 registered shortcuts preserve native text editing modal guards and standard undo redo while off", async ({
+  page,
+}) => {
+  await page.route("**/api/users/*/preferences", (route) =>
+    route.fulfill({
+      json: {
+        user_id: "00000000-0000-4000-8000-000000000001",
+        theme: "light",
+        appearance: { motion: "reduce", keyboard_shortcuts: false },
+      },
+    }),
+  );
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page.getByRole("button", { name: "View canvas", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Auto-arrange", exact: true })
+    .click();
+  await expect(
+    page.getByText("Canvas automatically arranged.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toBeEnabled();
+  const arranged = structuredClone(sandbox.document().design.layout);
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  await canvas.focus();
+  await page.keyboard.press("Control+z");
+  await expect(
+    page.getByRole("button", { name: "Redo", exact: true }),
+  ).toBeEnabled();
+  await expect
+    .poll(() => sandbox.document().design.layout)
+    .not.toEqual(arranged);
+  await page.keyboard.press("Control+Shift+z");
+  await expect.poll(() => sandbox.document().design.layout).toEqual(arranged);
+  await page.getByRole("tab", { name: "Structure", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Select module Service requests",
+      exact: true,
+    })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Delete module", exact: true })
+    .click();
+  const review = page.getByRole("alertdialog");
+  const writes = sandbox.documentWrites();
+  await page.keyboard.press("Control+z");
+  await page.keyboard.press("?");
+  await expect(review).toBeVisible();
+  expect(sandbox.documentWrites()).toBe(writes);
+  await review.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  const name = page.getByLabel("Trigger name", { exact: true });
+  await name.fill("Local trigger draft");
+  await name.press("End");
+  await name.pressSequentially(" with native typing");
+  await expect(name).toHaveValue("Local trigger draft with native typing");
+  await name.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+  await expect(name).toHaveValue("Local trigger draft");
+  expect(sandbox.documentWrites()).toBe(writes);
+});
+
 test("Trigger Studio switch preserves geometry and its 44 pixel hit target with personal display choices", async ({
   page,
 }) => {

@@ -7,6 +7,7 @@ import {
   getManageWorkspace,
   getWorkspaceBrand,
   workspaceBrand,
+  workspaceHasContacts,
   type WorkspaceBrand,
   type ManageWorkspaceProfile,
 } from "./workspace-api";
@@ -133,6 +134,32 @@ export const manageWorkspaceOptions = () =>
     queryKey: manageKeys.workspace(),
     queryFn: async ({ signal, client }) =>
       newestManageWorkspace(client, await getManageWorkspace(signal)),
+  });
+
+export type HelpWorkspaceContacts =
+  | { kind: "guest" }
+  | { kind: "full"; email: string | null; phone: string | null };
+
+/** Fresh, role-filtered projection; never consult the full-profile revision fallback. */
+export const helpWorkspaceContactsOptions = (userId: string) =>
+  queryOptions({
+    queryKey: ["help", "workspace-contacts", userId] as const,
+    queryFn: async ({ signal }): Promise<HelpWorkspaceContacts> => {
+      const workspace = await getManageWorkspace(signal);
+      if (signal.aborted)
+        throw new DOMException("Help read was cancelled", "AbortError");
+      return workspaceHasContacts(workspace)
+        ? {
+            kind: "full",
+            email: workspace.contact_email,
+            phone: workspace.contact_phone,
+          }
+        : { kind: "guest" };
+    },
+    staleTime: 0,
+    refetchOnMount: "always",
+    // Contact metadata has no consumer after Help closes and is never persisted.
+    gcTime: 0,
   });
 
 export function acceptedWorkspaceRevision(client: QueryClient): number {

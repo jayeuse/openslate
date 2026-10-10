@@ -30,6 +30,7 @@ import { useUserPreferences } from "@/components/theme-provider";
 import { NotificationBell } from "@/components/systems/platform/components/notification-bell";
 import { AppNavigation } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { HelpPanel } from "@/components/help/help-panel";
 import {
   GuardedWorkspaceLink,
   WorkspaceNavigationGuardProvider,
@@ -753,6 +754,7 @@ function AppHeaderActions({
         <span className="hidden sm:inline">Search workspace…</span>
       </GuardedWorkspaceLink>
       <NotificationBell accountId={verifiedUserId} />
+      <HelpPanel />
       <DropdownMenu open={accountOpen} onOpenChange={onAccountOpenChange}>
         <DropdownMenuTrigger
           render={

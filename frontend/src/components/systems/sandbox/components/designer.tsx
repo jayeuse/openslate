@@ -1,4 +1,5 @@
 import { useUserPreferences } from "@/components/theme-provider";
+import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import type {
   SandboxBinding,
@@ -252,7 +253,9 @@ export function Designer({
   ) => Promise<SandboxCommandResult<Design>>;
   onDraftStateChange: (dirty: boolean) => void;
 }) {
-  const { keyboardShortcuts } = useUserPreferences();
+  const { keyboardShortcuts, disabled: preferencesDisabled } =
+    useUserPreferences();
+  const shortcutsEnabled = keyboardShortcuts === true && !preferencesDisabled;
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
   // Narrow screens open on the canvas, the Sandbox's main surface.
@@ -518,6 +521,7 @@ export function Designer({
   useEffect(() => {
     function handleDesignerShortcut(event: KeyboardEvent): void {
       if (
+        pending ||
         event.defaultPrevented ||
         event.metaKey ||
         event.ctrlKey ||
@@ -526,22 +530,26 @@ export function Designer({
         document.querySelector('[role="dialog"], [role="alertdialog"]')
       )
         return;
-      if (event.key === "?" && keyboardShortcuts === true) {
+      if (event.key === SANDBOX_SHORTCUTS.help.key && shortcutsEnabled) {
         event.preventDefault();
         setCanvasHelpOpen(true);
         setPane("Canvas");
-      } else if (event.key === "0" && keyboardShortcuts === true) {
+      } else if (event.key === SANDBOX_SHORTCUTS.fit.key && shortcutsEnabled) {
         event.preventDefault();
         setPane("Canvas");
         requestAnimationFrame(fitCanvas);
-      } else if (event.key === "Delete" && keyboardTarget) {
+      } else if (
+        event.key === SANDBOX_SHORTCUTS.remove.key &&
+        shortcutsEnabled &&
+        keyboardTarget
+      ) {
         event.preventDefault();
         requestDelete(keyboardTarget);
       }
     }
     window.addEventListener("keydown", handleDesignerShortcut);
     return () => window.removeEventListener("keydown", handleDesignerShortcut);
-  }, [keyboardTarget, keyboardShortcuts]);
+  }, [keyboardTarget, shortcutsEnabled, pending]);
 
   function requestDelete(target: SandboxInspectorTarget): void {
     deleteFallbackId.current = null;
@@ -2414,12 +2422,13 @@ export function Designer({
                     </p>
                     <p className="text-muted-foreground mt-1">
                       {keyboardShortcuts === true
-                        ? "Designer shortcuts: press 0 to fit the canvas and ? for this help. "
+                        ? `Designer shortcuts: press ${SANDBOX_SHORTCUTS.fit.key} to fit the canvas and ${SANDBOX_SHORTCUTS.help.key} for this help. `
                         : keyboardShortcuts === false
                           ? "Convenience shortcuts are off in Appearance. Use the Fit and View buttons. "
                           : "Convenience shortcuts are available once your account preferences load. "}
-                      Delete reviews removal of the selected item. Shortcuts
-                      ignore text editing and open dialogs.
+                      {SANDBOX_SHORTCUTS.remove.key} reviews removal of the
+                      selected item. Shortcuts ignore text editing and open
+                      dialogs.
                     </p>
                   </section>
                 ) : null}
@@ -2524,6 +2533,7 @@ export function Designer({
                     />
                   ) : null}
                   <SandboxCanvas
+                    keyboardShortcutsEnabled={shortcutsEnabled}
                     onTraceCleared={() =>
                       setCanvasNotice((current) =>
                         current === "trace" ? null : current,
