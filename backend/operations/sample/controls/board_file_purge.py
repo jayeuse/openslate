@@ -202,7 +202,6 @@ def _purge_files(run: _Run) -> None:
             state="purged",
             deleted=True,
         )
-        run.send("GET", base + "/content", file_step("content_unavailable"), 404)
 
 
 def execute_board_file_purge(

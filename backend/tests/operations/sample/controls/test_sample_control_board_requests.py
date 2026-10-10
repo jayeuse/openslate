@@ -402,6 +402,7 @@ def test_widget_patch_and_duplicate_use_frontend_revision_bodies(
             "filters": [],
             "logic": "and",
             "metric": None,
+            "aggregation": "count",
             "visualization": "bar",
             "refresh": "manual",
         }

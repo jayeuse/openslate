@@ -39,7 +39,6 @@ BOARD_FILE_ROUTES = frozenset(
         ("POST", "/api/boards/{board_id}/files"),
         ("GET", "/api/boards/{board_id}/files"),
         ("GET", "/api/boards/{board_id}/files/{file_id}"),
-        ("GET", "/api/boards/{board_id}/files/{file_id}/content"),
         ("POST", "/api/boards/{board_id}/files/{file_id}/archive"),
         ("POST", "/api/boards/{board_id}/files/{file_id}/purge/preview"),
         ("POST", "/api/boards/{board_id}/files/{file_id}/purge"),
@@ -391,8 +390,6 @@ def verify_board_file_controls(
                     deleted=True,
                     step=step,
                 )
-                if admin.request("GET", path + "/content").status_code != 404:
-                    issues.append("Owned Board file final purge readback differs")
             except (SampleClientError, SamplePhaseActionError, ValueError, AttributeError):
                 issues.append("Owned Board file final purge readback failed")
     return issues

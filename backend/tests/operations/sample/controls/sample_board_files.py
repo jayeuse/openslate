@@ -182,7 +182,8 @@ class FakeBoard:
                 self.purged.add(file_id)
                 return _ok(200, self.metadata(file_id))
             if path.endswith("/content"):
-                return _ok(200 if self.fault == "content_present" else 404)
+                # The server accepts only uploads on this path, like the real router.
+                return _ok(405)
             return _ok(200, self.metadata(file_id))
         kind, content_id, *rest = path.removeprefix(base + "/").split("/")
         key = "post_revision" if kind == "posts" else "revision"

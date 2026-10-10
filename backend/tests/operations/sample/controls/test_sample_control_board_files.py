@@ -234,7 +234,6 @@ def test_verifier_requires_control_files_detached_at_the_end(
     [
         ("wrong_board", "identity"),
         ("not_purged", "identity"),
-        ("content_present", "HTTP 200"),
         ("unavailable", "HTTP 503"),
         ("expired", "preview"),
         ("naive_expiry", "preview"),
