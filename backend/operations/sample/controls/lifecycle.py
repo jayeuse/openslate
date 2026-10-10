@@ -14,6 +14,7 @@ from app.systems.sandbox.designs.service import canonical_document
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleClosePreviewResponse,
     LifecycleMutationResponse,
+    LifecyclePurgePreviewResponse,
 )
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.sandbox import (
@@ -378,7 +379,12 @@ class _LifecycleJourney:
             preview_step = f"preview_{step}"
             response = self.request(path + "/preview", preview_step, method="POST")
             try:
-                preview = LifecycleClosePreviewResponse.model_validate_json(response.content)
+                schema = (
+                    LifecyclePurgePreviewResponse
+                    if verb == "purge"
+                    else LifecycleClosePreviewResponse
+                )
+                preview = schema.model_validate_json(response.content)
             except ValidationError:
                 raise SamplePhaseActionError(
                     "Lifecycle preview was invalid", step=preview_step
