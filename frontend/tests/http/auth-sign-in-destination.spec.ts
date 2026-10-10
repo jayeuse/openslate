@@ -222,7 +222,11 @@ for (const [preferred, expected] of [
     await page.goto("/login");
     await expect(page).toHaveURL(new RegExp(`${expected}$`));
     expect(writes).toBe(0);
-    if (preferred === "sandbox") expect(fixture.sandboxProbes).toHaveLength(1);
+    // The start check reads one Test run; the Sandbox page then loads its own list.
+    if (preferred === "sandbox")
+      expect(
+        fixture.sandboxProbes.filter((query) => query.startsWith("?limit=1&")),
+      ).toHaveLength(1);
   });
 }
 

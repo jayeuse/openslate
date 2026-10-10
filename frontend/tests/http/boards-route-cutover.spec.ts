@@ -712,6 +712,12 @@ test("My events refreshes after saving and when the current tab reselects it", a
         }),
       });
     }
+    // A background resync re-reads the event under an open editor.
+    if (
+      path === `/api/boards/${boardId}/events/${eventId}` &&
+      route.request().method() === "GET"
+    )
+      return route.fulfill({ json: event() });
     if (
       path === `/api/boards/${boardId}/events/${eventId}` &&
       route.request().method() === "PATCH"

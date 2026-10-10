@@ -755,6 +755,8 @@ test("URL-selected event retries a failed detail read without changing the calen
   page: browser,
 }) => {
   await installSelectedEventApi(browser);
+  // A held event stream sends no resync, so only Retry can recover the read.
+  await browser.route("**/api/events", () => undefined);
   let available = false;
   await browser.route(`**/api/boards/${boardId}/events/${eventId}`, (route) =>
     route.fulfill(

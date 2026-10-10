@@ -284,8 +284,11 @@ export function ServerBackedBoardCalendar({
     useServerBoardEvents(boardId, calendarWindow, liveKey, search);
   const invalidateRef = useRef(invalidate);
   const accessKey = `${boardId}:${refreshKey}:${boardActive}:${isPurgeAdmin}:${accessVersion}`;
+  // A re-check keeps this Board's last confirmed access, so open menus and
+  // editors stay mounted; a denial or failure still clears it.
   const currentAccess =
-    access?.key === accessKey && access.status === "ready"
+    access?.key.startsWith(`${boardId}:`) &&
+    (access.status === "ready" || access.status === "loading")
       ? access.value
       : null;
   const accessDenied = blockedBoardId === boardId;
@@ -616,7 +619,11 @@ export function ServerBackedBoardCalendar({
   useEffect(() => {
     if (!boardActive && !isPurgeAdmin) return;
     let active = true;
-    setAccess({ key: accessKey, status: "loading", value: null });
+    setAccess((current) => ({
+      key: accessKey,
+      status: "loading",
+      value: current?.status === "ready" ? current.value : null,
+    }));
     void getMyBoardAccess(boardId)
       .then((value) => {
         if (active) {
