@@ -243,7 +243,15 @@ export default function Files() {
         hasMore={catalog.hasMore}
         onLoadMore={() => void catalog.loadMore()}
         loadingMore={catalog.loadingMore}
-        disabled={identity.isPending || !identityReady}
+        disabled={
+          identity.isPending ||
+          !identityReady ||
+          (!department &&
+            !catalog.search &&
+            !catalog.loading &&
+            !catalog.error &&
+            choices.length === 0)
+        }
         placeholder="Choose a department"
         onValueChange={(id) => {
           if (!choices.some((item) => item.id === id)) return;
