@@ -33,18 +33,19 @@ SEEDS = (
 )
 
 
-@pytest.mark.parametrize("pack_key", pack_keys())
-def test_twenty_small_seeds_per_pack_pass_offline_admission(pack_key: str) -> None:
+def test_the_seed_range_is_twenty_distinct_unsigned_64_bit_seeds() -> None:
     assert len(SEEDS) == 20
     assert len(set(SEEDS)) == 20
     assert {0, 42, 2**64 - 1} <= set(SEEDS)
     assert all(0 <= seed < 2**64 for seed in SEEDS)
-    pack = get_pack(pack_key)
-    failures: list[str] = []
-    for seed in SEEDS:
-        dataset = build_dataset("small", seed=seed, anchor_date=ANCHOR, organization=pack)
-        try:
-            admit_dataset(dataset)
-        except Exception as error:
-            failures.append(f"seed {seed}: {error}")
-    assert not failures, f"{pack_key} Small offline admission failures: {'; '.join(failures)}"
+
+
+# One item per pack and seed, so the parallel shards can share the range.
+@pytest.mark.parametrize("seed", SEEDS)
+@pytest.mark.parametrize("pack_key", pack_keys())
+def test_twenty_small_seeds_per_pack_pass_offline_admission(pack_key: str, seed: int) -> None:
+    dataset = build_dataset("small", seed=seed, anchor_date=ANCHOR, organization=get_pack(pack_key))
+    try:
+        admit_dataset(dataset)
+    except Exception as error:
+        pytest.fail(f"{pack_key} Small offline admission failure: seed {seed}: {error}")

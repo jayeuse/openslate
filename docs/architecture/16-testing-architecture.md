@@ -42,7 +42,9 @@ combines the five coverage data files, sums the test counts, and then applies th
 different source tree fails the gate. `pytest-split` balances the shards with
 `backend/tests/.test_durations`. Each CI run uploads fresh durations in the
 `backend-coverage` artifact; commit that file again when a shard takes much longer than
-the others. Local `prepush.py` runs `python -m tests.parallel_coverage`: three shards on
+the others. Locally, a shard uses the last combined run's durations
+(`backend/test-results/coverage/test-durations.json`) when they are newer than the
+committed file, so new tests stop falling back to the average. Local `prepush.py` runs `python -m tests.parallel_coverage`: three shards on
 their own disposable stacks at the same time, then the same combine step and gates. Each
 shard writes to its own folder under `backend/test-results/coverage-shards/`. Each test
 stack gets its own `/24` in `10.199.0.0/16`, outside Docker's default address pools, under
@@ -50,6 +52,11 @@ a short cross-process allocation lock, so parallel stacks never exhaust those po
 stacks run PostgreSQL without crash durability (`fsync`, `synchronous_commit`, and
 `full_page_writes` off) and memoize repeated `docker inspect` answers inside one pytest
 process; the per-test guard still checks the connected database identity every time.
+That check and the rolled-back test session use one pooled engine per database URL per
+pytest process (`backend/tests/database_pool.py`) instead of three new connections per
+test. Each connection runs `DISCARD ALL` when it returns to the pool, so the next test
+starts from a clean session; a test that must be the database's only consumer disposes
+the pools first. Alembic heads are read once per process.
 Backend-only stacks (coverage, its shards, and batches) point Auth's email templates at
 their own host port, `29000` plus the stack's network block, which is unique per live
 stack and below the ephemeral and Kubernetes NodePort ranges. Full-stack and smoke runs

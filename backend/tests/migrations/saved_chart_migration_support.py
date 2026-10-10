@@ -13,6 +13,7 @@ from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
 from tests.conftest import guarded_create_engine
+from tests.database_pool import dispose_pooled_engines
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 HEAD = "c64062dacada"
@@ -63,6 +64,9 @@ class ChartMigrationFixture:
         (directory / f"backfill-{uuid7().hex}.log").write_text("\n".join(safe_lines) + "\n")
 
     def require_sole_consumer(self) -> None:
+        # Idle connections that earlier tests left in this process's shared pools are
+        # closed first; any other consumer still fails the check below.
+        dispose_pooled_engines()
         with self.owner.connect() as connection:
             assert connection.scalar(text("SELECT current_setting('cluster_name')")) == (
                 "openslate-e2e-" + self.environment["OPENSLATE_FULLSTACK_RUN_ID"]
