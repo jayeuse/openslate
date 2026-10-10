@@ -12,6 +12,17 @@ RUN_ID = "4e2f9a7c" * 4
 DOCUMENT_ID = "76697e42-5d48-48a5-8ca6-c378e1cf9880"
 
 
+def tree_copy(value):
+    """Copy JSON-shaped state like copy.deepcopy, without its memo; other types use deepcopy."""
+    if isinstance(value, dict):
+        return {key: tree_copy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [tree_copy(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return copy.deepcopy(value)
+
+
 def identifier(value):
     return str(uuid5(NAMESPACE_URL, "version-prune-wire:" + value))
 
@@ -19,7 +30,7 @@ def identifier(value):
 class VersionPruneWire:
     def __init__(self, dataset):
         self.dataset = dataset
-        self.document = copy.deepcopy(dataset.document)
+        self.document = tree_copy(dataset.document)
         self.revision = 1
         self.versions, self.audit, self.requests = [], [], []
         self.phase, self.fault = "prepare", "none"
@@ -33,8 +44,9 @@ class VersionPruneWire:
         ).hexdigest()
 
     def document_response(self):
+        # httpx serializes the body when the response is built, so no copy is needed.
         return {
-            "document": copy.deepcopy(self.document),
+            "document": self.document,
             "revision": self.revision,
             "contentHash": self.hash(),
             "byteCount": len(json.dumps(self.document).encode()),
@@ -53,8 +65,8 @@ class VersionPruneWire:
                 "entity_type": entity_type,
                 "entity_id": entity_id,
                 "action": action,
-                "before": copy.deepcopy(before),
-                "after": copy.deepcopy(after),
+                "before": tree_copy(before),
+                "after": tree_copy(after),
                 "request_id": request_id,
                 "request_method": request.method,
                 "request_path": request.url.path,
@@ -96,7 +108,7 @@ class VersionPruneWire:
             "performedBy": ADMIN_ID,
             "isDeleted": False,
             "deletedAt": None,
-            "document": copy.deepcopy(self.document),
+            "document": tree_copy(self.document),
         }
         self.versions.append(row)
         self.audit_row(
@@ -219,7 +231,7 @@ class VersionPruneWire:
             if method == "PUT":
                 if body["expectedRevision"] != self.revision:
                     return httpx.Response(409, json={"detail": {"code": "stale_revision"}})
-                self.document = copy.deepcopy(body["document"])
+                self.document = tree_copy(body["document"])
                 self.advance(request, request_id)
             return httpx.Response(200, json=self.document_response())
         if path == "/api/sandbox/export":
@@ -282,7 +294,7 @@ class VersionPruneWire:
             if row is None:
                 return httpx.Response(404, json={"detail": {"code": "version_not_found"}})
             if method == "GET":
-                body = copy.deepcopy(row)
+                body = tree_copy(row)
                 if self.fault == "missing_detail_sourceDocumentRevision":
                     del body["sourceDocumentRevision"]
                 return httpx.Response(200, json=body)
@@ -298,7 +310,7 @@ class VersionPruneWire:
                 self.advance(request, request_id)
                 return httpx.Response(204)
         if path == "/api/audit-logs":
-            rows = copy.deepcopy(
+            rows = tree_copy(
                 [row for row in self.audit if row["request_id"] == request.url.params["request_id"]]
             )
             if self.fault == "audit_wrong_actor" and rows:
@@ -310,7 +322,7 @@ class VersionPruneWire:
             elif self.fault == "audit_missing":
                 rows = rows[:-1]
             elif self.fault == "audit_duplicate" and rows:
-                rows.append(copy.deepcopy(rows[0]))
+                rows.append(tree_copy(rows[0]))
             for row in rows:
                 if row["entity_type"] != "sandbox_documents":
                     continue

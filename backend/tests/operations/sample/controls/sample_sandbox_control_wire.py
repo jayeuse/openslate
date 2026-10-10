@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 from collections.abc import MutableMapping
 from uuid import uuid4
@@ -17,6 +16,7 @@ from tests.operations.sample.controls.sample_version_prune_wire import (
     RUN_ID,
     VersionPruneWire,
     identifier,
+    tree_copy,
 )
 
 
@@ -35,7 +35,7 @@ class _HistoryView(MutableMapping):
 
     def __setitem__(self, key, value):
         assert key == value["id"] and key not in self
-        row = copy.deepcopy(value)
+        row = tree_copy(value)
         row["sequence"] = max((item["sequence"] for item in self.owner.versions), default=0) + 1
         self.owner.versions.append(row)
 
@@ -192,18 +192,18 @@ class SandboxControlWire(VersionPruneWire):
             return None
         self.history_export_calls += 1
         self.history_export_state = (
-            copy.deepcopy(self.document),
+            tree_copy(self.document),
             self.revision,
-            copy.deepcopy(self.versions),
+            tree_copy(self.versions),
         )
-        body = copy.deepcopy(self.document)
+        body = tree_copy(self.document)
         body["versions"] = [
             {
                 "id": row["id"],
                 "label": row["label"],
                 "kind": row["kind"],
                 "document": {
-                    k: copy.deepcopy(v)
+                    k: tree_copy(v)
                     for k, v in row["document"].items()
                     if k not in {"kind", "schemaVersion"}
                 },
@@ -222,7 +222,7 @@ class SandboxControlWire(VersionPruneWire):
         if fault == "history_export_null":
             body["versions"] = None
         if fault == "history_export_duplicate":
-            versions.append(copy.deepcopy(versions[0]))
+            versions.append(tree_copy(versions[0]))
         if fault == "history_export_omitted":
             versions.pop()
         if fault == "history_export_foreign":
@@ -247,7 +247,7 @@ class SandboxControlWire(VersionPruneWire):
             self.revision += 1
         if fault == "history_export_history_race":
             self.active()[0].update(note="Concurrent note", metadataRevision=2)
-        self.last_history_export = copy.deepcopy(body)
+        self.last_history_export = tree_copy(body)
         return httpx.Response(200, json=body)
 
     def route(self, request, request_id):
