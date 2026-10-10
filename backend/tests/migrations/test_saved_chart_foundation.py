@@ -13,9 +13,10 @@ from app.systems.boards.models import BoardWidget
 from app.systems.openview.charts.models import Chart
 from app.systems.openview.dashboards.models import DashboardWidget
 from tests.migrations.saved_chart_migration_support import (
-    HEAD,
+    CHART_REVISION,
     PREDECESSOR,
     ChartMigrationFixture,
+    database_head,
 )
 from tests.migrations.saved_chart_migration_support import chart_migration as chart_migration
 from tests.migrations.saved_chart_migration_support import literal_query as _literal_query
@@ -377,7 +378,7 @@ def test_invalid_predecessor_config_refuses_upgrade_without_partial_changes(
     fixture.seed_legacy([invalid])
     before = fixture.snapshots("board_widgets")
     with pytest.raises(subprocess.CalledProcessError):
-        run_alembic(fixture.environment, "upgrade", HEAD)
+        run_alembic(fixture.environment, "upgrade", CHART_REVISION)
     _assert_predecessor(fixture)
     assert fixture.snapshots("board_widgets") == before
 
@@ -416,7 +417,7 @@ def test_update_failure_rolls_back_new_schema_and_all_widget_data(chart_migratio
         )
     try:
         with pytest.raises(subprocess.CalledProcessError):
-            run_alembic(fixture.environment, "upgrade", HEAD)
+            run_alembic(fixture.environment, "upgrade", CHART_REVISION)
         _assert_predecessor(fixture)
         assert fixture.snapshots("board_widgets") == before
     finally:
@@ -479,5 +480,6 @@ def test_downgrade_refuses_unrepresentable_retained_state_without_changes(chart_
     fixture.require_sole_consumer()
     with pytest.raises(subprocess.CalledProcessError):
         run_alembic(fixture.environment, "downgrade", PREDECESSOR)
-    assert fixture.revision() == HEAD
+    # The refused downgrade runs in one transaction and leaves the revision unchanged.
+    assert fixture.revision() == database_head()
     assert (fixture.snapshots("board_widgets"), fixture.snapshots("dashboard_widgets")) == before

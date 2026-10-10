@@ -3,10 +3,13 @@
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from uuid import UUID
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
@@ -16,9 +19,19 @@ from tests.conftest import guarded_create_engine
 from tests.database_pool import dispose_pooled_engines
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
-HEAD = "c64062dacada"
+# The saved-chart migration under test; later migrations may follow it.
+CHART_REVISION = "c64062dacada"
 PREDECESSOR = "5d4e4a094aa7"
 STAMP = datetime(2025, 2, 3, 4, 5, 6, tzinfo=UTC)
+
+
+@cache
+def database_head() -> str:
+    """The single Alembic head the shared test database starts and ends at."""
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).parents[2] / "migrations"))
+    [head] = ScriptDirectory.from_config(config).get_heads()
+    return head
 
 
 def literal_query():
@@ -88,8 +101,12 @@ class ChartMigrationFixture:
         assert self.revision() == PREDECESSOR
 
     def upgrade(self) -> None:
-        run_alembic(self.environment, "upgrade", HEAD)
-        assert self.revision() == HEAD
+        run_alembic(self.environment, "upgrade", CHART_REVISION)
+        assert self.revision() == CHART_REVISION
+
+    def restore(self) -> None:
+        run_alembic(self.environment, "upgrade", "head")
+        assert self.revision() == database_head()
 
     def snapshots(self, table: str) -> list[dict[str, object]]:
         assert table in {"board_widgets", "dashboard_widgets"}
@@ -200,7 +217,7 @@ def chart_migration():
         {key: uuid7() for key in ("actor", "department", "module", "board", "dashboard", "chart")},
     )
     try:
-        assert fixture.revision() == HEAD
+        assert fixture.revision() == database_head()
         with fixture.owner.begin() as connection:
             connection.execute(
                 text("""INSERT INTO public.users (id, email, username, status, role)
@@ -239,7 +256,7 @@ def chart_migration():
         yield fixture
     finally:
         fixture.clean()
-        if fixture.revision() != HEAD:
-            fixture.upgrade()
+        if fixture.revision() != database_head():
+            fixture.restore()
         fixture.runtime.dispose()
         fixture.owner.dispose()
