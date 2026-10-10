@@ -25,9 +25,9 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("npm run build", source)
         self.assertIn("npm test -- ${{ matrix.args }}", source)
         self.assertIn("args: --project=isolated", source)
-        for shard in range(1, 7):
+        for shard in range(1, 13):
             with self.subTest(shard=shard):
-                self.assertIn(f"args: --project=http --shard={shard}/6", source)
+                self.assertIn(f"args: --project=http --shard={shard}/12", source)
         self.assertIn("fail-fast: false", source)
 
     def test_frontend_verify_preserves_the_required_check(self):
@@ -53,12 +53,19 @@ class CiWorkflowContractTests(unittest.TestCase):
             "firefox",
             "webkit",
             "mobile",
-            "upload-artifact",
             "download-artifact",
             "timing-profile",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source.lower())
+
+    def test_frontend_uploads_only_failed_test_context(self):
+        source = self.source("frontend.yml")
+        upload = source.split("uses: actions/upload-artifact@", 1)
+
+        self.assertEqual(source.count("upload-artifact"), 1)
+        self.assertIn("if: failure()", upload[0].rsplit("- name:", 1)[1])
+        self.assertIn("path: frontend/test-results/playwright/", upload[1])
 
     def test_frontend_has_no_production_container_or_runtime_contract(self):
         source = self.source("frontend.yml")
