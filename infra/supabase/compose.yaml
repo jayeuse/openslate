@@ -65,6 +65,7 @@ services:
       GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_MAILER_AUTOCONFIRM: "false"
+      GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "true"
       GOTRUE_JWT_ADMIN_ROLES: service_role
       GOTRUE_JWT_AUD: authenticated
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
@@ -80,8 +81,10 @@ services:
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-OpenSlate}
       GOTRUE_MAILER_TEMPLATES_INVITE: ${AUTH_TEMPLATE_BASE_URL:?Set the internal template URL}/invite.html
       GOTRUE_MAILER_TEMPLATES_RECOVERY: ${AUTH_TEMPLATE_BASE_URL:?Set the internal template URL}/recovery.html
+      GOTRUE_MAILER_TEMPLATES_EMAIL_CHANGE: ${AUTH_TEMPLATE_BASE_URL:?Set the internal template URL}/email-change.html
       GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
       GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
     extra_hosts:
       - host.docker.internal:host-gateway
     healthcheck:

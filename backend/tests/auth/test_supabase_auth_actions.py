@@ -82,6 +82,110 @@ def test_recovery_and_password_update_use_provider_user_session() -> None:
     assert b"new password" in seen[1].read()
 
 
+def test_secure_email_change_keeps_partial_confirmation_distinct_from_new_session() -> None:
+    import json
+
+    from app.core.integrations.supabase_auth import SupabaseAuthClient
+
+    provider_id = uuid4()
+    seen: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.method == "PUT":
+            return httpx.Response(200, json={"id": str(provider_id), "email": "old@example.test"})
+        if len(seen) == 2:
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "msg": "Confirmation link accepted. Please proceed to confirm link sent "
+                    "to the other email",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+                "expires_in": 600,
+                "user": {"id": str(provider_id)},
+            },
+        )
+
+    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    assert client.request_email_change("current-access", "new@example.test").id == provider_id
+    partial = client.verify_email_change("a" * 56)
+    assert partial.tokens is None
+    final = client.verify_email_change("b" * 56)
+    assert final.tokens.user_id == provider_id
+    assert final.tokens.access_token == "new-access"
+    assert seen[0].headers["authorization"] == "Bearer current-access"
+    assert json.loads(seen[0].read()) == {"email": "new@example.test"}
+    assert all("authorization" not in request.headers for request in seen[1:])
+    assert [json.loads(request.read()) for request in seen[1:]] == [
+        {"token_hash": "a" * 56, "type": "email_change"},
+        {"token_hash": "b" * 56, "type": "email_change"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"code": "200", "msg": "unrecognized"},
+        {"code": 200, "msg": "accepted"},
+        {"access_token": "access"},
+        {
+            "code": "200",
+            "msg": "Confirmation link accepted. Please proceed to confirm link sent "
+            "to the other email",
+            "user": {"id": str(uuid4())},
+        },
+    ],
+)
+def test_secure_email_change_refuses_malformed_or_ambiguous_confirmation(payload: object) -> None:
+    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
+
+    client = SupabaseAuthClient(
+        _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    )
+    with pytest.raises(SupabaseAuthUnavailable):
+        client.verify_email_change("a" * 56)
+
+
+@pytest.mark.parametrize(
+    "status,exception",
+    [
+        (400, "InvalidProviderCredentials"),
+        (401, "InvalidProviderCredentials"),
+        (403, "InvalidProviderCredentials"),
+        (422, "InvalidProviderCredentials"),
+        (429, "SupabaseAuthUnavailable"),
+        (500, "SupabaseAuthUnavailable"),
+    ],
+)
+def test_secure_email_change_keeps_denial_distinct_from_uncertain_provider_result(
+    status, exception
+):
+    from app.core.integrations.supabase_auth import SupabaseAuthClient
+
+    client = SupabaseAuthClient(
+        _settings(),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(status, json={"error": "private-provider-detail"})
+        ),
+    )
+    for action in (
+        lambda: client.verify_email_change("a" * 56),
+        lambda: client.request_email_change("current", "new@example.test"),
+    ):
+        with pytest.raises(Exception) as caught:
+            action()
+        assert type(caught.value).__name__ == exception
+        assert "private-provider-detail" not in str(caught.value)
+
+
 def test_admin_reconciliation_filters_exact_email_and_operation_marker() -> None:
     from app.core.integrations.supabase_auth import SupabaseAuthClient
 

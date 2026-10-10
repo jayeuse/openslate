@@ -6,6 +6,7 @@ import { AccessMfaDialog } from "@/components/systems/access/components/security
 import { useMfaFlow } from "@/components/mfa-flow";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceInteractionSuspended } from "@/components/systems/shared/runtime/workspace-identity";
+import EmailChange from "./email-change";
 
 export default function SignInSecurity() {
   const flow = useMfaFlow();
@@ -28,6 +29,7 @@ export default function SignInSecurity() {
           Manage two-step verification
         </Button>
       </div>
+      <EmailChange />
       <Account />
       <AccessMfaDialog opener={opener} />
     </div>

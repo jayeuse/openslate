@@ -44,6 +44,38 @@ async function details(page: Page, event: string) {
   });
 }
 
+test("S24 email request and confirmed admission events describe their distinct effects", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  state.events = [
+    securityEvent(0, {
+      event_type: "identity.email_change_request",
+      source: "identity.email_change",
+      metadata: { stage: "provider_accepted" },
+    }),
+    securityEvent(1, {
+      event_type: "identity.email_change_confirmed",
+      source: "identity.email_change",
+      metadata: { stage: "local_admission" },
+    }),
+  ];
+  await page.goto("/manage?view=audit&audit=security-events");
+  await expect(
+    eventRows(page).getByText(/email change.*requested/i),
+  ).toBeVisible();
+  await expect(
+    eventRows(page).getByText(/confirmed email.*(?:saved|synchronized)/i),
+  ).toBeVisible();
+  await filters(page);
+  await expect(
+    page.getByRole("option", { name: "Email change request", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("option", { name: "Email change confirmed", exact: true }),
+  ).toHaveCount(1);
+});
+
 test("Events person picker uses server search and keeps its selected label outside results", async ({
   page,
 }) => {

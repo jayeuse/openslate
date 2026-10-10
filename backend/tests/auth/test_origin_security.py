@@ -7,7 +7,7 @@ from starlette.requests import Request
 
 import app.systems.access.auth.router as auth_router
 from app.core.config import Settings
-from app.systems.access.auth import cookies
+from app.systems.access.auth import cookies, request_security
 from tests.config_support import settings_values
 
 
@@ -29,7 +29,7 @@ def test_public_origin_is_normalized_and_browser_requests_require_its_exact_valu
         **settings_values(public_origin="https://APP.EXAMPLE.TEST:443/"), _env_file=None
     )
     monkeypatch.setattr(
-        auth_router,
+        request_security,
         "get_settings",
         lambda: SimpleNamespace(public_origin=settings.public_origin),
     )

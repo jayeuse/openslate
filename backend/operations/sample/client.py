@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import httpx
 
 from operations.sample.client_events import check_event_stream
+from operations.sample.client_failures import failure_code as _failure_code
 from operations.sample.journal import append_event
 from operations.sample.verification.route_coverage import route_template
 
@@ -28,10 +29,11 @@ _LOGIN_PATH = "/api/auth/login"
 _REFRESH_PATH = "/api/auth/refresh"
 _INVITATION_PATH = "/api/auth/invitations/complete"
 _RECOVERY_PATH = "/api/auth/recovery/complete"
+_EMAIL_CHANGE_PATH = "/api/auth/email/complete"
+_ACTION_PATHS = frozenset({_INVITATION_PATH, _RECOVERY_PATH, _EMAIL_CHANGE_PATH})
 _MAX_GET_RATE_LIMIT_RETRIES = 1
 _MAX_RETRY_AFTER_SECONDS = 2.0
 _ROLLED_BACK_RECORD_RETRY_DELAYS = (0.1, 0.3)
-_ROLLED_BACK_DETAIL = "Relationship operation is temporarily unavailable"
 _SAFE_MAPPING_VALUE = re.compile(r"[A-Za-z0-9_:-]{1,160}\Z")
 # The API rotates an access token only when it has 30 seconds or less left, so
 # an earlier refresh returns the same token and cannot extend the session.
@@ -123,53 +125,6 @@ def _request_id(response: httpx.Response) -> str | None:
         return None
 
 
-def _simple_error_detail(response: httpx.Response) -> str | None:
-    if (
-        response.headers.get("content-type", "").partition(";")[0].strip().lower()
-        != "application/json"
-        or len(response.content) > 512
-    ):
-        return None
-    try:
-        payload = response.json()
-    except ValueError:
-        return None
-    if isinstance(payload, dict) and set(payload) == {"detail"}:
-        detail = payload["detail"]
-        return detail if isinstance(detail, str) else None
-    return None
-
-
-def _failure_code(response: httpx.Response, method: str, path: str) -> str | None:
-    if response.status_code < 500:
-        return None
-    detail = _simple_error_detail(response)
-    if response.status_code == 503:
-        # Record writes reach this detail only from lock_row, which rolls back
-        # before create/update can flush or commit. Relationship mutations can
-        # emit the same detail after commit, so they are deliberately excluded.
-        record_patch = method == "PATCH" and path.startswith("/api/records/")
-        if record_patch:
-            try:
-                UUID(path.removeprefix("/api/records/"))
-            except ValueError:
-                record_patch = False
-        if detail == _ROLLED_BACK_DETAIL and (
-            (method == "POST" and path == "/api/records") or record_patch
-        ):
-            return "rollback_busy"
-        if detail == _ROLLED_BACK_DETAIL and path.startswith("/api/relationships"):
-            return "relationship_busy"  # May follow a commit; the caller must reconcile.
-        known = {
-            "Database unavailable": "database_unavailable",
-            "Authentication service unavailable": "authentication_unavailable",
-            "Authorization unavailable": "authorization_unavailable",
-        }
-        if detail in known:
-            return known[detail]
-    return "other"
-
-
 class SampleClient:
     """A per-actor browser-cookie client for authenticated OpenSlate API calls."""
 
@@ -232,6 +187,24 @@ class SampleClient:
 
     def check_event_stream(self) -> dict[str, object]:
         return check_event_stream(self._client, self._origin, self._append_event)
+
+    def request_email_change(self, email: str, current_password: str) -> httpx.Response:
+        return self.request(
+            "POST",
+            "/api/auth/me/email",
+            json_body={"email": email, "current_password": current_password},
+        )
+
+    def complete_email_change(self, token_hash: str) -> httpx.Response:
+        response = self._request(
+            "POST",
+            _EMAIL_CHANGE_PATH,
+            json_body={"token_hash": token_hash},
+            allow_unauthorized=True,
+        )
+        if response.is_success and self._client.cookies:
+            self._last_auth_at = time.monotonic()
+        return response
 
     def request(
         self,
@@ -298,9 +271,9 @@ class SampleClient:
                 "Cookie-session authentication and origin headers are managed by the client"
             )
         request_headers["Origin"] = self._origin
-        if path in {_INVITATION_PATH, _RECOVERY_PATH} and self._client.cookies:
+        if path in _ACTION_PATHS and self._client.cookies:
             raise SampleAuthenticationError("Action completion requires a cookie-free client")
-        if is_write and path not in {_LOGIN_PATH, _INVITATION_PATH, _RECOVERY_PATH}:
+        if is_write and path not in {_LOGIN_PATH, *_ACTION_PATHS}:
             csrf = self._csrf_cookie()
             if not csrf:
                 raise SampleAuthenticationError(

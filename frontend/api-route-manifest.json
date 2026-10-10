@@ -1627,6 +1627,12 @@
   },
   {
     "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "completeEmailChange",
+    "method": "POST",
+    "path": "/api/auth/email/complete"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
     "function": "completeInvitation",
     "method": "POST",
     "path": "/api/auth/invitations/complete"
@@ -1648,6 +1654,18 @@
     "function": "getSessionStatus",
     "method": "GET",
     "path": "/api/auth/session"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "probeEmailConfirmationSession",
+    "method": "GET",
+    "path": "/api/auth/session"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "requestEmailChange",
+    "method": "POST",
+    "path": "/api/auth/me/email"
   },
   {
     "adapter": "frontend/src/lib/auth-api.ts",

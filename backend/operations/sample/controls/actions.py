@@ -55,6 +55,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.account import plan_account_controls
     from operations.sample.controls.backups import plan_backup_controls
     from operations.sample.controls.boards import plan_board_controls
+    from operations.sample.controls.email_change import plan_email_change_controls
     from operations.sample.controls.files import plan_file_controls
     from operations.sample.controls.host_delivery import plan_host_controls
     from operations.sample.controls.jobs import plan_job_controls
@@ -94,6 +95,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     return (
         prune,
         *plan_account_controls(dataset),
+        *plan_email_change_controls(dataset),
         *plan_profile_controls(dataset),
         *plan_mfa_controls(dataset),
         *plan_people_security_controls(dataset),
@@ -315,6 +317,7 @@ def execute_control_action(
     from operations.sample.controls.account import execute_account_control
     from operations.sample.controls.backups import execute_backup_control
     from operations.sample.controls.boards import execute_board_control
+    from operations.sample.controls.email_change import execute_email_change_control
     from operations.sample.controls.files import FILE_OPERATIONS, execute_file_control
     from operations.sample.controls.jobs import execute_job_control
     from operations.sample.controls.manage import execute_manage_control
@@ -329,6 +332,8 @@ def execute_control_action(
     from operations.sample.controls.sandbox import execute_sandbox_control
 
     operation = action.values.get("operation")
+    if operation == "self_email_change":
+        return execute_email_change_control(action, dataset, context, on_substep=on_substep)
     if operation == "self_profile":
         return execute_profile_control(action, dataset, context, on_substep=on_substep)
     if operation == "physical_backup_export":

@@ -41,6 +41,7 @@ from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
+    ip_allowed,
     load_workspace_policy,
     renewed_session_expiry,
 )
@@ -116,25 +117,40 @@ def admit_provider_session(
     The caller commits before returning these credentials to a browser or CLI.
     """
 
-    timestamp = now or utc_now()
     claims = client.verify_access_token(tokens.access_token)
-    started_at = observation_started_at()
-    provider_user = _live_provider_user(client, claims.user_id, timestamp)
-    if claims.user_id != tokens.user_id or provider_user is None:
+    if claims.user_id != tokens.user_id:
         raise InvalidCredentials("Invalid credentials")
     user = db.scalar(
-        select(User).where(User.supabase_user_id == claims.user_id).with_for_update(of=User)
+        select(User)
+        .where(User.supabase_user_id == claims.user_id)
+        .execution_options(populate_existing=True)
+        .with_for_update(of=User)
     )
-    if not _eligible_user(user, claims.user_id, timestamp) or not _provider_session_exists(
-        db, claims.user_id, claims.session_id
+    if user is None or not _eligible_user(user, claims.user_id, now or utc_now()):
+        raise InvalidCredentials("Invalid credentials")
+    # The fresh provider read is serialized with admissions and binding changes.
+    started_at = observation_started_at()
+    provider_user = _live_provider_user(client, claims.user_id, now or utc_now())
+    timestamp = now or utc_now()
+    policy = load_workspace_policy(db)
+    if (
+        provider_user is None
+        or not provider_user.is_eligible(now=timestamp)
+        or not _eligible_user(user, claims.user_id, timestamp)
+        or claims.expires_at <= timestamp
+        or (user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after)
+        or not _provider_session_exists(db, claims.user_id, claims.session_id)
+        or not ip_allowed(policy, ip_address)
     ):
         raise InvalidCredentials("Invalid credentials")
     assert user is not None and provider_user is not None
+    from app.systems.access.identity.email_changes import synchronize_confirmed_email
+
+    synchronize_confirmed_email(db, user, provider_user, timestamp)
     initialize_observation(db, user.id)
     csrf = token_urlsafe(32)
     handle = token_urlsafe(48)
     cipher = _fernet()
-    policy = load_workspace_policy(db)
     session = IdentitySession(
         id=uuid7(),
         user_id=user.id,

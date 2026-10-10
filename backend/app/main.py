@@ -235,6 +235,7 @@ def create_app() -> FastAPI:
                 host: (
                     "/api/auth/email-templates/invite.html",
                     "/api/auth/email-templates/recovery.html",
+                    "/api/auth/email-templates/email-change.html",
                 )
                 for host in ("api", "host.docker.internal")
             },

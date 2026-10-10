@@ -14,8 +14,6 @@ from app.common.dependencies import (
     require_admin,
 )
 from app.common.dependencies.auth import get_mfa_identity, require_allowed_source
-from app.core.config import get_settings
-from app.core.config.development import browser_origin_is_permitted
 from app.core.database import get_db
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
@@ -37,6 +35,9 @@ from app.systems.access.auth.request_security import (
 )
 from app.systems.access.auth.request_security import (
     reject_mixed_credentials as _reject_mixed_credentials,
+)
+from app.systems.access.auth.request_security import (
+    require_browser_origin as _require_browser_origin,
 )
 from app.systems.access.auth.request_security import (
     require_completed_identity as _require_completed_identity,
@@ -93,11 +94,6 @@ from app.systems.manage.workspace.security_policy import PasswordPolicyViolation
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 router = APIRouter()
-
-
-def _require_browser_origin(request: Request) -> None:
-    if not browser_origin_is_permitted(get_settings(), request.headers.get("origin")):
-        raise HTTPException(status_code=403, detail="Invalid request origin")
 
 
 def _require_refresh_csrf(request: Request) -> str:

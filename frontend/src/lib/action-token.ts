@@ -4,7 +4,7 @@ type ActionHistory = Pick<History, "replaceState">;
 export function consumeActionToken(
   location: ActionLocation,
   history: ActionHistory,
-  expectedType: "invite" | "recovery",
+  expectedType: "invite" | "recovery" | "email_change",
 ): string | null {
   const fragment = location.hash;
   if (fragment || location.search) {
@@ -31,6 +31,8 @@ export function consumeActionToken(
     return null;
   const token = parameters.get("token_hash");
   if (!token || token !== token.trim() || /\s|[\x00-\x1f\x7f]/u.test(token))
+    return null;
+  if (expectedType === "email_change" && !/^[0-9a-f]{56}$/.test(token))
     return null;
   return token;
 }

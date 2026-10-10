@@ -9,6 +9,12 @@ import {
   profileUserB,
 } from "./helpers/profile-api";
 import { concealMfaTestCredentials, mockMfa } from "./helpers/mfa";
+import {
+  changedEmail,
+  expectNoEmailSecrets,
+  installEmailChangeApi,
+  observeEmailSecretExposure,
+} from "./helpers/email-change";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -39,7 +45,7 @@ for (const role of ["member", "guest"] as const) {
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: /change email/i }),
-    ).toHaveCount(0);
+    ).toBeEnabled();
     const save = page.getByRole("button", {
       name: "Save identity",
       exact: true,
@@ -74,6 +80,82 @@ for (const role of ["member", "guest"] as const) {
     expect(api.forbiddenReads).toEqual([]);
   });
 }
+
+test("Profile email request needs the current password and keeps saved email readonly until authoritative refresh", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  if (!baseURL) throw new Error("The HTTP project requires baseURL");
+  const profile = await installProfileApi(page);
+  const api = await installEmailChangeApi(page);
+  await observeEmailSecretExposure(page);
+  await context.addCookies([
+    { name: "openslate_csrf", value: "owned-profile-csrf", url: baseURL },
+  ]);
+  await page.goto("/profile#security");
+  await page.getByRole("button", { name: "Change email", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Change email",
+    exact: true,
+  });
+  const send = dialog.getByRole("button", {
+    name: "Send confirmation emails",
+    exact: true,
+  });
+  await dialog.getByLabel("New email", { exact: true }).fill(changedEmail);
+  await expect(send).toBeDisabled();
+  expect(api.requests).toEqual([]);
+  await dialog
+    .getByLabel("Current password", { exact: true })
+    .fill("owned current password");
+  const hold = profileGate();
+  api.holdRequest = hold;
+  try {
+    await send.click();
+    await hold.begun;
+    await expect(send).toBeDisabled();
+    await expect(
+      page.getByText("person@example.test", { exact: true }).first(),
+    ).toBeVisible();
+    hold.release();
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: /confirmation.*(?:sent|requested)|check.*both/i }),
+    ).toBeVisible();
+    expect(api.requests).toHaveLength(1);
+    expect(api.requests[0]?.body).toEqual({
+      email: changedEmail,
+      current_password: "owned current password",
+    });
+    expect(api.requests[0]?.headers["x-csrf-token"]).toBe("owned-profile-csrf");
+    expect(profile.writes).toEqual([]);
+    await expect(
+      page.getByText("person@example.test", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("textbox", { name: "Email", exact: true }),
+    ).toHaveCount(0);
+    await dialog.getByRole("button", { name: /close/i }).click();
+    // A later provider-confirmed admission has committed. The existing Reload
+    // profile read, never the request acknowledgment, supplies the saved email.
+    profile.people.get(profileUserA)!.email = changedEmail;
+    const reads = profile.selfReads.length;
+    await page
+      .getByRole("button", { name: "Reload profile", exact: true })
+      .click();
+    await expect.poll(() => profile.selfReads.length).toBeGreaterThan(reads);
+    await expect(page.getByText(changedEmail, { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("person@example.test", { exact: true }),
+    ).toHaveCount(0);
+    expect(api.requests).toHaveLength(1);
+    await expectNoEmailSecrets(page);
+  } finally {
+    hold.release();
+  }
+});
 
 test("Profile clears nullable values explicitly and rejects overlong Unicode before writing", async ({
   page,

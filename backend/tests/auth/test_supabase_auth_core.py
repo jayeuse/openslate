@@ -232,7 +232,9 @@ def test_provider_session_admission_requires_explicit_subject_mapping(
         datetime.now(UTC),
         datetime.now(UTC) + timedelta(minutes=10),
     )
-    client.get_admin_user.return_value = ProviderUser(provider_user_id, None)
+    client.get_admin_user.return_value = ProviderUser(
+        provider_user_id, None, email="person@example.test", email_confirmed_at=datetime.now(UTC)
+    )
     tokens = ProviderTokens("provider-access", "provider-refresh", provider_user_id, 600)
 
     issued = admit_provider_session(db, tokens, client, user_agent="test")

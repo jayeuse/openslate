@@ -73,6 +73,8 @@ const eventLabels: Record<string, string> = {
   "identity.lockout": "Sign-in lockout",
   "identity.ip_blocked": "Address blocked",
   "identity.password_change": "Password change",
+  "identity.email_change_request": "Email change request",
+  "identity.email_change_confirmed": "Email change confirmed",
   "identity.recovery_request": "Recovery request",
   "identity.recovery_complete": "Recovery completion",
   "identity.mfa.enrolled": "Two-step verification enrollment",
@@ -116,6 +118,8 @@ const stageLabels: Record<string, string> = {
   provider_request_unconfirmed: "Request not confirmed",
   event_commit: "Saving the event",
   local_commit: "Saving the change",
+  password_verification: "Checking the current password",
+  local_admission: "Saving the confirmed email during sign-in",
 };
 const reasonLabels: Record<string, string> = {
   request_accepted: "Recovery request accepted",
@@ -289,6 +293,16 @@ function securityEventSentence(
       return result(
         `${actor} changed their password.`,
         `Password change for ${actor}`,
+      );
+    case "identity.email_change_request":
+      return result(
+        `${actor}'s email change was requested; both addresses still require confirmation.`,
+        `Email change request for ${actor}`,
+      );
+    case "identity.email_change_confirmed":
+      return result(
+        `${person}'s confirmed email was saved during protected sign-in.`,
+        `Confirmed email synchronization for ${person}`,
       );
     case "identity.recovery_request":
       return result(

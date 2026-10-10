@@ -180,6 +180,16 @@ def verify_request_evidence(
 ) -> None:
     from operations.sample.verification.route_coverage import SEEDER_ROUTES, route_template
 
+    if action.values.get("operation") == "self_email_change":
+        from operations.sample.controls.email_change_verification import (
+            verify_email_change_evidence,
+        )
+
+        verify_email_change_evidence(
+            dataset, action, result, actors, admin_id, seen_request_ids, observed, issues
+        )
+        return
+
     if action.kind == "jobs_controls":
         from operations.sample.controls.jobs_verification import verify_job_evidence
 
