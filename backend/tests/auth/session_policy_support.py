@@ -1,13 +1,14 @@
 """Owned signed-auth/PostgreSQL world shared by the three session-policy journeys."""
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from secrets import token_urlsafe
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 from jwt.algorithms import ECAlgorithm
@@ -16,16 +17,17 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.config.provider_instance import assert_provider_instance
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 from app.systems.access.identity.rate_limits import login_fingerprint
-from app.systems.access.users.models import User
+from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
-from tests.auth.test_provider_auth_integration import provider_account as _provider_account
 from tests.auth.test_supabase_auth_core import _signed_access
+from tests.conftest import guarded_create_engine
 
 POLICY_FIELDS = (
     "session_timeout_minutes",
@@ -114,10 +116,84 @@ class PolicyWorld:
             )
 
 
+def shared_provider_sessions():
+    """One real provider user with six real provider sessions for this pytest process.
+
+    Admission reads Supabase's ``auth.sessions`` directly, so the sessions must exist.
+    Every later provider call in a policy journey goes to the fake transport, so the
+    journeys never change this user or its sessions; ``shared_provider_account`` in
+    tests/conftest.py yields it once per process and deletes it at the end.
+    """
+    settings = get_settings()
+    assert_provider_instance(
+        dict(os.environ), database_url=settings.database_url, expected_user="openslate_runtime"
+    )
+    email = f"policy-{uuid4().hex}@example.test"
+    password = token_urlsafe(32)
+    with httpx.Client(
+        base_url=settings.supabase_url.rstrip("/") + "/auth/v1/",
+        headers={"apikey": settings.supabase_secret_key.get_secret_value()},
+        timeout=15,
+    ) as admin:
+        created = admin.post(
+            "admin/users", json={"email": email, "password": password, "email_confirm": True}
+        )
+        assert created.status_code in {200, 201}
+        provider_id = UUID(created.json()["id"])
+        try:
+            transport = get_supabase_auth_client()
+            sessions = [
+                transport.verify_access_token(
+                    transport.password_grant(email, password).access_token
+                ).session_id
+                for _ in range(6)
+            ]
+            yield email, password, provider_id, sessions
+        finally:
+            deleted = admin.delete(f"admin/users/{provider_id}")
+            assert deleted.status_code in {200, 204, 404}
+
+
+def _local_account(email):
+    """The actor's local row for one journey, bound later to the shared provider user."""
+    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
+    local_id = None
+    try:
+        with Session(owner) as db:
+            user = User(
+                email=email,
+                username=f"journey-{uuid4().hex[:16]}",
+                status=UserStatus.ACTIVE.value,
+                role="member",
+            )
+            db.add(user)
+            db.commit()
+            local_id = user.id
+        yield local_id, owner
+    finally:
+        if local_id is not None:
+            with Session(owner) as db:
+                for session in db.scalars(
+                    select(IdentitySession).where(IdentitySession.user_id == local_id)
+                ):
+                    db.delete(session)
+                for notice in db.scalars(
+                    select(InAppNotification).where(InAppNotification.recipient_id == local_id)
+                ):
+                    db.delete(notice)
+                db.flush()
+                user = db.get(User, local_id)
+                if user is not None:
+                    db.delete(user)
+                db.commit()
+        owner.dispose()
+
+
 @pytest.fixture
-def policy_world(monkeypatch):
-    account = _provider_account.__wrapped__()
-    email, password, provider_id, actor_id, owner = next(account)
+def policy_world(monkeypatch, shared_provider_account):
+    email, password, provider_id, provider_sessions = shared_provider_account
+    account = _local_account(email)
+    actor_id, owner = next(account)
     settings = get_settings()
     client = TestClient(
         create_app(), base_url=settings.public_origin, raise_server_exceptions=False
@@ -152,50 +228,21 @@ def policy_world(monkeypatch):
         transport._next_jwks_fetch_at,
         transport._last_jwks_fetch_failed,
     )
-    world = None
+    world = PolicyWorld(
+        owner,
+        actor_id,
+        provider_id,
+        target_id,
+        email,
+        password,
+        client,
+        ec.generate_private_key(ec.SECP256R1()),
+        [],
+        # Four sessions sign in below; the last two exist only at the provider.
+        list(provider_sessions),
+        datetime.now(UTC),
+    )
     try:
-        handles, csrf = [], []
-        for _ in range(4):
-            result = client.post("/api/auth/login", json={"email": email, "password": password})
-            assert result.status_code == 200
-            handles.append(client.cookies.get("openslate_refresh"))
-            csrf.append(client.cookies.get("openslate_csrf"))
-            client.cookies.clear()
-        extra_sessions = [
-            transport.verify_access_token(
-                transport.password_grant(email, password).access_token
-            ).session_id
-            for _ in range(2)
-        ]
-        with Session(owner) as db:
-            rows = list(
-                db.scalars(
-                    select(IdentitySession)
-                    .where(IdentitySession.user_id == actor_id)
-                    .order_by(IdentitySession.created_at, IdentitySession.id)
-                )
-            )
-            assert len(rows) == 4
-            world = PolicyWorld(
-                owner,
-                actor_id,
-                provider_id,
-                target_id,
-                email,
-                password,
-                client,
-                ec.generate_private_key(ec.SECP256R1()),
-                [row.id for row in rows],
-                [row.provider_session_id for row in rows] + extra_sessions,
-                datetime.now(UTC),
-            )
-            cipher = Fernet(settings.supabase_session_encryption_key.get_secret_value().encode())
-            for slot, row in enumerate(rows):
-                row.provider_access_token_encrypted = cipher.encrypt(
-                    world.access(slot=slot).encode()
-                ).decode()
-            db.commit()
-        world.handles, world.csrf = handles, csrf
         jwk = ECAlgorithm.to_jwk(world.key.public_key(), as_dict=True)
         jwk.update({"kid": "test-key", "alg": "ES256", "use": "sig"})
 
@@ -269,6 +316,27 @@ def policy_world(monkeypatch):
         transport._jwks = {}
         transport._jwks_expires_at = transport._next_jwks_fetch_at = 0
         transport._last_jwks_fetch_failed = False
+        handles, csrf = [], []
+        for slot in range(4):
+            world.login_slot = slot
+            result = client.post("/api/auth/login", json={"email": email, "password": password})
+            assert result.status_code == 200
+            handles.append(client.cookies.get("openslate_refresh"))
+            csrf.append(client.cookies.get("openslate_csrf"))
+            client.cookies.clear()
+        world.login_slot = 0
+        with Session(owner) as db:
+            rows = {
+                row.provider_session_id: row
+                for row in db.scalars(
+                    select(IdentitySession).where(IdentitySession.user_id == actor_id)
+                )
+            }
+            assert set(rows) == set(world.provider_sessions[:4])
+            world.session_ids = [rows[slot].id for slot in world.provider_sessions[:4]]
+        world.handles, world.csrf = handles, csrf
+        world.clock = datetime.now(UTC)
+        world.calls.clear()
         for module in (
             "provider_sessions",
             "mfa",

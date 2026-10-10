@@ -81,6 +81,16 @@ def guarded_create_engine(database_url, **options):
     return create_engine(database_url, **options)
 
 
+def guarded_pooled_engine(database_url: str):
+    """Guard *database_url*, then return this process's shared pool for it.
+
+    For short helper statements that used to open a new engine each time; callers must
+    not dispose it (see tests/database_pool.py).
+    """
+    _guard_integration_database(database_url, ownership_cache=_OWNERSHIP_CACHE)
+    return pooled_engine(database_url)
+
+
 _GUARDED_IN_TEST = pytest.StashKey[set[tuple[str, tuple[tuple[str, str], ...]]]]()
 
 
@@ -185,3 +195,11 @@ def _integration_session(database_url: str) -> Generator[Session, None, None]:
         if transaction.is_active:
             transaction.rollback()
         connection.close()
+
+
+@pytest.fixture(scope="session")
+def shared_provider_account():
+    """One real provider user and six real sessions per process, for ``policy_world``."""
+    from tests.auth.session_policy_support import shared_provider_sessions
+
+    yield from shared_provider_sessions()
