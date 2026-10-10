@@ -18,7 +18,7 @@ import { manageWorkspaceOptions } from "@/components/systems/manage/adapters/man
 import { accessKeys } from "../../access/adapters/access-queries";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { ApiError } from "@/lib/api";
-import { Action, Choice, Panel } from "../../shared/components/ui";
+import { Action, Panel } from "../../shared/components/ui";
 import {
   changeAccountPassword,
   endAccountSession,
@@ -29,10 +29,8 @@ import {
   accountSessionsOptions,
   platformKeys,
 } from "../adapters/platform-queries";
-import {
-  useUserPreferences,
-  UserPreferencesStatus,
-} from "@/components/theme-provider";
+import { useDisplayRegion } from "@/components/use-display-region";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 
 type AccountConfirmation =
   | { type: "session"; session: AccountSession }
@@ -104,21 +102,18 @@ function accountDeviceLabel(userAgent: string | null): string {
 
 function formatLastActive(
   timestamp: string,
-  workspace: { locale: string; timezone: string },
+  workspace: WorkspaceRegion,
 ): string {
   try {
-    return new Intl.DateTimeFormat(workspace.locale, {
-      dateStyle: "medium",
-      timeStyle: "short",
-      timeZone: workspace.timezone,
-    }).format(new Date(timestamp));
+    if (Number.isNaN(new Date(timestamp).getTime()))
+      return "Date format unavailable";
+    return formatWorkspaceDateTime(timestamp, workspace);
   } catch {
     return "Date format unavailable";
   }
 }
 
 export default function Account() {
-  const theme = useUserPreferences();
   const queryClient = useQueryClient();
   const completeSignOut = useWorkspaceSignOut();
   const actionTrigger = useRef<HTMLButtonElement | null>(null);
@@ -127,6 +122,7 @@ export default function Account() {
   const accountId = identity.data?.id ?? "";
   const sessionsQuery = useQuery(accountSessionsOptions(accountId));
   const workspaceQuery = useQuery(manageWorkspaceOptions());
+  const displayRegion = useDisplayRegion(workspaceQuery.data);
   const passwordMutation = useMutation({
     mutationFn: (values: { currentPassword: string; newPassword: string }) =>
       changeAccountPassword(values.currentPassword, values.newPassword),
@@ -251,33 +247,6 @@ export default function Account() {
   }
   return (
     <div className="bg-background text-foreground grid grid-cols-1 items-start gap-5 rounded-xl xl:grid-cols-2">
-      <Panel title="Personal preferences">
-        <p className="text-muted-foreground text-sm">
-          Theme saves to your signed-in account and follows you across devices.
-        </p>
-        <Choice
-          label="Theme"
-          value={theme.mode ?? ""}
-          disabled={theme.disabled}
-          onChange={(event) =>
-            theme.setMode(
-              event.target.value === "system"
-                ? "system"
-                : event.target.value === "dark"
-                  ? "dark"
-                  : "light",
-            )
-          }
-        >
-          <option value="" disabled>
-            {theme.error ? "Theme unavailable" : "Loading theme…"}
-          </option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-          <option value="system">System</option>
-        </Choice>
-        <UserPreferencesStatus />
-      </Panel>
       <Panel title="Account security">
         <div className="space-y-3">
           <h3 data-slot="section-title" className="font-medium">
@@ -469,11 +438,11 @@ export default function Account() {
                       <p className="text-muted-foreground text-xs">
                         {session.current ? "Current session · " : ""}
                         Last active{" "}
-                        {workspaceQuery.data
-                          ? formatLastActive(session.refreshed_at, {
-                              locale: workspaceQuery.data.locale,
-                              timezone: workspaceQuery.data.timezone,
-                            })
+                        {displayRegion
+                          ? formatLastActive(
+                              session.refreshed_at,
+                              displayRegion,
+                            )
                           : workspaceQuery.isPending
                             ? "Loading organization date settings…"
                             : "Date settings unavailable"}

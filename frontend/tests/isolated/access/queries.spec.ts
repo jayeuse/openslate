@@ -40,7 +40,7 @@ test("every Access key starts with the area and holds its list filter", () => {
   expect(authMeOptions().queryKey).toEqual(["auth", "me"]);
 });
 
-test("a list read loads every page into one complete collection", async () => {
+test("a list read keeps the server page and does not follow has_more automatically", async () => {
   const second = {
     ...directoryUser,
     id: "00000000-0000-4000-8000-0000000000f2",
@@ -65,11 +65,11 @@ test("a list read loads every page into one complete collection", async () => {
 
   try {
     const users = await client().fetchQuery(userListOptions("include"));
-    expect(users.map((item) => item.id)).toEqual([user.id, second.id]);
-    expect(mock.requests.map(({ input }) => String(input))).toEqual([
-      "/api/users?limit=100&offset=0&sort_by=username&deleted=include",
-      "/api/users?limit=100&offset=1&sort_by=username&deleted=include",
-    ]);
+    expect(mock.requests).toHaveLength(1);
+    expect(users).toMatchObject({
+      items: [{ id: user.id }],
+      pagination: { count: 1, total: 2, has_more: true },
+    });
   } finally {
     mock.restore();
   }
@@ -133,5 +133,6 @@ test("a person's access and sessions sit under the users key", () => {
     "users",
     "sessions",
     "u1",
+    { limit: 10, offset: 0 },
   ]);
 });

@@ -6,18 +6,26 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.boards.models import Board, BoardWidget
 from app.systems.boards.portability import (
     PortabilityError,
     parse_portable_board,
     resolve_portable_board,
 )
+from app.systems.boards.portability_queries import portable_config
+from app.systems.boards.widget_schemas import BoardWidgetConfig
+from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from tests.boards.portable_chart_support import chart_board, complete_query, reference
+from tests.charts.chart_route_support import chart_world as chart_world
 
 
 def _bundle() -> dict:
@@ -132,6 +140,110 @@ def test_v3_structure_resolves_exact_active_names_types_without_mutating() -> No
     db.add.assert_not_called()
     db.flush.assert_not_called()
     db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "metric_type", "expected"),
+    [
+        (None, None, "count"),
+        (None, "decimal", "sum"),
+        ("average", "decimal", "average"),
+        ("distinct", "text", "distinct"),
+    ],
+)
+def test_v3_legacy_aggregation_codecs_preserve_meaning_and_named_references(
+    aggregation: str | None, metric_type: str | None, expected: str
+) -> None:
+    department, module, fields = _catalog()
+    measure = Field(
+        id=uuid7(),
+        module_id=module.id,
+        name="Measure",
+        type=metric_type or "decimal",
+        is_deleted=False,
+        config={},
+        position=2,
+    )
+    fields.append(measure)
+    live = {
+        "fields": [{"field_id": fields[0].id, "expected_type": "text"}],
+        "filters": [
+            {
+                "field_id": fields[1].id,
+                "expected_type": "select",
+                "operator": "eq",
+                "value": fields[1].config["options"][0]["id"],
+            }
+        ],
+        "logic": "or",
+        "metric": {"field_id": measure.id, "expected_type": metric_type} if metric_type else None,
+        "visualization": "pie",
+        "refresh": "five-minutes",
+    }
+    if aggregation is not None:
+        live["aggregation"] = aggregation
+    config = BoardWidgetConfig.model_validate(live)
+    exported = portable_config(config, module.id, {field.id: field for field in fields}, "S", True)
+    wanted = {
+        "fields": [{"name": "Label", "expected_type": "text"}],
+        "filters": [
+            {
+                "name": "Status",
+                "expected_type": "select",
+                "operator": "eq",
+                "value": "Open",
+            }
+        ],
+        "logic": "or",
+        "aggregation": expected,
+        "metric": {"name": "Measure", "expected_type": metric_type} if metric_type else None,
+        "visualization": "pie",
+        "size": "S",
+        "refresh": "five-minutes",
+        "pinned": True,
+    }
+    assert exported.model_dump(mode="json") == wanted
+
+    bundle = _bundle()
+    bundle["configuration"]["widgets"][0]["config"] = exported.model_dump(mode="json")
+    if aggregation is None:
+        # Old version-3 files omit this field; import must retain the old projection.
+        del bundle["configuration"]["widgets"][0]["config"]["aggregation"]
+    db = _database([department], [module], fields)
+    resolved = resolve_portable_board(db, parse_portable_board(_bytes(bundle))).widgets[0]
+
+    assert resolved.size == "S" and resolved.pinned is True
+    assert resolved.chart_id is None and resolved.module_id == module.id
+    assert resolved.config.model_dump(mode="json", exclude={"refresh"}) == config.model_dump(
+        mode="json", exclude={"refresh"}
+    )
+    assert resolved.config.refresh == "manual"
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "metric_type"),
+    [
+        (None, None),
+        ("count", "number"),
+        ("sum", None),
+        ("min", "date"),
+        ("max", "datetime"),
+        ("distinct", None),
+    ],
+)
+def test_v3_legacy_aggregation_rejects_invalid_measure_pairs(
+    aggregation: str | None, metric_type: str | None
+) -> None:
+    bundle = _bundle()
+    config = bundle["configuration"]["widgets"][0]["config"]
+    config["aggregation"] = aggregation
+    config["metric"] = {"name": "Measure", "expected_type": metric_type} if metric_type else None
+
+    with pytest.raises(PortabilityError) as error:
+        parse_portable_board(_bytes(bundle))
+    assert error.value.code == "board_bundle_invalid"
 
 
 @pytest.mark.parametrize("extra", ["id", "audience", "grants", "files", "placements"])
@@ -250,3 +362,121 @@ def test_v3_resolution_rejects_closed_module_and_soft_deleted_field() -> None:
         resolve_portable_board(
             _database([department], [module], fields), parse_portable_board(_bytes(_bundle()))
         )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "shape", ["mixed", "module_id", "field_id", "chart_id", "category", "unknown"]
+)
+def test_normalized_bundle_rejects_mixed_or_typed_id_grammar(chart_world, shape):
+    world = chart_world
+    query, _, _ = complete_query(world)
+    board, _ = chart_board(world, query)
+    with world.client("admin") as admin:
+        bundle = admin.get(f"/api/boards/{board.id}/configuration").json()
+        config = bundle["configuration"]["widgets"][0]["config"]
+        if shape == "mixed":
+            config["fields"] = []
+        elif shape == "module_id":
+            config["query"]["module_id"] = str(world.module.id)
+        elif shape == "field_id":
+            config["query"]["dimension"]["field_id"] = str(world.label.id)
+        elif shape == "chart_id":
+            config["chart_id"] = str(uuid7())
+        elif shape == "category":
+            bundle["configuration"]["widgets"][0]["widget_type"] = "records"
+        else:
+            config["future_option"] = True
+        before = [
+            world.db.scalar(select(func.count()).select_from(model))
+            for model in (Board, BoardWidget, AuditLog)
+        ]
+        result = admin.post(
+            "/api/boards/import",
+            content=_bytes(bundle),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        assert (
+            result.status_code == 422 and result.json()["detail"]["code"] == "board_bundle_invalid"
+        )
+        with Session(world.db.get_bind()) as durable:
+            assert [
+                durable.scalar(select(func.count()).select_from(model))
+                for model in (Board, BoardWidget, AuditLog)
+            ] == before
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("predicate", ["scalar", "list"])
+def test_normalized_person_predicates_are_not_portable(chart_world, predicate):
+    world = chart_world
+    query, _, _ = complete_query(world)
+    board, _ = chart_board(world, query)
+    with world.client("admin") as admin:
+        bundle = admin.get(f"/api/boards/{board.id}/configuration").json()
+        filters = bundle["configuration"]["widgets"][0]["config"]["query"]["definition"]["filters"]
+        filters[0] = {
+            "name": "Person",
+            "expected_type": "user",
+            "operator": "eq" if predicate == "scalar" else "in",
+            "value": str(world.users["manager"].id)
+            if predicate == "scalar"
+            else [str(world.users["manager"].id)],
+        }
+        result = admin.post(
+            "/api/boards/import",
+            content=_bytes(bundle),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        assert (
+            result.status_code == 422 and result.json()["detail"]["code"] == "board_bundle_invalid"
+        )
+    if predicate == "scalar":
+        query["definition"]["filters"][0] = {
+            **reference(world.person, "user"),
+            "operator": "eq",
+            "value": str(world.users["manager"].id),
+        }
+        other, _ = chart_board(world, query)
+        with world.client("reader") as reader:
+            result = reader.get(f"/api/boards/{other.id}/configuration")
+            assert result.status_code == 422 and str(world.users["manager"].id) not in result.text
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("failure", ["later_source", "commit"])
+def test_normalized_multiwidget_or_commit_failure_is_atomic(chart_world, monkeypatch, failure):
+    world = chart_world
+    query, _, _ = complete_query(world)
+    board, _ = chart_board(world, query)
+    with world.client("admin") as admin:
+        bundle = admin.get(f"/api/boards/{board.id}/configuration").json()
+        if failure == "later_source":
+            second = deepcopy(bundle["configuration"]["widgets"][0])
+            second["config"]["query"]["dimension"]["name"] = "Missing owned field"
+            bundle["configuration"]["widgets"].append(second)
+        before = [
+            world.db.scalar(select(func.count()).select_from(model))
+            for model in (Board, BoardWidget, AuditLog)
+        ]
+        if failure == "commit":
+
+            def refuse_commit():
+                world.db.flush()
+                raise OperationalError(
+                    "owned injected commit failure", {}, RuntimeError("unavailable")
+                )
+
+            monkeypatch.setattr(world.db, "commit", refuse_commit)
+        result = admin.post(
+            "/api/boards/import",
+            content=_bytes(bundle),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        assert result.status_code == (409 if failure == "later_source" else 503)
+        assert result.headers["Cache-Control"] == "private, no-store"
+        with Session(world.db.get_bind()) as durable:
+            assert [
+                durable.scalar(select(func.count()).select_from(model))
+                for model in (Board, BoardWidget, AuditLog)
+            ] == before

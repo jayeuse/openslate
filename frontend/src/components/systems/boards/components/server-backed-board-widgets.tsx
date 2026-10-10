@@ -3,7 +3,9 @@
 import { createElement, useEffect, useState, type ReactNode } from "react";
 import { getBoardWorkspaceToday } from "../adapters/board-workspace-date-api";
 import type { OpenViewRecord } from "../../openview/adapters/views-api";
+import type { OpenViewAggregateSnapshotResult } from "../../openview/adapters/analytics-api";
 import { collapseBoardWidgetPie } from "../domain/live-widget-query";
+import { OpenViewChartPreview } from "../../openview/components/chart-preview";
 import {
   useLiveBoardWidgets,
   type LiveWidgetItem,
@@ -29,6 +31,8 @@ function unavailableReason(item: LiveWidgetItem): string {
       return "Choose a field for this widget before its data can be shown.";
     case "unsupported-dimension":
       return "This field type is not supported by this widget.";
+    case "invalid-source":
+      return "Widget data unavailable.";
   }
 }
 
@@ -56,6 +60,8 @@ function displayRecordFieldValue(
 function recordsContent(item: LiveWidgetItem): ReactNode {
   if (item.data?.kind !== "records") return null;
   const { result, fieldNames } = item.data;
+  const fields =
+    item.plan.kind === "records" ? item.plan.request.definition.columns : [];
   if (item.widget.widgetType === "summary")
     return createElement(
       "p",
@@ -71,11 +77,7 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
         "Matching records",
       ),
     );
-  if (
-    item.widget.config.fields.some(
-      (field) => !fieldNames[field.fieldId]?.trim(),
-    )
-  )
+  if (fields.some((field) => !fieldNames[field.fieldId]?.trim()))
     return createElement(
       "p",
       { className: "text-muted-foreground text-sm", role: "alert" },
@@ -107,7 +109,7 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
             { className: "font-medium" },
             `Record ${index + 1}`,
           ),
-          item.widget.config.fields.length === 0
+          fields.length === 0
             ? createElement(
                 "p",
                 { className: "text-muted-foreground text-sm" },
@@ -116,7 +118,7 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
             : createElement(
                 "dl",
                 { className: "mt-1 space-y-1 text-sm" },
-                ...item.widget.config.fields.map((field) =>
+                ...fields.map((field) =>
                   createElement(
                     "div",
                     {
@@ -142,13 +144,15 @@ function recordsContent(item: LiveWidgetItem): ReactNode {
   );
 }
 
-function numericValue(value: number | string): number | null {
+function numericValue(value: number | string | null): number | null {
+  if (value === null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 function groupContent(item: LiveWidgetItem): ReactNode {
-  if (item.data?.kind !== "aggregate") return null;
+  if (item.data?.kind !== "aggregate" && item.data?.kind !== "snapshot")
+    return null;
   const { items, pagination } = item.data.result;
   if (items.length === 0)
     return createElement(
@@ -158,7 +162,13 @@ function groupContent(item: LiveWidgetItem): ReactNode {
     );
   const values = items.map((entry) => numericValue(entry.value));
   const hasNegative = values.some((value) => value !== null && value < 0);
-  const max = Math.max(...values.map((value) => value ?? 0));
+  const hasUnchartableValue = items.some(
+    (entry, index) => entry.value !== null && values[index] === null,
+  );
+  const finite = values.filter((value): value is number => value !== null);
+  const safeRange = Number.isFinite(
+    Math.max(0, ...finite) - Math.min(0, ...finite),
+  );
   return createElement(
     "div",
     { className: "space-y-3" },
@@ -172,17 +182,32 @@ function groupContent(item: LiveWidgetItem): ReactNode {
         ? "Negative values cannot be shown as bars. Exact values are listed below."
         : "Exact values are listed below; bar lengths are approximate.",
     ),
-    values.some((value) => value === null)
+    hasUnchartableValue || !safeRange
       ? createElement(
           "p",
           { className: "text-muted-foreground text-sm" },
           "Some values are too large to chart. Exact values remain below.",
         )
       : null,
+    !hasNegative && !hasUnchartableValue && safeRange && finite.length > 0
+      ? createElement(OpenViewChartPreview, {
+          type: "bar",
+          valueLabel: "Value",
+          showLabels: false,
+          showLegend: false,
+          className: "h-52 w-full min-w-0",
+          allowDecimals: true,
+          data: items.map((entry, index) => ({
+            key: `board-point-${index}`,
+            label: entry.label,
+            value: values[index],
+          })),
+        })
+      : null,
     createElement(
       "ol",
       { className: "space-y-3" },
-      ...items.map((entry, index) =>
+      ...items.map((entry) =>
         createElement(
           "li",
           { key: entry.key ?? "unspecified", className: "min-w-0" },
@@ -199,24 +224,42 @@ function groupContent(item: LiveWidgetItem): ReactNode {
             createElement(
               "span",
               { className: "font-medium tabular-nums" },
-              String(entry.value),
+              entry.value === null ? "—" : String(entry.value),
             ),
           ),
-          values[index] === null || hasNegative
-            ? null
-            : createElement(
-                "div",
-                {
-                  "aria-hidden": "true",
-                  className: "bg-muted mt-1 h-2 overflow-hidden rounded-full",
-                },
-                createElement("div", {
-                  className: "bg-chart-1 h-full rounded-full",
-                  style: {
-                    width: `${max === 0 ? 0 : ((values[index] ?? 0) / max) * 100}%`,
-                  },
-                }),
-              ),
+        ),
+      ),
+    ),
+  );
+}
+
+function nativeSnapshotValues(
+  result: OpenViewAggregateSnapshotResult,
+): ReactNode {
+  return createElement(
+    "ol",
+    { className: "space-y-1 text-sm" },
+    ...result.items.map((entry, index) =>
+      createElement(
+        "li",
+        {
+          key: `${entry.key ?? "null"}:${index}`,
+          className: "flex min-w-0 flex-wrap justify-between gap-2",
+        },
+        createElement(
+          "span",
+          { className: "min-w-0 break-words" },
+          entry.label,
+        ),
+        createElement(
+          "span",
+          { className: "font-medium tabular-nums" },
+          entry.value === null ? "—" : String(entry.value),
+        ),
+        createElement(
+          "span",
+          { className: "text-muted-foreground text-xs" },
+          `${entry.recordCount} records`,
         ),
       ),
     ),
@@ -225,18 +268,29 @@ function groupContent(item: LiveWidgetItem): ReactNode {
 
 function pieContent(item: LiveWidgetItem): ReactNode {
   if (item.data?.kind !== "snapshot") return null;
-  const projection = collapseBoardWidgetPie(item.data.result);
+  const legacy = item.widget.config !== null && "fields" in item.widget.config;
+  const projection = collapseBoardWidgetPie(item.data.result, legacy);
   if (projection.kind === "unavailable")
     return createElement(
-      "p",
-      { className: "text-muted-foreground text-sm" },
-      "This chart cannot be shown from an incomplete or unrepresentable result.",
+      "div",
+      { className: "space-y-2" },
+      createElement(
+        "p",
+        { className: "text-muted-foreground text-sm" },
+        "This chart cannot be shown from an incomplete or unrepresentable result.",
+      ),
+      legacy ? null : nativeSnapshotValues(item.data.result),
     );
   if (projection.points.length === 0)
     return createElement(
-      "p",
-      { className: "text-muted-foreground text-sm" },
-      "No matching groups. Adjust the widget filters to see results.",
+      "div",
+      { className: "space-y-2" },
+      createElement(
+        "p",
+        { className: "text-muted-foreground text-sm" },
+        "No matching groups. Adjust the widget filters to see results.",
+      ),
+      legacy ? null : nativeSnapshotValues(item.data.result),
     );
   const total = projection.points.reduce((sum, point) => sum + point.value, 0);
   if (!Number.isFinite(total))
@@ -248,44 +302,49 @@ function pieContent(item: LiveWidgetItem): ReactNode {
         null,
         "Values too large to chart. Exact values remain below.",
       ),
-      createElement(
-        "ol",
-        { className: "space-y-1" },
-        ...item.data.result.items.map((entry) =>
-          createElement(
-            "li",
-            {
-              key: entry.key ?? "unspecified",
-              className: "flex min-w-0 justify-between gap-2",
-            },
-            createElement(
-              "span",
-              { className: "min-w-0 break-words" },
-              entry.label,
+      legacy
+        ? createElement(
+            "ol",
+            { className: "space-y-1" },
+            ...item.data.result.items.map((entry) =>
+              createElement(
+                "li",
+                {
+                  key: entry.key ?? "unspecified",
+                  className: "flex min-w-0 justify-between gap-2",
+                },
+                createElement(
+                  "span",
+                  { className: "min-w-0 break-words" },
+                  entry.label,
+                ),
+                createElement(
+                  "span",
+                  { className: "font-medium tabular-nums" },
+                  entry.value === null ? "—" : String(entry.value),
+                ),
+              ),
             ),
-            createElement(
-              "span",
-              { className: "font-medium tabular-nums" },
-              String(entry.value),
-            ),
-          ),
-        ),
-      ),
+          )
+        : nativeSnapshotValues(item.data.result),
     );
-  let position = 0;
-  const stops = projection.points.map((point, index) => {
-    const start = position;
-    position += total === 0 ? 0 : (point.value / total) * 100;
-    return `${colors[index % colors.length]} ${start}% ${position}%`;
-  });
   return createElement(
     "div",
     { className: "flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center" },
     total > 0
-      ? createElement("div", {
-          "aria-hidden": "true",
-          className: "mx-auto aspect-square w-36 shrink-0 rounded-full sm:mx-0",
-          style: { backgroundImage: `conic-gradient(${stops.join(", ")})` },
+      ? createElement(OpenViewChartPreview, {
+          type: "pie",
+          valueLabel: "Value",
+          showLabels: false,
+          showLegend: false,
+          className: "h-52 w-full min-w-0 sm:w-1/2",
+          pieInnerRadius: 44,
+          pieOuterRadius: 76,
+          data: projection.points.map((point, index) => ({
+            key: `board-point-${index}`,
+            label: point.label,
+            value: point.value,
+          })),
         })
       : null,
     createElement(
@@ -298,46 +357,63 @@ function pieContent(item: LiveWidgetItem): ReactNode {
           ? `${projection.totalGroups} groups; ${projection.rolledUpGroups} included in Other. Chart values are approximate.`
           : `${projection.totalGroups} groups. Chart values are approximate.`,
       ),
-      createElement(
-        "ol",
-        { className: "space-y-1 text-sm" },
-        ...projection.points.map((point, index) =>
-          createElement(
-            "li",
-            {
-              key: point.key,
-              className: "flex min-w-0 flex-wrap justify-between gap-2",
-            },
-            createElement(
-              "span",
-              { className: "flex min-w-0 items-center gap-2 break-words" },
-              createElement("span", {
-                "aria-hidden": "true",
-                className: "size-2.5 shrink-0 rounded-full",
-                style: { backgroundColor: colors[index % colors.length] },
-              }),
-              point.label,
+      legacy
+        ? createElement(
+            "ol",
+            { className: "space-y-1 text-sm" },
+            ...projection.points.map((point, index) =>
+              createElement(
+                "li",
+                {
+                  key: point.key,
+                  className: "flex min-w-0 flex-wrap justify-between gap-2",
+                },
+                createElement(
+                  "span",
+                  { className: "flex min-w-0 items-center gap-2 break-words" },
+                  createElement("span", {
+                    "aria-hidden": "true",
+                    className: "size-2.5 shrink-0 rounded-full",
+                    style: { backgroundColor: colors[index % colors.length] },
+                  }),
+                  point.label,
+                ),
+                createElement(
+                  "span",
+                  { className: "font-medium tabular-nums" },
+                  point.key === "rollup:other"
+                    ? String(point.value)
+                    : String(
+                        item.data?.kind === "snapshot"
+                          ? (item.data.result.items.find(
+                              (entry) =>
+                                (entry.key === null
+                                  ? "group:null"
+                                  : `group:value:${entry.key}`) === point.key,
+                            )?.value ?? point.value)
+                          : point.value,
+                      ),
+                ),
+              ),
             ),
-            createElement(
-              "span",
-              { className: "font-medium tabular-nums" },
-              String(point.value),
-            ),
-          ),
-        ),
-      ),
+          )
+        : nativeSnapshotValues(item.data.result),
     ),
   );
 }
 
 function lineContent(item: LiveWidgetItem): ReactNode {
   if (item.data?.kind !== "snapshot") return null;
+  const bucket =
+    item.plan.kind === "snapshot" && item.plan.request.mode === "date_series"
+      ? (item.plan.request.bucket ?? "day")
+      : "day";
   const { items, pagination } = item.data.result;
   if (pagination.hasMore || pagination.total !== items.length)
     return createElement(
       "p",
       { className: "text-muted-foreground text-sm" },
-      "The daily chart is incomplete. Refresh to try again.",
+      `The ${bucket === "day" ? "daily" : bucket} chart is incomplete. Refresh to try again.`,
     );
   if (items.length === 0)
     return createElement(
@@ -350,49 +426,40 @@ function lineContent(item: LiveWidgetItem): ReactNode {
   const min = Math.min(...finite);
   const max = Math.max(...finite);
   const range = max - min || 1;
+  const hasUnchartableValue = items.some(
+    (entry, index) => entry.value !== null && values[index] === null,
+  );
   const canDraw =
-    values.every((value) => value !== null) && Number.isFinite(range);
-  const points = values.map((value, index) => ({
-    x: items.length === 1 ? 160 : 8 + (index / (items.length - 1)) * 304,
-    y: 152 - (((value ?? min) - min) / range) * 144,
-  }));
+    finite.length > 0 && !hasUnchartableValue && Number.isFinite(range);
   return createElement(
     "div",
     { className: "min-w-0 space-y-3" },
     createElement(
       "p",
       { className: "text-muted-foreground text-sm" },
-      `${items.length} ${items.length === 1 ? "day" : "days"} shown. Exact values are listed below; the line is approximate.`,
+      `${items.length} ${bucket}${items.length === 1 ? "" : "s"} shown. Exact values are listed below; the line is approximate.`,
     ),
     canDraw
-      ? createElement(
-          "svg",
-          {
-            "aria-hidden": "true",
-            className: "h-36 w-full min-w-0",
-            viewBox: "0 0 320 160",
-            preserveAspectRatio: "none",
-          },
-          createElement("polyline", {
-            fill: "none",
-            stroke: "var(--chart-1)",
-            strokeWidth: 3,
-            points: points.map(({ x, y }) => `${x},${y}`).join(" "),
-          }),
-          ...points.map(({ x, y }, index) =>
-            createElement("circle", {
-              key: items[index].key ?? String(index),
-              cx: x,
-              cy: y,
-              r: 3,
-              fill: "var(--chart-1)",
-            }),
-          ),
-        )
+      ? createElement(OpenViewChartPreview, {
+          type: "line",
+          valueLabel: "Value",
+          showLabels: false,
+          showPoints: true,
+          showLegend: false,
+          className: "h-52 w-full min-w-0",
+          allowDecimals: true,
+          data: items.map((entry, index) => ({
+            key: `board-point-${index}`,
+            label: entry.label,
+            value: values[index],
+          })),
+        })
       : createElement(
           "p",
           { className: "text-muted-foreground text-sm" },
-          "Values too large to chart. Exact values remain below.",
+          hasUnchartableValue || finite.length > 0
+            ? "Values too large to chart. Exact values remain below."
+            : "No chartable values are available. Exact values remain below.",
         ),
     createElement(
       "ol",
@@ -412,7 +479,7 @@ function lineContent(item: LiveWidgetItem): ReactNode {
           createElement(
             "span",
             { className: "font-medium tabular-nums" },
-            String(entry.value),
+            entry.value === null ? "—" : String(entry.value),
           ),
         ),
       ),
@@ -446,6 +513,11 @@ function widgetContent(item: LiveWidgetItem): ReactNode {
     );
   if (item.plan.kind === "records") return recordsContent(item);
   if (item.plan.kind === "aggregate") return groupContent(item);
+  if (item.plan.kind === "snapshot" && item.plan.widgetType !== "chart")
+    return item.data?.kind === "snapshot"
+      ? nativeSnapshotValues(item.data.result)
+      : null;
+  if (item.plan.visualization === "bar") return groupContent(item);
   return item.plan.visualization === "pie"
     ? pieContent(item)
     : lineContent(item);
@@ -457,7 +529,7 @@ function widgetCard(
   gridColumns: 2 | 3,
 ): ReactNode {
   const fullWidth =
-    item.widget.config.size === "full"
+    item.widget.size === "L"
       ? gridColumns === 3
         ? "lg:col-span-3"
         : "lg:col-span-2"
@@ -479,7 +551,7 @@ function widgetCard(
         { className: "min-w-0 text-base font-semibold break-words" },
         item.widget.name,
       ),
-      item.widget.config.pinned
+      item.widget.pinned
         ? createElement(
             "span",
             {

@@ -85,6 +85,55 @@ test("list reads send only the backend's query fields and forward the abort sign
   }
 });
 
+test("people lookups use repeated bounded IDs and groups send server gap filters", async () => {
+  const mock = installFetch((input) => {
+    const path = new URL(String(input), "http://access.invalid").pathname;
+    return Response.json(
+      path === "/api/users"
+        ? pageOf([directoryUser])
+        : path === "/api/access/groups"
+          ? pageOf([group])
+          : pageOf([memberCandidate]),
+    );
+  });
+  try {
+    await listAccessUsers({
+      ids: [ids.guest, ids.admin],
+      limit: 100,
+      deleted: "include",
+    });
+    await listAccessMemberCandidates({ ids: [ids.guest], limit: 100 });
+    await listAccessGroups({
+      without_access: true,
+      without_members: true,
+      sort_by: "member_count",
+      sort_order: "desc",
+    });
+    const queries = mock.requests.map(
+      (request) =>
+        new URL(String(request.input), "http://access.invalid").searchParams,
+    );
+    expect(queries[0]?.getAll("ids")).toEqual([ids.guest, ids.admin]);
+    expect(queries[1]?.getAll("ids")).toEqual([ids.guest]);
+    expect(Object.fromEntries(queries[2] ?? [])).toEqual({
+      without_access: "true",
+      without_members: "true",
+      sort_by: "member_count",
+      sort_order: "desc",
+    });
+    const before = mock.requests.length;
+    await expect(listAccessUsers({ ids: [] })).rejects.toThrow();
+    await expect(
+      listAccessMemberCandidates({
+        ids: Array.from({ length: 101 }, () => ids.guest),
+      }),
+    ).rejects.toThrow();
+    expect(mock.requests).toHaveLength(before);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("invitations send role and groups and never a password", async () => {
   const restoreCookie = installCsrfCookie("invite-token");
   const mock = installFetch((_input, init) =>
@@ -200,7 +249,8 @@ test("group writes carry If-Match and return the new ETag", async () => {
     });
     await replaceAccessGroupAccess(ids.group, {
       access: group.access.map((entry) => ({
-        ...entry,
+        department_id: entry.department_id,
+        module_id: entry.module_id,
         level: entry.level as "read" | "write",
       })),
       etag: '"group-3"',
@@ -235,7 +285,14 @@ test("group writes carry If-Match and return the new ETag", async () => {
       member_ids: [],
     });
     expect(JSON.parse(String(mock.requests[3]?.init?.body))).toEqual({
-      access: group.access,
+      access: [
+        { department_id: ids.department, module_id: null, level: "read" },
+        {
+          department_id: ids.department,
+          module_id: ids.module,
+          level: "write",
+        },
+      ],
     });
     expect(JSON.parse(String(mock.requests[4]?.init?.body))).toEqual({
       member_ids: [ids.guest],

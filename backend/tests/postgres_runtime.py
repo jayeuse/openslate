@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
-from sqlalchemy import create_engine, exc, pool
+from sqlalchemy import Engine, create_engine, exc, make_url, pool
 
 from app.core.config.disposable_instance import DisposableTargetError
 from app.core.config.instance import (
@@ -141,12 +141,15 @@ def assert_runner_database_url(
     environment: dict[str, str] | None = None,
     allowed_roles: frozenset[str] = _DATABASE_ROLES,
     ownership_cache: OwnershipCache | None = None,
+    engine: Engine | None = None,
 ) -> None:
     """Reject every integration URL except an exact private runner manifest entry.
 
     With ``ownership_cache``, a verified live Docker ownership verdict is reused for the
     same URL and unchanged environment; the connected database identity is still checked
-    on every call. Refusals are never cached.
+    on every call. Refusals are never cached. With ``engine`` (an engine for exactly
+    ``database_url``), the identity check runs on one of its pooled connections instead
+    of a new one.
     """
     values = os.environ if environment is None else environment
     try:
@@ -179,14 +182,17 @@ def assert_runner_database_url(
             raise RuntimeError("Database tests require a live runner-owned instance") from None
         if target is None:
             raise RuntimeError("Database tests require a live runner-owned instance")
-    engine = create_engine(database_url, poolclass=pool.NullPool)
+    if engine is not None and engine.url != make_url(database_url):
+        raise RuntimeError("Database tests require an engine for the checked URL")
+    checker = engine or create_engine(database_url, poolclass=pool.NullPool)
     try:
-        with engine.connect() as connection:
+        with checker.connect() as connection:
             assert_instance_target(connection, target, expected_user=parsed.username)
     except (exc.SQLAlchemyError, InstanceTargetError):
         raise RuntimeError("Database tests require matching live database identity") from None
     finally:
-        engine.dispose()
+        if engine is None:
+            checker.dispose()
     if ownership_cache is not None:
         ownership_cache[key] = target
 

@@ -265,10 +265,10 @@ def test_verified_factor_removal_invalidates_aggregate_without_claiming_mfa_off(
 
 
 @pytest.fixture
-def provider_account():
-    from tests.auth.test_provider_auth_integration import provider_account as original
+def provider_account(monkeypatch, request):
+    from tests.fake_provider_support import install_fake_provider, owned_account, real_session_pool
 
-    yield from original.__wrapped__()
+    yield from owned_account(install_fake_provider(monkeypatch, real_session_pool(request.config)))
 
 
 @pytest.fixture

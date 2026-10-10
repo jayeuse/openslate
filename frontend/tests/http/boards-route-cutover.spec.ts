@@ -36,6 +36,20 @@ test("Board menu keeps administration reachable without crowding the section", a
       json: { board_id: boardId, revision: 1, groups: [] },
     }),
   );
+  await page.route("**/api/access/groups?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      },
+    }),
+  );
   await page.goto(`/boards?board=${boardId}&section=overview`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
@@ -606,6 +620,48 @@ test("post editor retains a canceled close and discards only on confirmation", a
   );
 });
 
+test("a live refresh keeps an open post draft mounted and editable", async ({
+  page,
+}) => {
+  await installOpenViewEventSource(page);
+  await installBoardApi(page, () => true);
+  await page.goto(`/boards?board=${boardId}&section=posts`);
+  await page.getByRole("button", { name: "New post", exact: true }).click();
+  const editor = page.getByRole("dialog", {
+    name: "Post editor",
+    exact: true,
+  });
+  const title = editor.getByLabel("Title", { exact: true });
+  await title.fill("Draft");
+
+  // Hold the editor's access re-check so the live refresh stays in flight.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = () => {};
+  const begun = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  await page.route(`**/api/boards/${boardId}/my-access`, async (route) => {
+    started();
+    await held;
+    await route.fallback();
+  });
+  await sendOpenViewEvent(page, "resync");
+  await begun;
+
+  // The form stays mounted and focused, and typing continues mid-refresh.
+  await expect(title).toBeFocused();
+  await title.press("End");
+  await title.pressSequentially(" to keep");
+  release();
+  await expect(title).toHaveValue("Draft to keep");
+  await expect(
+    editor.getByText("Loading editable posts…", { exact: true }),
+  ).toHaveCount(0);
+});
+
 test("the post editor has no audience choice", async ({ page }) => {
   await installBoardApi(page, () => true);
   await page.goto(`/boards?board=${boardId}&section=posts`);
@@ -698,6 +754,12 @@ test("My events refreshes after saving and when the current tab reselects it", a
         }),
       });
     }
+    // A background resync re-reads the event under an open editor.
+    if (
+      path === `/api/boards/${boardId}/events/${eventId}` &&
+      route.request().method() === "GET"
+    )
+      return route.fulfill({ json: event() });
     if (
       path === `/api/boards/${boardId}/events/${eventId}` &&
       route.request().method() === "PATCH"
@@ -1111,6 +1173,9 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
             widget_type: "records",
             module_id: moduleId,
             position: 0,
+            size: "M",
+            pinned: false,
+            chart_id: null,
             config: {
               version: 1,
               fields: [{ field_id: assigneeFieldId, expected_type: "user" }],
@@ -1118,9 +1183,7 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
               logic: "and",
               metric: null,
               visualization: "bar",
-              size: "half",
               refresh: "manual",
-              pinned: false,
             },
             created_at: "2026-09-25T00:00:00Z",
             updated_at: "2026-09-25T00:00:00Z",
@@ -1137,28 +1200,18 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
       }),
     }),
   );
-  await page.route(`**/api/views/data-sources/${moduleId}/fields**`, (route) =>
+  await page.route(`**/api/fields/${assigneeFieldId}`, (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        items: [
-          {
-            id: assigneeFieldId,
-            module_id: moduleId,
-            name: "Assignee",
-            type: "user",
-            required: false,
-            position: 0,
-            config: { kind: "user" },
-          },
-        ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        id: assigneeFieldId,
+        module_id: moduleId,
+        name: "Assignee",
+        type: "user",
+        required: false,
+        position: 0,
+        config: { kind: "user" },
+        is_deleted: false,
       }),
     }),
   );
@@ -1434,7 +1487,7 @@ test("a stale author post archive preserves the selected post and local form", a
   await expect(archiveButton).toBeDisabled();
 });
 
-test("an author links a Record using its server-derived title", async ({
+test("an author links a Record using its off-page title field without crawling the catalog", async ({
   page,
 }) => {
   await installBoardApi(page, () => true, authorAccess);
@@ -1467,7 +1520,10 @@ test("an author links a Record using its server-derived title", async ({
   let linked = false;
   let listUnavailable = true;
   let sourcePageUnavailable = true;
+  let titleUnavailable = true;
   let recordsUnavailable = true;
+  const fieldOffsets: number[] = [];
+  const queryColumns: Array<Array<{ field_id: string }>> = [];
   const dataSources = Array.from({ length: 26 }, (_, index) => ({
     id:
       index === 0
@@ -1527,30 +1583,37 @@ test("an author links a Record using its server-derived title", async ({
     return route.fulfill({ status: 404, json: { detail: "Unmocked route" } });
   });
   await page.route("**/api/views/data-sources**", (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === `/api/views/data-sources/${moduleId}/fields`)
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    if (path === `/api/views/data-sources/${moduleId}/fields`) {
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      fieldOffsets.push(offset);
+      if (offset !== 0)
+        return route.fulfill({
+          status: 503,
+          json: { detail: "The catalog must not be crawled for a known ID" },
+        });
       return route.fulfill({
         json: {
-          items: [
-            {
-              id: fieldId,
-              module_id: moduleId,
-              name: "Request title",
-              type: "text",
-              required: false,
-              position: 0,
-              config: { kind: "text" },
-            },
-          ],
+          items: Array.from({ length: 100 }, (_, index) => ({
+            id: `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
+            module_id: moduleId,
+            name: `Other field ${index + 1}`,
+            type: "text",
+            required: false,
+            position: index,
+            config: { kind: "text" },
+          })),
           pagination: {
             limit: 100,
             offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
+            count: 100,
+            total: 101,
+            has_more: true,
           },
         },
       });
+    }
     const offset = Number(
       new URL(route.request().url()).searchParams.get("offset") ?? 0,
     );
@@ -1573,7 +1636,24 @@ test("an author links a Record using its server-derived title", async ({
       },
     });
   });
+  await page.route(`**/api/fields/${fieldId}`, (route) =>
+    titleUnavailable
+      ? route.fulfill({ status: 403, json: { detail: "Private title canary" } })
+      : route.fulfill({
+          json: {
+            id: fieldId,
+            module_id: moduleId,
+            name: "Request title",
+            type: "text",
+            required: false,
+            position: 100,
+            config: { kind: "text" },
+            is_deleted: false,
+          },
+        }),
+  );
   await page.route("**/api/records/query", (route) => {
+    queryColumns.push(route.request().postDataJSON().definition.columns);
     if (recordsUnavailable)
       return route.fulfill({
         status: 503,
@@ -1668,16 +1748,37 @@ test("an author links a Record using its server-derived title", async ({
   await expect(
     links.getByRole("button", { name: "Link Record", exact: true }),
   ).toBeDisabled();
+  expect(queryColumns).toEqual([]);
+  await expect(links).not.toContainText("Private title canary");
   expect(submitted).toBeNull();
-  recordsUnavailable = false;
+  titleUnavailable = false;
   await links.getByLabel("Search Records", { exact: true }).fill("Request");
+  await expect.poll(() => queryColumns.length).toBeGreaterThan(0);
+  await expect(links).toContainText("Records could not be loaded.");
+  recordsUnavailable = false;
+  await links.getByLabel("Search Records", { exact: true }).fill("Request 27");
   await expect(links.getByLabel("Record to link")).toBeVisible();
   await expect(links.getByText("Records could not be loaded.")).toHaveCount(0);
   await links.getByLabel("Record to link").selectOption(recordId);
+  await expect(links.getByLabel("Record to link")).toContainText("Request 27");
+  expect(fieldOffsets.every((offset) => offset === 0)).toBe(true);
+  expect(queryColumns.every((columns) => columns.length <= 100)).toBe(true);
+  expect(
+    queryColumns.every((columns) =>
+      columns.some((column) => column.field_id === fieldId),
+    ),
+  ).toBe(true);
   await links.getByRole("button", { name: "Link Record" }).click();
   await expect(links.getByRole("link", { name: "Request 27" })).toBeVisible();
   await expect(links.getByRole("status")).toHaveText("Record linked.");
-  await captureOpenViewReview(page, "boards-record-link-add");
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate((value) => {
+        document.documentElement.classList.toggle("dark", value === "dark");
+      }, mode);
+      await captureOpenViewReview(page, `s08-board-record-link-${mode}`);
+    }
+  }
   expect(submitted).toEqual({
     record_id: recordId,
     board_revision: 1,

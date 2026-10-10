@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import {
   useCallback,
@@ -11,7 +12,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Route } from "next";
-import { ApiError } from "@/lib/api";
+import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { Columns3, MoreHorizontal, Plus, Settings2, X } from "lucide-react";
 import {
@@ -33,12 +34,17 @@ import {
   type OpenViewSavedView,
 } from "../adapters/views-api";
 import { queryOpenViewWindowRecords } from "../adapters/window-api";
-import {
-  authMeOptions,
-  departmentsOptions,
-} from "../adapters/openview-queries";
+import { authMeOptions } from "../adapters/openview-queries";
 import { isCalendarDateField } from "./live-calendar";
 import { LiveKanban } from "./live-kanban";
+import {
+  recordMoveChanges,
+  sameRecordMoveValue,
+  type PendingRecordMove,
+  type RecordMoveCommand,
+} from "../domain/record-moves";
+import { updateOpenViewRecordMoves } from "../adapters/records-api";
+import { serverFieldMessage } from "../domain/record-form";
 import { LiveCalendar } from "./live-calendar";
 import { LiveTimeline } from "./live-timeline";
 import { workspaceCalendarQueryOptions } from "../../manage/adapters/workspace-api";
@@ -107,6 +113,7 @@ import type { SavedDraft } from "../domain/server-view-draft";
 import {
   decodeTemporaryView,
   encodeTemporaryView,
+  parseTemporaryView,
   TEMPORARY_VIEW_PARAM,
 } from "../domain/temporary-view";
 import { useServerViewsResource } from "../hooks/use-server-views-resource";
@@ -118,6 +125,13 @@ import {
 } from "./live-record-inspector";
 import { LiveRecordResults } from "./live-record-results";
 import { RecordCreateDialog } from "./record-create-dialog";
+import { ExportDialog } from "./export-dialog";
+import { useOpenViewAccessDenied } from "../adapters/openview-access";
+import {
+  useVerifiedWorkspaceUserId,
+  useWorkspaceInteractionSuspended,
+} from "../../shared/runtime/workspace-identity";
+import { reportDone } from "@/lib/feedback";
 import { SavedViewColumnControls } from "./saved-view-column-controls";
 import { SavedViewFilterControls } from "./saved-view-filter-controls";
 import { SavedViewAdvancedControls } from "./saved-view-advanced-controls";
@@ -292,6 +306,12 @@ function replaceTemporaryChanges(value: string | null) {
   );
 }
 
+import {
+  selectedFieldIds,
+  useOpenViewDepartmentNames,
+  useOpenViewSelectedFields,
+} from "../hooks/use-openview-catalog";
+
 function DepartmentName({
   departmentId,
   fallback,
@@ -299,10 +319,8 @@ function DepartmentName({
   departmentId: string | undefined;
   fallback: string;
 }) {
-  const departments = useQuery(departmentsOptions());
-  return (
-    departments.data?.find((item) => item.id === departmentId)?.name ?? fallback
-  );
+  const names = useOpenViewDepartmentNames(departmentId ? [departmentId] : []);
+  return names.get(departmentId ?? "") ?? fallback;
 }
 
 export default function ServerBackedViewsWorkspace({
@@ -320,6 +338,17 @@ export default function ServerBackedViewsWorkspace({
   const requestedRecord = searchParams.get("record");
   const requestedChanges = searchParams.get(TEMPORARY_VIEW_PARAM);
   const resource = useServerViewsResource(requestedModule);
+  const verifiedUserId = useVerifiedWorkspaceUserId();
+  const interactionSuspended = useWorkspaceInteractionSuspended();
+  const exportAccessDenied = useOpenViewAccessDenied();
+  const exportButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [exportContext, setExportContext] = useState<{
+    key: string;
+    moduleId: string;
+    viewId: string | null;
+    definition: OpenViewQueryDefinition;
+    fields: OpenViewDataSourceField[];
+  } | null>(null);
   const {
     catalog,
     catalogHasMore,
@@ -372,6 +401,19 @@ export default function ServerBackedViewsWorkspace({
   const [pendingNavigation, setPendingNavigation] =
     useState<PendingNavigation>(null);
   const [pendingAction, setPendingAction] = useState("");
+  const [recordMoves, setRecordMoves] = useState<
+    Map<string, PendingRecordMove>
+  >(() => new Map());
+  const recordMovesRef = useRef(recordMoves);
+  const savingRecordMoves = useRef(false);
+  const recordMoveRequest = useRef(0);
+  const hasRecordMoves = recordMoves.size > 0;
+  useEffect(() => {
+    if (!hasRecordMoves && pendingAction !== "save-moves") return;
+    const preventUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", preventUnload);
+    return () => window.removeEventListener("beforeunload", preventUnload);
+  }, [hasRecordMoves, pendingAction]);
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
@@ -429,7 +471,49 @@ export default function ServerBackedViewsWorkspace({
       return views;
     return [...views, deepLinkView];
   }, [currentWorkspace, deepLinkView, moduleId]);
-  const fields = currentWorkspace?.fields ?? [];
+  const metadataView =
+    moduleViews.find((view) => view.id === requestedView && !view.isDeleted) ??
+    moduleViews.find((view) => view.isDefault && !view.isDeleted);
+  const temporaryMetadata =
+    requestedChanges && currentWorkspace
+      ? parseTemporaryView(
+          requestedChanges,
+          metadataView
+            ? draftForView(metadataView)
+            : {
+                name: "",
+                definition: emptyDefinition(currentWorkspace.fields),
+                presentation: emptyPresentation(currentWorkspace.fields),
+              },
+        )
+      : null;
+  const selectedFields = useOpenViewSelectedFields(
+    moduleId,
+    currentWorkspace?.fields,
+    [
+      ...selectedFieldIds(metadataView),
+      ...selectedFieldIds(temporaryMetadata),
+      ...(draftState?.key.startsWith(`${moduleId}:`)
+        ? selectedFieldIds(draftState.value)
+        : []),
+    ],
+  );
+  const fields = selectedFields.items;
+  // A missing or mismatched field is refused by normal URL validation.
+  // Dependency failures must keep a valid arriving address available to Retry.
+  const selectedMetadataFailure =
+    selectedFields.error &&
+    !(selectedFields.error instanceof ApiContractError) &&
+    !(
+      selectedFields.error instanceof ApiError &&
+      selectedFields.error.status === 404
+    );
+  const fieldMetadataError = selectedMetadataFailure
+    ? apiErrorMessage(
+        selectedFields.error,
+        "Field metadata could not be loaded. Retry.",
+      )
+    : "";
   const source = catalog?.find((item) => item.id === moduleId);
   const moduleName = source?.name;
   // The module's shared default view opens when the address names no view.
@@ -438,6 +522,7 @@ export default function ServerBackedViewsWorkspace({
   )?.id;
   const identity = useQuery(authMeOptions());
   const workspaceCalendar = useQuery(workspaceCalendarQueryOptions());
+  const displayRegion = useDisplayRegion(workspaceCalendar.data);
   const queryClient = useQueryClient();
   useEffect(() => {
     const queryKey = workspaceCalendarQueryOptions().queryKey;
@@ -471,6 +556,20 @@ export default function ServerBackedViewsWorkspace({
       : null;
   // The server checks every change; these only decide which controls show.
   const canWriteRecords = recordLevel === "write" || recordLevel === "manage";
+  useEffect(() => {
+    // A receipt belongs to the authority/source that submitted it. Refusal or
+    // an account/source transition permanently invalidates that attempt.
+    recordMoveRequest.current += 1;
+    return () => {
+      recordMoveRequest.current += 1;
+    };
+  }, [
+    moduleId,
+    verifiedUserId,
+    canWriteRecords,
+    exportAccessDenied,
+    interactionSuspended,
+  ]);
   // Record history is for administrators and managers of the department.
   const canReadRecordHistory = Boolean(
     source && openViewLevel(identity.data, source.departmentId) === "manage",
@@ -566,7 +665,11 @@ export default function ServerBackedViewsWorkspace({
   // value the page wrote itself is never restored onto another View.
   const temporaryChanges = dirty ? encodeTemporaryView(baseDraft, draft) : null;
   const draftBaseReady = Boolean(
-    moduleId && currentWorkspace && (!routedView || activeSaved),
+    moduleId &&
+    currentWorkspace &&
+    (!routedView || activeSaved) &&
+    !selectedFields.pending &&
+    !selectedMetadataFailure,
   );
   const restoredDraftKey = useRef<string | null>(null);
   const mirroredChanges = useRef<string | null>(null);
@@ -1037,6 +1140,34 @@ export default function ServerBackedViewsWorkspace({
         ...visibleFields.filter((field) => field.id !== pinnedField.id),
       ]
     : visibleFields;
+  const exportContextKey = JSON.stringify({
+    moduleId,
+    draftKey,
+    viewId: activeSaved?.id ?? null,
+    verifiedUserId,
+  });
+  const canExport = Boolean(
+    moduleId &&
+    source &&
+    currentWorkspace &&
+    identity.isSuccess &&
+    identity.data.id === verifiedUserId &&
+    recordLevel &&
+    !invalidLink &&
+    !incompleteFilters &&
+    !fieldMetadataError &&
+    !selectedFields.error &&
+    !selectedFields.pending &&
+    !moduleLoading &&
+    !interactionSuspended &&
+    !exportAccessDenied,
+  );
+  useEffect(() => {
+    // A lost source or read permission ends this export context permanently.
+    // A subsequent retry requires a new explicit Export action.
+    if (exportContext && (!canExport || exportContext.key !== exportContextKey))
+      setExportContext(null);
+  }, [canExport, exportContext, exportContextKey]);
   const presentationVisibleFields = isCardPresentation
     ? visibleFields.filter((field) => !cardHeaderFieldIds.has(field.id))
     : tableFields;
@@ -1362,7 +1493,8 @@ export default function ServerBackedViewsWorkspace({
       });
       startNavigation(() => router.push(href, { scroll: false }));
     };
-    if (dirty) setPendingNavigation({ href, resume, discardDraft: true });
+    if (dirty || hasRecordMoves)
+      setPendingNavigation({ href, resume, discardDraft: true });
     else resume();
   };
 
@@ -1474,8 +1606,8 @@ export default function ServerBackedViewsWorkspace({
 
   const navigationGuard = useCallback(
     (href: string, resume: () => void) => {
-      if (pendingAction) return false;
-      if (!dirty) return true;
+      if (pendingAction || savingRecordMoves.current) return false;
+      if (!dirty && !hasRecordMoves) return true;
       if (
         typeof window !== "undefined" &&
         new URL(href, window.location.origin).href === window.location.href
@@ -1484,12 +1616,12 @@ export default function ServerBackedViewsWorkspace({
       setPendingNavigation({ href, resume, discardDraft: true });
       return false;
     },
-    [dirty, pendingAction, setPendingNavigation],
+    [dirty, hasRecordMoves, pendingAction, setPendingNavigation],
   );
   useWorkspaceNavigationGuard(navigationGuard);
 
   const confirmDraftDiscard = (resume: () => void) => {
-    if (!dirtyRef.current) {
+    if (!dirtyRef.current && recordMovesRef.current.size === 0) {
       resume();
       return;
     }
@@ -1498,6 +1630,197 @@ export default function ServerBackedViewsWorkspace({
       resume,
       discardDraft: false,
     });
+  };
+
+  const replaceRecordMoves = (moves: Map<string, PendingRecordMove>) => {
+    recordMovesRef.current = moves;
+    setRecordMoves(moves);
+  };
+
+  const stageRecordMove = (
+    record: OpenViewRecord,
+    field: OpenViewDataSourceField,
+    value: string | boolean | null,
+    targetLabel: string,
+  ) => {
+    stageMove(
+      record,
+      { kind: "single", fieldId: field.id, value },
+      targetLabel,
+      [field.id],
+      false,
+    );
+  };
+
+  const stageMove = (
+    record: OpenViewRecord,
+    command: RecordMoveCommand,
+    targetLabel: string,
+    fieldIds: readonly string[],
+    dates = true,
+  ) => {
+    const changes = recordMoveChanges(command);
+    if (
+      !canWriteRecords ||
+      interactionSuspended ||
+      exportAccessDenied ||
+      pendingAction ||
+      savingRecordMoves.current ||
+      record.isDeleted ||
+      record.moduleId !== moduleId ||
+      changes.some((change) => {
+        const field = activeFields.get(change.fieldId);
+        return (
+          !field ||
+          field.moduleId !== moduleId ||
+          !fieldIds.includes(field.id) ||
+          !(
+            dates ? ["date", "datetime"] : ["select", "user", "boolean"]
+          ).includes(field.type)
+        );
+      })
+    )
+      return;
+    const existing = recordMovesRef.current.get(record.id);
+    if (
+      existing &&
+      recordMoveChanges(existing).some(
+        (change) => !fieldIds.includes(change.fieldId),
+      )
+    ) {
+      setActionError(
+        "This record already has a move in another field. Save or discard that move first.",
+      );
+      return;
+    }
+    const original = existing?.original ?? {
+      ...record,
+      data: { ...record.data },
+      displayValues: { ...record.displayValues },
+    };
+    const moves = new Map(recordMovesRef.current);
+    const combined = new Map(
+      (existing ? recordMoveChanges(existing) : []).map((change) => [
+        change.fieldId,
+        change,
+      ]),
+    );
+    changes.forEach((change) => combined.set(change.fieldId, change));
+    const changed = [...combined.values()].filter(
+      (change) =>
+        !sameRecordMoveValue(
+          original.data[change.fieldId],
+          change.value,
+          activeFields.get(change.fieldId)?.type,
+        ),
+    );
+    if (changed.length === 0) moves.delete(record.id);
+    else {
+      if (!existing && moves.size >= 100) {
+        setActionError(
+          "You can move up to 100 records at a time. Save or discard the current moves first.",
+        );
+        return;
+      }
+      if (changed.length > 2) return;
+      const next: RecordMoveCommand =
+        changed.length === 1
+          ? { kind: "single", ...changed[0] }
+          : { kind: "compound", changes: [changed[0], changed[1]] };
+      moves.set(record.id, { ...next, original, targetLabel });
+    }
+    replaceRecordMoves(moves);
+    setActionError("");
+    setNotice("");
+  };
+
+  const saveRecordMoves = async () => {
+    if (
+      !moduleId ||
+      !canWriteRecords ||
+      interactionSuspended ||
+      exportAccessDenied ||
+      pendingAction ||
+      savingRecordMoves.current ||
+      recordMovesRef.current.size === 0
+    )
+      return;
+    const submitted = new Map(recordMovesRef.current);
+    if (
+      [...submitted.values()].some(
+        (move) => move.original.moduleId !== moduleId,
+      )
+    ) {
+      setActionError(
+        "These unsaved moves belong to another data source. Discard them before moving records here.",
+      );
+      return;
+    }
+    savingRecordMoves.current = true;
+    const request = ++recordMoveRequest.current;
+    setPendingAction("save-moves");
+    setActionError("");
+    setNotice("");
+    try {
+      const results = await updateOpenViewRecordMoves({
+        moduleId,
+        items: [...submitted].map(([recordId, move]) => ({
+          recordId,
+          ...(move.kind === "single"
+            ? { fieldId: move.fieldId, value: move.value }
+            : { changes: [...move.changes] }),
+          revision: move.original.updatedAt,
+        })),
+      });
+      const remaining = new Map(submitted);
+      if (request !== recordMoveRequest.current) return;
+      let saved = 0;
+      let forbidden = false;
+      for (const result of results) {
+        if (result.status === "updated") {
+          remaining.delete(result.record_id);
+          saved += 1;
+          continue;
+        }
+        const move = submitted.get(result.record_id);
+        if (!move) continue;
+        const error =
+          result.status === "stale"
+            ? "Changed by someone else — review"
+            : result.status === "forbidden"
+              ? "You no longer have permission to move this record."
+              : result.errors
+                  .map((issue) => serverFieldMessage(issue.message))
+                  .join(" ") ||
+                "This move cannot be saved. Review the field value.";
+        remaining.set(result.record_id, {
+          ...move,
+          status: result.status,
+          error,
+        });
+        forbidden ||= result.status === "forbidden";
+      }
+      replaceRecordMoves(remaining);
+      setRecordChanges((current) => current + 1);
+      setNotice(
+        `Saved ${saved} ${saved === 1 ? "move" : "moves"}.${remaining.size ? ` ${remaining.size} ${remaining.size === 1 ? "move needs" : "moves need"} review.` : ""}`,
+      );
+      if (forbidden) await identity.refetch();
+    } catch (error: unknown) {
+      if (request !== recordMoveRequest.current) return;
+      setActionError(
+        `Your moves could not be confirmed. ${apiErrorMessage(error, "Moves could not be saved.")} Your unsaved moves are kept.`,
+      );
+      // An unavailable or uncorrelated response can follow a committed write.
+      // Refresh authoritative results without changing the pending revisions.
+      if (!(error instanceof ApiError) || error.status >= 500)
+        setRecordChanges((current) => current + 1);
+      if (error instanceof ApiError && error.status === 403)
+        await identity.refetch();
+    } finally {
+      savingRecordMoves.current = false;
+      setPendingAction("");
+    }
   };
 
   const updateDraft = (update: (current: SavedDraft) => SavedDraft) => {
@@ -2218,7 +2541,7 @@ export default function ServerBackedViewsWorkspace({
                       section: "views",
                       module: next,
                     }) as Route;
-                    if (dirty)
+                    if (dirty || hasRecordMoves)
                       setPendingNavigation({
                         href,
                         resume: () => router.push(href),
@@ -2336,18 +2659,20 @@ export default function ServerBackedViewsWorkspace({
               </Button>
             </Alert>
           ) : null}
-          {metadataError ? (
+          {metadataError || fieldMetadataError ? (
             <Alert
               role="alert"
               variant="destructive"
               className="flex flex-wrap items-center justify-between gap-3"
             >
-              <span>{metadataError}</span>
+              <span>{metadataError || fieldMetadataError}</span>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
-                onClick={retryMetadata}
+                onClick={
+                  fieldMetadataError ? selectedFields.retry : retryMetadata
+                }
               >
                 Retry loading metadata
               </Button>
@@ -2444,6 +2769,41 @@ export default function ServerBackedViewsWorkspace({
               {actionError}
             </Alert>
           ) : null}
+          {hasRecordMoves ? (
+            <section
+              aria-label="Unsaved record moves"
+              className="bg-card border-card-edge flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius)] border p-4"
+            >
+              <p className="text-sm">
+                {recordMoves.size} unsaved{" "}
+                {recordMoves.size === 1 ? "move" : "moves"}. Save to update the
+                records.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  className="min-h-11"
+                  disabled={!canWriteRecords || Boolean(pendingAction)}
+                  onClick={() => void saveRecordMoves()}
+                >
+                  Save changes ({recordMoves.size})
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => {
+                    replaceRecordMoves(new Map());
+                    setActionError("");
+                    setNotice("Record moves were discarded.");
+                  }}
+                >
+                  Discard
+                </Button>
+              </div>
+            </section>
+          ) : null}
 
           <LoadingRegion
             loading={moduleLoading && !currentWorkspace}
@@ -2509,6 +2869,25 @@ export default function ServerBackedViewsWorkspace({
                       </p>
                     ) : null}
                     <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        ref={exportButtonRef}
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        disabled={!canExport}
+                        onClick={() => {
+                          if (!canExport || !moduleId) return;
+                          setExportContext({
+                            key: exportContextKey,
+                            moduleId,
+                            viewId: activeSaved?.id ?? null,
+                            definition: normalizedDraftDefinition,
+                            fields: tableFields,
+                          });
+                        }}
+                      >
+                        Export
+                      </Button>
                       {dirty ? (
                         <Button
                           type="button"
@@ -2791,7 +3170,16 @@ export default function ServerBackedViewsWorkspace({
                           type="button"
                           variant="outline"
                           className="min-h-11"
-                          disabled={Boolean(pendingAction)}
+                          disabled={
+                            Boolean(pendingAction) ||
+                            Boolean(currentWorkspace?.fieldsHasMore) ||
+                            metadataLoadingMore
+                          }
+                          title={
+                            currentWorkspace?.fieldsHasMore
+                              ? "Load all fields before creating a record."
+                              : undefined
+                          }
                           onClick={() => setCreateRecordOpen(true)}
                         >
                           <Plus aria-hidden="true" />
@@ -2927,7 +3315,7 @@ export default function ServerBackedViewsWorkspace({
                       ) : activeLayout === "kanban" ? (
                         groupByField && moduleId ? (
                           <LiveKanban
-                            region={workspaceCalendar.data}
+                            region={displayRegion}
                             key={
                               moduleId +
                               ":" +
@@ -2938,8 +3326,11 @@ export default function ServerBackedViewsWorkspace({
                             moduleId={moduleId}
                             definition={normalizedDraftDefinition}
                             refreshKey={recordInvalidation}
-                            groupByFieldId={groupByField.id}
-                            groupByFieldType={groupByField.type}
+                            groupByField={groupByField}
+                            canWrite={canWriteRecords}
+                            movesPending={Boolean(pendingAction)}
+                            pendingMoves={recordMoves}
+                            onMoveRecord={stageRecordMove}
                             fields={cardFields}
                             primaryFieldId={draft.presentation.primaryFieldId}
                             secondaryFieldId={
@@ -2970,6 +3361,14 @@ export default function ServerBackedViewsWorkspace({
                             refreshKey={recordInvalidation}
                             scale={draft.presentation.scale}
                             dateField={calendarDateField}
+                            canWrite={
+                              canWriteRecords &&
+                              !interactionSuspended &&
+                              !exportAccessDenied
+                            }
+                            movesPending={Boolean(pendingAction)}
+                            pendingMoves={recordMoves}
+                            onMoveDates={stageMove}
                             titleField={liveTitleField}
                             detailFields={liveDetailFields}
                             onOpenRecord={openRecordFromResults}
@@ -2990,6 +3389,14 @@ export default function ServerBackedViewsWorkspace({
                             dateRange={draft.presentation.dateRange}
                             refreshKey={recordInvalidation}
                             startField={timelineStartField}
+                            canWrite={
+                              canWriteRecords &&
+                              !interactionSuspended &&
+                              !exportAccessDenied
+                            }
+                            movesPending={Boolean(pendingAction)}
+                            pendingMoves={recordMoves}
+                            onMoveDates={stageMove}
                             endField={timelineEndField}
                             deadlineField={timelineDeadlineField}
                             progressField={timelineProgressField}
@@ -3053,7 +3460,7 @@ export default function ServerBackedViewsWorkspace({
                         </Empty>
                       ) : (
                         <LiveRecordResults
-                          region={workspaceCalendar.data}
+                          region={displayRegion}
                           title={activeSaved?.name ?? "Unsaved view"}
                           scopeLabel={
                             generalGroupedView && generalSelectedGroup
@@ -3235,7 +3642,7 @@ export default function ServerBackedViewsWorkspace({
                     </DialogHeader>
                     <div className="min-h-0 flex-1 overflow-y-auto">
                       <LiveRecordInspector
-                        region={workspaceCalendar.data}
+                        region={displayRegion}
                         actions={recordEditing ? null : inspectionActions}
                         record={linkedRecord}
                         recordLoading={linkedRecordLoading}
@@ -3253,6 +3660,12 @@ export default function ServerBackedViewsWorkspace({
                                 moduleId,
                                 departmentId: source.departmentId,
                                 editableFields: fields,
+                                fieldsHasMore: Boolean(
+                                  currentWorkspace?.fieldsHasMore,
+                                ),
+                                fieldsLoadingMore: metadataLoadingMore,
+                                onLoadMoreFields: () =>
+                                  void loadMoreModuleMetadata(),
                                 dataSources: catalog ?? [],
                                 canWrite: canWriteRecords,
                                 canReadHistory: canReadRecordHistory,
@@ -3279,6 +3692,23 @@ export default function ServerBackedViewsWorkspace({
                     )}
                   </DialogContent>
                 </Dialog>
+                {exportContext &&
+                exportContext.key === exportContextKey &&
+                canExport ? (
+                  <ExportDialog
+                    moduleId={exportContext.moduleId}
+                    viewId={exportContext.viewId}
+                    definition={exportContext.definition}
+                    fields={exportContext.fields}
+                    returnFocus={exportButtonRef}
+                    onClose={() => setExportContext(null)}
+                    onDownloaded={() => {
+                      setExportContext(null);
+                      setNotice("Export downloaded.");
+                      reportDone("Export downloaded.");
+                    }}
+                  />
+                ) : null}
                 {moduleId && canWriteRecords ? (
                   <RecordCreateDialog
                     open={createRecordOpen}
@@ -3565,11 +3995,14 @@ export default function ServerBackedViewsWorkspace({
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>
-                  Discard unsaved view changes?
+                  {hasRecordMoves
+                    ? "Discard unsaved changes?"
+                    : "Discard unsaved view changes?"}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  Your current view draft has unsaved changes. Continuing will
-                  discard them.
+                  {hasRecordMoves
+                    ? `You have ${recordMoves.size} unsaved ${recordMoves.size === 1 ? "move" : "moves"}.${dirty ? " Your current view draft also has unsaved changes." : ""} Continuing will discard them.`
+                    : "Your current view draft has unsaved changes. Continuing will discard them."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -3591,6 +4024,7 @@ export default function ServerBackedViewsWorkspace({
                     const transition = pendingNavigation;
                     if (!transition) return;
                     if (transition.discardDraft) setDraftState(null);
+                    replaceRecordMoves(new Map());
                     setPendingNavigation(null);
                     startNavigation(transition.resume);
                   }}

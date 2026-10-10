@@ -17,6 +17,7 @@ _CONTROL_KINDS = frozenset(
         "account_controls",
         "manage_controls",
         "backup_controls",
+        "jobs_controls",
         "read_controls",
         "board_controls",
         "openview_controls",
@@ -141,6 +142,7 @@ def _run_final_verifiers(
     from operations.sample.controls.access_verification import verify_access_controls
     from operations.sample.controls.account import verify_account_controls
     from operations.sample.controls.board_verification import verify_board_controls
+    from operations.sample.controls.jobs_verification import verify_jobs_controls
     from operations.sample.controls.openview_verification import verify_openview_controls
     from operations.sample.controls.sandbox_verification import verify_sandbox_controls
 
@@ -153,6 +155,7 @@ def _run_final_verifiers(
         ),
         ("Access", lambda: verify_access_controls(client, dataset, manifest, admin_id=admin_id)),
         ("Sandbox", lambda: verify_sandbox_controls(client, dataset, manifest, admin_id=admin_id)),
+        ("Jobs", lambda: verify_jobs_controls(client, dataset, manifest, admin_id)),
     )
     from operations.sample.controls.files_verification import verify_file_controls
     from operations.sample.controls.mfa_verification import verify_mfa_controls
@@ -176,6 +179,12 @@ def _run_final_verifiers(
         verifiers += (("Host", lambda: verify_host_controls(client, dataset, manifest, admin_id)),)
     if "real_mfa_reset" in operations:
         verifiers += (("MFA", lambda: verify_mfa_controls(client, dataset, manifest, admin_id)),)
+    if "self_profile" in operations:
+        from operations.sample.controls.profile_verification import verify_profile_controls
+
+        verifiers += (
+            ("Profile", lambda: verify_profile_controls(client, dataset, manifest, admin_id)),
+        )
     if "generic_record_file" in operations:
         verifiers += (
             ("Files", lambda: verify_file_controls(client, dataset, manifest, admin_id=admin_id)),

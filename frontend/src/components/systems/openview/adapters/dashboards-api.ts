@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  aggregateBucketSchema,
+  validAggregateBucketWindow,
+} from "../domain/aggregate-buckets";
+import type { Aggregation } from "../domain/chart-query";
 import { ApiError, apiFetch } from "@/lib/api";
 import { openViewReadFetch } from "./openview-access";
 import type { OpenViewAggregateSnapshotRequest } from "./analytics-api";
@@ -147,22 +152,23 @@ const wireDateSeriesQuerySchema = z
     mode: z.literal("date_series"),
     module_id: uuidSchema,
     definition: wireQueryDefinitionSchema,
-    aggregation: z.enum(["count", "sum", "average"]),
+    aggregation: z.enum(["count", "sum", "average", "min", "max", "distinct"]),
     measure: wireQueryFieldReferenceSchema.nullable(),
     date_field: wireQueryFieldReferenceSchema,
     from_date: z.iso.date(),
     to_date: z.iso.date(),
+    bucket: aggregateBucketSchema.default("day"),
   })
   .strict()
   .superRefine((query, context) => {
     if (
-      query.to_date < query.from_date ||
-      inclusiveDays(query.from_date, query.to_date) > 366
+      !validAggregateBucketWindow(query.from_date, query.to_date, query.bucket)
     ) {
       context.addIssue({
         code: "custom",
         path: ["to_date"],
-        message: "Dashboard date series must contain between 1 and 366 days",
+        message:
+          "Dashboard date series must contain between 1 and 366 calendar buckets",
       });
     }
     validateMeasure(query.aggregation, query.measure, context);
@@ -186,6 +192,7 @@ const wireDateSeriesQuerySchema = z
     dateField: query.date_field,
     fromDate: query.from_date,
     toDate: query.to_date,
+    bucket: query.bucket,
   }));
 
 const wireGroupQuerySchema = z
@@ -193,7 +200,7 @@ const wireGroupQuerySchema = z
     mode: z.literal("groups"),
     module_id: uuidSchema,
     definition: wireQueryDefinitionSchema,
-    aggregation: z.enum(["count", "sum", "average"]),
+    aggregation: z.enum(["count", "sum", "average", "min", "max", "distinct"]),
     measure: wireQueryFieldReferenceSchema.nullable(),
     dimension: wireQueryFieldReferenceSchema,
     date_field: wireQueryFieldReferenceSchema.nullish(),
@@ -287,10 +294,17 @@ const wireRecordsConfigSchema = z
   })
   .strict();
 
+/** Complete native inline configurations shared by Dashboard and Board reads. */
+export const dashboardWidgetWireConfigSchema = z.union([
+  wireChartConfigSchema,
+  wireAggregateConfigSchema,
+  wireRecordsConfigSchema,
+]);
+
 const queryBaseInputShape = {
   moduleId: uuidSchema,
   definition: z.unknown(),
-  aggregation: z.enum(["count", "sum", "average"]),
+  aggregation: z.enum(["count", "sum", "average", "min", "max", "distinct"]),
   measure: queryFieldReferenceSchema.optional(),
 };
 const groupQueryInputSchema = z
@@ -336,17 +350,18 @@ const dateSeriesQueryInputSchema = z
       .strict(),
     fromDate: z.iso.date(),
     toDate: z.iso.date(),
+    bucket: aggregateBucketSchema.default("day"),
   })
   .strict()
   .superRefine((query, context) => {
     if (
-      query.toDate < query.fromDate ||
-      inclusiveDays(query.fromDate, query.toDate) > 366
+      !validAggregateBucketWindow(query.fromDate, query.toDate, query.bucket)
     ) {
       context.addIssue({
         code: "custom",
         path: ["toDate"],
-        message: "Dashboard date series must contain between 1 and 366 days",
+        message:
+          "Dashboard date series must contain between 1 and 366 calendar buckets",
       });
     }
     validateMeasure(query.aggregation, query.measure, context);
@@ -402,28 +417,52 @@ const recordsConfigInputSchema = z
       }),
   })
   .strict();
+export const dashboardWidgetConfigInputSchema = z.union([
+  chartConfigInputSchema,
+  aggregateConfigInputSchema,
+  recordsConfigInputSchema,
+]);
+const widgetSizeSchema = z.enum(["S", "M", "L"]);
+const widgetSourceInputShape = {
+  size: widgetSizeSchema.default("M"),
+  chartId: uuidSchema.nullable().default(null),
+};
+function hasOneWidgetSource(chartId: string | null, config: unknown): boolean {
+  return (chartId === null) !== (config === null);
+}
 const dashboardWidgetInputSchema = z.discriminatedUnion("widgetType", [
   z
-    .object({ widgetType: z.literal("chart"), config: chartConfigInputSchema })
-    .strict(),
+    .object({
+      ...widgetSourceInputShape,
+      widgetType: z.literal("chart"),
+      config: chartConfigInputSchema.nullable().default(null),
+    })
+    .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chartId, widget.config)),
   z
     .object({
+      ...widgetSourceInputShape,
       widgetType: z.literal("summary"),
-      config: aggregateConfigInputSchema,
+      config: aggregateConfigInputSchema.nullable().default(null),
     })
-    .strict(),
+    .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chartId, widget.config)),
   z
     .object({
+      ...widgetSourceInputShape,
       widgetType: z.literal("workload"),
-      config: aggregateConfigInputSchema,
+      config: aggregateConfigInputSchema.nullable().default(null),
     })
-    .strict(),
+    .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chartId, widget.config)),
   z
     .object({
+      ...widgetSourceInputShape,
       widgetType: z.literal("records"),
-      config: recordsConfigInputSchema,
+      config: recordsConfigInputSchema.nullable().default(null),
     })
-    .strict(),
+    .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chartId, widget.config)),
 ]);
 const refreshCadenceSchema = z.enum(["manual", "one-minute", "five-minutes"]);
 const dashboardPositionSchema = z.number().int().min(0).max(10_000);
@@ -479,21 +518,32 @@ const paginationSchema = z
 const wireWidgetBaseShape = {
   id: uuidSchema,
   position: z.number().int().min(0).max(11),
+  size: widgetSizeSchema,
+  chart_id: uuidSchema.nullable(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
 };
 function transformWireWidget<
   Widget extends {
     widget_type: "summary" | "workload" | "records" | "chart";
+    chart_id: string | null;
+    config: unknown;
     created_at: string;
     updated_at: string;
   },
   WidgetType extends "summary" | "workload" | "records" | "chart",
 >(widget: Widget, widgetType: WidgetType) {
-  const { widget_type, created_at, updated_at, ...rest } = widget;
+  const { widget_type, chart_id, config, created_at, updated_at, ...rest } =
+    widget;
   void widget_type;
+  // The preceding source refinement proves this correlation before mapping.
+  const source: DashboardSource<NonNullable<Widget["config"]>> =
+    chart_id === null
+      ? { chartId: null, config: config as NonNullable<Widget["config"]> }
+      : { chartId: chart_id, config: null };
   return {
     ...rest,
+    ...source,
     widgetType,
     createdAt: created_at,
     updatedAt: updated_at,
@@ -504,33 +554,37 @@ const wireWidgetSchema = z.discriminatedUnion("widget_type", [
     .object({
       ...wireWidgetBaseShape,
       widget_type: z.literal("chart"),
-      config: wireChartConfigSchema,
+      config: wireChartConfigSchema.nullable(),
     })
     .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chart_id, widget.config))
     .transform((widget) => transformWireWidget(widget, "chart")),
   z
     .object({
       ...wireWidgetBaseShape,
       widget_type: z.literal("summary"),
-      config: wireAggregateConfigSchema,
+      config: wireAggregateConfigSchema.nullable(),
     })
     .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chart_id, widget.config))
     .transform((widget) => transformWireWidget(widget, "summary")),
   z
     .object({
       ...wireWidgetBaseShape,
       widget_type: z.literal("workload"),
-      config: wireAggregateConfigSchema,
+      config: wireAggregateConfigSchema.nullable(),
     })
     .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chart_id, widget.config))
     .transform((widget) => transformWireWidget(widget, "workload")),
   z
     .object({
       ...wireWidgetBaseShape,
       widget_type: z.literal("records"),
-      config: wireRecordsConfigSchema,
+      config: wireRecordsConfigSchema.nullable(),
     })
     .strict()
+    .refine((widget) => hasOneWidgetSource(widget.chart_id, widget.config))
     .transform((widget) => transformWireWidget(widget, "records")),
 ]);
 const dashboardSchema = z
@@ -608,7 +662,7 @@ export type OpenViewDashboardGroupQuery = {
   mode: "groups";
   moduleId: string;
   definition: OpenViewQueryDefinition;
-  aggregation: "count" | "sum" | "average";
+  aggregation: Aggregation;
   measure?: OpenViewQueryFieldReference;
   dimension: OpenViewQueryFieldReference;
   dateField?: OpenViewQueryFieldReference;
@@ -630,25 +684,26 @@ export type OpenViewDashboardWidgetConfig =
   | OpenViewDashboardRecordsConfig;
 export type OpenViewDashboardRefreshCadence =
   "manual" | "one-minute" | "five-minutes";
+export type OpenViewDashboardWidgetSize = "S" | "M" | "L";
+type DashboardSource<Config> =
+  { chartId: null; config: Config } | { chartId: string; config: null };
 type OpenViewDashboardWidgetBase = {
   id: string;
   position: number;
+  size: OpenViewDashboardWidgetSize;
   createdAt: string;
   updatedAt: string;
 };
-export type OpenViewDashboardWidget =
-  | (OpenViewDashboardWidgetBase & {
-      widgetType: "chart";
-      config: OpenViewDashboardChartConfig;
-    })
-  | (OpenViewDashboardWidgetBase & {
-      widgetType: "summary" | "workload";
-      config: OpenViewDashboardAggregateConfig;
-    })
-  | (OpenViewDashboardWidgetBase & {
-      widgetType: "records";
-      config: OpenViewDashboardRecordsConfig;
-    });
+export type OpenViewDashboardWidget = OpenViewDashboardWidgetBase &
+  (
+    | ({ widgetType: "chart" } & DashboardSource<OpenViewDashboardChartConfig>)
+    | ({
+        widgetType: "summary" | "workload";
+      } & DashboardSource<OpenViewDashboardAggregateConfig>)
+    | ({
+        widgetType: "records";
+      } & DashboardSource<OpenViewDashboardRecordsConfig>)
+  );
 export type OpenViewDashboard = {
   id: string;
   /** The department that owns the Dashboard; its managers change it. */
@@ -672,19 +727,21 @@ export type OpenViewDashboardPage = {
     hasMore: boolean;
   };
 };
-export type OpenViewDashboardWidgetInput =
-  | {
+type DashboardSourceInput<Config> =
+  { chartId?: null; config: Config } | { chartId: string; config?: null };
+export type OpenViewDashboardWidgetInput = {
+  size?: OpenViewDashboardWidgetSize;
+} & (
+  | ({
       widgetType: "chart";
-      config: OpenViewDashboardChartConfig;
-    }
-  | {
+    } & DashboardSourceInput<OpenViewDashboardChartConfig>)
+  | ({
       widgetType: "summary" | "workload";
-      config: OpenViewDashboardAggregateConfig;
-    }
-  | {
+    } & DashboardSourceInput<OpenViewDashboardAggregateConfig>)
+  | ({
       widgetType: "records";
-      config: OpenViewDashboardRecordsConfig;
-    };
+    } & DashboardSourceInput<OpenViewDashboardRecordsConfig>)
+);
 export type OpenViewDashboardCreateInput = {
   departmentId: string;
   name: string;
@@ -732,7 +789,7 @@ function inclusiveDays(fromDate: string, toDate: string): number {
 }
 
 function validateMeasure(
-  aggregation: "count" | "sum" | "average",
+  aggregation: Aggregation,
   measure: OpenViewQueryFieldReference | null | undefined,
   context: z.RefinementCtx,
 ) {
@@ -744,11 +801,15 @@ function validateMeasure(
         message: "Count does not accept a measure field",
       });
     }
-  } else if (measure == null || !numericFieldTypes.has(measure.expectedType)) {
+  } else if (
+    measure == null ||
+    (aggregation !== "distinct" && !numericFieldTypes.has(measure.expectedType))
+  ) {
     context.addIssue({
       code: "custom",
       path: ["measure"],
-      message: "Sum and average require a numeric measure field",
+      message:
+        "A measure is required; sum, average, min and max require a numeric field",
     });
   }
 }
@@ -758,7 +819,7 @@ function serializeSnapshotQuery(
     mode: "groups" | "date_series";
     moduleId: string;
     definition: unknown;
-    aggregation: "count" | "sum" | "average";
+    aggregation: Aggregation;
     measure?: OpenViewQueryFieldReference;
   } & Record<string, unknown>,
 ) {
@@ -816,6 +877,7 @@ function serializeSnapshotQuery(
     },
     from_date: date.fromDate,
     to_date: date.toDate,
+    bucket: date.bucket,
   };
 }
 
@@ -849,26 +911,32 @@ function serializeRecordsConfig(config: unknown) {
   };
 }
 
-function serializeWidgetConfig(
-  widget: z.output<typeof dashboardWidgetInputSchema>,
+/** Serialize the existing native definition; never turn a reference into inline config. */
+export function serializeDashboardWidgetConfig(
+  widgetType: OpenViewDashboardWidgetType,
+  config: unknown,
 ) {
-  switch (widget.widgetType) {
+  switch (widgetType) {
     case "chart":
-      return serializeChartConfig(widget.config);
+      return serializeChartConfig(config);
     case "summary":
     case "workload":
-      return serializeAggregateConfig(widget.config);
+      return serializeAggregateConfig(config);
     case "records":
-      return serializeRecordsConfig(widget.config);
+      return serializeRecordsConfig(config);
   }
 }
-
 function serializeWidgets(
   widgets: z.output<typeof dashboardWidgetInputSchema>[],
 ) {
   return widgets.map((widget) => ({
     widget_type: widget.widgetType,
-    config: serializeWidgetConfig(widget),
+    size: widget.size,
+    chart_id: widget.chartId,
+    config:
+      widget.config === null
+        ? null
+        : serializeDashboardWidgetConfig(widget.widgetType, widget.config),
   }));
 }
 

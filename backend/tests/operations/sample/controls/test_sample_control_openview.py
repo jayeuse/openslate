@@ -16,7 +16,6 @@ from app.systems.openview.reports.schemas import ReportUpdate
 from app.systems.openview.views.schemas import ViewUpdate
 from app.systems.sandbox.records.query_schemas import (
     AggregateQuery,
-    AggregateSnapshotQuery,
     GroupedRecordQuery,
     RecordQuery,
     WindowRecordQuery,
@@ -27,6 +26,11 @@ from operations.sample.client import SampleClient
 from operations.sample.packs.registry import get_pack, pack_keys
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.scenario import build_dataset
+from tests.operations.sample.controls.sample_openview_snapshots import snapshot_response
+from tests.operations.sample.controls.sample_purge_wire import SamplePurgeWire, report_fixture
+from tests.operations.sample.controls.test_sample_control_openview_plan import (
+    INCUMBENT_OPENVIEW_ROUTES,
+)
 
 
 def _uuid(value: str) -> str:
@@ -67,7 +71,11 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
     dataset = build_dataset(
         "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack(pack_key)
     )
-    actions = plan_openview_controls(dataset)
+    actions = tuple(
+        action
+        for action in plan_openview_controls(dataset)
+        if action.values["operation"] != "chart_lifecycle"
+    )
     records: dict[str, dict[str, object]] = {}
     seen: list[tuple[str, str]] = []
     counter = 0
@@ -122,6 +130,9 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
         "reports": {report_target: report_id},
     }
     name_id = live_fields[f"{source_module}:name"]
+    title_fields = {
+        live_id: live_fields[f"{module_key}:name"] for module_key, live_id in live_modules.items()
+    }
     resource_state: dict[str, dict[str, object]] = {
         "view": {
             "id": view_id,
@@ -137,23 +148,9 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             "revision": 5,
             "is_deleted": False,
         },
-        "report": {
-            "id": report_id,
-            "module_id": live_modules[source_module],
-            "name": "Existing report",
-            "subtitle": None,
-            "revision": 7,
-            "is_deleted": False,
-            "recipe": {
-                "version": 1,
-                "fields": [{"field_id": name_id, "expected_type": "text"}],
-                "filters": [],
-                "logic": "and",
-                "sorts": [],
-                "group_by": None,
-                "include_row_count": False,
-            },
-        },
+        "report": report_fixture(
+            report_id, live_modules[source_module], name_id, name="Existing report"
+        ),
         "schedule": {
             "id": schedule_id,
             "report_id": report_id,
@@ -169,6 +166,10 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             "updated_at": "2026-10-01T00:00:00Z",
         },
     }
+
+    purge_wire = SamplePurgeWire(
+        "report", source=resource_state["report"], actor_id=_uuid("user:admin")
+    )
 
     def response(status: int, body: object | None = None) -> httpx.Response:
         nonlocal counter
@@ -208,6 +209,11 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             )
         seen.append((request.method, request.url.path))
         path, method = request.url.path, request.method
+        if path.endswith(("/aggregate-snapshot", "/aggregate-snapshots")):
+            return snapshot_response(request)
+        purge_response = purge_wire.route(request)
+        if purge_response is not None:
+            return purge_response
         if path.endswith(
             ("/query", "/grouped-query", "/window-query", "/aggregate-query", "/aggregate-snapshot")
         ):
@@ -236,15 +242,6 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                 )
             if path.endswith("/aggregate-query"):
                 TypeAdapter(AggregateQuery).validate_python(body)
-            elif path.endswith("/aggregate-snapshot"):
-                TypeAdapter(AggregateSnapshotQuery).validate_python(body)
-                return response(
-                    200,
-                    {
-                        "items": [],
-                        "pagination": pagination(12),
-                    },
-                )
             else:
                 query = RecordQuery.model_validate(body)
                 return response(
@@ -311,7 +308,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                     200,
                     {
                         "token": f"token-{counter}",
-                        "confirmation_name": record_id,
+                        "confirmation_name": row["data"][title_fields[row["module_id"]]],
                         "impact": {
                             "target_type": "record",
                             "target_id": record_id,
@@ -322,7 +319,8 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
                 )
             if method == "POST" and path.endswith("/purge"):
                 body = json.loads(request.content)
-                assert row["is_deleted"] is True and body["confirmation_name"] == record_id
+                assert row["is_deleted"] is True
+                assert body["confirmation_name"] == row["data"][title_fields[row["module_id"]]]
                 assert body["password"] == "fixture-admin-password"
                 del records[record_id]
                 for relationship_id, edge in list(records.items()):
@@ -466,7 +464,7 @@ def test_openview_executor_sends_every_declared_route_with_server_request_shapes
             client.close()
 
     matched = set().union(*(_template(method, path, CONTROL_ROUTES) for method, path in seen))
-    assert matched == CONTROL_ROUTES
+    assert matched == INCUMBENT_OPENVIEW_ROUTES
     assert len(results) == len(actions)
     assert all(result["outcome"] == "completed" for result in results)
     assert not records

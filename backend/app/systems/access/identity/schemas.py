@@ -25,6 +25,27 @@ class PasswordChangeRequest(BaseModel):
     password: str = Field(min_length=12, max_length=128)
 
 
+class EmailChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=255)
+    current_password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_target(cls, value: object) -> object:
+        normalized = normalize_email(value)
+        if isinstance(normalized, str) and len(normalized.encode("utf-8")) > 255:
+            raise ValueError("Email address exceeds provider limit")
+        return normalized
+
+
+class EmailChangeCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token_hash: str = Field(min_length=56, max_length=56, pattern=r"^[0-9a-f]{56}$")
+
+
 class ActionTokenCompleteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

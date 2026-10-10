@@ -16,6 +16,7 @@ from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardWidget
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.manage.audit.listeners import REALTIME_INVALIDATION_KEY
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.dashboards.models import Dashboard
 from app.systems.openview.reports.models import Report
@@ -47,6 +48,14 @@ def _created_log(db: Session, entity: object) -> AuditLog:
     )
     assert row is not None
     return row
+
+
+def _board_payloads(db: Session) -> list[dict[str, str]]:
+    return [
+        event.to_payload()
+        for event in db.info.get(REALTIME_INVALIDATION_KEY, [])
+        if event.entity.startswith("board")
+    ]
 
 
 def test_same_flush_record_ancestry_and_relationship_source_are_stamped(
@@ -191,6 +200,10 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
     ):
         assert _created_log(integration_db, entity).department_id == department.id
     assert _created_log(integration_db, file).department_id is None
+    assert {tuple(sorted(payload.items())) for payload in _board_payloads(integration_db)} == {
+        tuple(sorted({"entity": entity, "board_id": str(board.id)}.items()))
+        for entity in ("boards", "board_posts", "board_events", "board_widgets")
+    }
 
 
 def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
@@ -242,6 +255,7 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
     board_id = board.id
     post_id = post.id
     integration_db.expunge_all()
+    integration_db.info.pop(REALTIME_INVALIDATION_KEY, None)
 
     module_child = Field(module_id=module_id, name="Notes", type=FieldType.TEXT, position=1)
     record_child = RelationshipEdge(
@@ -275,6 +289,11 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
 
     for child in (module_child, record_child, board_child, post_child, revision_child):
         assert _created_log(integration_db, child).department_id == department_id
+    assert sorted(_board_payloads(integration_db), key=lambda payload: payload["entity"]) == [
+        {"entity": "board_posts", "board_id": str(board_id)},
+        {"entity": "board_posts", "board_id": str(board_id)},
+        {"entity": "board_widgets", "board_id": str(board_id)},
+    ]
 
 
 def test_project_board_and_its_group_have_no_department(
@@ -290,6 +309,10 @@ def test_project_board_and_its_group_have_no_department(
 
     for entity in (board, board_group, group):
         assert _created_log(integration_db, entity).department_id is None
+    assert _board_payloads(integration_db) == [
+        {"entity": "boards", "board_id": str(board.id)},
+        {"entity": "boards", "board_id": str(board.id)},
+    ]
 
 
 def test_child_audit_department_survives_same_flush_parent_hard_delete(

@@ -4,34 +4,31 @@ import json
 from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.systems.boards.portability_schemas import (
-    PortableBoardBundle,
-    PortableFieldReference,
-    PortableQueryFilter,
+from app.systems.boards.portability_queries import (
+    PortabilityError as PortabilityError,
 )
+from app.systems.boards.portability_queries import (
+    inline_config,
+    query_references,
+)
+from app.systems.boards.portability_queries import (
+    reject_nonportable_person_filter as reject_nonportable_person_filter,
+)
+from app.systems.boards.portability_queries import (
+    select_filter_labels as select_filter_labels,
+)
+from app.systems.boards.portability_schemas import PortableBoardBundle, PortableWidgetConfig
 from app.systems.boards.schemas import BoardCreate
-from app.systems.boards.widget_schemas import BoardWidgetConfig, BoardWidgetSpec
+from app.systems.boards.widget_schemas import BoardWidgetSpec
 from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.records.query import comparison_value
-from app.systems.sandbox.records.query_schemas import FieldReference, QueryFilter, Scalar
 
 MAX_PORTABLE_BOARD_BYTES = 1024 * 1024
-
-
-class PortabilityError(ValueError):
-    """Safe domain rejection; the caller maps the code to its route-local HTTP shape."""
-
-    def __init__(self, code: str, message: str | None = None) -> None:
-        self.code = code
-        self.message = message
-        super().__init__(message or code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +81,8 @@ def _departments(db: Session, names: set[str]) -> dict[str, Department]:
             Department.deleted_at.is_(None),
         )
         .order_by(Department.id)
-        .with_for_update()
+        .with_for_update(nowait=True)
+        .execution_options(populate_existing=True)
     ).all()
     found: dict[str, Department] = {}
     for row in rows:
@@ -101,25 +99,33 @@ def _modules(
 ) -> dict[tuple[str, str], Module]:
     if not sources:
         return {}
-    department_ids = {departments[name].id for name, _ in sources}
-    module_names = {name for _, name in sources}
     rows = db.scalars(
         select(Module)
         .where(
-            Module.department_id.in_(sorted(department_ids)),
-            Module.module_name.in_(sorted(module_names)),
+            or_(
+                *(
+                    and_(
+                        Module.department_id == departments[department].id,
+                        Module.module_name == module,
+                    )
+                    for department, module in sorted(sources)
+                )
+            ),
             Module.is_deleted.is_(False),
             Module.deleted_at.is_(None),
         )
         .order_by(Module.id)
-        .with_for_update()
+        .with_for_update(nowait=True)
+        .execution_options(populate_existing=True)
     ).all()
     department_names = {department.id: name for name, department in departments.items()}
     found: dict[tuple[str, str], Module] = {}
     for row in rows:
         department_name = department_names.get(row.department_id)
         key = (department_name, row.module_name) if department_name is not None else None
-        if not _active(row) or key not in sources or key in found:
+        if key not in sources:
+            continue
+        if not _active(row) or key in found:
             raise PortabilityError("board_source_unavailable")
         assert key is not None
         found[key] = row
@@ -134,22 +140,29 @@ def _fields(
 ) -> dict[tuple[UUID, str], Field]:
     if not references:
         return {}
-    names = {name for requested in references.values() for name in requested}
     rows = db.scalars(
         select(Field)
         .where(
-            Field.module_id.in_(sorted(references)),
-            Field.name.in_(sorted(names)),
+            or_(
+                *(
+                    and_(Field.module_id == module_id, Field.name == name)
+                    for module_id, names in sorted(references.items())
+                    for name in sorted(names)
+                )
+            ),
             Field.is_deleted.is_(False),
             Field.deleted_at.is_(None),
         )
         .order_by(Field.id)
-        .with_for_update()
+        .with_for_update(nowait=True)
+        .execution_options(populate_existing=True)
     ).all()
     found: dict[tuple[UUID, str], Field] = {}
     for row in rows:
         key = (row.module_id, row.name)
-        if not _active(row) or row.name not in references.get(row.module_id, set()) or key in found:
+        if row.name not in references.get(row.module_id, set()):
+            continue
+        if not _active(row) or key in found:
             raise PortabilityError("board_source_unavailable")
         found[key] = row
     if {
@@ -158,92 +171,6 @@ def _fields(
     } != references:
         raise PortabilityError("board_source_unavailable")
     return found
-
-
-def _field_reference(
-    reference: PortableFieldReference, module_id: UUID, fields: dict[tuple[UUID, str], Field]
-) -> FieldReference:
-    field = fields.get((module_id, reference.name))
-    if field is None or field.type != reference.expected_type:
-        raise PortabilityError("board_source_unavailable")
-    return FieldReference(field_id=field.id, expected_type=reference.expected_type)
-
-
-def _select_option_labels(field: Field) -> dict[str, str]:
-    options = field.config.get("options")
-    if not isinstance(options, list) or not options:
-        raise PortabilityError("board_source_unavailable")
-    labels: dict[str, str] = {}
-    for option in options:
-        if not isinstance(option, dict) or set(option) != {"id", "label"}:
-            raise PortabilityError("board_source_unavailable")
-        option_id, label = option["id"], option["label"]
-        if not isinstance(option_id, str) or not isinstance(label, str):
-            raise PortabilityError("board_source_unavailable")
-        if option_id in labels or label in labels.values():
-            raise PortabilityError("board_source_unavailable")
-        labels[option_id] = label
-    return labels
-
-
-def _map_select_value(
-    value: Scalar | list[Scalar] | None, options: dict[str, str]
-) -> str | list[str] | None:
-    if value is None:
-        return None
-    values = value if isinstance(value, list) else [value]
-    mapped: list[str] = []
-    for item in values:
-        if not isinstance(item, str) or item not in options:
-            raise PortabilityError("board_source_unavailable")
-        mapped.append(options[item])
-    return mapped if isinstance(value, list) else mapped[0]
-
-
-def select_filter_labels(
-    field: Field, value: Scalar | list[Scalar] | None
-) -> str | list[str] | None:
-    """Export a live select predicate by portable labels, never installation IDs."""
-
-    return _map_select_value(value, _select_option_labels(field))
-
-
-def _select_filter_ids(field: Field, value: Scalar | list[Scalar] | None) -> str | list[str] | None:
-    labels = _select_option_labels(field)
-    return _map_select_value(value, {label: option_id for option_id, label in labels.items()})
-
-
-def reject_nonportable_person_filter(field: Field, value: Scalar | list[Scalar] | None) -> None:
-    if field.type == FieldType.USER and value is not None:
-        raise PortabilityError(
-            "board_bundle_invalid",
-            "Person filter values cannot be transferred in a Board bundle",
-        )
-
-
-def _filter(
-    reference: PortableQueryFilter, module_id: UUID, fields: dict[tuple[UUID, str], Field]
-) -> QueryFilter:
-    field = fields.get((module_id, reference.name))
-    if field is None or field.type != reference.expected_type:
-        raise PortabilityError("board_source_unavailable")
-    reject_nonportable_person_filter(field, reference.value)
-    try:
-        value = (
-            _select_filter_ids(field, reference.value)
-            if field.type == FieldType.SELECT
-            else reference.value
-        )
-        predicate = QueryFilter(
-            field_id=field.id,
-            expected_type=reference.expected_type,
-            operator=reference.operator,
-            value=value,
-        )
-        comparison_value(field, predicate)
-    except (HTTPException, ValidationError, ValueError) as error:
-        raise PortabilityError("board_source_unavailable") from error
-    return predicate
 
 
 def resolve_portable_board(db: Session, bundle: PortableBoardBundle) -> ResolvedBoardConfiguration:
@@ -265,38 +192,28 @@ def resolve_portable_board(db: Session, bundle: PortableBoardBundle) -> Resolved
     for widget in configuration.widgets:
         module_id = modules[(widget.source.department_name, widget.source.module_name)].id
         requested = references.setdefault(module_id, set())
-        requested.update(field.name for field in widget.config.fields)
-        requested.update(field.name for field in widget.config.filters)
-        if widget.config.metric is not None:
-            requested.add(widget.config.metric.name)
+        if isinstance(widget.config, PortableWidgetConfig):
+            requested.update(field.name for field in widget.config.fields)
+            requested.update(field.name for field in widget.config.filters)
+            if widget.config.metric is not None:
+                requested.add(widget.config.metric.name)
+        else:
+            requested.update(field.name for field in query_references(widget.config.query))
     fields = _fields(db, {module_id: names for module_id, names in references.items() if names})
 
     widgets: list[BoardWidgetSpec] = []
     for widget in configuration.widgets:
         module_id = modules[(widget.source.department_name, widget.source.module_name)].id
         try:
-            config = BoardWidgetConfig(
-                fields=[
-                    _field_reference(field, module_id, fields) for field in widget.config.fields
-                ],
-                filters=[_filter(item, module_id, fields) for item in widget.config.filters],
-                logic=widget.config.logic,
-                metric=(
-                    _field_reference(widget.config.metric, module_id, fields)
-                    if widget.config.metric is not None
-                    else None
-                ),
-                visualization=widget.config.visualization,
-                size=widget.config.size,
-                refresh=widget.config.refresh,
-                pinned=widget.config.pinned,
-            )
+            config = inline_config(widget.config, module_id, fields)
             widgets.append(
                 BoardWidgetSpec(
                     name=widget.name,
                     widget_type=widget.widget_type,
                     module_id=module_id,
                     config=config,
+                    size={"half": "M", "full": "L"}.get(widget.config.size, widget.config.size),
+                    pinned=widget.config.pinned,
                 )
             )
         except ValidationError as error:

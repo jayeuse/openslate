@@ -58,7 +58,7 @@ import {
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SampleDataNote } from "@/components/sample-data-note";
+import { SampleDataNote } from "./components/sample-data-note";
 import {
   MessageScrollerProvider,
   MessageScroller,

@@ -104,7 +104,7 @@ def test_upgrade_adds_defaults_without_cleanup_and_preserves_existing_configurat
             ).all()
             == [("integer", "NO", "365")] * 2
         )
-    subprocess.run([sys.executable, "-m", "alembic", "check"], env=world.environment, check=True)
+    run_alembic(world.environment, "check")
 
 
 @pytest.mark.parametrize("field", FIELDS)

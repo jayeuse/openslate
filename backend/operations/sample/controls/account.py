@@ -400,4 +400,20 @@ def verify_account_controls(
         issues.append("account control identity or readback evidence is invalid")
     if not issues:
         counts["account_control_actions"] = 1
+    plan = manifest.get("control_plan")
+    if isinstance(plan, list) and any(
+        isinstance(row, Mapping)
+        and isinstance(row.get("values"), Mapping)
+        and row["values"].get("operation") == "self_email_change"
+        for row in plan
+    ):
+        from operations.sample.controls.email_change_verification import (
+            verify_email_change_controls,
+        )
+
+        email_counts, email_issues = verify_email_change_controls(
+            admin, dataset, manifest, admin_id
+        )
+        counts.update(email_counts)
+        issues.extend(email_issues)
     return counts, issues

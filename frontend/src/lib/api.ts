@@ -66,7 +66,14 @@ export type Relationship = BaseEntity & {
   hidden_reasons: RelationshipHiddenReason[];
 };
 export type LifecycleTargetType =
-  "department" | "module" | "field" | "record" | "file" | "board";
+  | "department"
+  | "module"
+  | "field"
+  | "record"
+  | "file"
+  | "board"
+  | "report"
+  | "board_event";
 export type LifecycleOperation = "close" | "purge" | "reopen";
 export type LifecycleBlockerCode =
   | "closed_ancestor"
@@ -79,6 +86,7 @@ export type LifecycleBlockerCode =
   | "record_close_unsupported"
   | "purge_board_dependency"
   | "purge_dashboard_dependency"
+  | "purge_chart_dependency"
   | "purge_report_dependency"
   | "purge_report_run_dependency"
   | "purge_trigger_dependency"
@@ -166,6 +174,9 @@ export type LifecyclePreviewResponse = {
   expires_at: string;
   confirmation_name: string;
 };
+export type LifecyclePurgePreviewResponse = LifecyclePreviewResponse & {
+  last_successful_backup_at: string | null;
+};
 export type LifecycleMutationResponse = {
   impact: LifecycleImpact;
   operation_id: string | null;
@@ -212,6 +223,7 @@ export class ApiError extends Error {
     message: string,
     public details?: unknown,
     public code?: LifecycleErrorCode,
+    public retryAfter?: number,
   ) {
     super(message);
   }
@@ -489,6 +501,11 @@ async function parseResponse(
         ? body.detail
         : "Request could not be completed";
     const errorDetail = isErrorDetail(detail) ? detail : undefined;
+    const retryHeader = response.headers.get("Retry-After")?.trim();
+    const retryAfter =
+      retryHeader && /^\d+$/.test(retryHeader)
+        ? Number(retryHeader)
+        : undefined;
     throw new ApiError(
       response.status,
       typeof detail === "string"
@@ -498,6 +515,9 @@ async function parseResponse(
           : "Request could not be completed",
       detail,
       typeof errorDetail?.code === "string" ? errorDetail.code : undefined,
+      retryAfter !== undefined && Number.isSafeInteger(retryAfter)
+        ? retryAfter
+        : undefined,
     );
   }
   return body;

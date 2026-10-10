@@ -490,9 +490,11 @@ test("Export sends the saved-view query and downloads the complete server CSV", 
       (_, i) => `${uuid(i + 1)},${i === 0 ? "' =SUM(A1:A2)" : `Job ${i}`}\r\n`,
     ).join("");
   await page.route("**/api/records/export", (r) => {
-    requests.push(r.request().postDataJSON());
+    const body = r.request().postDataJSON();
+    requests.push(body);
     return r.fulfill({
-      body: csv,
+      // The accepted server contract omits Record ID unless explicitly requested.
+      body: body.include_record_id === true ? csv : "Title\r\nJob 1\r\n",
       contentType: "text/csv; charset=utf-8",
       headers: {
         "Content-Disposition": 'attachment; filename="records.csv"',
@@ -509,7 +511,9 @@ test("Export sends the saved-view query and downloads the complete server CSV", 
   await expect(
     page.getByText("13 records ready · showing the first 10.", { exact: true }),
   ).toBeVisible();
-  expect(requests).toEqual([{ module_id: MODULE, definition }]);
+  expect(requests).toEqual([
+    { module_id: MODULE, definition, include_record_id: true },
+  ]);
   const downloading = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download CSV", exact: true }).click();
   const download = await downloading;
@@ -890,7 +894,7 @@ test("Administrator people results open the existing People destination and empt
     .getByRole("searchbox", { name: "Search workspace" })
     .fill("operator");
   await expect(
-    page.getByRole("link", { name: "Pump operator operator", exact: true }),
+    page.getByRole("link", { name: "Open Pump operator", exact: true }),
   ).toHaveAttribute("href", `/access?view=people&user=${uuid(1)}`);
   await expect(
     page.getByRole("region", { name: "Records search results" }),

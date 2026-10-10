@@ -1,7 +1,6 @@
 """Compatible policy migration and fail-closed downgrade on guarded PostgreSQL."""
 
 import subprocess
-import sys
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -196,9 +195,7 @@ def test_upgrade_maps_roles_and_established_episodes_without_eviction(legacy):
         finally:
             try:
                 run_alembic(environment, "upgrade", "head")
-                subprocess.run(
-                    [sys.executable, "-m", "alembic", "check"], env=environment, check=True
-                )
+                run_alembic(environment, "check")
             finally:
                 engine.dispose()
 

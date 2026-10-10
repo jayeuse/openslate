@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "./helpers/test";
+import { profilePreferences } from "./helpers/profile-api";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import type {
   BoardEventOccurrencePage,
   BoardEventPage,
@@ -178,96 +184,433 @@ async function installSelectedEventApi(
   });
 }
 
+async function installS11EventApi(browser: Page) {
+  await installOpenViewEventSource(browser);
+  await installSelectedEventApi(browser);
+  await browser.route("**/api/users/*/preferences", (route) =>
+    route.fulfill({
+      json: {
+        user_id: new URL(route.request().url()).pathname.split("/")[3],
+        theme: "light",
+        appearance: { motion: "reduce", keyboard_shortcuts: true },
+      },
+    }),
+  );
+  let saved = {
+    ...selectedEventWire,
+    start_date: "2026-09-14",
+    end_date: "2026-09-16",
+  };
+  const reads: string[] = [];
+  const writes: string[] = [];
+  await browser.route("**/api/boards**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const prefix = `/api/boards/${boardId}`;
+    if (request.method() !== "GET") {
+      writes.push(url.pathname);
+      return route.fulfill({
+        status: 409,
+        json: { detail: "Unexpected write" },
+      });
+    }
+    reads.push(url.pathname);
+    const board = {
+      id: boardId,
+      scope: "project",
+      department_id: null,
+      name: "Calendar board",
+      description: "Current calendar",
+      status: "active",
+      revision: saved.board_revision,
+      level: "manage",
+      created_at: saved.created_at,
+      updated_at: saved.updated_at,
+    };
+    const pagination = {
+      limit: 25,
+      offset: 0,
+      count: 1,
+      total: 1,
+      has_more: false,
+    };
+    if (url.pathname === "/api/boards")
+      return route.fulfill({ json: { items: [board], pagination } });
+    if (url.pathname === prefix) return route.fulfill({ json: board });
+    if (url.pathname === `${prefix}/my-access`)
+      return route.fulfill({
+        json: { level: "manage", read: true, write: true, manage: true },
+      });
+    if (url.pathname === `${prefix}/events/${eventId}`)
+      return route.fulfill({ json: saved });
+    if (url.pathname === `${prefix}/events/occurrences`)
+      return route.fulfill({
+        json: {
+          items: [
+            {
+              id: `${eventId}:2026-09-14`,
+              event_id: eventId,
+              date: "2026-09-14",
+              start: "2026-09-14",
+              end: "2026-09-16",
+              event: saved,
+            },
+          ],
+          pagination: { ...pagination, limit: 100 },
+          board_revision: saved.board_revision,
+        },
+      });
+    return route.fallback();
+  });
+  return {
+    reads,
+    writes,
+    change() {
+      saved = {
+        ...saved,
+        title: "Remote event title",
+        details: "Remote planning details",
+        revision: 2,
+        board_revision: 2,
+      };
+    },
+  };
+}
+
+for (const dirty of [false, true]) {
+  test(`S11 event invalidation ${dirty ? "retains the dirty event and offers review latest" : "updates the clean event editor"}`, async ({
+    page: browser,
+  }) => {
+    const api = await installS11EventApi(browser);
+    await browser.goto(`/boards?board=${boardId}&section=calendar`);
+    await browser.getByText("View event", { exact: true }).click();
+    await browser
+      .getByRole("button", {
+        name: `Edit ${selectedEventWire.title}`,
+        exact: true,
+      })
+      .click();
+    const title = browser.getByLabel("Event title", { exact: true });
+    await expect(title).toHaveValue(selectedEventWire.title);
+    if (dirty) {
+      await title.fill("My local event title");
+      await browser
+        .getByLabel("Details", { exact: true })
+        .fill("My complete local planning draft");
+      await browser
+        .getByLabel("Location", { exact: true })
+        .fill("Local room 42");
+    }
+    api.change();
+    await sendOpenViewEvent(browser, "invalidate", {
+      entity: "board_events",
+      board_id: boardId,
+    });
+    if (dirty) {
+      await expect(
+        browser.getByText("Changed by someone else — review latest", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(title).toHaveValue("My local event title");
+      await expect(browser.getByLabel("Details", { exact: true })).toHaveValue(
+        "My complete local planning draft",
+      );
+      await expect(browser.getByLabel("Location", { exact: true })).toHaveValue(
+        "Local room 42",
+      );
+      await expect(
+        browser.getByRole("button", { name: "Save event", exact: true }),
+      ).toBeDisabled();
+      await browser
+        .getByText("Review the latest saved event", { exact: true })
+        .click();
+      await expect(
+        browser
+          .getByRole("definition")
+          .filter({ hasText: "Remote planning details" }),
+      ).toBeVisible();
+      if (process.env.OPENVIEW_CAPTURE_DIR) {
+        await browser.addStyleTag({
+          content: "nextjs-portal { display: none !important; }",
+        });
+        await browser.evaluate(() => document.fonts.ready);
+        const notice = browser.getByText(
+          "Changed by someone else — review latest",
+          { exact: true },
+        );
+        const originalViewport = browser.viewportSize();
+        for (const mode of ["light", "dark"] as const) {
+          await browser.evaluate(applyAppearancePreferences, {
+            mode,
+            reduceMotion: true,
+          });
+          for (const viewport of [
+            { width: 1440, height: 900 },
+            { width: 390, height: 844 },
+          ]) {
+            await browser.setViewportSize(viewport);
+            await notice.evaluate((element) =>
+              element.scrollIntoView({
+                block: "center",
+                behavior: "instant",
+              }),
+            );
+            await expect(notice).toBeInViewport();
+            expect(
+              await browser.evaluate(
+                () => document.documentElement.scrollWidth <= innerWidth,
+              ),
+            ).toBe(true);
+            await browser.screenshot({
+              path: `${process.env.OPENVIEW_CAPTURE_DIR}/s11-dirty-event-${mode}-${viewport.width}x${viewport.height}.png`,
+              animations: "disabled",
+              fullPage: false,
+            });
+          }
+        }
+        if (originalViewport) await browser.setViewportSize(originalViewport);
+        const latest = browser.getByRole("button", {
+          name: "Load latest event and discard my draft",
+          exact: true,
+        });
+        await latest.focus();
+        await expect(latest).toBeFocused();
+        await latest.press("Enter");
+        await expect(title).toHaveValue("Remote event title");
+      }
+    } else {
+      await expect(title).toHaveValue("Remote event title");
+      await expect(browser.getByLabel("Details", { exact: true })).toHaveValue(
+        "Remote planning details",
+      );
+      await expect(
+        browser.getByText("Changed by someone else — review latest", {
+          exact: true,
+        }),
+      ).toHaveCount(0);
+    }
+    expect(api.writes).toHaveLength(0);
+    expect(
+      api.reads.filter((path) => path.endsWith(`/events/${eventId}`)).length,
+    ).toBeGreaterThan(0);
+    await expect(
+      browser.getByRole("heading", { name: "September 2026", exact: true }),
+    ).toBeVisible();
+  });
+}
+
+test("S11 an old live event refusal cannot close a newly created local draft", async ({
+  page: browser,
+}) => {
+  const api = await installS11EventApi(browser);
+  await browser.goto(`/boards?board=${boardId}&section=calendar`);
+  await browser.getByText("View event", { exact: true }).click();
+  await browser
+    .getByRole("button", {
+      name: `Edit ${selectedEventWire.title}`,
+      exact: true,
+    })
+    .click();
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await browser.route(
+    `**/api/boards/${boardId}/events/${eventId}`,
+    async (route) => {
+      await held;
+      return route.fulfill({
+        status: 403,
+        json: { detail: "Old event is unavailable" },
+      });
+    },
+  );
+  try {
+    const entered = browser.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname ===
+        `/api/boards/${boardId}/events/${eventId}`,
+    );
+    api.change();
+    await sendOpenViewEvent(browser, "invalidate", {
+      entity: "board_events",
+      board_id: boardId,
+    });
+    await entered;
+    await browser.getByRole("button", { name: "Cancel", exact: true }).click();
+    await browser
+      .getByRole("button", { name: "New event", exact: true })
+      .click();
+    await browser
+      .getByLabel("Event title", { exact: true })
+      .fill("My new local event");
+    const completed = browser.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        `/api/boards/${boardId}/events/${eventId}`,
+    );
+    release();
+    await completed;
+    await expect(
+      browser.getByLabel("Event title", { exact: true }),
+    ).toHaveValue("My new local event");
+    await expect(
+      browser.getByText(
+        "This event or Board is no longer available. The editor was closed.",
+        { exact: true },
+      ),
+    ).toHaveCount(0);
+    expect(api.writes).toHaveLength(0);
+  } finally {
+    release();
+  }
+});
+
 test.describe("Boards workspace regional dates", () => {
   test.use({ locale: "en-US", timezoneId: "UTC" });
 
-  test("calendar localizes dates without shifting all-day dates or replacing the event timezone", async ({
-    page: browser,
-  }) => {
-    await installSelectedEventApi(browser);
-    await browser.route("**/api/workspace", (route) =>
-      route.fulfill({
-        json: {
-          display_name: "OpenSlate",
-          mark: "OS",
-          logo_file_id: null,
-          revision: 1,
-          today: "2026-09-14",
-          week_start: "monday",
-          locale: "fr-FR",
-          timezone: "America/Los_Angeles",
-        },
-      }),
-    );
-    const timedId = "00000000-0000-4000-8000-000000000099";
-    const items = [
-      {
-        id: `${eventId}:2026-09-14`,
-        event_id: eventId,
-        date: "2026-09-14",
-        start: "2026-09-14",
-        end: "2026-09-16",
-        event: {
-          ...selectedEventWire,
-          title: "Regional all-day event",
-          start_date: "2026-09-14",
-          end_date: "2026-09-16",
-        },
-      },
-      {
-        id: `${timedId}:2026-09-14T01:00:00Z`,
-        event_id: timedId,
-        date: "2026-09-14",
-        start: "2026-09-14T01:00:00Z",
-        end: "2026-09-14T02:00:00Z",
-        event: {
-          ...selectedEventWire,
-          id: timedId,
-          title: "Regional timed event",
-          all_day: false,
-          start_date: null,
-          end_date: null,
-          start_at: "2026-09-14T01:00:00Z",
-          end_at: "2026-09-14T02:00:00Z",
-          timezone_name: "Asia/Manila",
-        },
-      },
-    ];
-    await browser.route(
-      `**/api/boards/${boardId}/events/occurrences?**`,
-      (route) =>
-        route.fulfill({
-          json: {
-            items,
-            pagination: {
-              limit: 100,
-              offset: 0,
-              count: 2,
-              total: 2,
-              has_more: false,
+  for (const personal of [false, true]) {
+    test(
+      personal
+        ? "S21 Boards personal week and clock format preserve all-day dates, event zone and query windows"
+        : "calendar localizes dates without shifting all-day dates or replacing the event timezone",
+      async ({ page: browser }) => {
+        await installSelectedEventApi(browser);
+        if (personal) {
+          await browser.setViewportSize({ width: 1440, height: 900 });
+          await browser.route(`**/api/users/${authorId}/preferences`, (route) =>
+            route.fulfill({
+              json: profilePreferences(authorId, {
+                timezone: "Asia/Tokyo",
+                date_format: "ymd",
+                time_format: "12h",
+                week_start: "sunday",
+              }),
+            }),
+          );
+        }
+        const windows: { start: string | null; end: string | null }[] = [];
+        browser.on("request", (request) => {
+          const url = new URL(request.url());
+          if (url.pathname.endsWith("/events/occurrences"))
+            windows.push({
+              start: url.searchParams.get("window_start"),
+              end: url.searchParams.get("window_end"),
+            });
+        });
+        await browser.route("**/api/workspace", (route) =>
+          route.fulfill({
+            json: {
+              display_name: "OpenSlate",
+              mark: "OS",
+              logo_file_id: null,
+              revision: 1,
+              today: "2026-09-14",
+              week_start: "monday",
+              locale: "fr-FR",
+              timezone: "America/Los_Angeles",
             },
-            board_revision: 1,
+          }),
+        );
+        const timedId = "00000000-0000-4000-8000-000000000099";
+        const items = [
+          {
+            id: `${eventId}:2026-09-14`,
+            event_id: eventId,
+            date: "2026-09-14",
+            start: "2026-09-14",
+            end: "2026-09-16",
+            event: {
+              ...selectedEventWire,
+              title: "Regional all-day event",
+              start_date: "2026-09-14",
+              end_date: "2026-09-16",
+            },
           },
-        }),
+          {
+            id: `${timedId}:2026-09-14T01:00:00Z`,
+            event_id: timedId,
+            date: "2026-09-14",
+            start: "2026-09-14T01:00:00Z",
+            end: "2026-09-14T02:00:00Z",
+            event: {
+              ...selectedEventWire,
+              id: timedId,
+              title: "Regional timed event",
+              all_day: false,
+              start_date: null,
+              end_date: null,
+              start_at: "2026-09-14T01:00:00Z",
+              end_at: "2026-09-14T02:00:00Z",
+              timezone_name: "Asia/Manila",
+            },
+          },
+        ];
+        await browser.route(
+          `**/api/boards/${boardId}/events/occurrences?**`,
+          (route) =>
+            route.fulfill({
+              json: {
+                items,
+                pagination: {
+                  limit: 100,
+                  offset: 0,
+                  count: 2,
+                  total: 2,
+                  has_more: false,
+                },
+                board_revision: 1,
+              },
+            }),
+        );
+        await browser.goto(`/boards?board=${boardId}&section=calendar`);
+        await expect(
+          browser.getByRole("heading", { name: "septembre 2026", exact: true }),
+        ).toBeVisible();
+        const day = browser.getByRole("button", {
+          name: /View lun\. 14 sept\./,
+        });
+        await expect(day).toHaveAttribute("aria-current", "date");
+        await day.click();
+        await expect(
+          browser.getByText("All day · lun. 14 sept.–mer. 16 sept.", {
+            exact: true,
+          }),
+        ).toBeVisible();
+        await expect(
+          browser.getByText(
+            personal
+              ? /lun\. 14 sept\..*9:00\sAM.*lun\. 14 sept\..*10:00\sAM.*Asia\/Manila/
+              : /lun\. 14 sept\..*0?9:00.*lun\. 14 sept\..*10:00.*Asia\/Manila/,
+          ),
+        ).toBeVisible();
+        if (personal) {
+          const calendar = browser.getByRole("region", {
+            name: "septembre 2026 calendar",
+            exact: true,
+          });
+          await expect(
+            calendar.getByText(/^(dim\.|lun\.|mar\.|mer\.|jeu\.|ven\.|sam\.)$/),
+          ).toHaveText([
+            "dim.",
+            "lun.",
+            "mar.",
+            "mer.",
+            "jeu.",
+            "ven.",
+            "sam.",
+          ]);
+        }
+        expect(windows.length).toBeGreaterThan(0);
+        expect(
+          windows.every(
+            ({ start, end }) => start === "2026-09-01" && end === "2026-09-30",
+          ),
+        ).toBe(true);
+      },
     );
-    await browser.goto(`/boards?board=${boardId}&section=calendar`);
-    await expect(
-      browser.getByRole("heading", { name: "septembre 2026", exact: true }),
-    ).toBeVisible();
-    const day = browser.getByRole("button", { name: /View lun\. 14 sept\./ });
-    await expect(day).toHaveAttribute("aria-current", "date");
-    await day.click();
-    await expect(
-      browser.getByText("All day · lun. 14 sept.–mer. 16 sept.", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(
-      browser.getByText(
-        /lun\. 14 sept\..*0?9:00.*lun\. 14 sept\..*10:00.*Asia\/Manila/,
-      ),
-    ).toBeVisible();
-  });
+  }
 });
 
 test.describe("organization calendar week start", () => {
@@ -412,6 +755,8 @@ test("URL-selected event retries a failed detail read without changing the calen
   page: browser,
 }) => {
   await installSelectedEventApi(browser);
+  // A held event stream sends no resync, so only Retry can recover the read.
+  await browser.route("**/api/events", () => undefined);
   let available = false;
   await browser.route(`**/api/boards/${boardId}/events/${eventId}`, (route) =>
     route.fulfill(
@@ -427,8 +772,10 @@ test("URL-selected event retries a failed detail read without changing the calen
     name: "Event unavailable",
   });
   await expect(unavailable).toBeVisible();
+  const retry = unavailable.getByRole("button", { name: "Retry", exact: true });
+  await expect(retry).toBeVisible();
   available = true;
-  await unavailable.getByRole("button", { name: "Retry" }).click();
+  await retry.click();
   await expect(
     browser.getByRole("dialog", { name: selectedEventWire.title }),
   ).toBeVisible();
@@ -1316,4 +1663,457 @@ test("denied latest-version check clears cached occurrences even when retry fail
   });
   expect(failed.data).toBeNull();
   expect(failed.status).toBe("error");
+});
+
+async function installArchivedEventPurge(
+  browser: Page,
+  role: "admin" | "member" = "admin",
+  failChallenge = false,
+  holdPreview = false,
+) {
+  await installOpenViewEventSource(browser);
+  await installSelectedEventApi(browser);
+  await browser.route("**/api/auth/me", (route) =>
+    route.fulfill({ json: { id: authorId, role, access: [] } }),
+  );
+  const workspace = {
+    display_name: "OpenSlate",
+    mark: "OS",
+    logo_file_id: null,
+    revision: 1,
+    today: "2026-09-14",
+    week_start: "monday",
+    locale: "en-US",
+    timezone: "UTC",
+    purge_enabled: true,
+  };
+  await browser.route("**/api/workspace", (route) =>
+    route.fulfill({ json: workspace }),
+  );
+  let releasePreview = () => {};
+  const previewGate = new Promise<void>((resolve) => {
+    releasePreview = resolve;
+  });
+  await browser.route(`**/api/boards/${boardId}/my-access`, (route) =>
+    route.fulfill({
+      json: {
+        level: "manage",
+        read: true,
+        write: true,
+        manage: true,
+      },
+    }),
+  );
+  const impact = {
+    target_type: "board_event",
+    target_id: eventId,
+    actor_id: authorId,
+    operation: "purge",
+    rows: [],
+    external_impacts: [],
+    key_strips: [],
+    blockers: [],
+    impact_digest: "a".repeat(64),
+  };
+  let purges = 0;
+  let deleted = false;
+  await browser.route(`**/api/boards/${boardId}/events?**`, (route) => {
+    const items = deleted ? [] : [{ ...selectedEventWire, archived: true }];
+    return route.fulfill({
+      json: {
+        items,
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: items.length,
+          total: items.length,
+          has_more: false,
+        },
+        board_revision: deleted ? 2 : 1,
+      },
+    });
+  });
+  await browser.route(
+    `**/api/boards/${boardId}/events/${eventId}/purge**`,
+    async (route) => {
+      if (route.request().url().endsWith("/preview")) {
+        if (holdPreview) await previewGate;
+        return route.fulfill({
+          json: {
+            impact,
+            token: "owned-event-preview",
+            expires_at: "2026-09-26T00:00:00Z",
+            confirmation_name: selectedEventWire.title,
+            last_successful_backup_at: null,
+          },
+        });
+      }
+      purges += 1;
+      expect(route.request().postDataJSON()).toEqual({
+        token: "owned-event-preview",
+        confirmation_name: selectedEventWire.title,
+        password: "synthetic-event-password",
+      });
+      if (failChallenge)
+        return route.fulfill({
+          status: 404,
+          json: {
+            detail: {
+              code: "challenge_not_found",
+              message: "private event internals",
+            },
+          },
+        });
+      deleted = true;
+      return route.fulfill({ json: { impact, operation_id: null } });
+    },
+  );
+  return {
+    workspace,
+    releasePreview,
+    get purges() {
+      return purges;
+    },
+  };
+}
+
+for (const failChallenge of [false, true]) {
+  test(`S04 archived event purge ${failChallenge ? "retains its row after an unavailable challenge" : "removes only its confirmed archived row"}`, async ({
+    page: browser,
+  }) => {
+    const api = await installArchivedEventPurge(
+      browser,
+      "admin",
+      failChallenge,
+    );
+    await browser.goto(`/boards?board=${boardId}&section=calendar`);
+    await browser
+      .getByRole("button", { name: "Event lists", exact: true })
+      .click();
+    await browser
+      .getByRole("menuitem", { name: "Archived events", exact: true })
+      .click();
+    const archived = browser.getByRole("region", {
+      name: "Archived Board events",
+      exact: true,
+    });
+    await archived
+      .getByRole("button", {
+        name: `Permanently delete ${selectedEventWire.title}`,
+        exact: true,
+      })
+      .click();
+    const review = browser.getByRole("dialog", {
+      name: "Permanently delete event?",
+    });
+    await expect(
+      review.getByText(
+        "Last successful backup: No successful backup recorded.",
+      ),
+    ).toBeVisible();
+    await review
+      .getByLabel("Type the event name")
+      .fill(selectedEventWire.title + " ");
+    await review
+      .getByLabel("Administrator password")
+      .fill("synthetic-event-password");
+    await expect(
+      review.getByRole("button", {
+        name: "Confirm permanent deletion",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect(api.purges).toBe(0);
+    await review
+      .getByLabel("Type the event name")
+      .fill(selectedEventWire.title);
+    await review
+      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .click();
+    if (failChallenge) {
+      await expect(
+        review.getByText("The review is unavailable. Request a new review."),
+      ).toBeVisible();
+      await review
+        .getByRole("button", { name: "Review again", exact: true })
+        .click();
+      await expect(review.getByLabel("Administrator password")).toHaveValue("");
+      await review.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(
+        archived.getByRole("button", {
+          name: `Restore ${selectedEventWire.title}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+    } else {
+      await expect(review).toBeHidden();
+      await expect(
+        archived.getByText(selectedEventWire.title, { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        browser.getByText("Event permanently deleted.", { exact: true }),
+      ).toBeVisible();
+    }
+    expect(api.purges).toBe(1);
+    await expect(browser.getByText("private event internals")).toHaveCount(0);
+  });
+}
+
+test("S04 archived event remains restorable by a member without permanent-delete authority", async ({
+  page: browser,
+}) => {
+  const api = await installArchivedEventPurge(browser, "member");
+  await browser.goto(`/boards?board=${boardId}&section=calendar`);
+  await browser
+    .getByRole("button", { name: "Event lists", exact: true })
+    .click();
+  await browser
+    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .click();
+  const archived = browser.getByRole("region", {
+    name: "Archived Board events",
+    exact: true,
+  });
+  await expect(
+    archived.getByRole("button", {
+      name: `Restore ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    archived.getByRole("button", {
+      name: `Permanently delete ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(api.purges).toBe(0);
+});
+
+test("S04 pending event review can recover after purge setting changes without accepting its late preview", async ({
+  page: browser,
+}) => {
+  const api = await installArchivedEventPurge(browser, "admin", false, true);
+  await browser.goto(`/boards?board=${boardId}&section=calendar`);
+  await browser
+    .getByRole("button", { name: "Event lists", exact: true })
+    .click();
+  await browser
+    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .click();
+  const archived = browser.getByRole("region", {
+    name: "Archived Board events",
+    exact: true,
+  });
+  const begin = archived.getByRole("button", {
+    name: `Permanently delete ${selectedEventWire.title}`,
+    exact: true,
+  });
+  await begin.click();
+  await expect(
+    browser
+      .getByRole("dialog", { name: "Permanently delete event?" })
+      .getByText("Preparing review…"),
+  ).toBeVisible();
+  api.workspace.purge_enabled = false;
+  await sendOpenViewEvent(browser, "invalidate", {
+    entity: "workspace_profiles",
+  });
+  await expect(
+    browser.getByRole("dialog", { name: "Permanently delete event?" }),
+  ).toBeHidden();
+  const released = browser.waitForResponse((response) =>
+    response.url().endsWith("/purge/preview"),
+  );
+  api.releasePreview();
+  await released;
+  api.workspace.purge_enabled = true;
+  await sendOpenViewEvent(browser, "invalidate", {
+    entity: "workspace_profiles",
+  });
+  await expect(begin).toBeVisible();
+  await expect(begin).toBeEnabled();
+  expect(api.purges).toBe(0);
+});
+test("S04 correction: admin purges archived-parent event while ordinary lifecycle editing stays unavailable", async ({
+  page: browser,
+}) => {
+  const api = await installArchivedEventPurge(browser);
+  const archivedParent = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: "Calendar board",
+    description: "Current calendar",
+    status: "archived",
+    revision: 1,
+    level: "manage",
+    created_at: selectedEventWire.created_at,
+    updated_at: selectedEventWire.updated_at,
+  };
+  await browser.route(`**/api/boards/${boardId}`, (route) =>
+    route.fulfill({ json: archivedParent }),
+  );
+  await browser.route("**/api/boards?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [archivedParent],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  await browser.goto(
+    `/boards?board=${boardId}&section=calendar&status=archived`,
+  );
+  await expect(
+    browser.getByRole("heading", { name: "Calendar", exact: true }).last(),
+  ).toBeVisible();
+  await expect(
+    browser.getByRole("button", { name: "Event lists", exact: true }),
+  ).toBeVisible();
+  await browser
+    .getByRole("button", { name: "Event lists", exact: true })
+    .click();
+  await browser
+    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .click();
+  const archived = browser.getByRole("region", {
+    name: "Archived Board events",
+    exact: true,
+  });
+  await expect(
+    archived.getByText(selectedEventWire.title, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    archived.getByRole("button", {
+      name: `Restore ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    browser.getByRole("button", { name: "New event", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    browser.getByRole("button", { name: "Edit event", exact: true }),
+  ).toHaveCount(0);
+  await archived
+    .getByRole("button", {
+      name: `Permanently delete ${selectedEventWire.title}`,
+      exact: true,
+    })
+    .click();
+  const review = browser.getByRole("dialog", {
+    name: "Permanently delete event?",
+  });
+  await review.getByLabel("Type the event name").fill(selectedEventWire.title);
+  await review
+    .getByLabel("Administrator password")
+    .fill("synthetic-event-password");
+  await review
+    .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  await expect(
+    archived.getByText(selectedEventWire.title, { exact: true }),
+  ).toHaveCount(0);
+  expect(api.purges).toBe(1);
+});
+
+test("S04 correction: archived-parent admin retains current-access retry after an event-list failure", async ({
+  page: browser,
+}) => {
+  await installArchivedEventPurge(browser);
+  const parent = {
+    id: boardId,
+    scope: "project",
+    department_id: null,
+    name: "Calendar board",
+    description: "Current calendar",
+    status: "archived",
+    revision: 1,
+    level: "manage",
+    created_at: selectedEventWire.created_at,
+    updated_at: selectedEventWire.updated_at,
+  };
+  await browser.route(`**/api/boards/${boardId}`, (route) =>
+    route.fulfill({ json: parent }),
+  );
+  await browser.route("**/api/boards?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [parent],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+      },
+    }),
+  );
+  let fail = true,
+    reads = 0;
+  await browser.route(`**/api/boards/${boardId}/events?**`, (route) => {
+    reads += 1;
+    if (fail)
+      return route.fulfill({
+        status: 503,
+        json: { detail: "Private dependency failure" },
+      });
+    return route.fulfill({
+      json: {
+        items: [{ ...selectedEventWire, archived: true }],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 1,
+          total: 1,
+          has_more: false,
+        },
+        board_revision: 1,
+      },
+    });
+  });
+  await browser.goto(
+    `/boards?board=${boardId}&section=calendar&status=archived`,
+  );
+  await browser
+    .getByRole("button", { name: "Event lists", exact: true })
+    .click();
+  await browser
+    .getByRole("menuitem", { name: "Archived events", exact: true })
+    .click();
+  const retry = browser.getByRole("button", {
+    name: "Retry archived events",
+    exact: true,
+  });
+  await expect(retry).toBeVisible();
+  await expect(browser.getByText("Private dependency failure")).toHaveCount(0);
+  await expect(
+    browser.getByRole("button", {
+      name: `Permanently delete ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  fail = false;
+  await retry.click();
+  await expect(
+    browser.getByRole("button", {
+      name: `Permanently delete ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(reads).toBe(2);
+  await expect(
+    browser.getByRole("button", {
+      name: `Restore ${selectedEventWire.title}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
 });

@@ -6,6 +6,7 @@ import {
   type Route,
 } from "./helpers/test";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { profilePreferences } from "./helpers/profile-api";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -1012,6 +1013,7 @@ async function installViewsApi(
     initialPresentation?: Partial<SavedView["presentation"]>;
     disableInitialSearch?: boolean;
     recordName?: string;
+    serialFieldName?: string;
     viewerRole?: "admin" | "member";
     deletedRecord?: boolean;
     cardFieldsNotInColumns?: boolean;
@@ -1305,7 +1307,7 @@ async function installViewsApi(
             {
               id: serialFieldId,
               module_id: moduleId,
-              name: "Serial number",
+              name: options.serialFieldName ?? "Serial number",
               type: "text",
               required: false,
               position: 2,
@@ -1429,7 +1431,7 @@ async function installViewsApi(
       const offset = Number(url.searchParams.get("offset") ?? 0);
       const limit = Number(url.searchParams.get("limit") ?? 100);
       if (options.deepViewBeyondBound) {
-        const total = 1001;
+        const total = 101;
         const items = Array.from(
           { length: Math.min(limit, Math.max(0, total - offset)) },
           (_, index) => {
@@ -1820,6 +1822,7 @@ async function installViewsApi(
   });
   return {
     workspace,
+    windowRows,
     failWorkspaceRead: (failed: boolean) => {
       workspaceFailure = failed;
     },
@@ -2489,6 +2492,8 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     archivedDialog.getByRole("status").filter({ hasText: "restored" }),
   ).toBeVisible();
+  // The restore selects the view and refreshes the module behind the dialog.
+  await expect(page).toHaveURL(new RegExp(`view=${viewId}`));
   await archivedDialog.getByRole("button", { name: "Close" }).click();
 
   await openViewAction(page, "Make default view");
@@ -4548,6 +4553,225 @@ test.describe("OpenView workspace regional dates", () => {
     });
   });
 
+  test("S21 Calendar personal dates and week start change presentation only, retaining workspace grouping and requests", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.clock.setFixedTime(new Date("2026-09-01T12:00:00Z"));
+    const api = await installViewsApi(page, {
+      initialLayout: "calendar",
+      disableInitialSearch: true,
+      calendarDateTimeValue: "2026-09-01T00:30:00Z",
+      initialPresentation: { date_range: "week", scale: "month" },
+    });
+    Object.assign(api.workspace, {
+      locale: "en-US",
+      timezone: "Asia/Manila",
+      today: "2026-09-01",
+      week_start: "monday",
+    });
+    let preferences = profilePreferences(userId, {
+      timezone: "America/Los_Angeles",
+      date_format: "ymd",
+      time_format: "24h",
+      week_start: "monday",
+    });
+    await page.route(`**/api/users/${userId}/preferences`, (route) =>
+      route.fulfill({ json: preferences }),
+    );
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const calendar = page.getByRole("region", {
+      name: "September 2026 calendar",
+      exact: true,
+    });
+    await expect(calendar).toBeVisible();
+    // Aug 31 in the personal zone still belongs to the response's Sep 1 group.
+    const workspaceDay = calendar.getByRole("group", {
+      name: "Move to 2026-09-01",
+      exact: true,
+    });
+    const record = workspaceDay.getByRole("button", {
+      name: "Open record: Window equipment 01",
+      exact: true,
+    });
+    await expect(record).toContainText("2026-08-31");
+    await expect(record).toContainText("17:30");
+    await expect(
+      page.getByText(/Workspace timezone: Asia\/Manila/),
+    ).toBeVisible();
+    await expect(
+      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+    ).toHaveText(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    expect(api.windowQueryRequests.at(-1)).toMatchObject({
+      mode: "calendar",
+      scope: "window",
+      date_field: { field_id: calendarDateFieldId, expected_type: "datetime" },
+      from_date: "2026-08-31",
+      to_date: "2026-09-06",
+      limit: 25,
+      offset: 0,
+    });
+    const windowReads = api.windowQueryRequests.length;
+    // Use the incumbent cross-tab signal to obtain a confirmed preference
+    // read without leaving Calendar or changing its query/workspace data.
+    preferences = profilePreferences(userId, {
+      timezone: "America/Los_Angeles",
+      date_format: "ymd",
+      time_format: "24h",
+      week_start: "sunday",
+    });
+    await page.evaluate(() =>
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "openslate-theme" }),
+      ),
+    );
+    await expect(
+      calendar.getByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/),
+    ).toHaveText(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+    await expect(record).toContainText("2026-08-31");
+    expect(api.windowQueryRequests).toHaveLength(windowReads);
+    await expect(page.getByLabel("Window starts", { exact: true })).toHaveValue(
+      "2026-08-31",
+    );
+    await expect(page.getByLabel("Window ends", { exact: true })).toHaveValue(
+      "2026-09-06",
+    );
+    const batches: {
+      module_id: string;
+      items: {
+        record_id: string;
+        revision: string;
+        field_id: string;
+        value: string;
+      }[];
+    }[] = [];
+    await page.route("**/api/records/batch-update", (route) => {
+      expect(route.request().method()).toBe("POST");
+      const body = route.request().postDataJSON() as (typeof batches)[number];
+      batches.push(body);
+      const results = body.items.map((item) => {
+        const row = api.windowRows.find(({ id }) => id === item.record_id);
+        if (!row) throw new Error("Unknown move target");
+        if (item.revision !== row.updated_at)
+          return { record_id: item.record_id, status: "stale" };
+        Object.assign(row.data, { [item.field_id]: item.value });
+        row.updated_at = "2026-09-23T00:01:00Z";
+        return {
+          record_id: row.id,
+          status: "updated",
+          record: structuredClone(row),
+        };
+      });
+      return route.fulfill({ json: { results } });
+    });
+    const moveCard = workspaceDay.getByRole("article").filter({
+      has: page.getByRole("button", {
+        name: "Open record: Window equipment 01",
+        exact: true,
+      }),
+    });
+    await moveCard
+      .getByRole("button", { name: "Move to…", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Move date…", exact: true })
+      .click();
+    const move = page.getByRole("dialog", {
+      name: "Move Window equipment 01",
+      exact: true,
+    });
+    // The move starts on the workspace day, not the personal Aug 31 label.
+    await expect(move.getByLabel("Move date", { exact: true })).toHaveValue(
+      "2026-09-01",
+    );
+    await move.getByLabel("Move date", { exact: true }).fill("2026-09-02");
+    await move.getByRole("button", { name: "Stage move", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Save changes (1)", exact: true })
+      .click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Saved 1 move." }),
+    ).toBeVisible();
+    expect(batches).toEqual([
+      {
+        module_id: moduleId,
+        items: [
+          {
+            record_id: "00000000-0000-4000-8000-000000000200",
+            revision: "2026-09-23T00:00:00Z",
+            field_id: calendarDateFieldId,
+            value: "2026-09-02T00:30:00Z",
+          },
+        ],
+      },
+    ]);
+    expect(api.windowRows[0]?.data[calendarDateFieldId]).toBe(
+      "2026-09-02T00:30:00Z",
+    );
+    await expect(
+      calendar
+        .getByRole("group", { name: "Move to 2026-09-02", exact: true })
+        .getByRole("button", {
+          name: "Open record: Window equipment 01",
+          exact: true,
+        }),
+    ).toContainText("2026-09-01");
+  });
+
+  test("S21 Timeline personal formatting preserves date-only days and the workspace window", async ({
+    page,
+  }) => {
+    const api = await installViewsApi(page, {
+      initialLayout: "timeline",
+      disableInitialSearch: true,
+      initialPresentation: {
+        timeline_deadline_field_id: timelineTimestampDeadlineFieldId,
+      },
+    });
+    Object.assign(api.workspace, { locale: "en-US", timezone: "Asia/Manila" });
+    await page.route(`**/api/users/${userId}/preferences`, (route) =>
+      route.fulfill({
+        json: profilePreferences(userId, {
+          timezone: "America/Los_Angeles",
+          date_format: "ymd",
+          time_format: "24h",
+        }),
+      }),
+    );
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await page.getByLabel("Window starts", { exact: true }).fill("2026-09-01");
+    await page.getByLabel("Window ends", { exact: true }).fill("2026-09-30");
+    const intervals = page.getByRole("list", {
+      name: "Timeline intervals",
+      exact: true,
+    });
+    const row = intervals
+      .getByRole("listitem")
+      .filter({ hasText: "Window equipment 01" });
+    await expect(row).toContainText("2026-08-29");
+    await expect(row).toContainText("2026-09-04");
+    // Sep 6 18:30 UTC is Sep 7 02:30 in the response zone, Sep 6 11:30
+    // in the personal zone; date-only interval endpoints never shift.
+    await expect(row).toContainText("2026-09-06");
+    await expect(row).toContainText("11:30");
+    await expect(
+      page.getByText(/Workspace timezone: Asia\/Manila/).first(),
+    ).toBeVisible();
+    expect(api.windowQueryRequests.at(-1)).toMatchObject({
+      mode: "timeline",
+      from_date: "2026-09-01",
+      to_date: "2026-09-30",
+      scope: "window",
+      start_field: { field_id: timelineStartFieldId, expected_type: "date" },
+      end_field: { field_id: timelineEndFieldId, expected_type: "date" },
+      offset: 0,
+    });
+  });
+
   test("failed regional reads keep record content usable and recover dates separately", async ({
     page,
   }) => {
@@ -4894,7 +5118,7 @@ test("stale conflict can reload the authoritative saved version without losing i
   expect(api.saved().definition.search).toBe("external edit");
 });
 
-test("a saved view beyond the bounded list loads through its UUID deep link", async ({
+test("S08 a saved view beyond the first page loads through its UUID deep link", async ({
   page,
 }) => {
   const api = await installViewsApi(page, { deepViewBeyondBound: true });
@@ -5638,7 +5862,8 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     impact,
     token: "synthetic-record-challenge",
     expires_at: "2026-09-25T00:00:00Z",
-    confirmation_name: recordOneId,
+    confirmation_name: "Server-supplied record title",
+    last_successful_backup_at: null,
   };
   let rejectNextPurge = true;
   await page.route("**/api/records/**", async (route) => {
@@ -5691,6 +5916,9 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await expect(impactSummary).toContainText("1 record");
   await expect(impactSummary).toContainText("2 links");
   await expect(impactSummary).toContainText("3 automation history entries");
+  await expect(details.getByText(/Last successful backup/)).toHaveText(
+    "Last successful backup: No successful backup recorded.",
+  );
   await expect(details.getByText(/Work orders.*Maintenance/)).toBeVisible();
   await expect(
     details.getByText(/Pump seal replacement.*Work orders.*Maintenance/),
@@ -5712,7 +5940,9 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     .getByRole("button", { name: "Permanently delete", exact: true })
     .click();
   await expect(details.getByLabel("Administrator password")).toBeVisible();
-  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Type the record name")
+    .fill(preview.confirmation_name);
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
@@ -5726,9 +5956,11 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   await expect(
     details.getByText(/Pump seal replacement.*Work orders.*Maintenance/),
   ).toBeVisible();
-  await expect(details.getByLabel("Type the record ID")).toHaveValue("");
+  await expect(details.getByLabel("Type the record name")).toHaveValue("");
   await expect(details.getByLabel("Administrator password")).toHaveValue("");
-  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Type the record name")
+    .fill(preview.confirmation_name);
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
@@ -5743,7 +5975,9 @@ test("an administrator can preview and confirm deleted-record purging with a fre
     .getByRole("button", { name: "Review again", exact: true })
     .click();
   await expect(details.getByLabel("Administrator password")).toHaveValue("");
-  await details.getByLabel("Type the record ID").fill(recordOneId);
+  await details
+    .getByLabel("Type the record name")
+    .fill(preview.confirmation_name);
   await details
     .getByLabel("Administrator password")
     .fill("synthetic-test-passphrase");
@@ -5761,12 +5995,12 @@ test("an administrator can preview and confirm deleted-record purging with a fre
   ]);
   expect(recordPurgeCalls[3]?.body).toEqual({
     token: preview.token,
-    confirmation_name: recordOneId,
+    confirmation_name: preview.confirmation_name,
     password: "synthetic-test-passphrase",
   });
   expect(recordPurgeCalls[5]?.body).toEqual({
     token: preview.token,
-    confirmation_name: recordOneId,
+    confirmation_name: preview.confirmation_name,
     password: "synthetic-test-passphrase",
   });
 });
@@ -5789,7 +6023,8 @@ test("a blocked record purge lists the dependency and hides password confirmatio
       json: {
         token: "blocked-record-challenge",
         expires_at: "2026-09-25T00:00:00Z",
-        confirmation_name: recordOneId,
+        confirmation_name: "Centrifugal pump 04",
+        last_successful_backup_at: null,
         impact: {
           target_type: "record",
           target_id: recordOneId,
@@ -6016,3 +6251,711 @@ for (const layout of ["table", "kanban"] as const) {
     });
   }
 }
+
+// S16: synthetic attachments are independent of the production serializer.
+const s16Csv =
+  "Status,Equipment name,Serial number\r\n" +
+  Array.from(
+    { length: 13 },
+    (_, index) => `In service,Export equipment ${index + 1},S${index + 1}\r\n`,
+  ).join("");
+const s16Workbook = Buffer.from(
+  "UEsDBBQAAAAIADt8SV0cdPw42AAAAPYBAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbK2RvU4DMQzHX+WUtWpcGDqgXhfKCgy8gJvz9aLLl2K3XN++uVAYUIGFyUr+Hz9L3rydE3EzeRe4VYNIegBgM5BH1jFRKEofs0cpz3yAhGbEA8H9arUGE4NQkKXMHWq72VGPRyfN01S+2cbQqkyOVfP4YZxZrcKUnDUoRYdT6L5RlleCLsnq4cEmXhSDgpuEWfkZcM29nChn21Hzilme0RcXTA7eYx73MY7695IbW8a+t4a6aI6+RDSnTNjxQCTe6Tq1RxsWf/OrmaGOu39e5Kv/cw+o595eAFBLAwQUAAAACAA7fEld/luGcooAAADwAAAACwAAAF9yZWxzLy5yZWxzjc8xDsIwDAXQq1Q+QF0YGFDaiaUr4gImddqqTRw5QZTbk7EgBkbrf70vmyuvlGcJaZpjqja/htTClHM8IyY7sadUS+RQEifqKZdTR4xkFxoZj01zQt0b0Jm9WfVDC9oPB6hur8j/2OLcbPki9uE55B8TX40ik46cW9hWfIoud5GlLihgZ/Djwe4NUEsDBBQAAAAIADt8SV2vROrqkwAAAOUAAAAPAAAAeGwvd29ya2Jvb2sueG1sjY8xDsIwDEWvEvkAuGVgqNpOLKzcICQuidrEkR0Ex6dq6c5k///l9+X+zTI/mGfzSUvWAUKtpUNUFyhZPXGhvCYTS7J1lfJELULWayCqacFz01ww2ZhhJ3TyD4OnKTq6snslynWHCC22Rs4aYlEY+61Bf9Nkm2iAOzkWr2A28+YHaMFIF9dFbr4FHHs87vB4bfwCUEsDBBQAAAAIADt8SV22VKrPjgAAAPEAAAAaAAAAeGwvX3JlbHMvd29ya2Jvb2sueG1sLnJlbHONzz0OwjAMBeCrVDlA3TIwoCYTS1fEBaLUbaI2P7KNgNsTMaAiMTBZfpa+Jw8X3KyEnNiHws0jbom18iLlBMDOY7Tc5oKpXuZM0UpdaYFi3WoXhEPXHYH2hjLD3mzGSSsap14112fBf+w8z8HhObtbxCQ/KuCeaWWPKBW1tKBo9YkY3qNvq6rADPD1oXkBUEsDBBQAAAAIADt8SV2d9fu6iQAAALYAAAAYAAAAeGwvd29ya3NoZWV0cy9zaGVldDEueG1sTY5NCgIxDIWvUnoAM+PChbQFQU/gCUqNttg/08h4fDOzEBcv5H0hj2eWRs8REVl9Sq7D6sjcjwAjRCx+7FrHKpd7o+JZLD1gdEJ/255Khv00HaD4VLUzGzt79s5QWxRZPQsN63KatWKrU82p4pVJeBrOsLu83qkXrGyAnYEVQhBJgMy/RPhVdV9QSwECFAMUAAAACAA7fEldHHT8ONgAAAD2AQAAEwAAAAAAAAAAAAAAgAEAAAAAW0NvbnRlbnRfVHlwZXNdLnhtbFBLAQIUAxQAAAAIADt8SV3+W4ZyigAAAPAAAAALAAAAAAAAAAAAAACAAQkBAABfcmVscy8ucmVsc1BLAQIUAxQAAAAIADt8SV2vROrqkwAAAOUAAAAPAAAAAAAAAAAAAACAAbwBAAB4bC93b3JrYm9vay54bWxQSwECFAMUAAAACAA7fEldtlSqz44AAADxAAAAGgAAAAAAAAAAAAAAgAF8AgAAeGwvX3JlbHMvd29ya2Jvb2sueG1sLnJlbHNQSwECFAMUAAAACAA7fEldnfX7uokAAAC2AAAAGAAAAAAAAAAAAAAAgAFCAwAAeGwvd29ya3NoZWV0cy9zaGVldDEueG1sUEsFBgAAAAAFAAUARQEAAAEEAAAAAA==",
+  "base64",
+);
+const s16AttachmentHeaders = {
+  "Content-Disposition":
+    'attachment; filename="Equipment-register-2026-09-20.csv"',
+  "Cache-Control": "no-store",
+  "X-Content-Type-Options": "nosniff",
+};
+type S16Reply = {
+  status?: number;
+  body?: string | Buffer;
+  contentType?: string;
+  headers?: Record<string, string>;
+  json?: unknown;
+};
+async function installS16Export(
+  page: Page,
+  role: "member" | "guest" = "member",
+  serialFieldName?: string,
+) {
+  const views = await installViewsApi(page, {
+    cardFieldsNotInColumns: true,
+    serialFieldName,
+    initialPresentation: {
+      column_field_ids: [nameFieldId, statusFieldId, serialFieldId],
+      pinned_field_ids: [statusFieldId],
+    },
+  });
+  let actor = userId;
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: { authenticated: true, user_id: actor, setup_required: false },
+    }),
+  );
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: actor,
+        role,
+        access: [
+          { department_id: departmentId, module_id: moduleId, level: "read" },
+        ],
+      },
+    }),
+  );
+  const requests: unknown[] = [];
+  const downloads: string[] = [];
+  const writes: string[] = [];
+  page.on("download", (download) =>
+    downloads.push(download.suggestedFilename()),
+  );
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (
+      (path.startsWith("/api/views") || path === "/api/records/batch-update") &&
+      request.method() !== "GET"
+    )
+      writes.push(`${request.method()} ${path}`);
+  });
+  let reply: S16Reply = {};
+  let hold: {
+    started: () => void;
+    wait: Promise<void>;
+    finished: () => void;
+  } | null = null;
+  await page.route("**/api/records/export", async (route) => {
+    requests.push(route.request().postDataJSON());
+    const captured = reply;
+    const barrier = hold;
+    hold = null;
+    barrier?.started();
+    if (barrier) await barrier.wait;
+    try {
+      await route.fulfill(
+        captured.json !== undefined
+          ? {
+              status: captured.status ?? 503,
+              json: captured.json,
+            }
+          : {
+              status: captured.status ?? 200,
+              body: captured.body ?? s16Csv,
+              contentType: captured.contentType ?? "text/csv; charset=utf-8",
+              headers: captured.headers ?? s16AttachmentHeaders,
+            },
+      );
+    } catch (error) {
+      // A cancelled browser request may have already detached its route.
+      if (!barrier) throw error;
+    } finally {
+      barrier?.finished();
+    }
+  });
+  return {
+    views,
+    requests,
+    downloads,
+    writes,
+    reply: (value: S16Reply) => {
+      reply = value;
+    },
+    account: (value: string) => {
+      actor = value;
+    },
+    hold: () => {
+      let started = () => {},
+        release = () => {},
+        finished = () => {};
+      const began = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const wait = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const done = new Promise<void>((resolve) => {
+        finished = resolve;
+      });
+      hold = { started, wait, finished };
+      return { began, release, done };
+    },
+  };
+}
+async function openS16Export(page: Page) {
+  await page.getByRole("button", { name: "Export", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Export records" });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+async function s16DownloadedBytes(page: Page, action: () => Promise<void>) {
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    action(),
+  ]);
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+  return {
+    filename: download.suggestedFilename(),
+    bytes: Buffer.concat(chunks),
+  };
+}
+
+test.describe("S16 export journeys", () => {
+  test.beforeEach(async ({ context }) => {
+    await context.tracing.start({ screenshots: true, snapshots: true });
+  });
+  test.afterEach(async ({ context }, info) => {
+    await context.tracing.stop({ path: info.outputPath("trace.zip") });
+  });
+
+  for (const role of ["member", "guest"] as const) {
+    test(`S16 export: ${role} exports current query and chosen pinned columns without saving`, async ({
+      page,
+    }) => {
+      const api = await installS16Export(page, role);
+      api.views.saved().definition.filters = [
+        {
+          field_id: statusFieldId,
+          expected_type: "select",
+          operator: "eq",
+          value: inServiceChoiceId,
+        },
+      ];
+      api.views.saved().definition.sort = [
+        { field_id: nameFieldId, expected_type: "text", direction: "desc" },
+      ];
+      const chosenCsv =
+        "Status,Serial number\r\n" +
+        Array.from(
+          { length: 13 },
+          (_, index) => `In service,S${index + 1}\r\n`,
+        ).join("");
+      api.reply({ body: chosenCsv });
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const search = page.getByRole("searchbox", { name: "Search Equipment" });
+      await search.fill("valve");
+      await expect(page).toHaveURL(/[?&]changes=/);
+      const address = page.url();
+      await expect(
+        page.getByRole("button", { name: "View actions" }),
+      ).toHaveCount(0);
+      const dialog = await openS16Export(page);
+      await expect(
+        dialog
+          .getByRole("list", { name: "Export columns" })
+          .getByRole("checkbox"),
+      ).toHaveCount(3);
+      await expect(
+        dialog.getByRole("button", { name: "Move Status up" }),
+      ).toBeDisabled();
+      await dialog
+        .getByRole("button", { name: "Move Serial number up" })
+        .click();
+      await dialog
+        .getByRole("checkbox", { name: "Equipment name", exact: true })
+        .click();
+      const file = await s16DownloadedBytes(page, () =>
+        dialog.getByRole("button", { name: "Download", exact: true }).click(),
+      );
+      expect(file.filename).toBe("Equipment-register-2026-09-20.csv");
+      expect(file.bytes.toString("utf8")).toBe(chosenCsv);
+      expect(api.requests).toEqual([
+        {
+          module_id: moduleId,
+          view_id: viewId,
+          format: "csv",
+          include_record_id: false,
+          definition: {
+            version: 1,
+            logic: "and",
+            columns: [
+              { field_id: statusFieldId, expected_type: "select" },
+              { field_id: serialFieldId, expected_type: "text" },
+            ],
+            filters: [
+              {
+                field_id: statusFieldId,
+                expected_type: "select",
+                operator: "eq",
+                value: inServiceChoiceId,
+              },
+            ],
+            sort: [
+              {
+                field_id: nameFieldId,
+                expected_type: "text",
+                direction: "desc",
+              },
+            ],
+            deleted: "exclude",
+            search: "valve",
+            search_fields: [{ field_id: nameFieldId, expected_type: "text" }],
+          },
+        },
+      ]);
+      await expect(dialog).toHaveCount(0);
+      await expect(search).toHaveValue("valve");
+      await expect(page).toHaveURL(address);
+      await expect(
+        page.getByText("Temporary changes", { exact: true }),
+      ).toBeVisible();
+      expect(api.writes).toEqual([]);
+    });
+  }
+
+  test("S16 export: Excel choices stay local across format changes and preserve workbook bytes", async ({
+    page,
+  }) => {
+    const api = await installS16Export(page);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const dialog = await openS16Export(page);
+    await expect(dialog.getByLabel("Title", { exact: true })).toHaveCount(0);
+    await dialog.getByLabel("Format", { exact: true }).selectOption("xlsx");
+    await expect(
+      dialog.getByRole("checkbox", { name: "Include details", exact: true }),
+    ).toBeChecked();
+    await expect(dialog.getByLabel("Accent")).toHaveValue("theme");
+    await expect(
+      dialog.getByRole("checkbox", { name: "Banded rows", exact: true }),
+    ).not.toBeChecked();
+    await expect(
+      dialog.getByRole("checkbox", { name: "Numeric totals", exact: true }),
+    ).not.toBeChecked();
+    await dialog
+      .getByLabel("Title", { exact: true })
+      .fill("Maintenance register");
+    await expect(dialog.getByLabel("Title", { exact: true })).toHaveAttribute(
+      "maxlength",
+      "120",
+    );
+    await dialog
+      .getByRole("checkbox", { name: "Include details", exact: true })
+      .uncheck();
+    await dialog.getByLabel("Accent").selectOption("gray");
+    await dialog
+      .getByRole("checkbox", { name: "Banded rows", exact: true })
+      .check();
+    await dialog
+      .getByRole("checkbox", { name: "Numeric totals", exact: true })
+      .check();
+    await dialog
+      .getByRole("checkbox", { name: "Include Record ID", exact: true })
+      .check();
+    await dialog.getByLabel("Format", { exact: true }).selectOption("csv");
+    await expect(dialog.getByLabel("Title", { exact: true })).toHaveCount(0);
+    await dialog.getByLabel("Format", { exact: true }).selectOption("xlsx");
+    await expect(dialog.getByLabel("Title", { exact: true })).toHaveValue(
+      "Maintenance register",
+    );
+    api.reply({
+      body: s16Workbook,
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      headers: {
+        ...s16AttachmentHeaders,
+        "Content-Disposition": 'attachment; filename="Equipment.xlsx"',
+      },
+    });
+    const file = await s16DownloadedBytes(page, () =>
+      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+    );
+    expect(file.bytes).toEqual(s16Workbook);
+    expect(file.filename).toBe("Equipment.xlsx");
+    expect(api.requests[0]).toMatchObject({
+      format: "xlsx",
+      title: "Maintenance register",
+      include_details: false,
+      include_record_id: true,
+      accent: "gray",
+      banded: true,
+      totals: true,
+    });
+  });
+
+  test("S16 export: empty columns require an explicit Record ID and never restore removed fields", async ({
+    page,
+  }) => {
+    const api = await installS16Export(page);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const dialog = await openS16Export(page);
+    for (const name of ["Status", "Equipment name", "Serial number"])
+      await dialog.getByRole("checkbox", { name, exact: true }).uncheck();
+    await expect(
+      dialog.getByRole("button", { name: "Download", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      dialog.getByText("Choose at least one column or include Record ID."),
+    ).toBeVisible();
+    expect(api.requests).toEqual([]);
+    await dialog
+      .getByRole("checkbox", { name: "Include Record ID", exact: true })
+      .check();
+    api.reply({ body: `Record ID\r\n${recordOneId}\r\n` });
+    const file = await s16DownloadedBytes(page, () =>
+      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+    );
+    expect(file.bytes.toString("utf8")).toBe(`Record ID\r\n${recordOneId}\r\n`);
+    expect(api.requests[0]).toMatchObject({
+      include_record_id: true,
+      definition: { columns: [] },
+    });
+  });
+
+  for (const invalid of [
+    { name: "wrong status", reply: { status: 201 } },
+    { name: "wrong MIME", reply: { contentType: "text/html" } },
+    {
+      name: "missing attachment",
+      reply: {
+        headers: { ...s16AttachmentHeaders, "Content-Disposition": "inline" },
+      },
+    },
+    {
+      name: "unsafe filename",
+      reply: {
+        headers: {
+          ...s16AttachmentHeaders,
+          "Content-Disposition": 'attachment; filename="../private.csv"',
+        },
+      },
+    },
+    {
+      name: "wrong extension",
+      reply: {
+        headers: {
+          ...s16AttachmentHeaders,
+          "Content-Disposition": 'attachment; filename="records.xlsx"',
+        },
+      },
+    },
+    {
+      name: "cacheable response",
+      reply: {
+        headers: { ...s16AttachmentHeaders, "Cache-Control": "public" },
+      },
+    },
+    {
+      name: "sniffable response",
+      reply: {
+        headers: { ...s16AttachmentHeaders, "X-Content-Type-Options": "sniff" },
+      },
+    },
+    {
+      name: "oversized bytes",
+      reply: { body: Buffer.alloc(8 * 1024 * 1024 + 1, 65) },
+    },
+  ] satisfies { name: string; reply: S16Reply }[]) {
+    test(`S16 export: ${invalid.name} is never an attachment and Retry keeps options`, async ({
+      page,
+    }) => {
+      const api = await installS16Export(page);
+      api.reply(invalid.reply);
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const dialog = await openS16Export(page);
+      await dialog
+        .getByRole("checkbox", { name: "Serial number", exact: true })
+        .uncheck();
+      await dialog
+        .getByRole("button", { name: "Download", exact: true })
+        .click();
+      await expect(dialog.getByRole("alert")).toContainText(
+        "could not be downloaded",
+      );
+      expect(api.downloads).toEqual([]);
+      await expect(
+        dialog.getByRole("checkbox", { name: "Serial number", exact: true }),
+      ).not.toBeChecked();
+      api.reply({});
+      await s16DownloadedBytes(page, () =>
+        dialog.getByRole("button", { name: "Download", exact: true }).click(),
+      );
+      expect(api.requests).toHaveLength(2);
+    });
+  }
+  for (const failure of [
+    { status: 404, code: "not_found", expected: "no longer available" },
+    {
+      status: 503,
+      code: "private_failure",
+      expected: "could not be downloaded",
+    },
+    { status: 422, code: "export_limit_exceeded", expected: "10,000 rows" },
+    {
+      status: 422,
+      code: "export_no_columns",
+      expected: "Choose at least one column",
+    },
+  ]) {
+    test(`S16 export: safe ${failure.code} failure retains query and allows recovery`, async ({
+      page,
+    }) => {
+      const api = await installS16Export(page);
+      api.reply({
+        status: failure.status,
+        json: {
+          detail: { code: failure.code, message: "PRIVATE_EXPORT_SENTINEL" },
+        },
+      });
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const address = page.url();
+      const dialog = await openS16Export(page);
+      await dialog
+        .getByRole("button", { name: "Download", exact: true })
+        .click();
+      await expect(dialog.getByRole("alert")).toContainText(failure.expected);
+      await expect(page.getByText("PRIVATE_EXPORT_SENTINEL")).toHaveCount(0);
+      expect(api.downloads).toEqual([]);
+      expect(page.url()).toBe(address);
+      api.reply({});
+      await s16DownloadedBytes(page, () =>
+        dialog.getByRole("button", { name: "Download", exact: true }).click(),
+      );
+      expect(api.writes).toEqual([]);
+    });
+  }
+
+  test("S16 export: a denied export hides all retained read data and never exposes private details", async ({
+    page,
+  }) => {
+    const api = await installS16Export(page);
+    api.reply({
+      status: 403,
+      json: {
+        detail: { code: "forbidden", message: "PRIVATE_EXPORT_SENTINEL" },
+      },
+    });
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const dialog = await openS16Export(page);
+    await dialog.getByRole("button", { name: "Download", exact: true }).click();
+    await expect(
+      page.getByText("Equipment register", { exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByText("PRIVATE_EXPORT_SENTINEL")).toHaveCount(0);
+    expect(api.downloads).toEqual([]);
+    await expect(
+      page.getByRole("button", { name: "Retry catalog", exact: true }),
+    ).toBeVisible();
+    api.reply({});
+    await page
+      .getByRole("button", { name: "Retry catalog", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", {
+        name: "Export",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeEnabled();
+    // Recovery requires a new explicit export action; the refused dialog stays closed.
+    await expect(dialog).toHaveCount(0);
+    const fresh = await openS16Export(page);
+    await s16DownloadedBytes(page, () =>
+      fresh.getByRole("button", { name: "Download", exact: true }).click(),
+    );
+    expect(api.requests).toHaveLength(2);
+  });
+
+  for (const end of ["cancel", "account", "refusal", "navigation"] as const) {
+    test(`S16 export: one submit and late ${end} completion cannot download or announce success`, async ({
+      page,
+    }) => {
+      const api = await installS16Export(page);
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const button = page.getByRole("button", { name: "Export", exact: true });
+      const dialog = await openS16Export(page);
+      const held = api.hold();
+      await dialog
+        .getByRole("button", { name: "Download", exact: true })
+        .dblclick();
+      await held.began;
+      await expect(
+        dialog.getByRole("button", { name: "Downloading…" }),
+      ).toBeDisabled();
+      expect(api.requests).toHaveLength(1);
+      if (end === "cancel") {
+        await page.keyboard.press("Escape");
+        await expect(dialog).toHaveCount(0);
+        await expect(button).toBeFocused();
+      } else if (end === "account") {
+        api.account(otherAccountId);
+        await page.evaluate(() =>
+          window.dispatchEvent(new FocusEvent("focus")),
+        );
+        await expect(dialog).toHaveCount(0);
+      } else if (end === "refusal") {
+        api.views.denyRecordQueries();
+        await api.views.triggerInvalidation("records");
+        await expect(
+          page.getByText("Equipment register", { exact: true }),
+        ).toHaveCount(0);
+      } else {
+        await page.goto(`/openview?section=views&module=${moduleId}`);
+        await expect(dialog).toHaveCount(0);
+      }
+      held.release();
+      await held.done;
+      expect(api.downloads).toEqual([]);
+      await expect(
+        page.getByText("Export downloaded.", { exact: true }),
+      ).toHaveCount(0);
+    });
+  }
+
+  for (const theme of ["light", "dark"] as const) {
+    test(`S16 export: ${theme} keyboard, mobile and pending/error controls remain usable`, async ({
+      page,
+    }) => {
+      const longLabel =
+        "Serial number and maintenance reference for equipment with a deliberately long column label";
+      const api = await installS16Export(page, "member", longLabel);
+      await page.route(/\/api\/users\/[^/]+\/preferences$/, (route) =>
+        route.fulfill({
+          json: {
+            user_id: userId,
+            theme,
+            appearance: { motion: "reduce", keyboard_shortcuts: true },
+          },
+        }),
+      );
+      await page.goto(
+        `/openview?section=views&module=${moduleId}&view=${viewId}`,
+      );
+      const opener = page.getByRole("button", { name: "Export", exact: true });
+      await opener.focus();
+      await page.keyboard.press("Enter");
+      const dialog = page.getByRole("dialog", { name: "Export records" });
+      await expect(dialog).toBeVisible();
+      await page.addStyleTag({
+        content: "nextjs-portal { display: none !important; }",
+      });
+      await expect(
+        dialog.getByText("Exports up to 10,000 rows. Your export is recorded."),
+      ).toBeVisible();
+      await dialog
+        .getByRole("button", { name: "Move Equipment name up" })
+        .focus();
+      await page.keyboard.press("Enter");
+      await dialog.getByLabel("Format", { exact: true }).selectOption("xlsx");
+      const bounds = async () => {
+        const box = await dialog.boundingBox();
+        expect(box).not.toBeNull();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(
+          page.viewportSize()!.width,
+        );
+        const cancel = dialog.getByRole("button", {
+          name: "Cancel",
+          exact: true,
+        });
+        await cancel.scrollIntoViewIfNeeded();
+        const control = await cancel.boundingBox();
+        expect(control!.height).toBeGreaterThanOrEqual(44);
+        expect(control!.y + control!.height).toBeLessThanOrEqual(
+          page.viewportSize()!.height,
+        );
+      };
+      await captureOpenViewReview(page, `s16-excel-${theme}`, {
+        beforeScreenshot: async () => {
+          await bounds();
+          await dialog.evaluate((node) => {
+            node.scrollTop = 0;
+          });
+          await expect(
+            dialog.getByRole("checkbox", { name: longLabel, exact: true }),
+          ).toBeVisible();
+        },
+      });
+      await captureOpenViewReview(page, `s16-excel-options-${theme}`, {
+        beforeScreenshot: bounds,
+      });
+      api.reply({ status: 503, json: { detail: "PRIVATE_EXPORT_SENTINEL" } });
+      await dialog
+        .getByRole("button", { name: "Download", exact: true })
+        .click();
+      await expect(dialog.getByRole("alert")).toBeVisible();
+      await captureOpenViewReview(page, `s16-error-${theme}`, {
+        beforeScreenshot: bounds,
+      });
+      const held = api.hold();
+      await dialog
+        .getByRole("button", { name: "Download", exact: true })
+        .click();
+      await held.began;
+      await captureOpenViewReview(page, `s16-pending-${theme}`, {
+        beforeScreenshot: bounds,
+      });
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      held.release();
+      await held.done;
+      await expect(opener).toBeFocused();
+      expect(api.downloads).toEqual([]);
+    });
+  }
+
+  test("S16 export: CSV after Excel omits every Excel-only option", async ({
+    page,
+  }) => {
+    const api = await installS16Export(page);
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const dialog = await openS16Export(page);
+    await dialog.getByLabel("Format", { exact: true }).selectOption("xlsx");
+    await dialog.getByLabel("Title", { exact: true }).fill("Local title");
+    await dialog
+      .getByRole("checkbox", { name: "Banded rows", exact: true })
+      .check();
+    await dialog.getByLabel("Format", { exact: true }).selectOption("csv");
+    await s16DownloadedBytes(page, () =>
+      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+    );
+    const request = api.requests[0] as Record<string, unknown>;
+    expect(request.format).toBe("csv");
+    for (const key of [
+      "title",
+      "include_details",
+      "accent",
+      "banded",
+      "totals",
+    ])
+      expect(request).not.toHaveProperty(key);
+  });
+
+  test("S16 export: an incomplete filter disables export without a request", async ({
+    page,
+  }) => {
+    const api = await installS16Export(page);
+    api.views.saved().definition.filters = [
+      {
+        field_id: nameFieldId,
+        expected_type: "text",
+        operator: "eq",
+        value: "",
+      },
+    ];
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    await expect(
+      page.getByRole("button", { name: "Export", exact: true }),
+    ).toBeDisabled();
+    expect(api.requests).toEqual([]);
+  });
+});

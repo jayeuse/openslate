@@ -6,7 +6,28 @@ import { Input } from "@/components/ui/input";
 import {
   canMutateBoardWidgets,
   useBoardWidgetManagement,
+  widgetQueryUnchanged,
 } from "../hooks/use-board-widget-management";
+import { useQuery } from "@tanstack/react-query";
+import { ChartSourceEditor } from "../../openview/components/chart-editor/chart-source-editor";
+import {
+  changeChartEditorWidgetType,
+  newChartEditorDraft,
+} from "../../openview/domain/chart-query";
+import {
+  compileBoardWidgetDraft,
+  createWidgetInput,
+} from "../domain/widget-editor";
+import { useOpenViewAccessDenied } from "../../openview/adapters/openview-access";
+import {
+  fieldsFirstPageOptions,
+  extendsRead,
+  readStamp,
+} from "../../openview/adapters/openview-queries";
+import {
+  listOpenViewDataSourceFields,
+  type OpenViewDataSourceField,
+} from "../../openview/adapters/views-api";
 import { ConfirmAction } from "./ui";
 
 export function ServerBoardWidgetManagement({
@@ -37,16 +58,61 @@ export function ServerBoardWidgetManagement({
     widgetId: string;
   } | null>(null);
   const nameId = useId();
-  const moduleId = useId();
+  const widgetTypeId = useId();
+  const sourceId = useId();
   const settingsNameId = useId();
   const sizeId = useId();
   const pinnedId = useId();
   const { state, sources } = manager;
+  const queryReadDenied = useOpenViewAccessDenied();
+  const visibleSources = queryReadDenied ? [] : sources.items;
   const snapshot = state.status === "ready" ? state.snapshot : null;
   const canEdit = boardActive && !!snapshot?.access.manage;
   const busy = state.pending || state.status === "loading";
   const canMutate = canMutateBoardWidgets(state, boardActive);
   const mutationBlocked = busy || !canMutate;
+  const editor = state.draft?.query ?? state.creation.query;
+  const queryModule = editor.chartId === null ? editor.inline.moduleId : "";
+  const fieldsQuery = useQuery(fieldsFirstPageOptions(queryModule));
+  const [moreFields, setMoreFields] = useState<{
+    moduleId: string;
+    readAt: number;
+    items: OpenViewDataSourceField[];
+    hasMore: boolean;
+  } | null>(null);
+  const [fieldsError, setFieldsError] = useState("");
+  const [fieldsPending, setFieldsPending] = useState(false);
+  const [refusedChartId, setRefusedChartId] = useState<string | null>(null);
+  const extension =
+    moreFields?.moduleId === queryModule &&
+    extendsRead(moreFields.readAt, fieldsQuery)
+      ? moreFields
+      : null;
+  const queryFields =
+    queryReadDenied || fieldsQuery.error
+      ? []
+      : [...(fieldsQuery.data?.items ?? []), ...(extension?.items ?? [])];
+  async function loadMoreFields() {
+    if (fieldsPending || !queryModule) return;
+    setFieldsPending(true);
+    setFieldsError("");
+    try {
+      const page = await listOpenViewDataSourceFields(queryModule, {
+        limit: 100,
+        offset: queryFields.length,
+      });
+      setMoreFields({
+        moduleId: queryModule,
+        readAt: readStamp(fieldsQuery),
+        items: [...(extension?.items ?? []), ...page.items],
+        hasMore: page.pagination.hasMore,
+      });
+    } catch {
+      setFieldsError("More fields could not be loaded. Retry fields.");
+    } finally {
+      setFieldsPending(false);
+    }
+  }
 
   useEffect(() => {
     setRemoving(null);
@@ -54,12 +120,16 @@ export function ServerBoardWidgetManagement({
 
   function onCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    manager.createSummary();
+    if (queryReadDenied) return;
+    manager.createWidget(queryFields, () => setRefusedChartId(editor.chartId));
   }
 
   function onSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    manager.saveSettings();
+    if (state.draft?.query && queryReadDenied) return;
+    manager.saveSettings(queryFields, () =>
+      setRefusedChartId(state.draft?.query?.chartId ?? null),
+    );
   }
 
   return (
@@ -146,7 +216,7 @@ export function ServerBoardWidgetManagement({
                   <h3 className="font-medium break-words">{widget.name}</h3>
                   <p className="text-muted-foreground text-sm">
                     {widget.widgetType}
-                    {widget.config.pinned ? " · Pinned" : ""}
+                    {widget.pinned ? " · Pinned" : ""}
                   </p>
                 </div>
                 {canEdit && (
@@ -221,29 +291,66 @@ export function ServerBoardWidgetManagement({
         </ol>
       )}
 
-      {canEdit && state.draft && (
+      {canEdit ? (
         <form
           data-slot="card"
-          onSubmit={onSave}
-          className="border-card-edge bg-card shadow-card space-y-4 rounded-xl border p-4"
+          key={state.draft?.source.id ?? "create"}
+          onSubmit={state.draft ? onSave : onCreate}
+          className="min-w-0 space-y-4 border-t pt-5"
         >
           <h3 data-slot="section-title" className="font-medium">
-            Widget settings
+            {state.draft ? "Widget settings" : "Add widget"}
           </h3>
           <div className="space-y-1">
-            <label htmlFor={settingsNameId} className="text-sm font-medium">
+            <label
+              htmlFor={state.draft ? settingsNameId : nameId}
+              className="text-sm font-medium"
+            >
               Widget name
             </label>
             <Input
-              id={settingsNameId}
-              value={state.draft.name}
+              id={state.draft ? settingsNameId : nameId}
+              value={state.draft?.name ?? state.creation.name}
+              className="min-h-11"
               maxLength={80}
               required
               disabled={mutationBlocked}
               onChange={(event) =>
-                manager.changeDraft({ name: event.target.value })
+                state.draft
+                  ? manager.changeDraft({ name: event.target.value })
+                  : manager.changeCreation({ name: event.target.value })
               }
             />
+          </div>
+          <div className="space-y-1">
+            <label htmlFor={widgetTypeId} className="text-sm font-medium">
+              Widget type
+            </label>
+            <select
+              id={widgetTypeId}
+              data-slot="select"
+              value={state.draft?.source.widgetType ?? editor.inline.widgetType}
+              disabled={mutationBlocked || !!state.draft}
+              className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2"
+              onChange={(event) =>
+                manager.changeCreation({
+                  query: {
+                    ...editor,
+                    chartId: null,
+                    inline: changeChartEditorWidgetType(
+                      editor.inline,
+                      event.target.value as typeof editor.inline.widgetType,
+                      queryFields,
+                    ),
+                  },
+                })
+              }
+            >
+              <option value="summary">Summary</option>
+              <option value="workload">Workload</option>
+              <option value="records">Records</option>
+              <option value="chart">Chart</option>
+            </select>
           </div>
           <div className="space-y-1">
             <label htmlFor={sizeId} className="text-sm font-medium">
@@ -252,20 +359,21 @@ export function ServerBoardWidgetManagement({
             <select
               data-slot="select"
               id={sizeId}
-              value={state.draft.size}
+              value={state.draft?.size ?? state.creation.size}
               disabled={mutationBlocked}
               onChange={(event) =>
-                manager.changeDraft({
-                  size: event.target.value as "half" | "full",
+                (state.draft ? manager.changeDraft : manager.changeCreation)({
+                  size: event.target.value as "S" | "M" | "L",
                 })
               }
               className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2"
             >
-              <option value="half">Standard</option>
-              <option value="full">Full width</option>
+              <option value="S">Small</option>
+              <option value="M">Medium</option>
+              <option value="L">Large</option>
             </select>
             <p className="text-muted-foreground text-xs">
-              Standard cards adapt to the available space.
+              Cards adapt to the available space.
             </p>
           </div>
           <label
@@ -275,139 +383,192 @@ export function ServerBoardWidgetManagement({
             <input
               id={pinnedId}
               type="checkbox"
-              checked={state.draft.pinned}
+              checked={state.draft?.pinned ?? state.creation.pinned}
               disabled={mutationBlocked}
               onChange={(event) =>
-                manager.changeDraft({ pinned: event.target.checked })
+                (state.draft ? manager.changeDraft : manager.changeCreation)({
+                  pinned: event.target.checked,
+                })
               }
             />
             Pin this widget
           </label>
+          {state.draft?.source.widgetType === "summary" &&
+          state.draft.source.config &&
+          "fields" in state.draft.source.config ? (
+            <p className="text-muted-foreground text-sm">
+              This legacy Summary counts all matching records. Editing filters
+              keeps that count; choosing a Group by field explicitly replaces it
+              with a grouped query.
+            </p>
+          ) : null}
+          {!state.draft && editor.chartId !== null ? (
+            <div className="space-y-2">
+              <label htmlFor={sourceId} className="text-sm font-medium">
+                Data source
+              </label>
+              <select
+                id={sourceId}
+                data-slot="select"
+                value={editor.inline.moduleId}
+                className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2"
+                disabled={
+                  mutationBlocked ||
+                  queryReadDenied ||
+                  sources.status !== "ready"
+                }
+                onChange={(event) => {
+                  setRefusedChartId(null);
+                  manager.changeCreation({
+                    query: {
+                      chartId: "",
+                      inline: changeChartEditorWidgetType(
+                        newChartEditorDraft(event.target.value, []),
+                        editor.inline.widgetType,
+                        [],
+                      ),
+                    },
+                  });
+                }}
+              >
+                <option value="">Choose a data source</option>
+                {visibleSources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.name}
+                  </option>
+                ))}
+              </select>
+              {sources.status === "loading" ? (
+                <p role="status" className="text-muted-foreground text-sm">
+                  Loading record sources…
+                </p>
+              ) : null}
+              {sources.error ? (
+                <p role="alert" className="text-destructive text-sm">
+                  {sources.error}
+                </p>
+              ) : null}
+              {sources.error || sources.hasMore ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={mutationBlocked || sources.status === "loading"}
+                  onClick={
+                    sources.error ? manager.reload : manager.loadMoreSources
+                  }
+                >
+                  {sources.error ? "Retry sources" : "Load more sources"}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          <ChartSourceEditor
+            refusedChartId={refusedChartId}
+            onRetrySource={() => setRefusedChartId(null)}
+            value={editor}
+            onChange={(query) => {
+              setRefusedChartId(null);
+              if (state.draft) manager.changeDraft({ query });
+              else manager.changeCreation({ query });
+            }}
+            disabled={mutationBlocked}
+            restrictModule
+            catalog={{
+              sources: state.draft
+                ? visibleSources.filter(
+                    (source) => source.id === state.draft?.source.moduleId,
+                  )
+                : visibleSources,
+              sourcesLoading: sources.status === "loading",
+              sourcesError: queryReadDenied
+                ? "The source catalog is unavailable. Retry fields or catalog."
+                : (sources.error ?? ""),
+              sourcesHasMore:
+                !state.draft && sources.hasMore && !queryReadDenied,
+              fields: queryFields,
+              fieldsLoading: fieldsQuery.isPending && !!queryModule,
+              fieldsError:
+                queryReadDenied || fieldsQuery.error
+                  ? "The field catalog is unavailable. Retry fields."
+                  : fieldsError,
+              fieldsHasMore:
+                !queryReadDenied &&
+                (extension?.hasMore ??
+                  fieldsQuery.data?.pagination.hasMore ??
+                  false),
+              metadataError: "",
+              metadataRetryTarget: null,
+              metadataLoading: fieldsPending,
+              sourceName:
+                visibleSources.find(
+                  (source) => source.id === editor.inline.moduleId,
+                )?.name ?? "Record source",
+            }}
+            actions={{
+              retryCatalog: manager.reload,
+              retryFields: () => {
+                setFieldsError("");
+                void fieldsQuery.refetch();
+              },
+              loadMoreSources: manager.loadMoreSources,
+              loadMoreFields,
+            }}
+          >
+            {(input) => (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="submit"
+                  className="min-h-11"
+                  disabled={
+                    mutationBlocked ||
+                    queryReadDenied ||
+                    !(state.draft?.name ?? state.creation.name).trim() ||
+                    (editor.chartId !== null
+                      ? (!input &&
+                          (!state.draft ||
+                            !widgetQueryUnchanged(state.draft))) ||
+                        refusedChartId === editor.chartId
+                      : state.draft
+                        ? !widgetQueryUnchanged(state.draft) &&
+                          !compileBoardWidgetDraft(
+                            state.draft.source,
+                            editor.inline,
+                            queryFields,
+                          )
+                        : !input ||
+                          !createWidgetInput(state.creation, queryFields))
+                  }
+                >
+                  {state.draft ? "Save settings" : "Add widget"}
+                </Button>
+                {state.draft ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11"
+                    disabled={busy}
+                    onClick={manager.cancelEdit}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+            )}
+          </ChartSourceEditor>
+          {state.error ? (
+            <p role="alert" className="text-destructive text-sm">
+              {state.error}
+            </p>
+          ) : null}
           {state.conflict && (
             <p role="alert" className="text-destructive text-sm">
               This widget changed after you opened settings. Your draft is
               retained; cancel and reopen settings before saving.
             </p>
           )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="submit"
-              className="min-h-11"
-              disabled={mutationBlocked || !state.draft.name.trim()}
-            >
-              Save settings
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11"
-              disabled={busy}
-              onClick={manager.cancelEdit}
-            >
-              Cancel
-            </Button>
-          </div>
         </form>
-      )}
-
-      {canEdit && (
-        <form
-          data-slot="card"
-          onSubmit={onCreate}
-          className="border-card-edge bg-card shadow-card space-y-4 rounded-xl border p-4"
-        >
-          <div>
-            <h3 data-slot="section-title" className="font-medium">
-              Add summary widget
-            </h3>
-            <p className="text-muted-foreground text-sm">
-              Everyone who can read this Board sees the new widget.
-            </p>
-          </div>
-          <div className="space-y-1">
-            <label htmlFor={nameId} className="text-sm font-medium">
-              Widget name
-            </label>
-            <Input
-              id={nameId}
-              value={state.summary.name}
-              maxLength={80}
-              required
-              disabled={mutationBlocked}
-              onChange={(event) =>
-                manager.changeSummary({ name: event.target.value })
-              }
-            />
-          </div>
-          <div className="space-y-1">
-            <label htmlFor={moduleId} className="text-sm font-medium">
-              Active record source
-            </label>
-            <select
-              data-slot="select"
-              id={moduleId}
-              value={
-                sources.items.some((item) => item.id === state.summary.moduleId)
-                  ? state.summary.moduleId
-                  : ""
-              }
-              disabled={mutationBlocked || sources.status !== "ready"}
-              required
-              onChange={(event) =>
-                manager.changeSummary({ moduleId: event.target.value })
-              }
-              className="border-input bg-card text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2"
-            >
-              <option value="">Choose an active source</option>
-              {sources.items.map((source) => (
-                <option value={source.id} key={source.id}>
-                  {source.name}
-                </option>
-              ))}
-            </select>
-            {sources.status === "loading" && (
-              <p role="status" className="text-muted-foreground text-sm">
-                Loading active sources…
-              </p>
-            )}
-            {sources.error && (
-              <p role="alert" className="text-destructive text-sm">
-                {sources.error}
-              </p>
-            )}
-            {sources.status === "ready" && sources.items.length === 0 && (
-              <p className="text-muted-foreground text-sm">
-                No active record sources are available.
-              </p>
-            )}
-            {sources.hasMore && (
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                disabled={mutationBlocked || sources.status !== "ready"}
-                onClick={() => void manager.loadMoreSources()}
-              >
-                Load more sources
-              </Button>
-            )}
-          </div>
-          <Button
-            type="submit"
-            className="min-h-11"
-            disabled={
-              mutationBlocked ||
-              sources.status !== "ready" ||
-              !state.summary.name.trim() ||
-              !sources.items.some(
-                (source) => source.id === state.summary.moduleId,
-              )
-            }
-          >
-            Add summary widget
-          </Button>
-        </form>
-      )}
+      ) : null}
 
       <ConfirmAction
         open={

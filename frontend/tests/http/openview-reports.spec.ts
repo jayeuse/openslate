@@ -6,6 +6,8 @@ import {
   type Route,
 } from "./helpers/test";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { readFile } from "node:fs/promises";
+import { profilePreferences } from "./helpers/profile-api";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -86,6 +88,11 @@ async function installReportsApi(
     /** The user's level on the Report department; the default manages it. */
     level?: "read" | "manage";
     savedSchedule?: boolean;
+    lastRun?: {
+      state: "pending" | "running" | "succeeded" | "failed" | "canceled";
+      finished_at: string | null;
+      failure_label: string | null;
+    } | null;
     /** The account role; the default is a member. */
     role?: "admin" | "member";
     /** Add a module (and a Report on it) that the member can only read. */
@@ -349,6 +356,7 @@ async function installReportsApi(
                 weekday: 0,
                 month_day: null,
                 next_due_at: "2026-09-28T01:00:00Z",
+                last_run: options.lastRun ?? null,
                 created_at: timestamp,
                 updated_at: timestamp,
               },
@@ -376,6 +384,7 @@ async function installReportsApi(
           weekday: null,
           month_day: null,
           next_due_at: "2026-09-25T01:00:00Z",
+          last_run: null,
           created_at: timestamp,
           updated_at: timestamp,
         }),
@@ -516,6 +525,140 @@ test.describe("Reports in a non-UTC browser timezone", () => {
       csvReads: 1,
     });
   });
+});
+
+test("S21 Report metadata follows personal display while schedule inputs and frozen CSV remain unchanged", async ({
+  page,
+}, testInfo) => {
+  await installReportsApi(page, false, report, {
+    ownerRunCount: 1,
+    savedSchedule: true,
+    lastRun: {
+      state: "succeeded",
+      finished_at: "2026-09-24T00:00:00Z",
+      failure_label: null,
+    },
+  });
+  const scheduleWrites: unknown[] = [];
+  const savedSchedule = {
+    id: scheduleId,
+    report_id: reportId,
+    revision: 1,
+    enabled: true,
+    cadence: "weekly",
+    timezone_name: "Asia/Manila",
+    local_time: "09:00",
+    weekday: 0,
+    month_day: null,
+    next_due_at: "2026-09-28T01:00:00Z",
+    last_run: {
+      state: "succeeded",
+      finished_at: "2026-09-24T00:00:00Z",
+      failure_label: null,
+    },
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  await page.route(`**/api/reports/${reportId}/schedule`, (route) => {
+    if (route.request().method() === "PATCH") {
+      const body: unknown = route.request().postDataJSON();
+      scheduleWrites.push(body);
+      if (typeof body !== "object" || body === null)
+        throw new Error("Invalid schedule command");
+      Object.assign(savedSchedule, body, { revision: 2 });
+    }
+    return route.fulfill({ json: savedSchedule });
+  });
+  await page.route(`**/api/users/${userId}/preferences`, (route) =>
+    route.fulfill({
+      json: profilePreferences(userId, {
+        timezone: "America/Los_Angeles",
+        date_format: "ymd",
+        time_format: "24h",
+        week_start: "sunday",
+      }),
+    }),
+  );
+  // One captured text column, matching the run's Asset heading and row count.
+  // Date-like cell text is server-owned output, never personally reformatted.
+  const snapshotCsv = '"Asset"\r\n"2026-09-24 08:00 · 2026-09-24"\r\n';
+  await page.route(`**/api/reports/${reportId}/runs/${runId}`, (route) =>
+    route.fulfill({ json: run }),
+  );
+  const outputRequests: { path: string; search: string; method: string }[] = [];
+  await page.route(`**/api/reports/${reportId}/runs/${runId}/csv`, (route) => {
+    const url = new URL(route.request().url());
+    outputRequests.push({
+      path: url.pathname,
+      search: url.search,
+      method: route.request().method(),
+    });
+    return route.fulfill({
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="report-${runId}.csv"`,
+      },
+      body: snapshotCsv,
+    });
+  });
+  await page.goto(`/openview?section=reports&report=${reportId}&run=${runId}`);
+  const selected = page.getByRole("region", {
+    name: "Selected output",
+    exact: true,
+  });
+  await expect(selected).toContainText("2026-09-23");
+  await expect(selected).toContainText("17:00");
+  await expect(selected).toContainText("Recipe version 1");
+  await expect(selected).toContainText("1 row");
+  await page.getByRole("tab", { name: "Schedule", exact: true }).click();
+  const lastRun = page.getByRole("status", {
+    name: "Last scheduled run",
+    exact: true,
+  });
+  await expect(lastRun).toContainText("2026-09-23");
+  await expect(lastRun).toContainText("17:00");
+  await page
+    .getByRole("checkbox", { name: "Enable scheduled runs", exact: true })
+    .check();
+  await page.getByLabel("Local time", { exact: true }).fill("10:30");
+  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
+    "Asia/Manila",
+  );
+  await expect(page.getByLabel("Weekday", { exact: true })).toHaveValue("0");
+  await page
+    .getByRole("button", { name: "Save schedule", exact: true })
+    .click();
+  await expect(
+    page.getByText("Schedule saved and enabled.", { exact: true }),
+  ).toBeVisible();
+  expect(scheduleWrites).toHaveLength(1);
+  expect(scheduleWrites[0]).toMatchObject({
+    enabled: true,
+    cadence: "weekly",
+    revision: 1,
+    weekday: 0,
+    local_time: "10:30",
+    timezone_name: "Asia/Manila",
+  });
+  expect(savedSchedule).toMatchObject({
+    revision: 2,
+    weekday: 0,
+    local_time: "10:30",
+    timezone_name: "Asia/Manila",
+  });
+  const downloaded = page.waitForEvent("download");
+  await selected.getByRole("button", { name: /Download CSV/ }).click();
+  const download = await downloaded;
+  const path = testInfo.outputPath("s21-frozen-report.csv");
+  await download.saveAs(path);
+  expect(await readFile(path, "utf8")).toBe(snapshotCsv);
+  expect(outputRequests).toEqual([
+    {
+      path: `/api/reports/${reportId}/runs/${runId}/csv`,
+      search: "",
+      method: "GET",
+    },
+  ]);
 });
 
 test("connected Reports expose only authorized shared-run metadata to a reader", async ({
@@ -1888,5 +2031,269 @@ test("Reports correction: a held template cannot restore Reports after same-acco
     await expect(search).toBeVisible();
   } finally {
     release();
+  }
+});
+
+async function installArchivedReportPurge(
+  page: Page,
+  role: "admin" | "member" = "admin",
+  failure = false,
+) {
+  await installReportsApi(
+    page,
+    false,
+    { ...report, is_deleted: true },
+    { role },
+  );
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      json: {
+        display_name: "OpenSlate",
+        mark: "OS",
+        logo_file_id: null,
+        revision: 1,
+        today: "2026-09-25",
+        week_start: "monday",
+        locale: "en-US",
+        timezone: "UTC",
+        purge_enabled: true,
+      },
+    }),
+  );
+  const impact = {
+    target_type: "report",
+    target_id: reportId,
+    operation: "purge",
+    actor_id: userId,
+    rows: [],
+    external_impacts: [],
+    key_strips: [],
+    blockers: [],
+    impact_digest: "a".repeat(64),
+  };
+  let purges = 0;
+  let removed = false;
+  await page.route(`**/api/reports/${reportId}/purge**`, (route) => {
+    if (route.request().url().endsWith("/preview"))
+      return route.fulfill({
+        json: {
+          impact,
+          token: "owned-report-preview",
+          expires_at: "2026-09-26T00:00:00Z",
+          confirmation_name: report.name,
+          last_successful_backup_at: "2026-09-24T00:00:00Z",
+        },
+      });
+    purges += 1;
+    expect(route.request().postDataJSON()).toEqual({
+      token: "owned-report-preview",
+      confirmation_name: report.name,
+      password: "synthetic-report-password",
+    });
+    if (failure)
+      return route.fulfill({
+        status: 404,
+        json: {
+          detail: {
+            code: "challenge_not_found",
+            message: "private report internals",
+          },
+        },
+      });
+    removed = true;
+    return route.fulfill({ json: { impact, operation_id: null } });
+  });
+  await page.route(`**/api/reports/${reportId}`, (route) =>
+    removed
+      ? route.fulfill({ status: 404, json: { detail: "Report not found" } })
+      : route.fallback(),
+  );
+  await page.route("**/api/reports?**", (route) =>
+    removed ? route.fulfill({ json: pageOf([]) }) : route.fallback(),
+  );
+  return {
+    get purges() {
+      return purges;
+    },
+  };
+}
+
+for (const failure of [false, true]) {
+  test(`S04 archived Report purge ${failure ? "keeps its target and offers a fresh review for an unavailable challenge" : "confirms exact name and clears only its deleted selection"}`, async ({
+    page,
+  }) => {
+    const api = await installArchivedReportPurge(page, "admin", failure);
+    await page.goto(`/openview?section=reports&report=${reportId}`);
+    await page.getByRole("button", { name: "Report options" }).click();
+    await page
+      .getByRole("menuitem", { name: "Permanently delete Report", exact: true })
+      .click();
+    const review = page.getByRole("dialog", {
+      name: "Permanently delete Report?",
+    });
+    await expect(review.getByText(/Last successful backup:/)).toBeVisible();
+    await review
+      .getByLabel("Type the Report name")
+      .fill(report.name.toLowerCase());
+    await review
+      .getByLabel("Administrator password")
+      .fill("synthetic-report-password");
+    await expect(
+      review.getByRole("button", {
+        name: "Confirm permanent deletion",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    expect(api.purges).toBe(0);
+    await review.getByLabel("Type the Report name").fill(report.name);
+    await review
+      .getByRole("button", { name: "Confirm permanent deletion", exact: true })
+      .click();
+    if (failure) {
+      await expect(
+        review.getByText("The review is unavailable. Request a new review."),
+      ).toBeVisible();
+      await expect(review.getByLabel("Administrator password")).toHaveCount(0);
+      await review
+        .getByRole("button", { name: "Review again", exact: true })
+        .click();
+      await expect(review.getByLabel("Administrator password")).toHaveValue("");
+      await review.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Report options" }).click();
+      await expect(
+        page.getByRole("menuitem", { name: "Restore Report", exact: true }),
+      ).toBeVisible();
+    } else {
+      await expect(review).toBeHidden();
+      await expect(page).toHaveURL(/section=reports$/);
+      await expect(
+        page.getByText("Report permanently deleted.", { exact: true }),
+      ).toBeVisible();
+    }
+    expect(api.purges).toBe(1);
+    await expect(page.getByText("private report internals")).toHaveCount(0);
+  });
+}
+
+test("S04 member may restore an archived Report but cannot permanently delete it", async ({
+  page,
+}) => {
+  const api = await installArchivedReportPurge(page, "member");
+  await page.goto(`/openview?section=reports&report=${reportId}`);
+  await page.getByRole("button", { name: "Report options" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Restore Report", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", {
+      name: "Permanently delete Report",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(api.purges).toBe(0);
+});
+
+test.describe("S14 Report last-run summary", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+  for (const state of ["none", "failed", "running"] as const) {
+    test(`S14 ${state} last run is server-authored, regional and preserves schedule policy`, async ({
+      page,
+    }) => {
+      if (process.env.OPENVIEW_CAPTURE_DIR) {
+        const theme =
+          process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.emulateMedia({
+          colorScheme: theme,
+          reducedMotion: "reduce",
+        });
+        await page.route("**/api/users/*/preferences", (route) =>
+          route.fulfill({
+            json: {
+              user_id: userId,
+              theme,
+              appearance: { motion: "reduce", keyboard_shortcuts: true },
+            },
+          }),
+        );
+      }
+      const reader = state === "failed";
+      const api = await installReportsApi(page, false, report, {
+        savedSchedule: true,
+        level: reader ? "read" : "manage",
+        lastRun:
+          state === "none"
+            ? null
+            : {
+                state,
+                finished_at: state === "failed" ? timestamp : null,
+                failure_label: state === "failed" ? "Source unavailable" : null,
+              },
+      });
+      await page.goto("/openview?section=reports");
+      await page
+        .getByRole("button", {
+          name: /^Operations review(?: Field operations)?$/,
+        })
+        .click();
+      await page.getByRole("tab", { name: "Schedule", exact: true }).click();
+      if (state === "none")
+        await expect(
+          page.getByText("Last run: No runs yet", { exact: true }),
+        ).toBeVisible();
+      else {
+        const summary = page.getByRole("status", {
+          name: "Last scheduled run",
+          exact: true,
+        });
+        await expect(summary).toContainText(
+          state === "failed" ? "Failed" : "Running",
+        );
+        if (state === "failed") {
+          await expect(summary).toContainText(/Sep 24, 2026.*8:00\sAM/);
+          await expect(summary).toContainText("Source unavailable");
+          await expect(
+            page.getByRole("button", { name: "Save schedule", exact: true }),
+          ).toHaveCount(0);
+        } else await expect(summary).toContainText("Finish time not recorded");
+      }
+      if (!reader) {
+        await page.getByLabel("Local time").fill("16:25");
+        await page
+          .getByRole("tab", { name: "Saved outputs", exact: true })
+          .click();
+        await page.getByRole("tab", { name: "Schedule", exact: true }).click();
+        await expect(page.getByLabel("Local time")).toHaveValue("16:25");
+      }
+      expect(api.counts().scheduleWrites).toBe(0);
+      if (state === "failed") {
+        const theme =
+          process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
+        await captureOpenViewReview(page, `s14-report-last-run-${theme}`, {
+          beforeScreenshot: async (capture) => {
+            // Exclude Next's development overlay from opt-in product captures.
+            await capture.addStyleTag({
+              content: "nextjs-portal { display: none !important; }",
+            });
+            await expect(capture.locator("html")).toHaveClass(
+              theme === "dark" ? /dark/ : /^(?!.*dark)/,
+            );
+            await capture.evaluate(async () => {
+              await document.fonts.ready;
+              await new Promise<void>((resolve) =>
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => resolve()),
+                ),
+              );
+            });
+            expect(
+              await capture.evaluate(
+                () => document.documentElement.scrollWidth <= window.innerWidth,
+              ),
+            ).toBe(true);
+          },
+        });
+      }
+    });
   }
 });

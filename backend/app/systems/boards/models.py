@@ -5,6 +5,7 @@ from typing import ClassVar
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -121,11 +122,17 @@ class BoardWidget(BaseModel):
             name="ck_board_widgets_type",
         ),
         CheckConstraint("position >= 0 AND position < 12", name="ck_board_widgets_position"),
+        CheckConstraint("size IN ('S', 'M', 'L')", name="ck_board_widgets_size"),
+        CheckConstraint(
+            "(config IS NOT NULL) <> (chart_id IS NOT NULL)",
+            name="ck_board_widgets_query_source",
+        ),
         UniqueConstraint(
             "board_id", "position", name="uq_board_widgets_board_position",
             deferrable=True, initially="DEFERRED",
         ),
         Index("ix_board_widgets_module_id", "module_id"),
+        Index("ix_board_widgets_chart_id", "chart_id"),
     )
 
     board_id: Mapped[UUID] = mapped_column(
@@ -137,4 +144,15 @@ class BoardWidget(BaseModel):
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     widget_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    size: Mapped[str] = mapped_column(
+        String(1), default="M", server_default=text("'M'"), nullable=False
+    )
+    pinned: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    chart_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("charts.id", ondelete="RESTRICT"), nullable=True
+    )
+    config: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )

@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
@@ -21,12 +21,14 @@ from app.systems.access.policy.checks import forbidden, module_filter, require_m
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User
+from app.systems.manage.jobs.registry import failure_label
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.run_service import validate_report_recipe
 from app.systems.openview.reports.schedule_models import ReportSchedule
 from app.systems.openview.reports.schedule_schemas import (
     Cadence,
     ScheduleCreate,
+    ScheduleLastRun,
     SchedulePatch,
     ScheduleResponse,
 )
@@ -107,7 +109,21 @@ def _policy(db: Session, report_id: UUID, *, lock: bool) -> ReportSchedule | Non
     return db.scalar(statement)
 
 
-def _response(policy: ReportSchedule) -> ScheduleResponse:
+def _response(db: Session, policy: ReportSchedule) -> ScheduleResponse:
+    latest = db.scalar(
+        select(ScheduledWork)
+        .where(
+            ScheduledWork.kind == "report-run",
+            ScheduledWork.report_id == policy.report_id,
+            or_(
+                ScheduledWork.attempt_count > 0,
+                ScheduledWork.last_attempt_started_at.is_not(None),
+                ScheduledWork.state.in_(("succeeded", "failed", "canceled")),
+            ),
+        )
+        .order_by(ScheduledWork.scheduled_for.desc(), ScheduledWork.id.desc())
+        .limit(1)
+    )
     return ScheduleResponse(
         id=policy.id,
         report_id=policy.report_id,
@@ -119,6 +135,13 @@ def _response(policy: ReportSchedule) -> ScheduleResponse:
         weekday=policy.weekday,
         month_day=policy.month_day,
         next_due_at=policy.next_due_at if policy.enabled else None,
+        last_run=(
+            ScheduleLastRun(
+                state=latest.state,
+                finished_at=latest.finished_at,
+                failure_label=failure_label(latest.failure_code),
+            ) if latest is not None else None
+        ),
         created_at=policy.created_at,
         updated_at=policy.updated_at,
     )
@@ -136,6 +159,7 @@ def _due(payload: ScheduleCreate) -> datetime:
 
 
 def _cancel_old_work(db: Session, report_id: UUID) -> None:
+    current = utc_now()
     outstanding = db.scalars(
         select(ScheduledWork)
         .where(
@@ -148,6 +172,7 @@ def _cancel_old_work(db: Session, report_id: UUID) -> None:
     )
     for work in outstanding:
         work.state = WorkState.CANCELED
+        work.finished_at = current
         work.failure_code = "schedule_changed"
         work.lease_token = None
         work.lease_expires_at = None
@@ -169,7 +194,7 @@ def read_report_schedule(report_id: UUID, user: Reader, db: Database) -> Schedul
     policy = _policy(db, report.id, lock=False)
     if policy is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Report schedule not found")
-    return _response(policy)
+    return _response(db, policy)
 
 
 @router.post(
@@ -200,7 +225,7 @@ def create_report_schedule(
     _commit(db)
     db.refresh(policy)
     response.headers["Location"] = f"/api/reports/{report.id}/schedule"
-    return _response(policy)
+    return _response(db, policy)
 
 
 @router.patch("/{report_id}/schedule", response_model=ScheduleResponse)
@@ -259,4 +284,4 @@ def update_report_schedule(
         policy.revision += 1
     _commit(db)
     db.refresh(policy)
-    return _response(policy)
+    return _response(db, policy)

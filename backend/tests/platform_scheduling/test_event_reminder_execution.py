@@ -21,6 +21,7 @@ from app.systems.platform.scheduling.models import (
 from app.systems.platform.scheduling.reminder_execution import (
     claim_due_reminder_work,
     execute_due_reminders,
+    fail_reminder_work,
     finalize_reminder_claim,
 )
 from tests.boards.support import board_group, client, grant, member, project_board
@@ -119,6 +120,7 @@ def test_a_weekly_reminder_notifies_every_reader_before_each_occurrence(
     db.flush()
     db.refresh(first)
     assert first.state == WorkState.SUCCEEDED
+    assert first.last_attempt_started_at == late_delivery and first.finished_at == late_delivery
 
     materialize_event_reminders(db, now=late_delivery)
     second = _work(db, event)[1]
@@ -130,6 +132,34 @@ def test_a_weekly_reminder_notifies_every_reader_before_each_occurrence(
             select(InAppNotification.recipient_id).where(InAppNotification.work_id == second.id)
         )
     ) == {author.id, new_reader.id}
+
+
+def test_reminder_failure_backoff_exhaustion_and_reclaim_timestamps(integration_owner_db):
+    db = integration_owner_db
+    board, author = project_board(db), member(db)
+    grant(db, board, [author], AccessLevel.WRITE)
+    event = _timed_event(db, board, author, reminders=["start"], weekly=False)
+    materialize_event_reminders(db, now=START - timedelta(minutes=1))
+    [work] = _work(db, event)
+    current = START
+    for attempt in range(1, 6):
+        [claim] = claim_due_reminder_work(db, now=current)
+        assert work.last_attempt_started_at == current
+        assert work.attempt_count == attempt
+        assert fail_reminder_work(db, claim, now=current)
+        assert not fail_reminder_work(db, claim, now=current)
+        if attempt < 5:
+            assert work.state == WorkState.PENDING and work.finished_at is None
+            assert work.next_attempt_at == current + timedelta(seconds=2**attempt)
+            assert claim_due_reminder_work(db, now=current) == []
+            current = work.next_attempt_at
+        else:
+            assert work.state == WorkState.FAILED and work.finished_at == current
+            assert work.failure_code == "attempts_exhausted"
+    assert claim_due_reminder_work(db, now=current + timedelta(days=1)) == []
+    assert list(
+        db.scalars(select(InAppNotification).where(InAppNotification.work_id == work.id))
+    ) == []
 
 
 def test_changing_the_time_requeues_and_archive_clears_pending_occurrences(

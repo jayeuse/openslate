@@ -1,4 +1,5 @@
 "use client";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
 import { useCallback, useId, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -24,7 +25,6 @@ import {
   resolvePersonDraft,
   roleLabels,
   samePersonDraft,
-  sponsorOptions,
   usernameError,
   usernameHint,
   type PersonDraft,
@@ -47,6 +47,7 @@ import {
   UncertainDraftWarning,
   type DraftReviewValues,
 } from "./editor-conflicts";
+import { SponsorSearchSelect } from "./person-search-select";
 import { SelectField, TextField } from "./people-fields";
 
 type Edit = { baseline: PersonDraft; draft: PersonDraft };
@@ -91,6 +92,7 @@ export function PersonDetails({
   listFresh: boolean;
 }) {
   const id = useId();
+  const region = useWorkspaceDisplayRegion();
   const client = useQueryClient();
   const signedInId = useVerifiedWorkspaceUserId();
   const [stored] = useState(() => readPersonDraft(signedInId));
@@ -114,18 +116,12 @@ export function PersonDetails({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
-  const [now] = useState(() => Date.now());
 
   const current = draftFromUser(person);
   const values = edit?.draft ?? current;
   const dirty = edit !== null;
   const guest = person.role === "guest";
   const peopleById = new Map(people.map((item) => [item.id, item]));
-  const sponsors = sponsorOptions(people, now);
-  const sponsorListed = sponsors.some(
-    (option) => option.value === values.sponsor_user_id,
-  );
-  const sponsor = peopleById.get(values.sponsor_user_id);
 
   const discard = useCallback(() => {
     clearPersonDraft(signedInId);
@@ -173,7 +169,7 @@ export function PersonDetails({
       return match ? personName(match) : value ? "Unavailable" : "";
     }
     if (field === "expires_on")
-      return value ? formatDate(endOfDateInput(value)) : "";
+      return value ? formatDate(endOfDateInput(value), region) : "";
     return value;
   }
 
@@ -424,24 +420,10 @@ export function PersonDetails({
         )}
         {guest ? (
           <>
-            <SelectField
+            <SponsorSearchSelect
               id={`${id}-sponsor`}
-              label="Sponsor"
               value={values.sponsor_user_id}
               disabled={pending}
-              options={[
-                ...(sponsorListed
-                  ? []
-                  : [
-                      {
-                        value: values.sponsor_user_id,
-                        label: sponsor
-                          ? `${personName(sponsor)} (not active)`
-                          : "Choose a sponsor",
-                      },
-                    ]),
-                ...sponsors,
-              ]}
               error={errors.sponsor}
               onChange={(sponsor_user_id) => update({ sponsor_user_id })}
             />

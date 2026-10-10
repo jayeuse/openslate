@@ -17,6 +17,8 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
       case 404:
         return "This item is no longer available. Refresh and try again.";
       case 409:
+        if (error.code === "version_limit")
+          return "Version history is full. Delete old checkpoints in History.";
         return "This item changed. Refresh it and try again.";
       case 422:
         return "Check the entered values and try again.";

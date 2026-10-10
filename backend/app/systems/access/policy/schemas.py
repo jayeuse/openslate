@@ -14,6 +14,7 @@ from app.systems.access.users.models import UserRole, UserStatus
 
 class GroupSortField(StrEnum):
     NAME = "name"
+    MEMBER_COUNT = "member_count"
     CREATED_AT = "created_at"
     UPDATED_AT = "updated_at"
 
@@ -32,6 +33,11 @@ class GroupAccessEntry(_StrictModel):
 
 class GroupAccessReplace(_StrictModel):
     access: list[GroupAccessEntry] = Field(max_length=500)
+
+
+class GroupAccessResponse(GroupAccessEntry):
+    department_name: str
+    module_name: str | None
 
 
 class GroupCreate(_StrictModel):
@@ -69,7 +75,7 @@ class GroupResponse(BaseModel):
     description: str
     revision: int
     member_ids: list[UUID]
-    access: list[GroupAccessEntry]
+    access: list[GroupAccessResponse]
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
@@ -78,7 +84,9 @@ class GroupResponse(BaseModel):
 
 
 class GroupListRequest(StandardListRequest[GroupSortField]):
-    pass
+    without_access: bool = False
+    without_members: bool = False
+    member_id: UUID | None = None
 
 
 class MemberCandidateSortField(StrEnum):
@@ -91,6 +99,7 @@ class MemberCandidateListRequest(StandardListRequest[MemberCandidateSortField]):
     """Deleted accounts are never candidates."""
 
     deleted: Literal[DeletedFilter.EXCLUDE] = DeletedFilter.EXCLUDE
+    ids: list[UUID] | None = Field(default=None, max_length=100)
 
 
 class MemberCandidateResponse(BaseModel):
@@ -104,3 +113,4 @@ class MemberCandidateResponse(BaseModel):
     email: str
     role: UserRole
     status: UserStatus
+    access_ends_at: datetime | None = Field(validation_alias="expires_at")

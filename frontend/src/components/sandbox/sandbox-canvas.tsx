@@ -18,6 +18,7 @@ import {
   type UpdateSandboxFieldPatch,
 } from "@/lib/sandbox/model";
 import { canConnect } from "@/lib/sandbox/rules";
+import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 import {
   MODULE_TABLE,
   SANDBOX_GRID_MAJOR_SIZE,
@@ -123,6 +124,8 @@ export interface SandboxCanvasProps {
   onTraceCleared?: () => void;
   graphRef?: MutableRefObject<SandboxCanvasApi | null>;
   pending?: boolean;
+  /** Only the owning Build screen's confirmed account preference enables F2. */
+  keyboardShortcutsEnabled?: boolean;
 }
 
 interface SandboxCanvasRuntime {
@@ -180,6 +183,7 @@ export function SandboxCanvas({
   onTraceCleared,
   graphRef,
   pending = false,
+  keyboardShortcutsEnabled = false,
 }: SandboxCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -190,6 +194,7 @@ export function SandboxCanvas({
   const gridVisibleRef = useRef(gridVisible);
   const snapEnabledRef = useRef(snapEnabled);
   const pendingRef = useRef(pending);
+  const keyboardShortcutsRef = useRef(keyboardShortcutsEnabled);
   const syncingRef = useRef(false);
   const appliedLayoutRef = useRef<SandboxCanvasLayout | undefined>(undefined);
   const [editor, setEditor] = useState<CanvasEditor | null>(null);
@@ -239,7 +244,8 @@ export function SandboxCanvas({
   });
   useEffect(() => {
     pendingRef.current = pending;
-  }, [pending]);
+    keyboardShortcutsRef.current = keyboardShortcutsEnabled;
+  }, [pending, keyboardShortcutsEnabled]);
   useEffect(() => {
     gridVisibleRef.current = gridVisible;
     snapEnabledRef.current = snapEnabled;
@@ -867,8 +873,21 @@ export function SandboxCanvas({
     observer.observe(canvasFrame);
 
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "F2") {
+      if (event.key === SANDBOX_SHORTCUTS.rename.key) {
         if (
+          keyboardShortcutsRef.current &&
+          !pendingRef.current &&
+          !event.defaultPrevented &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !(
+            event.target instanceof Element &&
+            event.target.closest(
+              "input, textarea, select, [contenteditable='true']",
+            )
+          ) &&
+          !document.querySelector('[role="dialog"], [role="alertdialog"]') &&
           editorRef.current === null &&
           stateRef.current.selectedCellId !== null
         ) {

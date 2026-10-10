@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Download,
   FileDown,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -33,10 +35,19 @@ import {
 } from "../domain/document";
 import type { SandboxOrganizationTemplate } from "../domain/templates";
 import { exportSandboxBundle } from "../state/api";
+import { sandboxVersionPageOptions } from "../state/sandbox-queries";
+import { useSandboxHistoryAccess } from "../state/sandbox-history-access";
+import { useWorkspaceInteractionSuspended } from "../../shared/runtime/workspace-identity";
 import type { SandboxCommandResult } from "../state/commands";
 import { OrganizationTemplateDialog } from "./organization-template-dialog";
+import {
+  VersionCapacityBanner,
+  type VersionCapacityActions,
+} from "./version-capacity-banner";
 
 type Props = {
+  versionsRefreshKey: number;
+  versionCapacity: VersionCapacityActions;
   pending: boolean;
   /** The page owns the template dialog so the empty canvas can open it too. */
   templatesOpen: boolean;
@@ -72,6 +83,8 @@ function download(name: string, document: SandboxDocumentV4) {
 }
 
 export function SandboxHeaderActions({
+  versionsRefreshKey,
+  versionCapacity,
   pending,
   templatesOpen,
   onTemplatesOpenChange,
@@ -91,6 +104,46 @@ export function SandboxHeaderActions({
   const [staged, setStaged] = useState<SandboxDocumentV4 | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [includeVersions, setIncludeVersions] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const exportController = useRef<AbortController | null>(null);
+  const mounted = useRef(false);
+  const suspended = useWorkspaceInteractionSuspended();
+  const historyAccess = useSandboxHistoryAccess();
+  // Observe the same unfiltered first page as capacity and History. The
+  // filtered total, mutable count and visible row count are not export totals.
+  const versionCount = useQuery({
+    ...sandboxVersionPageOptions(
+      { limit: 25, offset: 0, search: undefined, kind: undefined },
+      versionsRefreshKey,
+    ),
+    select: (page) => page.total,
+    enabled: importOpen && !historyAccess.denied && !suspended,
+  });
+  const countUnavailable = historyAccess.denied || versionCount.isError;
+  const countLoading = versionCount.isPending || versionCount.isFetching;
+  const countReady =
+    !countUnavailable && !countLoading && !suspended && versionCount.isSuccess;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      exportController.current?.abort();
+      exportController.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    if (suspended) {
+      exportController.current?.abort();
+      exportController.current = null;
+      setExportBusy(false);
+    }
+  }, [suspended]);
+  function cancelExport() {
+    exportController.current?.abort();
+    exportController.current = null;
+    setExportBusy(false);
+  }
   async function checkpoint() {
     if (!label.trim()) {
       setError("Give this checkpoint a short name.");
@@ -129,15 +182,35 @@ export function SandboxHeaderActions({
     setStaged(null);
   }
   async function exportDocument() {
-    setBusy(true);
+    if (pending || busy || suspended || !countReady || exportController.current)
+      return;
+    const controller = new AbortController();
+    exportController.current = controller;
+    setExportBusy(true);
     setError("");
     try {
-      const bundle = await exportSandboxBundle();
-      download(bundle.filename, bundle.document);
+      const bundle = await exportSandboxBundle({
+        includeVersions,
+        signal: controller.signal,
+      });
+      if (
+        mounted.current &&
+        !controller.signal.aborted &&
+        exportController.current === controller
+      )
+        download(bundle.filename, bundle.document);
     } catch {
-      setError("Export could not be completed. Try again.");
+      if (
+        mounted.current &&
+        !controller.signal.aborted &&
+        exportController.current === controller
+      )
+        setError("Export could not be completed. Try again.");
     } finally {
-      setBusy(false);
+      if (mounted.current && exportController.current === controller) {
+        exportController.current = null;
+        setExportBusy(false);
+      }
     }
   }
   async function discard() {
@@ -217,6 +290,10 @@ export function SandboxHeaderActions({
               Save this draft so you can compare or restore it later.
             </DialogDescription>
           </DialogHeader>
+          <VersionCapacityBanner
+            {...versionCapacity}
+            pending={versionCapacity.pending || busy}
+          />
           {error ? <Alert variant="destructive">{error}</Alert> : null}
           <Field>
             <FieldLabel htmlFor="sandbox-checkpoint-label">Name</FieldLabel>
@@ -250,7 +327,11 @@ export function SandboxHeaderActions({
       </Dialog>
       <Dialog
         open={importOpen}
-        onOpenChange={(open) => !busy && setImportOpen(open)}
+        onOpenChange={(open) => {
+          if (busy) return;
+          if (!open) cancelExport();
+          setImportOpen(open);
+        }}
       >
         <DialogContent>
           <DialogHeader>
@@ -260,21 +341,68 @@ export function SandboxHeaderActions({
               previously exported.
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-3">
+            <Field>
+              <FieldLabel
+                htmlFor="sandbox-export-history"
+                className="flex min-h-11 items-center gap-3"
+              >
+                <Checkbox
+                  id="sandbox-export-history"
+                  checked={includeVersions}
+                  onCheckedChange={setIncludeVersions}
+                  disabled={pending || busy || exportBusy || !countReady}
+                />
+                Include version history
+              </FieldLabel>
+            </Field>
+            {countUnavailable ? (
+              <Alert variant="destructive" className="space-y-3">
+                <p>Version count is unavailable.</p>
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={
+                    pending ||
+                    busy ||
+                    exportBusy ||
+                    versionCount.isFetching ||
+                    suspended
+                  }
+                  onClick={() => void versionCount.refetch()}
+                >
+                  Retry version count
+                </Button>
+              </Alert>
+            ) : countLoading ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                Loading version count…
+              </p>
+            ) : countReady ? (
+              <p className="text-sm">
+                {versionCount.data} saved version
+                {versionCount.data === 1 ? "" : "s"}
+              </p>
+            ) : null}
+            <p className="text-muted-foreground text-sm">
+              Imported versions count toward the 50-version limit.
+            </p>
+          </div>
           {error ? <Alert variant="destructive">{error}</Alert> : null}
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               className="min-h-11"
-              disabled={pending || busy}
+              disabled={pending || busy || exportBusy || !countReady}
               onClick={() => void exportDocument()}
             >
               <Download />
-              Export JSON
+              {exportBusy ? "Exporting…" : "Export JSON"}
             </Button>
             <Button
               variant="outline"
               className="min-h-11"
-              disabled={pending || busy}
+              disabled={pending || busy || exportBusy}
               onClick={() => input.current?.click()}
             >
               <Upload />
@@ -295,7 +423,7 @@ export function SandboxHeaderActions({
               </p>
               <Button
                 className="min-h-11"
-                disabled={pending || busy}
+                disabled={pending || busy || exportBusy}
                 onClick={() => void importDocument()}
               >
                 <FileDown />
@@ -303,6 +431,19 @@ export function SandboxHeaderActions({
               </Button>
             </div>
           ) : null}
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={busy}
+              onClick={() => {
+                cancelExport();
+                setImportOpen(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
       <Dialog

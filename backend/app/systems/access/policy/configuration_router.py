@@ -8,7 +8,7 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import select, true
+from sqlalchemy import func, select, true
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -18,10 +18,10 @@ from app.common.listing import ListQuerySpec, StandardListResponse, execute_stan
 from app.core.database import get_db
 from app.systems.access.policy.checks import forbidden
 from app.systems.access.policy.delegation import replace_members
-from app.systems.access.policy.models import Group
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import (
-    GroupAccessEntry,
     GroupAccessReplace,
+    GroupAccessResponse,
     GroupCreate,
     GroupListRequest,
     GroupMembersReplace,
@@ -48,6 +48,8 @@ from app.systems.access.policy.service import (
     update_group,
 )
 from app.systems.access.users.models import User, UserRole
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.modules.models import Module
 
 router = APIRouter(prefix="/access", tags=["access"])
 AdminUser = Annotated[User, Depends(require_admin)]
@@ -62,9 +64,25 @@ class MemberCandidateListResponse(StandardListResponse[MemberCandidateResponse])
     pass
 
 
+_MEMBER_COUNT = (
+    select(func.count(GroupMember.id))
+    .where(GroupMember.group_id == Group.id)
+    .correlate(Group)
+    .scalar_subquery()
+)
+_ACCESS_NAMES = (
+    select(func.string_agg(func.concat(Department.department_name, " ", Module.module_name), " "))
+    .select_from(GroupAccess)
+    .join(Department, Department.id == GroupAccess.department_id)
+    .outerjoin(Module, Module.id == GroupAccess.module_id)
+    .where(GroupAccess.group_id == Group.id, GroupAccess.is_deleted.is_(False))
+    .correlate(Group)
+    .scalar_subquery()
+)
 GROUP_LIST_SPEC = ListQuerySpec(
     sort_fields={
         GroupSortField.NAME: cast(ColumnElement[Any], Group.name),
+        GroupSortField.MEMBER_COUNT: _MEMBER_COUNT,
         GroupSortField.CREATED_AT: cast(ColumnElement[Any], Group.created_at),
         GroupSortField.UPDATED_AT: cast(ColumnElement[Any], Group.updated_at),
     },
@@ -73,6 +91,7 @@ GROUP_LIST_SPEC = ListQuerySpec(
     search_fields=(
         cast(ColumnElement[str], Group.name),
         cast(ColumnElement[str], Group.description),
+        cast(ColumnElement[str], _ACCESS_NAMES),
     ),
     deleted_field=cast(ColumnElement[bool], Group.is_deleted),
 )
@@ -154,7 +173,7 @@ def _private(response: Response) -> None:
 def _group_response(
     row: Group,
     member_ids: list[UUID],
-    access: list[GroupAccessEntry],
+    access: list[GroupAccessResponse],
 ) -> GroupResponse:
     return GroupResponse.model_validate(
         {
@@ -191,7 +210,22 @@ def list_groups(
     visible = _visible_groups(db, user)
     _private(response)
     try:
-        result = execute_standard_list(db, select(Group).where(visible), params, GROUP_LIST_SPEC)
+        statement = select(Group).where(visible)
+        if params.member_id is not None:
+            statement = statement.where(
+                select(GroupMember.id)
+                .where(GroupMember.group_id == Group.id, GroupMember.user_id == params.member_id)
+                .exists()
+            )
+        if params.without_access:
+            statement = statement.where(
+                ~select(GroupAccess.id)
+                .where(GroupAccess.group_id == Group.id, GroupAccess.is_deleted.is_(False))
+                .exists()
+            )
+        if params.without_members:
+            statement = statement.where(_MEMBER_COUNT == 0)
+        result = execute_standard_list(db, statement, params, GROUP_LIST_SPEC)
         ids = [row.id for row in result.items]
         member_map = group_member_map(db, ids)
         access_map = group_access_map(db, ids)
@@ -309,9 +343,12 @@ def list_member_candidates(
             is None
         ):
             raise forbidden()
+        statement = select(User).where(User.role != UserRole.ADMIN.value)
+        if params.ids is not None:
+            statement = statement.where(User.id.in_(params.ids))
         result = execute_standard_list(
             db,
-            select(User).where(User.role != UserRole.ADMIN.value),
+            statement,
             params,
             MEMBER_CANDIDATE_LIST_SPEC,
         )

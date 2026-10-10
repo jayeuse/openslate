@@ -131,6 +131,134 @@ export function updateOpenViewRecord(input: {
   });
 }
 
+const recordMoveSchema = z
+  .object({
+    recordId: uuidSchema,
+    revision: z.iso.datetime({ offset: true }),
+    fieldId: uuidSchema,
+    value: z.union([z.string(), z.boolean(), z.null()]),
+  })
+  .strict();
+const compoundRecordMoveSchema = z
+  .object({
+    recordId: uuidSchema,
+    revision: z.iso.datetime({ offset: true }),
+    changes: z
+      .array(
+        z
+          .object({
+            fieldId: uuidSchema,
+            value: z.union([z.string(), z.boolean(), z.null()]),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(2),
+  })
+  .strict()
+  .refine(
+    (item) =>
+      new Set(item.changes.map((change) => change.fieldId)).size ===
+      item.changes.length,
+  );
+const recordMoveInputSchema = z.union([
+  recordMoveSchema,
+  compoundRecordMoveSchema,
+]);
+const batchResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("updated"),
+      record_id: uuidSchema,
+      record: recordSchema,
+    })
+    .strict(),
+  z.object({ status: z.literal("stale"), record_id: uuidSchema }).strict(),
+  z
+    .object({
+      status: z.literal("invalid"),
+      record_id: uuidSchema,
+      errors: z.array(
+        z
+          .object({
+            code: z.string(),
+            field_id: uuidSchema.nullable(),
+            message: z.string(),
+          })
+          .strict(),
+      ),
+      truncated: z.boolean(),
+    })
+    .strict(),
+  z.object({ status: z.literal("forbidden"), record_id: uuidSchema }).strict(),
+]);
+
+export type OpenViewRecordMove = z.input<typeof recordMoveInputSchema>;
+export type OpenViewRecordMoveResult = z.output<typeof batchResultSchema>;
+
+/** Saves only each selected field, against the revision seen before the move. */
+export async function updateOpenViewRecordMoves(input: {
+  moduleId: string;
+  items: readonly OpenViewRecordMove[];
+}): Promise<OpenViewRecordMoveResult[]> {
+  const moduleId = uuidSchema.parse(input.moduleId);
+  const items = z
+    .array(recordMoveInputSchema)
+    .min(1)
+    .max(100)
+    .parse(input.items);
+  const requested = new Map(items.map((item) => [item.recordId, item]));
+  if (requested.size !== items.length) throw new ApiContractError();
+  const response = await apiFetch(
+    "/records/batch-update",
+    z
+      .object({
+        results: z.array(batchResultSchema).max(100),
+      })
+      .strict(),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        module_id: moduleId,
+        items: items.map((item) => ({
+          record_id: item.recordId,
+          revision: item.revision,
+          ...("changes" in item
+            ? {
+                changes: item.changes.map(({ fieldId, value }) => ({
+                  field_id: fieldId,
+                  value,
+                })),
+              }
+            : { field_id: item.fieldId, value: item.value }),
+        })),
+      }),
+    },
+  );
+  const returned = new Set(response.results.map((result) => result.record_id));
+  if (
+    response.results.length !== items.length ||
+    returned.size !== requested.size
+  )
+    throw new ApiContractError();
+  for (const result of response.results) {
+    const item = requested.get(result.record_id);
+    if (
+      !item ||
+      (result.status === "updated" &&
+        (result.record.id !== item.recordId ||
+          result.record.moduleId !== moduleId ||
+          result.record.isDeleted ||
+          result.record.deletedAt !== null ||
+          ("changes" in item ? item.changes : [item]).some(
+            (change) => result.record.data[change.fieldId] !== change.value,
+          )))
+    )
+      throw new ApiContractError();
+  }
+  return response.results;
+}
+
 export async function deleteOpenViewRecord(recordId: string): Promise<void> {
   await apiFetch(recordPath(recordId), noContentSchema, { method: "DELETE" });
 }
@@ -153,7 +281,6 @@ export async function previewRecordPurge(
     { method: "POST", cache: "no-store" },
   );
   assertLifecyclePurgePreviewFor(preview, "record", recordId);
-  if (preview.confirmation_name !== recordId) throw new ApiContractError();
   return preview;
 }
 
@@ -163,7 +290,6 @@ export async function purgeRecord(
 ): Promise<z.output<typeof lifecyclePurgeResultSchema>> {
   const recordId = uuidSchema.parse(rawRecordId);
   const input = lifecyclePurgeInputSchema.parse(rawInput);
-  if (input.confirmationName !== recordId) throw new ApiContractError();
   const result = await apiFetch(
     `${recordPath(recordId)}/purge`,
     lifecyclePurgeResultSchema,
@@ -186,66 +312,62 @@ export function isStaleRecordSave(error: unknown): boolean {
   return error instanceof ApiError && error.status === 412;
 }
 
-export async function listOpenViewRelationshipFields(
+export function listOpenViewRelationshipFields(
   moduleId: string,
-): Promise<OpenViewRelationshipField[]> {
+  options: { limit?: number; offset?: number } = {},
+): Promise<OpenViewPage<OpenViewRelationshipField>> {
   const query = new URLSearchParams({
     module_id: uuidSchema.parse(moduleId),
     type: "relationship",
-    limit: "100",
+    deleted: "exclude",
+    limit: String(options.limit ?? 100),
+    offset: String(options.offset ?? 0),
   });
-  const page = await apiFetch(
-    `/fields?${query.toString()}`,
-    listSchema(relationshipFieldSchema),
-    { cache: "no-store" },
-  );
-  return page.items
-    .filter((field) => !field.isDeleted)
-    .sort((left, right) => left.position - right.position);
+  return apiFetch(`/fields?${query}`, listSchema(relationshipFieldSchema), {
+    cache: "no-store",
+  });
 }
 
-const RECORD_LINK_PAGE_SIZE = 100;
-// A record with more links than this is refused rather than shown incomplete.
-const RECORD_LINK_MAX_PAGES = 50;
-
-/** Every visible link that starts or ends at the record (the panel treats it as complete). */
-export async function listOpenViewRecordLinks(
+/** One visible incident-link page; the caller exposes the continuation. */
+export function listOpenViewRecordLinks(
   recordId: string,
-): Promise<OpenViewRelationship[]> {
-  const incident = uuidSchema.parse(recordId);
-  const links: OpenViewRelationship[] = [];
-  for (let pageIndex = 0; pageIndex < RECORD_LINK_MAX_PAGES; pageIndex += 1) {
-    const query = new URLSearchParams({
-      incident_record_id: incident,
-      limit: String(RECORD_LINK_PAGE_SIZE),
-      offset: String(pageIndex * RECORD_LINK_PAGE_SIZE),
-    });
-    const page = await apiFetch(
-      `/relationships?${query.toString()}`,
-      listSchema(relationshipSchema),
-      { cache: "no-store" },
-    );
-    links.push(...page.items);
-    if (!page.pagination.hasMore) return links;
-  }
-  throw new ApiContractError();
+  options: { limit?: number; offset?: number } = {},
+): Promise<OpenViewPage<OpenViewRelationship>> {
+  return listOpenViewLinks({ incidentRecordId: recordId, ...options });
 }
 
-/** One page of a link field's visible links. */
+/** One bounded, server-filtered relationship page. Exact filters support write reconciliation and candidate occupancy. */
+export function listOpenViewLinks(options: {
+  incidentRecordId?: string;
+  fieldId?: string;
+  sourceRecordId?: string;
+  targetRecordId?: string;
+  limit?: number;
+  offset?: number;
+  signal?: AbortSignal;
+}): Promise<OpenViewPage<OpenViewRelationship>> {
+  const query = new URLSearchParams({
+    limit: String(options.limit ?? 100),
+    offset: String(options.offset ?? 0),
+  });
+  for (const [key, value] of Object.entries({
+    incident_record_id: options.incidentRecordId,
+    field_id: options.fieldId,
+    source_record_id: options.sourceRecordId,
+    target_record_id: options.targetRecordId,
+  }))
+    if (value) query.set(key, uuidSchema.parse(value));
+  return apiFetch(`/relationships?${query}`, listSchema(relationshipSchema), {
+    cache: "no-store",
+    signal: options.signal,
+  });
+}
+
 export function listOpenViewFieldLinks(
   fieldId: string,
   options: { limit: number; offset: number },
 ): Promise<OpenViewPage<OpenViewRelationship>> {
-  const query = new URLSearchParams({
-    field_id: uuidSchema.parse(fieldId),
-    limit: String(options.limit),
-    offset: String(options.offset),
-  });
-  return apiFetch(
-    `/relationships?${query.toString()}`,
-    listSchema(relationshipSchema),
-    { cache: "no-store" },
-  );
+  return listOpenViewLinks({ fieldId, ...options });
 }
 
 export function linkOpenViewRecords(input: {
@@ -295,14 +417,16 @@ export async function unlinkOpenViewRecords(
 export function searchOpenViewLinkTargets(input: {
   moduleId: string;
   definition: OpenViewQueryDefinition;
+  limit?: number;
+  offset?: number;
 }): Promise<OpenViewPage<OpenViewRecord>> {
   return openViewReadFetch("/records/query", recordListSchema, {
     method: "POST",
     body: JSON.stringify({
       module_id: uuidSchema.parse(input.moduleId),
       definition: serializeOpenViewQueryDefinition(input.definition),
-      limit: 50,
-      offset: 0,
+      limit: input.limit ?? 50,
+      offset: input.offset ?? 0,
     }),
   });
 }

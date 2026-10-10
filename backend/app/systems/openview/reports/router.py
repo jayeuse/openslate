@@ -11,7 +11,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import Engine, select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -30,9 +30,9 @@ from app.systems.access.policy.checks import (
 )
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.openview.reports.deletion_service import delete_report_tree
 from app.systems.openview.reports.eligibility import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
+from app.systems.openview.reports.purge_router import router as purge_router
 from app.systems.openview.reports.run_reader_router import (
     accessible_run,
     run_response,
@@ -60,6 +60,7 @@ def _private_cache(response: Response) -> None:
 
 router = APIRouter(prefix="/reports", tags=["reports"], dependencies=[Depends(_private_cache)])
 router.include_router(run_reader_router)
+router.include_router(purge_router)
 Reader = Annotated[User, Depends(get_current_user)]
 # Changing a Report needs ``manage`` on its module; each route checks the module.
 Writer = Annotated[User, Depends(get_current_user)]
@@ -266,34 +267,6 @@ def restore_report(
     _commit(db)
     db.refresh(report)
     return _response(report)
-
-
-@router.delete("/{report_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
-def permanently_delete_report(
-    report_id: UUID,
-    revision: Annotated[int, Query(ge=1)],
-    user: Writer,
-    db: Database,
-) -> Response:
-    """Remove an archived recipe and every frozen snapshot in one audited transaction."""
-    try:
-        report = _report(db, user, report_id, lock=True, manage=True)
-        if report.revision != revision:
-            raise _conflict(
-                "stale_revision",
-                "Report changed; reload before saving",
-                current_revision=report.revision,
-            )
-        if not report.is_deleted:
-            raise _conflict("report_not_archived", "Archive the Report before deleting it")
-        delete_report_tree(db, report)
-        db.commit()
-    except (IntegrityError, OperationalError) as error:
-        db.rollback()
-        raise _conflict(
-            "report_delete_conflict", "The Report changed while it was being deleted"
-        ) from error
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

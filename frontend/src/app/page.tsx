@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   CheckCircle2,
@@ -7,6 +11,9 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { workspaceStartRoute } from "@/components/workspace-start";
+import { getSessionStatus } from "@/lib/auth-api";
+import { cn } from "@/lib/utils";
 
 const workflow = [
   ["01", "Set up", "Create the first administrator outside the browser."],
@@ -15,8 +22,31 @@ const workflow = [
 ] as const;
 
 export default function Home() {
+  const router = useRouter();
+  const [checkingSession, setCheckingSession] = useState(true);
+  useEffect(() => {
+    const controller = new AbortController();
+    async function checkSession() {
+      try {
+        const session = await getSessionStatus(controller.signal);
+        if (session.authenticated) {
+          const destination = await workspaceStartRoute();
+          if (!controller.signal.aborted) router.replace(destination);
+        } else if (!controller.signal.aborted) {
+          setCheckingSession(false);
+        }
+      } catch {
+        if (!controller.signal.aborted) setCheckingSession(false);
+      }
+    }
+    void checkSession();
+    return () => controller.abort();
+  }, [router]);
   return (
-    <main className="bg-background text-foreground min-h-screen">
+    <main
+      className="bg-background text-foreground min-h-screen"
+      aria-busy={checkingSession}
+    >
       <header className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-10">
         <a className="flex items-center gap-3" href="/">
           <span className="bg-foreground text-background grid size-9 place-items-center rounded-[var(--radius)] text-sm font-bold">
@@ -24,7 +54,12 @@ export default function Home() {
           </span>
           <span className="text-sm font-semibold">OpenSlate</span>
         </a>
-        <nav className="flex items-center gap-2">
+        <nav
+          className={cn(
+            "flex items-center gap-2",
+            checkingSession && "invisible",
+          )}
+        >
           <Button asChild variant="ghost" size="sm">
             <a href="/setup">First deployment?</a>
           </Button>
@@ -46,7 +81,12 @@ export default function Home() {
             operational data and keep work moving from setup to everyday
             records.
           </p>
-          <div className="mt-9 flex flex-wrap gap-3">
+          <div
+            className={cn(
+              "mt-9 flex flex-wrap gap-3",
+              checkingSession && "invisible",
+            )}
+          >
             <Button asChild size="lg">
               <a href="/login">
                 Open workspace <ArrowRight aria-hidden="true" />

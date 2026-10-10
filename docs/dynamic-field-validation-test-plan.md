@@ -1,133 +1,78 @@
 # Dynamic Field Validation Contracts and Testing
 
-## Purpose
+## Purpose and scope
 
-This plan verifies the dynamic-field contract at the boundaries that actually enforce it:
+Verify the current dynamic-field contract at the enforcing boundaries:
+Sandbox/Pydantic definitions, field-aware record normalization, registered
+FastAPI requests, and PostgreSQL persistence/locks. The backend is authoritative;
+frontend validation is user feedback, not the persistence security boundary.
 
-1. Pydantic request and field-definition validation.
-2. FastAPI field-aware record validation and normalization.
-3. PostgreSQL structural constraints, JSONB persistence, transactions, and locks.
-4. The direct-SQL trust boundary where application-only semantics and ORM audit can be bypassed.
+[`FieldType`](../backend/app/systems/sandbox/fields/models.py) has 13 values:
+`text`, `long_text`, `email`, `url`, `number`, `decimal`, `int`, `boolean`,
+`date`, `datetime`, `select`, `user`, and `relationship`. Primitive record
+values use [`fields/validation.py`](../backend/app/systems/sandbox/fields/validation.py)
+and [`mutation_validation.py`](../backend/app/systems/sandbox/records/mutation_validation.py).
+Relationship edges use their own service, never `Record.data`.
 
-The backend remains authoritative. Frontend Zod validation is intentionally outside this suite because it is client-side feedback rather than the persistence security boundary.
+In scope are definition/configuration, active-field creation gates, full-value
+record saves, closed values, deterministic errors, JSONB persistence,
+relationship visibility/cardinality, user eligibility, and concurrency.
+Do not introduce new limits, lifecycle policy, audit rules, load testing or
+penetration testing merely to execute this plan.
 
-## Scope and non-goals
+## Current contract and retained tests
 
-In scope:
+Test names below identify checked-in protection, not a claim that this document
+executed it. The old nine-type inventory and removed CRUD-schema tests are not
+the current test list.
 
-- all nine field types;
-- field configuration and metadata;
-- the record-create gate on active fields;
-- record create/update replacement semantics;
-- closed and relationship fields;
-- deterministic error aggregation;
-- PostgreSQL persistence and constraints;
-- runtime-role direct SQL behavior;
-- relationship cardinality and NOWAIT contention;
-- decimal migration/runtime compatibility.
-
-Not in scope:
-
-- broad load or penetration testing;
-- defining new payload, text, field-count, or option-count limits;
-- changing lifecycle policy;
-- changing audit redaction policy;
-- changing the validation contract as part of test execution.
-
-## Environment and safety
-
-PostgreSQL checks require an explicitly authorized disposable database. The full-stack runner creates an isolated loopback PostgreSQL database with a per-run identity; tests reject unrecognized targets.
-
-Application operations run through `TEST_DATABASE_URL`. Tests that commit fixtures clean only their generated UUIDs through the owner-capable `MIGRATION_DATABASE_URL`. No table-wide reset or user-data cleanup is performed.
-
-Concurrency checks use independent engines, connections, and sessions. They use explicit PostgreSQL row locks and `NOWAIT`; they do not use sleeps or share a SQLAlchemy session between participants.
-
-## Contract traceability
-
-| Rule | Contract | Automated evidence |
+| Boundary | Contract | Existing test source and named cases |
 |---|---|---|
-| R-001 | Supported types are text, number, decimal, int, boolean, date, datetime, select, and relationship. | `test_field_schema_accepts_primitive_types`, `test_field_validators_cover_every_type_and_return_clean_values` |
-| R-002 | Field names are trimmed and contain 1–150 characters. | `test_field_schema_trims_name_and_enforces_one_to_150_character_boundaries` |
-| R-003 | Position is nonnegative; active module positions are unique. | Existing field schema tests plus `test_direct_sql_can_store_invalid_record_data_but_postgres_rejects_invalid_field_structure` |
-| R-004 | Configuration keys are type-specific and unknown/cross-type keys are rejected. | `test_field_config_rejects_invalid_select_options`, `test_field_config_rejects_cross_type_configuration` |
-| R-005 | Select options are a nonempty unique string list and values match exactly. | `test_select_config_preserves_embedded_strings_and_requires_exact_values` |
-| R-006 | Number/int reject booleans and non-finite/wrong numeric types and enforce inclusive bounds. | `test_field_validators_cover_every_type_and_return_clean_values`, shared contract fixture |
-| R-007 | Decimal values and bounds are canonical strings with 38 integer and 18 fractional digits, no exponent/plus/leading-zero syntax, and exact bounds. | `test_field_config_validates_text_and_canonicalizes_decimal_bounds`, `test_decimal_validation_enforces_lexical_limits_and_exact_bounds`, shared contract fixture |
-| R-008 | Text preserves its value and applies configured code-point length bounds. | `test_text_validation_preserves_whitespace_and_counts_unicode_codepoints` |
-| R-009 | Boolean/date/datetime require their exact wire types/profile; date and datetime calendar boundaries are checked. | `test_date_validation_accepts_calendar_boundaries_and_rejects_invalid_dates`, `test_datetime_validation_accepts_datetime_boundaries_and_rejects_invalid_dates`, `test_datetime_validation_requires_strict_timezone_aware_profile` |
-| R-010 | Relationship metadata is complete, relationship fields are not required, and relationship config is empty. | Existing field schema/module validation tests |
-| R-011 | Active field names and positions are unique per module in the Sandbox publish and at the PostgreSQL layer. | Publication planning tests and the direct structural SQL test |
-| R-012 | A publish requires each active module to have at least one active, structurally valid, contiguous field set. | Existing module schema validator tests and publication tests |
-| R-013 | Unknown top-level field/record properties are currently ignored, while config keys are strict. | `test_top_level_extra_keys_are_ignored_by_field_and_record_schemas` |
-| R-014 | Fields change only through the Sandbox publish; the field API is read-only. | `test_schema_catalog_routes_are_read_only_in_the_application_contract`, `test_removed_schema_write_routes_are_not_served` |
-| R-015 | Tightened required/config rules cannot invalidate active records. | Existing field-update impact tests |
-| R-016 | Field order comes only from the Sandbox document positions. | Publication tests |
-| R-017 | Field close/reopen transitions preserve stored record values. | `test_replacement_update_preserves_closed_values_drops_optional_active_values` |
-| R-018 | Record create requires an active module with at least one active field, checked after the module lock; a publish that creates a module makes it ready for records. | `test_record_create_rejects_module_whose_last_active_field_is_closed`, `test_field_close_and_record_create_serialize_on_parent_module_lock`, `test_record_create_succeeds_right_after_the_publish_that_creates_the_module` |
-| R-019 | Record keys are exact field UUID strings; malformed and unknown keys are rejected. | Existing aggregate/deterministic record mutation tests |
-| R-020 | Optional primitive null is accepted; required null and required empty text are rejected. | `test_optional_primitive_record_values_accept_null`, `test_required_text_record_values_reject_null_and_empty` |
-| R-021 | Every active primitive value uses its registered type validator and normalization. | `test_field_validators_cover_every_type_and_return_clean_values`, shared parity fixture |
-| R-022 | Record validation aggregates field errors rather than stopping at the first one. | `test_record_mutation_aggregates_errors_and_normalizes_active_values`, `test_record_mutation_reports_errors_in_deterministic_phases` |
-| R-023 | Supplying update `data` replaces active data, removes omitted optional active values, and preserves omitted closed values. | `test_record_update_replaces_active_values_instead_of_merging_them`, `test_replacement_update_preserves_closed_values_drops_optional_active_values` |
-| R-024 | Existing closed primitive values may only be resubmitted with exactly equal type and value; changed/new values conflict. | Existing closed-field tests and `test_record_patch_rejects_type_changed_closed_integer_value` |
-| R-025 | Relationship fields never accept values in `Record.data`; relationship edges use their own service. | `test_relationship_values_are_rejected_on_record_create_and_update`, shared parity fixture |
-| R-026 | Errors have deterministic phases, a 20-item cap, a `truncated` flag, ordinary `422`, and closed-mutation `409`. | Existing error-shape/order tests and `test_record_mutation_caps_deterministic_errors` |
-| R-027 | Valid normalized values persist with expected JSONB types and ORM audit data. | `test_router_persists_jsonb_types_and_canonical_decimal_values` |
-| R-028 | PostgreSQL enforces field type, nonnegative position, active uniqueness, relationship FKs/self-link/duplicate structure; it does not interpret dynamic record keys. | Dynamic direct-SQL structural test and existing relationship integration contract tests |
-| R-029 | Runtime-role direct SQL bypasses FastAPI semantic validation and ORM audit. | `test_runtime_role_can_store_invalid_record_data_without_orm_audit_and_rolls_back` |
-| R-030 | Relationship cardinality is application-enforced; all four flag combinations and hidden-edge reservation are covered. | `test_create_accepts_all_four_cardinalities`, `test_create_enforces_both_cardinalities`, existing hidden-edge PostgreSQL test |
-| R-031 | Contention can produce `503`; after the winner commits, a retry can produce deterministic `409`, with no losing mutation/audit. | duplicate-field race test and `test_single_target_race_returns_unavailable_then_committed_conflict` |
-| R-032 | Explicit-null decimal bounds mean unbounded and are preserved by runtime validation and applied migrations. | `test_migrated_explicit_null_decimal_config_is_an_unbounded_runtime_bound` |
+| Definition and configuration | Type-specific configuration rejects cross-type/unknown keys. Active module fields have unique names/positions and structurally valid relationship metadata. | [`test_fields.py`](../backend/tests/catalog/test_fields.py): `test_field_config_rejects_cross_type_configuration`, `test_module_schema_validator_checks_active_field_structure`, `test_module_schema_validator_reuses_field_config_and_relationship_metadata`. |
+| Select | Options have stable UUID IDs and labels; records store IDs, not labels. Duplicate labels are rejected. | [`test_fields.py`](../backend/tests/catalog/test_fields.py): `test_select_option_ids_are_stable_values_and_duplicate_labels_are_rejected`. |
+| Text, long text, email, URL | Values/defaults obey their own format and configured constraints; text is not silently trimmed as record normalization. | [`test_record_validation.py`](../backend/tests/catalog/test_record_validation.py): `test_text_like_defaults_must_satisfy_their_field_constraints`, `test_field_config_validates_text_and_canonicalizes_decimal_bounds`; [`test_field_validation.py`](../backend/tests/sandbox_designs/test_field_validation.py): `test_portable_values_cover_supported_types_constraints_and_invalid_dates`. |
+| Number and integer | Reject booleans/non-finite/wrong wire types; enforce bounds and configured steps; normalize defaults. | [`test_record_validation.py`](../backend/tests/catalog/test_record_validation.py): `test_numeric_defaults_are_normalized_and_enforce_bounds_and_steps`, `test_shared_record_field_validation_cases`; [shared parity fixture](../contracts/record-field-validation-cases.json). |
+| Decimal | Canonical string, up to 38 integer and 18 fractional digits; no exponent/plus/leading-zero syntax, with exact inclusive bounds. | [`test_record_validation.py`](../backend/tests/catalog/test_record_validation.py): `test_decimal_validation_enforces_lexical_limits_and_exact_bounds`; [`test_fields.py`](../backend/tests/catalog/test_fields.py): `test_record_route_rejects_numeric_json_for_decimal_field`. |
+| Boolean, date and datetime | Exact value types and calendar validity. Designer-compatible datetime syntax and offset-equivalent instants use the current validator, not a blanket timezone-required claim. | [`test_record_validation.py`](../backend/tests/catalog/test_record_validation.py): `test_operational_date_and_datetime_constraints_match_designer_values`, `test_shared_record_field_validation_cases`; [`test_field_validation.py`](../backend/tests/sandbox_designs/test_field_validation.py): `test_datetime_values_accept_designer_syntax_and_compare_timezone_offsets_as_instants`. |
+| User | Assigned user UUIDs must remain eligible current module readers; picker results do not authorize a subsequent write. | [`test_user_field_integration.py`](../backend/tests/catalog/test_user_field_integration.py): `test_assignable_picker_and_record_writes_follow_current_module_readers`. |
+| Request schemas | Record request extras are rejected, not ignored. Departments/modules/fields expose read-only catalog routes; schema writes happen through Sandbox publish. | [`test_request_schema_contracts.py`](../backend/tests/catalog/test_request_schema_contracts.py): `test_write_schemas_accept_declared_inputs_and_reject_unknown_top_level_fields`, `test_unknown_write_fields_return_fastapi_422`; [`test_fields_api_contract.py`](../backend/tests/catalog/test_fields_api_contract.py): `test_schema_catalog_routes_are_read_only_in_the_application_contract`, `test_removed_schema_write_routes_are_not_served`. |
+| Publish and active structure | Publish validates active contiguous structure and impact on existing records. Record create requires an active module with at least one active field after its lock. | [`test_publication_planning_integration.py`](../backend/tests/sandbox_publications/test_publication_planning_integration.py): `test_preview_blocks_a_required_field_added_to_a_module_with_live_records`, `test_publish_keeps_active_positions_contiguous_after_closing_an_earlier_field`; [`test_publication_operational_access.py`](../backend/tests/sandbox_publications/test_publication_operational_access.py): `test_record_create_succeeds_right_after_the_publish_that_creates_the_module`. |
+| Null/required values and exact keys | Optional values accept null; required text rejects null/empty; unknown keys and relationship values cannot enter record data. | [`test_record_validation.py`](../backend/tests/catalog/test_record_validation.py): `test_optional_primitive_record_values_accept_null`, `test_required_text_record_values_reject_null_and_empty`, `test_record_data_validation_rejects_unknown_relationship_and_missing_required_values`. |
+| Full-value saves and closed fields | Supplying `data` replaces active values, drops omitted optional active values, and preserves omitted closed values. A changed type/value for a closed field conflicts. | [`test_dynamic_field_persistence_integration.py`](../backend/tests/catalog/test_dynamic_field_persistence_integration.py): `test_replacement_update_preserves_closed_values_drops_optional_active_values`; [`test_record_validation.py`](../backend/tests/catalog/test_record_validation.py): `test_record_patch_rejects_type_changed_closed_integer_value`. |
+| Error collection | Aggregate errors in deterministic phases with a 20-item cap and `truncated`; ordinary invalid values return 422 and closed mutations conflict. | [`test_record_validation.py`](../backend/tests/catalog/test_record_validation.py): `test_record_mutation_aggregates_errors_and_normalizes_active_values`, `test_record_mutation_caps_deterministic_errors`. |
+| JSONB and explicit-null decimal bounds | Accepted normalized values persist with their JSONB types. Explicit-null minimum/maximum means unbounded. | [`test_dynamic_field_persistence_integration.py`](../backend/tests/catalog/test_dynamic_field_persistence_integration.py): `test_router_persists_jsonb_types_and_canonical_decimal_values`; [`test_dynamic_field_database_integration.py`](../backend/tests/catalog/test_dynamic_field_database_integration.py): `test_migrated_explicit_null_decimal_config_is_an_unbounded_runtime_bound`. |
+| Lifecycle and create concurrency | Field close and record creation serialize on the parent module; zero active fields reject creation without rewriting stored records. | [`test_dynamic_field_concurrency_integration.py`](../backend/tests/catalog/test_dynamic_field_concurrency_integration.py): `test_field_close_and_record_create_serialize_on_parent_module_lock`; [`test_dynamic_field_persistence_integration.py`](../backend/tests/catalog/test_dynamic_field_persistence_integration.py): `test_record_create_rejects_module_whose_last_active_field_is_closed`. |
+| Relationships | Structural self/duplicate constraints are PostgreSQL-backed; cardinality and hidden-edge reservations are enforced by the service. | [`test_mutations.py`](../backend/tests/relationships_integration/test_mutations.py): `test_postgres_constraints_reject_self_and_active_duplicates`, `test_relationship_cardinality_rejects_a_second_edge`; [`test_relationships_cross_department_http.py`](../backend/tests/relationships_integration/test_relationships_cross_department_http.py): `test_cardinality_conflict_with_a_hidden_cross_department_link_reveals_no_record`. |
+| Relationship contention | A held NOWAIT lock may produce 503; after the winner commits a retry may produce a deterministic 409 with no losing mutation. | [`test_concurrency.py`](../backend/tests/relationships_integration/test_concurrency.py): `test_single_target_race_returns_unavailable_then_committed_conflict`. |
 
-## Running checks
+## Environment, safety and running checks
 
-Run focused field and record tests from `backend/` with the repository's pytest
-configuration. Database and cross-system checks use the disposable full-stack
-runner, which provisions its own database and identities, applies migrations,
-and cleans up its resources. See [Testing architecture](architecture/16-testing-architecture.md)
-for test layers, commands, isolation, and CI workflows.
+Use the [testing architecture](architecture/16-testing-architecture.md): focused
+pytest checks from `backend/` and the guarded disposable Supabase/PostgreSQL
+runner for database guarantees. It provisions an isolated per-run identity,
+applies the active migrations and rejects unrecognized targets. Never use a
+personal/customer database or SQLite. Fixture cleanup is limited to owned IDs.
+Concurrency checks use independent engines/connections/sessions and explicit
+locks, not sleeps or a shared SQLAlchemy session.
 
-## Enforcement boundaries
+Run only the affected batch while repairing; full coverage and real-stack
+acceptance belong to their owning gate. See [migration guidance](../backend/migrations/AGENTS.md).
+The explicit-null decimal behavior is verified at the active migrated state;
+archived migration numbering is not a current command target.
 
-### 1. FastAPI validation protects supported API writes
+## Enforcement boundaries and remaining limitations
 
-Record routes validate and normalize dynamic values before persistence. Invalid values are rejected without changing records; accepted values retain their normalized JSONB types.
-
-### 2. Direct database access is a trusted bypass boundary
-
-Direct SQL through the runtime role can store semantically invalid dynamic record JSON without creating an ORM audit row. Dynamic validation and audit capture belong to the application path.
-
-PostgreSQL separately enforces supported field types, nonnegative positions, and unique active names and positions.
-
-This is not an HTTP authorization bypass. It means runtime/owner credentials and PostgreSQL network access must remain private because dynamic semantics and ORM audit are application-level controls.
-
-### 3. Field lifecycle and record creation
-
-Field close/reopen transitions run under the parent module lock. Creating a record in a
-module with zero active fields returns `409` with the detail `Module has no active fields`.
-Existing record updates remain supported; data is not rewritten.
-
-### 4. Explicit-null decimal bounds
-
-Explicit `minimum`/`maximum: null` means unbounded. Runtime schema validation preserves
-nulls and compares only non-null canonical bounds. Applied migration 0015 is unchanged;
-no historical JSON rewrite is required.
-
-### 5. Concurrency outcomes are controlled
-
-Field uniqueness and single-target relationship contention have separate transient and committed-state outcomes:
-
-- contender during held lock: `503`;
-- retry after winner commit: `409`;
-- committed state must satisfy active uniqueness/cardinality;
-- failed contender produces no domain or audit mutation.
-
-These tests distinguish transient NOWAIT contention from committed-state conflicts and do not assume a predetermined thread winner.
-
-## Remaining risks and limitations
-
-- Requests have a 1 MiB total body limit. Separate record-key, module-field, text-byte and option-count limits are not defined.
-- Ordinary browser `number`/`int` values can lose JavaScript precision outside the safe integer range; exact values should use decimal strings.
-- Dynamic record audit redaction is UUID-keyed.
-- PostgreSQL relationship cardinality remains application-enforced rather than constrained directly by the database.
-- The suite uses router/service calls plus registered API and real PostgreSQL checks for deterministic concurrency. It does not run a live browser→gateway→FastAPI→database workflow.
+- Direct SQL is a trusted bypass boundary: it can evade FastAPI dynamic-value
+  semantics and ORM audit. PostgreSQL separately constrains field types,
+  positions, active uniqueness, relationship metadata and foreign keys. Keep
+  runtime/owner credentials and network access private. This is not an HTTP
+  authorization bypass or a claim that retired direct-SQL tests still exist.
+- Relationship cardinality is application-enforced, not a standalone database
+  cardinality constraint.
+- The total request body is bounded; this plan defines no separate module-field,
+  text-byte or option-count limits.
+- Browser numeric values can lose precision outside the safe integer range;
+  exact decimal values use strings.
+- Router/service and PostgreSQL tests prove their own boundaries. They do not
+  establish a live browser→gateway→FastAPI→database journey; use the real-stack
+  acceptance procedure for that claim.

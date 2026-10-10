@@ -27,6 +27,19 @@ from tests.auth.test_auth_router_contracts import _request, _role, _user
 pytestmark = pytest.mark.usefixtures("local_auth_router_settings")
 
 
+@pytest.fixture
+def committed_security_events(monkeypatch) -> list[tuple[str, str]]:
+    """Record independently committed security events without a database."""
+
+    events: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        auth_router.provider_actions.audit_service,
+        "append_committed_security_event",
+        lambda payload: events.append((payload.event_type, payload.outcome.value)),
+    )
+    return events
+
+
 def _action(monkeypatch, db, *, pending=False):
     user = _user(status=UserStatus.PENDING if pending else UserStatus.ACTIVE)
     user.supabase_user_id = uuid7()
@@ -69,7 +82,9 @@ def _payload():
     )
 
 
-def test_recovery_completes_with_provider_password_update_without_app_session(monkeypatch):
+def test_recovery_completes_with_provider_password_update_without_app_session(
+    monkeypatch, committed_security_events
+):
     db = Mock(spec=Session)
     user, client, _ = _action(monkeypatch, db)
     assert auth_router.complete_recovery(_payload(), _request(), db).status_code == 204
@@ -77,6 +92,7 @@ def test_recovery_completes_with_provider_password_update_without_app_session(mo
     client.update_password.assert_called_once_with("action-access", _payload().password)
     client.sign_out.assert_called_once_with("action-access", scope="global")
     assert user.status == UserStatus.ACTIVE.value
+    assert committed_security_events
 
 
 def test_invitation_completion_records_attempt_and_commits_success_with_activation(monkeypatch):
@@ -160,7 +176,9 @@ def test_recovery_cannot_change_password_for_an_ineligible_local_user(monkeypatc
     client.sign_out.assert_called_once_with("action-access", scope="local")
 
 
-def test_recovery_request_has_identical_response_for_known_and_unknown_emails(monkeypatch):
+def test_recovery_request_has_identical_response_for_known_and_unknown_emails(
+    monkeypatch, committed_security_events
+):
     db = Mock(spec=Session)
     client = Mock()
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: client)
@@ -169,11 +187,15 @@ def test_recovery_request_has_identical_response_for_known_and_unknown_emails(mo
         "recovery_request_permitted",
         lambda *_a, **_kw: True,
     )
+    recorded_per_email = []
     for email in ("known@example.test", "unknown@example.test"):
+        before = len(committed_security_events)
         assert (
             auth_router.request_recovery(RecoveryRequest(email=email), _request(), db).status_code
             == 204
         )
+        recorded_per_email.append(committed_security_events[before:])
+    assert recorded_per_email[0] == recorded_per_email[1]
     assert [call.args[0] for call in client.request_recovery.call_args_list] == [
         "known@example.test",
         "unknown@example.test",

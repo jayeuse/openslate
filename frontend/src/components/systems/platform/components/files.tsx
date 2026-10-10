@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import {
@@ -12,6 +13,11 @@ import {
 } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
+import { SearchSelect } from "@/components/ui/search-select";
+import {
+  useAccessCatalog,
+  catalogDepartments,
+} from "../../access/hooks/use-access-catalog";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { reportDone, reportError } from "@/lib/feedback";
 import { formatWorkspaceDateTime } from "@/lib/date-time";
@@ -55,7 +61,6 @@ import {
 } from "../adapters/library-files-api";
 import {
   isLibraryRefused,
-  libraryDepartmentsOptions,
   libraryFilesOptions,
   libraryRefusalOptions,
   platformKeys,
@@ -124,27 +129,38 @@ export default function Files() {
     identity.error instanceof ApiError &&
     [401, 403, 404].includes(identity.error.status);
   const identityReady = identity.data !== undefined && !identityRefused;
-  const departments = useQuery({
-    ...libraryDepartmentsOptions(),
+  const requested = searchParams.get("department");
+  const defaultId =
+    requested === null && identity.data?.role !== "admin"
+      ? identity.data?.access.find(
+          (entry) =>
+            entry.moduleId === null &&
+            openViewLevel(identity.data, entry.departmentId) !== null,
+        )?.departmentId
+      : undefined;
+  const catalog = useAccessCatalog({
+    kind: "departments",
+    deleted: "include",
+    selectedIds: requested ? [requested] : defaultId ? [defaultId] : [],
     enabled: identityReady,
   });
-  const catalogRefused =
-    departments.error instanceof ApiError &&
-    [401, 403, 404].includes(departments.error.status);
+  const departments = catalog.query;
+  const catalogRefused = catalog.denied;
   const choices = useMemo(
     () =>
       identityReady && !catalogRefused
-        ? (departments.data ?? []).filter(
+        ? catalogDepartments(catalog.combined).filter(
             (department) =>
               openViewLevel(identity.data, department.id) !== null,
           )
         : [],
-    [catalogRefused, departments.data, identity.data, identityReady],
+    [catalog.combined, catalogRefused, identity.data, identityReady],
   );
-  const requested = searchParams.get("department");
   const department =
     requested === null
-      ? choices[0]
+      ? defaultId
+        ? choices.find((item) => item.id === defaultId)
+        : choices[0]
       : choices.find((item) => item.id === requested);
   const level = department ? openViewLevel(identity.data, department.id) : null;
 
@@ -197,32 +213,54 @@ export default function Files() {
   }, [client]);
 
   const loading =
-    identity.isPending || (identityReady && departments.isPending);
+    identity.isPending ||
+    (identityReady &&
+      !catalogRefused &&
+      !department &&
+      (catalog.loading || catalog.selectedLoading));
   return (
     <Panel title="Department file library">
-      <Choice
+      <SearchSelect
         label="Department"
         value={department?.id ?? ""}
-        disabled={loading || !choices.length}
-        onChange={(event) => {
-          const id = event.currentTarget.value;
+        options={choices.map((item) => ({
+          value: item.id,
+          label: `${item.department_name}${item.is_deleted ? " (Closed)" : ""}`,
+        }))}
+        selectedOption={
+          department
+            ? {
+                value: department.id,
+                label: `${department.department_name}${department.is_deleted ? " (Closed)" : ""}`,
+              }
+            : undefined
+        }
+        search={catalog.search}
+        onSearchChange={catalog.onSearchChange}
+        loading={catalog.loading}
+        error={catalog.error}
+        onRetry={() => void catalog.retry()}
+        hasMore={catalog.hasMore}
+        onLoadMore={() => void catalog.loadMore()}
+        loadingMore={catalog.loadingMore}
+        disabled={
+          identity.isPending ||
+          !identityReady ||
+          (!department &&
+            !catalog.search &&
+            !catalog.loading &&
+            !catalog.error &&
+            choices.length === 0)
+        }
+        placeholder="Choose a department"
+        onValueChange={(id) => {
           if (!choices.some((item) => item.id === id)) return;
           const parameters = new URLSearchParams(searchParams.toString());
           parameters.set("section", "files");
           parameters.set("department", id);
           router.push(`/platform?${parameters}` as Route, { scroll: false });
         }}
-      >
-        <option value="" disabled>
-          Choose a department
-        </option>
-        {choices.map((item) => (
-          <option key={item.id} value={item.id}>
-            {item.department_name}
-            {item.is_deleted ? " (Closed)" : ""}
-          </option>
-        ))}
-      </Choice>
+      />
       {identity.isError ? (
         <RetryBand
           message="Your department access could not be checked. Retry before opening files."
@@ -230,12 +268,12 @@ export default function Files() {
           disabled={identity.isFetching}
           onRetry={() => void identity.refetch()}
         />
-      ) : departments.error ? (
+      ) : catalog.error ? (
         <RetryBand
-          message="Departments could not be loaded. Retry to load the complete list."
+          message="Departments could not be loaded. Retry to search again."
           retryLabel="Retry departments"
           disabled={departments.isFetching}
-          onRetry={() => void departments.refetch()}
+          onRetry={() => void catalog.retry()}
         />
       ) : null}
       <LoadingRegion
@@ -243,7 +281,7 @@ export default function Files() {
         label="Loading departments…"
         skeleton={<Skeleton className="h-24 w-full" />}
       >
-        {identityReady && !catalogRefused && departments.data ? (
+        {identityReady && !catalogRefused ? (
           department && level ? (
             <LibraryContents
               key={department.id}
@@ -290,6 +328,7 @@ function LibraryContents({
   const files = useQuery(libraryFilesOptions(department.id, criteria));
   const denied = useQuery(libraryRefusalOptions(department.id)).data;
   const workspace = useQuery(manageWorkspaceOptions());
+  const displayRegion = useDisplayRegion(workspace.data);
   const pending = useQuery<UploadCheck | null>({
     queryKey: uploadKey(department.id),
     queryFn: async () => null,
@@ -673,9 +712,9 @@ function LibraryContents({
   const metadata = (file: LibraryFile) => {
     const uploader = labels[file.creatorId];
     let added = "Date format unavailable";
-    if (workspace.data) {
+    if (displayRegion) {
       try {
-        added = formatWorkspaceDateTime(file.createdAt, workspace.data, {
+        added = formatWorkspaceDateTime(file.createdAt, displayRegion, {
           dateStyle: "medium",
           timeStyle: "short",
         });

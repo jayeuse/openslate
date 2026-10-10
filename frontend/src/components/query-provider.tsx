@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { UserPreferencesProvider } from "@/components/theme-provider";
 import { bindOpenViewAccess } from "@/components/systems/openview/adapters/openview-access";
+import { bindSandboxHistoryAccess } from "@/components/systems/sandbox/state/sandbox-history-access";
 
 function createQueryClient() {
   return new QueryClient({
@@ -32,6 +33,7 @@ export function AppQueryProvider({ children }: { children: ReactNode }) {
     const created = createQueryClient();
     // A new account starts with OpenView access unknown, not refused.
     bindOpenViewAccess(created);
+    bindSandboxHistoryAccess(created);
     return created;
   });
   return (

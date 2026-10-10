@@ -1,4 +1,5 @@
 import { useUserPreferences } from "@/components/theme-provider";
+import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import type {
   SandboxBinding,
@@ -252,7 +253,9 @@ export function Designer({
   ) => Promise<SandboxCommandResult<Design>>;
   onDraftStateChange: (dirty: boolean) => void;
 }) {
-  const { keyboardShortcuts } = useUserPreferences();
+  const { keyboardShortcuts, disabled: preferencesDisabled } =
+    useUserPreferences();
+  const shortcutsEnabled = keyboardShortcuts === true && !preferencesDisabled;
   const [viewPreferences, setViewPreferences] =
     useState<SandboxViewPreferences>(loadSandboxViewPreferences);
   // Narrow screens open on the canvas, the Sandbox's main surface.
@@ -518,6 +521,7 @@ export function Designer({
   useEffect(() => {
     function handleDesignerShortcut(event: KeyboardEvent): void {
       if (
+        pending ||
         event.defaultPrevented ||
         event.metaKey ||
         event.ctrlKey ||
@@ -526,22 +530,26 @@ export function Designer({
         document.querySelector('[role="dialog"], [role="alertdialog"]')
       )
         return;
-      if (event.key === "?" && keyboardShortcuts === true) {
+      if (event.key === SANDBOX_SHORTCUTS.help.key && shortcutsEnabled) {
         event.preventDefault();
         setCanvasHelpOpen(true);
         setPane("Canvas");
-      } else if (event.key === "0" && keyboardShortcuts === true) {
+      } else if (event.key === SANDBOX_SHORTCUTS.fit.key && shortcutsEnabled) {
         event.preventDefault();
         setPane("Canvas");
         requestAnimationFrame(fitCanvas);
-      } else if (event.key === "Delete" && keyboardTarget) {
+      } else if (
+        event.key === SANDBOX_SHORTCUTS.remove.key &&
+        shortcutsEnabled &&
+        keyboardTarget
+      ) {
         event.preventDefault();
         requestDelete(keyboardTarget);
       }
     }
     window.addEventListener("keydown", handleDesignerShortcut);
     return () => window.removeEventListener("keydown", handleDesignerShortcut);
-  }, [keyboardTarget, keyboardShortcuts]);
+  }, [keyboardTarget, shortcutsEnabled, pending]);
 
   function requestDelete(target: SandboxInspectorTarget): void {
     deleteFallbackId.current = null;
@@ -642,18 +650,18 @@ export function Designer({
   function bindingFor(
     target: SandboxInspectorTarget,
   ): SandboxLifecycleBinding | undefined {
-    if (target.kind === "link") return undefined;
+    const kind = target.kind === "link" ? "relationship" : target.kind;
     const field =
       target.kind === "field" ? projectedField(design, target.id) : undefined;
     const id = field?.field.id ?? target.id;
     const parent = field?.moduleId ?? null;
     const binding = bindings?.find(
       (item) =>
-        item.kind === target.kind &&
+        item.kind === kind &&
         item.sandbox_id === id &&
         item.parent_sandbox_id === parent,
     );
-    return binding ? { ...binding, kind: target.kind } : undefined;
+    return binding ? { ...binding, kind } : undefined;
   }
   function lifecycleState(target: SandboxInspectorTarget) {
     const binding = bindingFor(target);
@@ -685,6 +693,40 @@ export function Designer({
           "Load the closed live item and save or cancel your edits before reviewing permanent deletion.",
       };
     return onLifecycle(binding, "purge");
+  }
+  function relationshipLifecycleActions(
+    id: string,
+    name: string,
+    orientation: "outgoing" | "incoming",
+  ) {
+    const target = { kind: "link" as const, id };
+    if (!bindingFor(target)) return null;
+    const state = lifecycleState(target);
+    const verb = state.closed ? "Reopen" : "Close";
+    return (
+      <>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={state.disabled}
+          aria-label={`${verb} ${orientation} relationship ${name}`}
+          onClick={() => void toggleLifecycle(target)}
+        >
+          {verb} relationship
+        </Button>
+        {state.canPurge ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={state.disabled}
+            aria-label={`Permanently delete ${orientation} relationship ${name}`}
+            onClick={() => void purgeLifecycle(target)}
+          >
+            Permanently delete relationship
+          </Button>
+        ) : null}
+      </>
+    );
   }
   async function renameDepartment(
     id: string,
@@ -962,7 +1004,11 @@ export function Designer({
     design.departments.length === 0 && design.modules.length === 0;
   const atMinZoom = canvasView.zoom <= SANDBOX_ZOOM.min + 0.001;
   const atMaxZoom = canvasView.zoom >= SANDBOX_ZOOM.max - 0.001;
-  const currentDeleteImpact = deletionImpact(design, deleteTarget);
+  const currentDeleteImpact = deletionImpact(
+    design,
+    deleteTarget,
+    Boolean(deleteTarget && bindingFor(deleteTarget)),
+  );
   function open(kind: string) {
     setEditor(kind);
     setEditingRelationship(null);
@@ -2043,6 +2089,7 @@ export function Designer({
                       >
                         Delete relationship
                       </Button>
+                      {relationshipLifecycleActions(r.id, r.name, "outgoing")}
                     </div>
                   ))}
                 <h4 className="text-xs font-semibold">Incoming</h4>
@@ -2090,6 +2137,7 @@ export function Designer({
                         >
                           Delete relationship
                         </Button>
+                        {relationshipLifecycleActions(r.id, r.name, "incoming")}
                       </div>
                     </div>
                   ))}
@@ -2374,12 +2422,13 @@ export function Designer({
                     </p>
                     <p className="text-muted-foreground mt-1">
                       {keyboardShortcuts === true
-                        ? "Designer shortcuts: press 0 to fit the canvas and ? for this help. "
+                        ? `Designer shortcuts: press ${SANDBOX_SHORTCUTS.fit.key} to fit the canvas and ${SANDBOX_SHORTCUTS.help.key} for this help. `
                         : keyboardShortcuts === false
                           ? "Convenience shortcuts are off in Appearance. Use the Fit and View buttons. "
                           : "Convenience shortcuts are available once your account preferences load. "}
-                      Delete reviews removal of the selected item. Shortcuts
-                      ignore text editing and open dialogs.
+                      {SANDBOX_SHORTCUTS.remove.key} reviews removal of the
+                      selected item. Shortcuts ignore text editing and open
+                      dialogs.
                     </p>
                   </section>
                 ) : null}
@@ -2484,6 +2533,7 @@ export function Designer({
                     />
                   ) : null}
                   <SandboxCanvas
+                    keyboardShortcutsEnabled={shortcutsEnabled}
                     onTraceCleared={() =>
                       setCanvasNotice((current) =>
                         current === "trace" ? null : current,

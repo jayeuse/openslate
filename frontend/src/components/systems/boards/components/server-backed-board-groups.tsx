@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useId, useState, type FormEvent } from "react";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { ApiError } from "@/lib/api";
 import { Alert } from "@/components/ui/alert";
+import { SearchSelect } from "@/components/ui/search-select";
 import { Button } from "@/components/ui/button";
 import {
   NativeSelect,
@@ -71,12 +73,34 @@ export function ServerBackedBoardGroups({
   onChanged?: () => void;
 }) {
   const id = useId();
+  const actorId = useVerifiedWorkspaceUserId();
   const [reloadKey, setReloadKey] = useState(0);
   const [loaded, setLoaded] = useState<{ key: string; value: Loaded } | null>(
     null,
   );
   const [draft, setDraft] = useState<Entry[] | null>(null);
-  const [choices, setChoices] = useState<GroupChoice[] | null>(null);
+  const [choices, setChoices] = useState<{
+    key: string;
+    items: GroupChoice[];
+    nextOffset: number;
+    hasMore: boolean;
+  } | null>(null);
+  const [groupSearch, setGroupSearch] = useState("");
+  const [groupOffset, setGroupOffset] = useState<{
+    key: string;
+    offset: number;
+  } | null>(null);
+  const [groupRetry, setGroupRetry] = useState(0);
+  const [choicesLoading, setChoicesLoading] = useState(false);
+  const [choicesError, setChoicesError] = useState<string | null>(null);
+  const [selectedGroupState, setSelectedGroup] = useState<
+    (GroupChoice & { scope: string }) | null
+  >(null);
+  const scopeKey = `${actorId}:${boardId}`;
+  const selectedGroup =
+    selectedGroupState?.scope === scopeKey ? selectedGroupState : null;
+  const choicesKey = JSON.stringify([scopeKey, isAdmin, groupSearch.trim()]);
+  const offset = groupOffset?.key === choicesKey ? groupOffset.offset : 0;
   const [adding, setAdding] = useState<{
     groupId: string;
     level: BoardAccessLevel;
@@ -110,24 +134,62 @@ export function ServerBackedBoardGroups({
   useEffect(() => {
     if (!isAdmin) return;
     const controller = new AbortController();
-    listAccessGroups({
-      limit: 100,
-      sort_by: "name",
-      sort_order: "asc",
-      signal: controller.signal,
-    }).then(
-      (page) =>
-        setChoices(
-          page.items
-            .filter((group) => !group.is_deleted)
-            .map((group) => ({ id: group.id, name: group.name })),
-        ),
+    setChoicesLoading(true);
+    setChoicesError(null);
+    const timer = setTimeout(
       () => {
-        if (!controller.signal.aborted) setChoices([]);
+        void listAccessGroups({
+          limit: 25,
+          offset,
+          search: groupSearch.trim() || undefined,
+          sort_by: "name",
+          sort_order: "asc",
+          signal: controller.signal,
+        })
+          .then((page) => {
+            if (controller.signal.aborted) return;
+            const items = page.items
+              .filter((group) => !group.is_deleted)
+              .map((group) => ({ id: group.id, name: group.name }));
+            setChoices((current) => ({
+              key: choicesKey,
+              items:
+                offset > 0 && current?.key === choicesKey
+                  ? [
+                      ...new Map(
+                        [...current.items, ...items].map((item) => [
+                          item.id,
+                          item,
+                        ]),
+                      ).values(),
+                    ]
+                  : items,
+              nextOffset: page.pagination.offset + page.pagination.count,
+              hasMore: page.pagination.has_more,
+            }));
+            setChoicesLoading(false);
+          })
+          .catch((failure: unknown) => {
+            if (controller.signal.aborted) return;
+            if (
+              failure instanceof ApiError &&
+              [401, 403, 404].includes(failure.status)
+            ) {
+              setChoices(null);
+              setSelectedGroup(null);
+              setAdding({ groupId: "", level: "read" });
+            }
+            setChoicesError("Group choices could not be loaded. Retry.");
+            setChoicesLoading(false);
+          });
       },
+      groupSearch ? 200 : 0,
     );
-    return () => controller.abort();
-  }, [isAdmin]);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [choicesKey, groupSearch, groupRetry, isAdmin, offset]);
 
   const state: Loaded =
     loaded?.key === key ? loaded.value : { status: "loading" };
@@ -135,7 +197,8 @@ export function ServerBackedBoardGroups({
   const entries = draft ?? saved?.groups ?? [];
   const dirty = saved !== null && !sameEntries(entries, saved.groups);
   const editable = isAdmin && boardActive && saved !== null;
-  const available = (choices ?? []).filter(
+  const currentChoices = choices?.key === choicesKey ? choices : null;
+  const available = (currentChoices?.items ?? []).filter(
     (choice) => !entries.some((entry) => entry.groupId === choice.id),
   );
 
@@ -147,13 +210,17 @@ export function ServerBackedBoardGroups({
 
   function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const choice = available.find((item) => item.id === adding.groupId);
+    const choice =
+      available.find((item) => item.id === adding.groupId) ??
+      (selectedGroup?.id === adding.groupId ? selectedGroup : null);
+    if (entries.some((entry) => entry.groupId === adding.groupId)) return;
     if (!choice) return;
     change([
       ...entries,
       { groupId: choice.id, name: choice.name, level: adding.level },
     ]);
     setAdding({ groupId: "", level: "read" });
+    setSelectedGroup(null);
   }
 
   async function save() {
@@ -286,31 +353,48 @@ export function ServerBackedBoardGroups({
               className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end"
             >
               <div className="min-w-0 flex-1 space-y-1">
-                <label htmlFor={`${id}-group`} className="text-sm font-medium">
-                  Add a group
-                </label>
-                <NativeSelect
+                <SearchSelect
                   id={`${id}-group`}
-                  className="w-full [&_select]:min-h-11"
+                  label="Add a group"
                   value={adding.groupId}
-                  disabled={pending || choices === null}
-                  onChange={(event) =>
-                    setAdding({ ...adding, groupId: event.target.value })
+                  placeholder="Choose a group"
+                  options={available.map((choice) => ({
+                    value: choice.id,
+                    label: choice.name,
+                  }))}
+                  selectedOption={
+                    selectedGroup
+                      ? { value: selectedGroup.id, label: selectedGroup.name }
+                      : undefined
                   }
-                >
-                  <NativeSelectOption value="">
-                    {choices === null
-                      ? "Loading groups…"
-                      : available.length === 0
-                        ? "No other groups"
-                        : "Choose a group"}
-                  </NativeSelectOption>
-                  {available.map((choice) => (
-                    <NativeSelectOption key={choice.id} value={choice.id}>
-                      {choice.name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
+                  search={groupSearch}
+                  onSearchChange={(value) =>
+                    setGroupSearch(value.slice(0, 100))
+                  }
+                  loading={choicesLoading && offset === 0}
+                  loadingMore={choicesLoading && offset > 0}
+                  error={choicesError ?? undefined}
+                  onRetry={() => setGroupRetry((value) => value + 1)}
+                  hasMore={currentChoices?.hasMore}
+                  onLoadMore={() => {
+                    if (currentChoices?.hasMore && !choicesLoading)
+                      setGroupOffset({
+                        key: choicesKey,
+                        offset: currentChoices.nextOffset,
+                      });
+                  }}
+                  disabled={pending}
+                  onValueChange={(value) => {
+                    const choice =
+                      available.find((item) => item.id === value) ??
+                      (selectedGroup?.id === value ? selectedGroup : null);
+                    if (value && !choice) return;
+                    setSelectedGroup(
+                      choice ? { ...choice, scope: scopeKey } : null,
+                    );
+                    setAdding({ ...adding, groupId: value });
+                  }}
+                />
               </div>
               <div className="space-y-1">
                 <label htmlFor={`${id}-level`} className="text-sm font-medium">

@@ -1,7 +1,5 @@
 """Board-owned permanent deletion with complete child/work inventory."""
 
-import hashlib
-import json
 from typing import Annotated
 from uuid import UUID
 
@@ -11,7 +9,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import require_admin, require_fresh_exact_admin
-from app.core.base_model import BaseModel
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.systems.access.users.models import User
@@ -41,13 +38,17 @@ from app.systems.sandbox.lifecycle.exceptions import (
     LifecyclePurgePreconditionError,
 )
 from app.systems.sandbox.lifecycle.planner import canonical_lifecycle_digest
+from app.systems.sandbox.lifecycle.purge_support import (
+    PURGE_DISABLED_MESSAGE,
+    last_successful_backup_at,
+)
+from app.systems.sandbox.lifecycle.purge_support import purge_row_state as _row_state
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleImpactResponse,
     LifecycleMutationResponse,
     LifecycleOperation,
     LifecyclePurgePreviewResponse,
     LifecyclePurgeRequest,
-    LifecycleRowState,
     LifecycleTargetType,
 )
 from app.systems.sandbox.lifecycle.service import (
@@ -85,7 +86,7 @@ class BoardScopeFixed(LifecycleError):
 
 def _require_purge_enabled() -> None:
     if not get_settings().lifecycle_purge_enabled:
-        raise LifecyclePurgeDisabled("Permanent Board deletion is disabled")
+        raise LifecyclePurgeDisabled(PURGE_DISABLED_MESSAGE)
 
 
 def _require_project_board(db: Session, board_id: UUID) -> None:
@@ -101,23 +102,6 @@ def _require_project_board(db: Session, board_id: UUID) -> None:
             "Only project Boards can be permanently deleted; "
             "a department Board is deleted with its department"
         )
-
-
-def _row_state(row: BaseModel | ScheduledWork) -> LifecycleRowState:
-    # The impact carries no Board content, but its digest reacts to every retained
-    # column of the Board's rows.
-    state = {column.name: getattr(row, column.name) for column in row.__table__.columns}
-    fingerprint = hashlib.sha256(
-        json.dumps(state, sort_keys=True, separators=(",", ":"), default=str).encode()
-    ).hexdigest()
-    return LifecycleRowState(
-        entity_type=row.__tablename__,
-        entity_id=row.id,
-        is_deleted=row.is_deleted if isinstance(row, BaseModel) else False,
-        deleted_at=row.deleted_at if isinstance(row, BaseModel) else None,
-        updated_at=row.updated_at,
-        state_fingerprint=fingerprint,
-    )
 
 
 def _impact(
@@ -292,13 +276,14 @@ def preview_board_purge(
         _require_purge_enabled()
         require_fresh_exact_admin(db, user.id)
         _require_project_board(db, board_id)
-        impact, _, _ = _impact(db, user.id, board_id)
+        impact, board, _ = _impact(db, user.id, board_id)
         issued = issue_challenge(db, user.id, "purge", "board", board_id, impact.impact_digest)
         return LifecyclePurgePreviewResponse(
             impact=impact,
             token=issued.token,
             expires_at=issued.expires_at,
-            confirmation_name=str(board_id),
+            confirmation_name=board.name,
+            last_successful_backup_at=last_successful_backup_at(db),
         )
     except LifecycleError as exc:
         raise _error(exc) from exc
@@ -316,8 +301,11 @@ def purge_board(
     try:
         _require_purge_enabled()
         _require_project_board(db, board_id)
-        if payload.confirmation_name != str(board_id):
-            raise LifecycleConfirmationNameMismatch("Confirmation must match the Board ID")
+        board = db.get(Board, board_id)
+        if board is None:
+            raise LifecycleNotFound("Board not found")
+        if payload.confirmation_name != board.name:
+            raise LifecycleConfirmationNameMismatch("Confirmation must match the Board name")
         digest = challenge_impact_digest(db, payload.token, user.id, "purge", "board", board_id)
         challenge = verify_challenge(
             db,
@@ -330,6 +318,7 @@ def purge_board(
             user.email,
             payload.password,
         )
+        _require_purge_enabled()
         require_fresh_exact_admin(db, user.id)
         impact, board, children = _impact(db, user.id, board_id, lock=True)
         if impact.impact_digest != challenge.impact_digest:

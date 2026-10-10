@@ -2,7 +2,7 @@
 
 from typing import Any, cast
 
-from sqlalchemy import and_, literal, or_
+from sqlalchemy import and_, literal, or_, tuple_
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -12,12 +12,15 @@ from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.post_schemas import PostSort, PostView
 
 
-def list_spec(view: PostView) -> ListQuerySpec[PostSort]:
+def list_spec(view: PostView, *, pinned_first: bool) -> ListQuerySpec[PostSort]:
     source = BoardPostRevision if view is PostView.PUBLISHED else BoardPost
+    updated_order = (
+        tuple_(BoardPost.pinned, source.updated_at) if pinned_first else source.updated_at
+    )
     return ListQuerySpec(
         sort_fields={
             PostSort.CREATED_AT: cast(ColumnElement[Any], source.created_at),
-            PostSort.UPDATED_AT: cast(ColumnElement[Any], source.updated_at),
+            PostSort.UPDATED_AT: cast(ColumnElement[Any], updated_order),
             PostSort.TITLE: cast(ColumnElement[Any], source.title),
         },
         default_sort=PostSort.UPDATED_AT,

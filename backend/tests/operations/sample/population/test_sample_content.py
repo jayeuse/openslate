@@ -10,9 +10,11 @@ from typing import Any
 import httpx
 import pytest
 
+from app.systems.boards.widget_schemas import BoardWidgetWrite
 from operations.sample.client import SampleClient
+from operations.sample.packs.registry import get_pack
 from operations.sample.population.board_entries import create_board_event, create_board_post
-from operations.sample.population.boards import replace_project_board_groups
+from operations.sample.population.boards import _make_widgets, replace_project_board_groups
 from operations.sample.population.content import (
     SampleContentError,
     assert_empty_content,
@@ -163,6 +165,119 @@ def test_project_board_access_uses_admin_revisioned_group_replace(tmp_path: Path
         ("GET", f"/api/boards/{BOARD_ID}/groups"),
         ("PUT", f"/api/boards/{BOARD_ID}/groups"),
     ]
+
+
+@pytest.mark.parametrize("with_numeric", [True, False])
+def test_board_population_writes_standalone_widget_presentation(
+    tmp_path: Path, with_numeric: bool
+) -> None:
+    module_id = "00000000-0000-7000-8000-000000000020"
+    title_id = "00000000-0000-7000-8000-000000000021"
+    amount_id = "00000000-0000-7000-8000-000000000022"
+    refs = [
+        {"field_id": title_id, "expected_type": "text"},
+        {"field_id": amount_id, "expected_type": "number"},
+    ]
+    if not with_numeric:
+        refs = refs[:1]
+    expected = (
+        ("summary", "Operations snapshot", "M", None, "count", "bar"),
+        ("workload", "Status breakdown", "M", None, "count", "bar"),
+        ("records", "Recent records", "L", None, "count", "bar"),
+        (
+            "chart",
+            "Trend chart",
+            "M",
+            refs[1] if with_numeric else None,
+            "sum" if with_numeric else "count",
+            "line",
+        ),
+    )
+    revision = 7
+    saved: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal revision
+        if request.url.path == "/api/auth/login":
+            return _login(request)
+        if request.method == "GET":
+            assert request.url.path == f"/api/boards/{BOARD_ID}"
+            return httpx.Response(200, json={"id": BOARD_ID, "revision": revision})
+        assert (request.method, request.url.path) == ("POST", f"/api/boards/{BOARD_ID}/widgets")
+        BoardWidgetWrite.model_validate_json(request.content, strict=True)
+        kind, name, size, metric, aggregation, visualization = expected[len(saved)]
+        wanted = {
+            "name": name,
+            "widget_type": kind,
+            "module_id": module_id,
+            "size": size,
+            "pinned": False,
+            "chart_id": None,
+            "config": {
+                "version": 1,
+                "fields": refs,
+                "filters": [],
+                "logic": "and",
+                "aggregation": aggregation,
+                "metric": metric,
+                "visualization": visualization,
+                "refresh": "manual",
+            },
+        }
+        assert json.loads(request.content) == {"revision": revision, "widget": wanted}
+        widget = {
+            **wanted,
+            "id": f"00000000-0000-7000-8000-{31 + len(saved):012d}",
+            "board_id": BOARD_ID,
+            "position": len(saved),
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+        saved.append(widget)
+        revision += 1
+        return httpx.Response(
+            201,
+            headers={"X-Request-ID": widget["id"]},
+            json={"widget": widget, "board_revision": revision},
+        )
+
+    with _client(tmp_path, handler) as client:
+        assert client.login("sample@example.test", "synthetic-password").status_code == 200
+        count = _make_widgets(
+            client,
+            [
+                {
+                    "id": BOARD_ID,
+                    "logical_id": "department:finance",
+                    "board": {"id": BOARD_ID},
+                    "department_key": "finance",
+                }
+            ],
+            {"finance": {"id": DEPARTMENT_ID}},
+            {"fixture": {"id": module_id, "department_id": DEPARTMENT_ID}},
+            {
+                "fixture": [
+                    {
+                        "id": title_id,
+                        "module_id": module_id,
+                        "name": "Title",
+                        "type": "text",
+                        "position": 0,
+                    },
+                    {
+                        "id": amount_id,
+                        "module_id": module_id,
+                        "name": "Amount",
+                        "type": "number",
+                        "position": 1,
+                    },
+                ][: 2 if with_numeric else 1]
+            },
+            get_pack("harbor"),
+        )
+    assert count == 4 and revision == 11
+    assert [widget["size"] for widget in saved] == ["M", "M", "L", "M"]
+    assert all(widget["chart_id"] is None and widget["pinned"] is False for widget in saved)
 
 
 def test_board_post_and_event_use_current_revision_and_ui_payloads(tmp_path: Path) -> None:

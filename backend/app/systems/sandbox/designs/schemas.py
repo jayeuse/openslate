@@ -388,3 +388,9 @@ class VersionListResponse(StrictModel):
     count: int
     total: int
     has_more: bool = Field(alias="hasMore")
+    mutable_count: int = Field(ge=0, alias="mutableCount")
+    version_cap: int = Field(ge=1, alias="versionCap")
+
+
+class VersionPruneResponse(StrictModel):
+    deleted_count: int = Field(ge=0, alias="deletedCount")

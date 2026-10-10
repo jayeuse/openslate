@@ -68,7 +68,17 @@ async function installServerBoards(page: Page) {
         write: false,
         manage: false,
       });
-    if (path === `/api/boards/${boardId}/post-authors`) return reply(200, []);
+    if (path === `/api/boards/${boardId}/post-authors`)
+      return reply(200, {
+        items: [],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      });
     return reply(404, { detail: "Content route unavailable" });
   });
 }
@@ -181,15 +191,19 @@ test("a slow Board list shows its skeleton only after 300ms, and for at least 30
   // The frame already names the Board; the region still holds its skeleton.
   await expect(region).toHaveAttribute("aria-busy", "true");
   await page.clock.runFor(200);
+  // Count, never wait: a waiting read would block the paused clock it needs.
+  const settled = page.locator(
+    '[data-slot="loading-region"][aria-busy="false"]',
+  );
   await expect
     .poll(
       async () => {
         await page.clock.runFor(1);
-        return region.getAttribute("aria-busy");
+        return settled.count();
       },
       { intervals: [50] },
     )
-    .toBe("false");
+    .toBe(1);
   await expect(
     region.getByRole("region", { name: "Record summaries" }),
   ).toBeVisible();

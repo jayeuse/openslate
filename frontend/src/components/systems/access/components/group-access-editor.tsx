@@ -8,6 +8,12 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
+import { Input } from "@/components/ui/input";
+import {
+  useAccessCatalog,
+  catalogModules,
+  type AccessCatalogSearch,
+} from "../hooks/use-access-catalog";
 import { cn } from "@/lib/utils";
 
 import {
@@ -159,12 +165,14 @@ export function GroupAccessEditor({
   entries,
   departments,
   modules,
+  departmentSearch,
   disabled,
   onChange,
 }: {
   entries: readonly AccessGroupAccessEntry[];
   departments: readonly AccessDepartment[];
   modules: readonly AccessModule[];
+  departmentSearch: AccessCatalogSearch;
   disabled: boolean;
   onChange: (entries: AccessGroupAccessEntry[]) => void;
 }) {
@@ -184,58 +192,82 @@ export function GroupAccessEditor({
     });
   }
 
-  if (!rows.length)
-    return (
-      <p className="text-muted-foreground rounded-lg border p-4 text-sm">
-        There are no departments yet. Create departments in the Sandbox, then
-        give this group access to them.
-      </p>
-    );
-
   return (
-    <ul aria-label="Departments" className="flex flex-col gap-2">
-      {rows.map((row) => {
-        const department = draft[row.id] ?? { level: null, modules: {} };
-        const overrides = Object.keys(department.modules).length;
-        const open = expanded.has(row.id);
-        const inherited = department.level
-          ? `Same as department (${levelLabels[department.level]})`
-          : "Same as department (None)";
-        return (
-          <li key={row.id} className="bg-card min-w-0 rounded-lg border">
-            <div className="flex min-w-0 flex-col gap-2 p-3 sm:flex-row sm:items-center sm:gap-3">
-              <div className="min-w-0 flex-1">
-                <p
-                  id={`${id}-${row.id}-name`}
-                  className="text-sm font-medium break-words"
-                >
-                  {row.name}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  {row.modules.length === 0
-                    ? "No modules"
-                    : overrides
-                      ? overrides === 1
-                        ? `1 of ${row.modules.length} ${row.modules.length === 1 ? "module has" : "modules has"} its own level`
-                        : `${overrides} of ${row.modules.length} modules have their own level`
-                      : `${row.modules.length} ${row.modules.length === 1 ? "module" : "modules"}, same as department`}
-                </p>
-              </div>
-              <LevelSelect
-                id={`${id}-${row.id}-level`}
-                label={`${row.name} level`}
-                value={department.level}
-                emptyLabel="None"
-                disabled={disabled}
-                onChange={(level) =>
-                  onChange(
-                    entriesFromAccessDraft(
-                      setDepartmentLevel(draft, row.id, level),
-                    ),
-                  )
-                }
-              />
-              {row.modules.length ? (
+    <div className="space-y-3">
+      <Input
+        type="search"
+        aria-label="Search departments"
+        className="min-h-11"
+        value={departmentSearch.search}
+        onChange={(event) =>
+          departmentSearch.onSearchChange(event.target.value)
+        }
+      />
+      {departmentSearch.loading ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading departments…
+        </p>
+      ) : null}
+      {departmentSearch.error ? (
+        <div role="alert" className="space-y-2 text-sm">
+          <p>{departmentSearch.error}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={() => void departmentSearch.retry()}
+          >
+            Retry departments
+          </Button>
+        </div>
+      ) : null}
+      {!rows.length && !departmentSearch.loading && !departmentSearch.error ? (
+        <p className="text-muted-foreground text-sm">
+          {departmentSearch.search
+            ? "No departments match. Try another search."
+            : "There are no departments yet. Create departments in the Sandbox, then give this group access to them."}
+        </p>
+      ) : null}
+      <ul aria-label="Departments" className="flex flex-col gap-2">
+        {(departmentSearch.denied ? [] : rows).map((row) => {
+          const department = draft[row.id] ?? { level: null, modules: {} };
+          const overrides = Object.keys(department.modules).length;
+          const open = expanded.has(row.id);
+          const inherited = department.level
+            ? `Same as department (${levelLabels[department.level]})`
+            : "Same as department (None)";
+          return (
+            <li key={row.id} className="bg-card min-w-0 rounded-lg border">
+              <div className="flex min-w-0 flex-col gap-2 p-3 sm:flex-row sm:items-center sm:gap-3">
+                <div className="min-w-0 flex-1">
+                  <p
+                    id={`${id}-${row.id}-name`}
+                    className="text-sm font-medium break-words"
+                  >
+                    {row.name}
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    {overrides === 0
+                      ? "No module overrides"
+                      : overrides === 1
+                        ? "1 module has its own level"
+                        : `${overrides} modules have their own level`}
+                  </p>
+                </div>
+                <LevelSelect
+                  id={`${id}-${row.id}-level`}
+                  label={`${row.name} level`}
+                  value={department.level}
+                  emptyLabel="None"
+                  disabled={disabled}
+                  onChange={(level) =>
+                    onChange(
+                      entriesFromAccessDraft(
+                        setDepartmentLevel(draft, row.id, level),
+                      ),
+                    )
+                  }
+                />
                 <Button
                   type="button"
                   variant="ghost"
@@ -254,48 +286,143 @@ export function GroupAccessEditor({
                     )}
                   />
                 </Button>
+              </div>
+              {open ? (
+                <DepartmentModules
+                  regionId={`${id}-${row.id}-modules`}
+                  departmentId={row.id}
+                  departmentName={row.name}
+                  entries={entries}
+                  disabled={disabled || Boolean(departmentSearch.error)}
+                  inherited={inherited}
+                  onChange={onChange}
+                />
               ) : null}
-            </div>
-            {row.modules.length && open ? (
-              <ul
-                id={`${id}-${row.id}-modules`}
-                aria-label={`Modules in ${row.name}`}
-                className="bg-muted/40 flex flex-col gap-2 border-t p-3 sm:pl-6"
-              >
-                {row.modules.map((module) => (
-                  <li
-                    key={module.id}
-                    className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3"
-                  >
-                    <p className="min-w-0 flex-1 text-sm break-words">
-                      {module.name}
-                    </p>
-                    <LevelSelect
-                      id={`${id}-${module.id}-level`}
-                      label={`${module.name} level`}
-                      value={department.modules[module.id] ?? null}
-                      emptyLabel={inherited}
-                      disabled={disabled}
-                      onChange={(level) =>
-                        onChange(
-                          entriesFromAccessDraft(
-                            setModuleLevel(draft, row.id, module.id, level),
-                          ),
-                        )
-                      }
-                    />
-                    {/* Keeps module selects aligned with the department select. */}
-                    <span
-                      aria-hidden="true"
-                      className="hidden sm:block sm:w-32"
-                    />
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {departmentSearch.hasMore ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={departmentSearch.loadingMore}
+          onClick={() => void departmentSearch.loadMore()}
+        >
+          Load more departments
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function DepartmentModules({
+  regionId,
+  departmentId,
+  departmentName,
+  entries,
+  disabled,
+  inherited,
+  onChange,
+}: {
+  regionId: string;
+  departmentId: string;
+  departmentName: string;
+  entries: readonly AccessGroupAccessEntry[];
+  disabled: boolean;
+  inherited: string;
+  onChange: (entries: AccessGroupAccessEntry[]) => void;
+}) {
+  const id = useId();
+  const search = useAccessCatalog({
+    kind: "modules",
+    departmentId,
+    selectedIds: entries.flatMap((entry) =>
+      entry.department_id === departmentId && entry.module_id
+        ? [entry.module_id]
+        : [],
+    ),
+  });
+  const modules = catalogModules(search.combined).filter(
+    (module) => module.department_id === departmentId,
+  );
+  const draft = accessDraftFromEntries(entries);
+  const department = draft[departmentId] ?? { level: null, modules: {} };
+  return (
+    <div className="bg-muted/40 space-y-3 border-t p-3 sm:pl-6">
+      <Input
+        type="search"
+        aria-label={`Search modules in ${departmentName}`}
+        className="min-h-11"
+        value={search.search}
+        onChange={(event) => search.onSearchChange(event.target.value)}
+      />
+      {search.loading ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading modules…
+        </p>
+      ) : null}
+      {search.error ? (
+        <div role="alert" className="space-y-2 text-sm">
+          <p>{search.error}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={() => void search.retry()}
+          >
+            Retry modules
+          </Button>
+        </div>
+      ) : null}
+      {!modules.length && !search.loading && !search.error ? (
+        <p className="text-muted-foreground text-sm">
+          {search.search ? "No modules match." : "No modules."}
+        </p>
+      ) : null}
+      <ul
+        id={regionId}
+        aria-label={`Modules in ${departmentName}`}
+        className="flex flex-col gap-2"
+      >
+        {modules.map((module) => (
+          <li
+            key={module.id}
+            className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3"
+          >
+            <p className="min-w-0 flex-1 text-sm break-words">
+              {module.module_name}
+            </p>
+            <LevelSelect
+              id={`${id}-${module.id}-level`}
+              label={`${module.module_name} level`}
+              value={department.modules[module.id] ?? null}
+              emptyLabel={inherited}
+              disabled={disabled || Boolean(search.error)}
+              onChange={(level) =>
+                onChange(
+                  entriesFromAccessDraft(
+                    setModuleLevel(draft, departmentId, module.id, level),
+                  ),
+                )
+              }
+            />
+            <span aria-hidden="true" className="hidden sm:block sm:w-32" />
           </li>
-        );
-      })}
-    </ul>
+        ))}
+      </ul>
+      {search.hasMore ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={search.loadingMore}
+          onClick={() => void search.loadMore()}
+        >
+          Load more modules
+        </Button>
+      ) : null}
+    </div>
   );
 }

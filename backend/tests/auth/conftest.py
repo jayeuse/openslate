@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.common.dependencies.auth as auth_dependencies
+import app.systems.access.auth.request_security as request_security
 import app.systems.access.auth.router as auth_router
 from app.systems.access.identity import mfa, provider_actions, provider_login, provider_sessions
 from app.systems.access.users import sessions_router
@@ -54,7 +55,7 @@ def unit_workspace_policy(request, monkeypatch: pytest.MonkeyPatch) -> Workspace
 @pytest.fixture
 def local_auth_router_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        auth_router,
+        request_security,
         "get_settings",
         lambda: SimpleNamespace(public_origin="https://app.example.test"),
     )

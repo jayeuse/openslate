@@ -1,5 +1,6 @@
 import { Alert } from "@/components/ui/alert";
-import type { LifecycleImpact } from "@/lib/api";
+import type { LifecyclePurgePreview } from "@/lib/lifecycle";
+import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 
 const entityLabels: Record<string, readonly [string, string]> = {
   boards: ["Board", "Boards"],
@@ -30,6 +31,7 @@ const entityLabels: Record<string, readonly [string, string]> = {
   report_runs: ["report run", "report runs"],
   report_run_rows: ["report result", "report results"],
   dashboard_widgets: ["Dashboard widget", "Dashboard widgets"],
+  charts: ["chart", "charts"],
   record_triggers: ["trigger", "triggers"],
   record_trigger_conditions: ["trigger condition", "trigger conditions"],
   record_trigger_actions: ["trigger action", "trigger actions"],
@@ -40,7 +42,10 @@ const entityLabels: Record<string, readonly [string, string]> = {
   sandbox_bindings: ["design binding", "design bindings"],
 };
 
-type LifecyclePurgeReviewProps = { impact: LifecycleImpact };
+type LifecyclePurgeReviewProps = {
+  preview: LifecyclePurgePreview;
+  region?: WorkspaceRegion;
+};
 
 function impactGroup(entityType: string): string {
   return entityType === "record_trigger_events" ||
@@ -50,7 +55,11 @@ function impactGroup(entityType: string): string {
 }
 
 /** The same review of server-owned impact precedes each target's confirmation. */
-export function LifecyclePurgeReview({ impact }: LifecyclePurgeReviewProps) {
+export function LifecyclePurgeReview({
+  preview,
+  region = { locale: "en-US", timezone: "UTC" },
+}: LifecyclePurgeReviewProps) {
+  const { impact, last_successful_backup_at } = preview;
   const counts = new Map<string, number>();
   for (const row of impact.rows) {
     const group = impactGroup(row.entity_type);
@@ -70,6 +79,12 @@ export function LifecyclePurgeReview({ impact }: LifecyclePurgeReviewProps) {
     <div className="space-y-3">
       <p className="text-sm" role="status">
         {summary}
+      </p>
+      <p className="text-muted-foreground text-sm break-words">
+        Last successful backup:{" "}
+        {last_successful_backup_at === null
+          ? "No successful backup recorded."
+          : `${formatWorkspaceDateTime(last_successful_backup_at, region)} · ${region.timezone}`}
       </p>
       {impact.external_impacts.length > 0 ? (
         <div className="space-y-2 text-sm">

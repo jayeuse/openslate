@@ -17,6 +17,9 @@ const routes = [
   "/manage",
   "/platform",
   "/settings/appearance",
+  "/profile",
+  "/auth/email-change",
+  "/",
 ];
 
 export default async function warmRoutes(config: FullConfig): Promise<void> {

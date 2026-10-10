@@ -1,13 +1,13 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import {
   useWorkspaceNavigationGuard,
+  useWorkspaceNavigationRequest,
   type WorkspaceNavigationGuard,
 } from "@/components/workspace-navigation-guard";
 import ImportExport from "./components/import-export";
-import Account from "./components/account";
 import Notifications from "./components/notifications";
 import Search from "./components/search";
 import Files from "./components/files";
@@ -38,6 +38,8 @@ function platformSectionFromSearch(
 
 export default function Platform() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const requestNavigation = useWorkspaceNavigationRequest();
   const [hash, setHash] = useState(() =>
     typeof window === "undefined" ? "" : window.location.hash,
   );
@@ -63,25 +65,25 @@ export default function Platform() {
     return () => window.removeEventListener("hashchange", syncHash);
   }, []);
 
+  useEffect(() => {
+    if (tab !== "Account") return;
+    const replace = () => router.replace("/profile#security");
+    if (requestNavigation("/profile#security", replace)) replace();
+  }, [tab, router, requestNavigation]);
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Platform"
-        description="Search, files, notifications, import and export, and your account."
+        description="Search, files, notifications, and import and export."
       />
       {tab === "Account" ? (
-        <p
-          role="note"
-          aria-label="Account data"
-          className="text-muted-foreground -mt-4 text-sm"
-        >
-          Password, device sessions, and theme use your signed-in account.
+        <p role="status" className="text-muted-foreground text-sm">
+          Opening your profile…
         </p>
       ) : null}
       {tab === "Import & export" ? (
         <ImportExport onNavigationGuardChange={registerImportGuard} />
-      ) : tab === "Account" ? (
-        <Account />
       ) : tab === "Search" ? (
         <Search query={query} onQueryChange={setQuery} />
       ) : tab === "Files" ? (

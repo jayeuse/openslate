@@ -1,7 +1,6 @@
 """One-shot parser isolation; no provider access and no durable filesystem state."""
 
 import os
-import resource
 import subprocess
 import sys
 from pathlib import PurePosixPath
@@ -12,7 +11,6 @@ from app.systems.platform.files.validation import (
     MIME,
     ValidatedContent,
     invalid,
-    validate_content,
 )
 
 
@@ -25,7 +23,7 @@ def validate_bounded(filename: str, content: bytes, *, logo: bool = False) -> Va
             [
                 sys.executable,
                 "-m",
-                "app.systems.platform.files.validation_worker",
+                "app.systems.platform.files.validation_child",
                 extension,
                 "logo" if logo else "document",
             ],
@@ -44,17 +42,3 @@ def validate_bounded(filename: str, content: bytes, *, logo: bool = False) -> Va
         raise invalid()
     return ValidatedContent(result.stdout, MIME[extension])
 
-
-def main() -> int:
-    # Bound CPU and address space even if a third-party parser loops or expands input.
-    resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-    if sys.platform == "linux":
-        resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
-    content = sys.stdin.buffer.read(MAX_BYTES + 1)
-    validated = validate_content("file" + sys.argv[1], content, logo=sys.argv[2] == "logo")
-    sys.stdout.buffer.write(validated.content)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

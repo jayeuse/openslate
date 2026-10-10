@@ -1,5 +1,7 @@
 "use client";
 
+import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -49,10 +51,10 @@ import type {
 } from "./state/commands";
 import {
   createSandboxVersion,
+  pruneSandboxVersions,
   deleteSandboxVersion,
   getSandboxVersion,
   importSandboxBundle,
-  listAllSandboxVersions,
   listSandboxTriggerRuns,
   loadSandboxDocument,
   replaceSandboxDocument,
@@ -85,7 +87,13 @@ import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
 import { SandboxLifecycleDialog } from "./components/lifecycle-dialog";
-import { sandboxBindingsOptions, sandboxKeys } from "./state/sandbox-queries";
+import {
+  sandboxBindingsOptions,
+  sandboxKeys,
+  sandboxVersionPageOptions,
+} from "./state/sandbox-queries";
+import { useSandboxHistoryAccess } from "./state/sandbox-history-access";
+import type { VersionCapacityActions } from "./components/version-capacity-banner";
 import {
   confirmSandboxLifecycle,
   getSandboxBindings,
@@ -287,7 +295,7 @@ export default function SandboxPage() {
       setLifecycleRecovery(false);
     }
   }, [purgeEnabled, lifecycleRequest]);
-  const [versions, setVersions] = useState<SandboxVersion[]>([]);
+  const [versionsRefreshKey, setVersionsRefreshKey] = useState(0);
   const [testRuns, setTestRuns] = useState<SandboxTestRun[]>([]);
   const [triggerRuns, setTriggerRuns] = useState<SandboxTriggerRun[]>([]);
   const [triggerActivity, setTriggerActivity] = useState({
@@ -297,6 +305,15 @@ export default function SandboxPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [pending, setPending] = useState(false);
+  const [versionRecovery, setVersionRecovery] = useState(false);
+  const historyAccess = useSandboxHistoryAccess();
+  const capacityRead = useQuery({
+    ...sandboxVersionPageOptions(
+      { limit: 25, offset: 0, search: undefined, kind: undefined },
+      versionsRefreshKey,
+    ),
+    enabled: session !== null && !historyAccess.denied,
+  });
   const [message, setMessage] = useState("");
   const [feedbackError, setFeedbackError] = useState("");
   // Bumped by each successful Publish; the look's title signature plays once.
@@ -311,7 +328,11 @@ export default function SandboxPage() {
   const [publicationPending, setPublicationPending] = useState(false);
   const [testPending, setTestPending] = useState(false);
   const [sandboxGeneration, setSandboxGeneration] = useState(0);
-  const commandBusy = pending || lifecycleRequest !== null || lifecycleRecovery;
+  const commandBusy =
+    pending ||
+    lifecycleRequest !== null ||
+    lifecycleRecovery ||
+    versionRecovery;
   const bindingMismatch = Boolean(
     session &&
     bindingsQuery.data &&
@@ -365,7 +386,7 @@ export default function SandboxPage() {
   const status = publishStatus(session, design, Boolean(conflict));
 
   const refreshVersions = useCallback(async () => {
-    setVersions(await listAllSandboxVersions());
+    setVersionsRefreshKey((value) => value + 1);
   }, []);
   const refreshTriggerActivity = useCallback(async () => {
     setTriggerActivity({ loading: true, error: "" });
@@ -390,18 +411,123 @@ export default function SandboxPage() {
     );
     await refreshVersions();
   }, [refreshVersions]);
+  const refreshCapacity = useCallback(async () => {
+    const nextKey = versionsRefreshKey + 1;
+    const [response] = await Promise.all([
+      loadSandboxDocument(),
+      queryClient.fetchQuery({
+        ...sandboxVersionPageOptions(
+          { limit: 25, offset: 0, search: undefined, kind: undefined },
+          nextKey,
+        ),
+        staleTime: 0,
+      }),
+      queryClient.refetchQueries(
+        { queryKey: ["sandbox", "versions"], type: "active" },
+        { throwOnError: true },
+      ),
+    ]);
+    setSession((current) =>
+      current
+        ? syncSandboxDocumentMetadata(current, response)
+        : openSandboxDocumentSession(response),
+    );
+    setVersionsRefreshKey(nextKey);
+  }, [queryClient, versionsRefreshKey]);
+  const retryCapacity = useCallback(async () => {
+    if (
+      commandPending.current ||
+      lifecycleLock.current ||
+      testPending ||
+      publicationPending
+    )
+      return;
+    commandPending.current = true;
+    setPending(true);
+    try {
+      await refreshCapacity();
+      setVersionRecovery(false);
+      setFeedbackError("");
+    } catch (error) {
+      setVersionRecovery(true);
+      setFeedbackError(commandFailure(error).error);
+    } finally {
+      commandPending.current = false;
+      setPending(false);
+    }
+  }, [refreshCapacity, testPending, publicationPending]);
+  const pruneVersions = useCallback(async (): Promise<
+    SandboxCommandResult<number>
+  > => {
+    if (!session) return sandboxStillLoading();
+    if (
+      commandPending.current ||
+      lifecycleLock.current ||
+      commandBusy ||
+      designerDraftDirty ||
+      triggerDraft.dirty ||
+      triggerDraft.pending ||
+      testPending ||
+      publicationPending ||
+      conflict ||
+      historyAccess.denied ||
+      !capacityRead.isSuccess ||
+      capacityRead.isFetching ||
+      capacityRead.error ||
+      capacityRead.data.mutableCount < 45
+    )
+      return {
+        ok: false,
+        error:
+          "Load current version capacity and finish the current Sandbox action before deleting checkpoints.",
+      };
+    commandPending.current = true;
+    setPending(true);
+    try {
+      const result = await pruneSandboxVersions({
+        expectedRevision: session.revision,
+      });
+      await refreshCapacity();
+      setVersionRecovery(false);
+      setMessage(
+        `${result.deletedCount} old version${result.deletedCount === 1 ? "" : "s"} deleted.`,
+      );
+      return { ok: true, value: result.deletedCount };
+    } catch (error) {
+      // A response or readback failure can follow a committed mutation. Hold
+      // writes until explicit Retry reloads both revision and capacity.
+      setVersionRecovery(true);
+      return commandFailure(error);
+    } finally {
+      commandPending.current = false;
+      setPending(false);
+    }
+  }, [
+    session,
+    commandBusy,
+    designerDraftDirty,
+    triggerDraft,
+    testPending,
+    publicationPending,
+    conflict,
+    historyAccess.denied,
+    capacityRead.isSuccess,
+    capacityRead.isFetching,
+    capacityRead.error,
+    capacityRead.data,
+    refreshCapacity,
+  ]);
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError("");
     void queryClient.invalidateQueries({ queryKey: sandboxKeys.bindings });
     try {
-      const [document, versionItems, testPage] = await Promise.all([
+      const [document, testPage] = await Promise.all([
         loadSandboxDocument(),
-        listAllSandboxVersions(),
         listSandboxTests({ limit: 50 }),
       ]);
       setSession(openSandboxDocumentSession(document));
-      setVersions(versionItems);
+      setVersionsRefreshKey((value) => value + 1);
       setTestRuns(testPage.items);
     } catch (error) {
       setLoadError(commandFailure(error).error);
@@ -711,7 +837,12 @@ export default function SandboxPage() {
       if (section !== "Build" || commandBusy || conflict) return;
       if (
         (!event.metaKey && !event.ctrlKey) ||
-        !["z", "y"].includes(event.key.toLowerCase())
+        !(
+          [
+            SANDBOX_SHORTCUTS.undo.key,
+            SANDBOX_SHORTCUTS.redo.key,
+          ] as readonly string[]
+        ).includes(event.key.toLowerCase())
       )
         return;
       if (
@@ -724,7 +855,9 @@ export default function SandboxPage() {
       if (document.querySelector("[role='dialog'], [role='alertdialog']"))
         return;
       event.preventDefault();
-      void (event.key.toLowerCase() === "y" || event.shiftKey
+      void (event.key.toLowerCase() === SANDBOX_SHORTCUTS.redo.key ||
+      (event.key.toLowerCase() === SANDBOX_SHORTCUTS.redo.alternate.key &&
+        event.shiftKey === SANDBOX_SHORTCUTS.redo.alternate.shift)
         ? redo()
         : undo());
     }
@@ -946,6 +1079,33 @@ export default function SandboxPage() {
         </Alert>
       </section>
     );
+  const versionCapacity: VersionCapacityActions = {
+    state:
+      versionRecovery || historyAccess.denied || capacityRead.error
+        ? { status: "unavailable" }
+        : capacityRead.isPending || capacityRead.isFetching
+          ? { status: "loading" }
+          : capacityRead.isSuccess
+            ? {
+                status: "ready",
+                mutableCount: capacityRead.data.mutableCount,
+                versionCap: capacityRead.data.versionCap,
+              }
+            : { status: "unavailable" },
+    pending:
+      loading ||
+      pending ||
+      lifecycleRequest !== null ||
+      lifecycleRecovery ||
+      publicationPending ||
+      Boolean(conflict) ||
+      designerDraftDirty ||
+      testPending ||
+      triggerDraft.dirty ||
+      triggerDraft.pending,
+    onRetry: retryCapacity,
+    onPrune: pruneVersions,
+  };
   return (
     <section
       data-sandbox-page
@@ -1085,6 +1245,8 @@ export default function SandboxPage() {
               Review &amp; Publish
             </Button>
             <SandboxHeaderActions
+              versionsRefreshKey={versionsRefreshKey}
+              versionCapacity={versionCapacity}
               pending={
                 loading ||
                 commandBusy ||
@@ -1224,7 +1386,8 @@ export default function SandboxPage() {
         ) : null}
         {section === "History" ? (
           <VersionsWorkspace
-            versions={versions}
+            versionCapacity={versionCapacity}
+            refreshKey={versionsRefreshKey}
             getVersion={async (id) => {
               try {
                 return {

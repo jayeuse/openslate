@@ -4,6 +4,13 @@ from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 
 from app.common.dependencies import CurrentIdentity
+from app.core.config import get_settings
+from app.core.config.development import browser_origin_is_permitted
+
+
+def require_browser_origin(request: Request) -> None:
+    if not browser_origin_is_permitted(get_settings(), request.headers.get("origin")):
+        raise HTTPException(status_code=403, detail="Invalid request origin")
 
 
 def source(request: Request) -> str | None:

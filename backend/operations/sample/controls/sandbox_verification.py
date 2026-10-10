@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from typing import Any, cast
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient
 from operations.sample.controls.sandbox import (
@@ -108,6 +110,7 @@ def verify_sandbox_controls(
         return {"sandbox_test_runs_verified": 0, "sandbox_temporary_versions_removed": 0}, issues
     operations = {action.values.get("operation"): action for action in actions}
     expected_operations = {
+        "prune_versions",
         "create_checkpoint",
         "update_checkpoint",
         "delete_checkpoint",
@@ -125,6 +128,13 @@ def verify_sandbox_controls(
     round_trip = results.get(import_action.key, {}) if import_action is not None else {}
     if round_trip.get("document_round_trip") is not True:
         issues.append("Sandbox export and import did not preserve the document")
+
+    from operations.sample.controls.sandbox_export import validate_history_export_reads
+
+    try:
+        validate_history_export_reads(round_trip.get("history_export_reads"), admin_id)
+    except (ValidationError, ValueError, TypeError, KeyError):
+        issues.append("Sandbox history export read proof was missing or changed")
 
     version_ids: dict[str, str] = {}
     for operation, key in (
@@ -197,10 +207,15 @@ def verify_sandbox_controls(
         admin, dataset, actions, results, manifest, admin_id, versions
     )
     issues.extend(lifecycle_issues)
+    from operations.sample.controls.version_prune_verification import verify_version_prune
+
+    prune_counts, prune_issues = verify_version_prune(admin, dataset, manifest, admin_id)
+    issues.extend(prune_issues)
     return {
         "sandbox_test_runs_verified": verified_tests,
         "sandbox_temporary_versions_removed": removed_versions,
         **lifecycle_counts,
+        **prune_counts,
     }, issues
 
 

@@ -40,6 +40,7 @@ import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import ManageAudit from "./components/audit";
+import ManageJobs from "./components/jobs";
 import {
   initialManageSettings,
   type ManageSection,
@@ -90,7 +91,8 @@ import {
 import { UpdatesPanel } from "./components/updates-panel";
 import { LicensingPanel } from "./components/licensing-panel";
 
-type ViewTab = "Organization" | "Audit" | "Backup" | "Updates & licensing";
+type ViewTab =
+  "Organization" | "Audit" | "Backup" | "Jobs" | "Updates & licensing";
 type LogoDraft =
   | { kind: "new" | "reservation-unknown"; file: File }
   | { kind: "candidate"; file: File; candidate: WorkspaceLogoFile }
@@ -169,6 +171,7 @@ const manageTabs: readonly ViewTab[] = [
   "Organization",
   "Audit",
   "Backup",
+  "Jobs",
   "Updates & licensing",
 ];
 
@@ -446,19 +449,23 @@ function ManageContent() {
       ? organizationReadOnly
         ? "Only an administrator can change these settings."
         : "Settings save to the organization."
-      : tab === "Audit"
-        ? "Audit entries are loaded from your organization."
-        : recoveryView
-          ? "Backup policy and backup history are loaded from your server."
-          : "The running version and the latest release check come from your server. No license is required.";
+      : tab === "Jobs"
+        ? "Job state and retries come from your server."
+        : tab === "Audit"
+          ? "Audit entries are loaded from your organization."
+          : recoveryView
+            ? "Backup policy and backup history are loaded from your server."
+            : "The running version and the latest release check come from your server. No license is required.";
   const pageDescription =
     tab === "Organization"
       ? "Make this workspace feel like your organization."
-      : tab === "Audit"
-        ? "See who changed what, then inspect the details."
-        : tab === "Updates & licensing"
-          ? "Your running version and license status, together in one place."
-          : "Manage backup schedules and requests.";
+      : tab === "Jobs"
+        ? "See scheduled work, attempts, and problems."
+        : tab === "Audit"
+          ? "See who changed what, then inspect the details."
+          : tab === "Updates & licensing"
+            ? "Your running version and license status, together in one place."
+            : "Manage backup schedules and requests.";
 
   const workspacePatch = workspaceQuery.data
     ? workspaceSettingsPatch(
@@ -1412,8 +1419,27 @@ function ManageContent() {
             </section>
           ) : null}
 
+          {tab === "Jobs" ? (
+            <ManageJobs admitted={verifiedOrganizationRole === "admin"} />
+          ) : null}
+
           {tab === "Audit" ? (
-            <ManageAudit renderHeader={renderPageHeader} />
+            <ManageAudit
+              renderHeader={renderPageHeader}
+              securityEventsAdmitted={verifiedOrganizationRole === "admin"}
+              securityEventsSelected={
+                searchParams.get("audit") === "security-events"
+              }
+              onSecurityEventsSelected={(selected) => {
+                const params = new URLSearchParams(searchParams.toString());
+                params.set("view", "audit");
+                if (selected) params.set("audit", "security-events");
+                else params.delete("audit");
+                router.replace(("/manage?" + params.toString()) as Route, {
+                  scroll: false,
+                });
+              }}
+            />
           ) : null}
 
           {tab === "Updates & licensing" ? (

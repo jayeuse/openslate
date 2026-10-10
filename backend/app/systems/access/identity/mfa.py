@@ -29,6 +29,7 @@ from app.systems.access.identity.mfa_observations import (
     record_provider_observation,
 )
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.provider_user_cache import forget_provider_user
 from app.systems.access.identity.session_revocation import (
     reconcile_session_cap,
     revoke_session,
@@ -180,6 +181,8 @@ def verify_factor(
         before_policy, user, before_provider
     )
     tokens = SupabaseMfaClient(client).challenge_and_verify(current_access, factor_id, code)
+    # A factor verified through OpenSlate requires AAL2 from every session at once.
+    forget_provider_user(tokens.user_id)
     try:
         claims = client.verify_access_token(tokens.access_token)
         if (
@@ -255,6 +258,7 @@ def unenroll_factor(
     provider_id = user.supabase_user_id
     assert provider_id is not None
     SupabaseMfaClient(client).unenroll(current_access, factor_id)
+    forget_provider_user(provider_id)
     started_at = observation_started_at()
     if verified:
         revoke_user_sessions(db, user_id, except_session_id=None)

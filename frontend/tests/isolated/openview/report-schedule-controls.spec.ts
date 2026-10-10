@@ -28,6 +28,7 @@ test("existing schedule retains the server policy and never computes the due cur
     weekday: 4,
     monthDay: null,
     nextDueAt: "2026-09-25T20:45:00Z",
+    lastRun: null,
     createdAt: "2026-09-23T00:00:00Z",
     updatedAt: "2026-09-23T00:00:00Z",
   });

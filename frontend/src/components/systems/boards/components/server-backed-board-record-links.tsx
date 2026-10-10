@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { subscribeWorkspaceInvalidations } from "@/components/systems/shared/adapters/invalidation-events";
 import { invalidatesRecords } from "@/components/systems/openview/adapters/openview-queries";
 import {
+  getOpenViewDataSourceField,
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
   queryOpenViewRecords,
@@ -180,37 +181,24 @@ export function ServerBoardRecordLinks(props: Props) {
   useEffect(() => {
     if (props.access !== "edit" || !moduleId) return;
     let active = true;
+    const controller = new AbortController();
     setRecordStatus("loading");
     void (async () => {
       const selectedSource = sources.find((source) => source.id === moduleId);
       const selectedTitleFieldId = selectedSource?.titleFieldId ?? null;
-      const collectedFields: OpenViewDataSourceField[] = [];
-      let titleFieldFound = selectedTitleFieldId === null;
-      let nextOffset = 0;
-      for (let pageNumber = 0; pageNumber < 50; pageNumber += 1) {
-        const page = await listOpenViewDataSourceFields(moduleId, {
-          limit: 100,
-          offset: nextOffset,
-        });
-        collectedFields.push(...page.items);
-        if (
-          selectedTitleFieldId !== null &&
-          page.items.some((field) => field.id === selectedTitleFieldId)
-        ) {
-          titleFieldFound = true;
-        }
-        if (!page.pagination.hasMore || titleFieldFound) break;
-        if (page.items.length === 0)
-          throw new Error("Data source fields could not be loaded.");
-        nextOffset += page.items.length;
-      }
-      if (!titleFieldFound)
-        throw new Error("The selected Record title field is unavailable.");
+      const fields = await listOpenViewDataSourceFields(moduleId, {
+        limit: 100,
+        offset: 0,
+      });
       const nextTitleField = selectedTitleFieldId
-        ? (collectedFields.find((field) => field.id === selectedTitleFieldId) ??
-          null)
+        ? await getOpenViewDataSourceField(
+            moduleId,
+            selectedTitleFieldId,
+            controller.signal,
+          )
         : null;
-      const queryFields = collectedFields.slice(0, 100);
+      if (!active) return;
+      const queryFields = fields.items;
       const searchable = queryFields
         .filter((field) =>
           ["text", "long_text", "email", "url", "select"].includes(field.type),
@@ -261,6 +249,7 @@ export function ServerBoardRecordLinks(props: Props) {
     });
     return () => {
       active = false;
+      controller.abort();
     };
   }, [props.access, moduleId, recordOffset, search, sources]);
 

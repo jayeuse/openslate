@@ -392,7 +392,8 @@ def _purge_copy(
     if (
         not isinstance(token, str)
         or not token
-        or name != board_id
+        or not isinstance(name, str)
+        or not name
         or not isinstance(impact, Mapping)
     ):
         raise SamplePhaseActionError(

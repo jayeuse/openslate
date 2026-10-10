@@ -80,7 +80,7 @@ def test_real_executor_no_audit_evidence_satisfies_verifier_contract(
                 headers=headers,
                 json={
                     "token": "private-preview-value",
-                    "confirmation_name": board_id,
+                    "confirmation_name": "Archived phase Board",
                     "impact": {
                         "target_id": board_id,
                         "operation": "purge",

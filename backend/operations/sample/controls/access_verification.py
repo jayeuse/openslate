@@ -4,12 +4,144 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, cast
+from uuid import UUID
 
+from pydantic import ValidationError
+
+from app.systems.access.users.schemas import UserResponse
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.expectations import read_phase_plan
 from operations.sample.verification.core import SampleVerificationError
+
+
+def _pending_invitation(
+    raw: object, user_id: str, email: str, username: str, *, sent: bool
+) -> UserResponse | None:
+    try:
+        user = UserResponse.model_validate(raw)
+    except ValidationError:
+        return None
+    timestamp = user.invitation_sent_at
+    if (
+        str(user.id) != user_id
+        or user.email != email
+        or user.username != username
+        or user.role != "member"
+        or user.status != "pending"
+        or user.is_deleted
+        or user.deleted_at is not None
+        or (timestamp is not None) != sent
+        or (timestamp is not None and (timestamp.tzinfo is None or timestamp.utcoffset() is None))
+    ):
+        return None
+    return user
+
+
+def _invitation_receipts(
+    actions: list[PhaseAction],
+    results: Mapping[str, Mapping[str, Any]],
+    dataset: SampleDataset,
+    manifest: Mapping[str, Any],
+    admin_id: str,
+    issues: list[str],
+) -> bool:
+    invitations = [
+        action
+        for action in actions
+        if action.values.get("operation")
+        in {
+            "resend_invitation",
+            "reconcile_invitation",
+            "revoke_invitation",
+        }
+    ]
+    valid = [action.values.get("operation") for action in invitations] == [
+        "resend_invitation",
+        "revoke_invitation",
+        "reconcile_invitation",
+        "revoke_invitation",
+    ] and len({action.target_key for action in invitations}) == 1
+    if not valid:
+        issues.append("Pending invitation receipt sequence is invalid")
+    raw_results = manifest.get("control_results", [])
+    request_ids: set[UUID] = set()
+    for action in invitations:
+        user_id = _mapped_id_from_contextless_result(manifest, action.target_key)
+        person = next(
+            (p for p in dataset.organization.actors.people if p.key == action.target_key), None
+        )
+        result = results.get(action.key, {})
+        evidence = result.get("request_evidence")
+        row = (
+            evidence[0]
+            if isinstance(evidence, list)
+            and len(evidence) == 1
+            and isinstance(evidence[0], Mapping)
+            else {}
+        )
+        raw_id = row.get("request_id")
+        try:
+            request_id = UUID(raw_id) if isinstance(raw_id, str) else None
+        except ValueError:
+            request_id = None
+        operation = action.values.get("operation")
+        sent = operation != "revoke_invitation"
+        root = f"/api/auth/invitations/{user_id}"
+        path = f"{root}/{str(operation).removesuffix('_invitation')}" if sent else root
+        status = 200 if sent else 204
+        before = (
+            _pending_invitation(
+                result.get("invitation_before"),
+                user_id,
+                person.email,
+                person.username,
+                sent=operation != "reconcile_invitation",
+            )
+            if person and user_id
+            else None
+        )
+        after = (
+            _pending_invitation(
+                result.get("invitation_after"), user_id, person.email, person.username, sent=sent
+            )
+            if person and user_id
+            else None
+        )
+        if (
+            not isinstance(raw_results, list)
+            or sum(
+                isinstance(raw, Mapping) and raw.get("action_key") == action.key
+                for raw in raw_results
+            )
+            != 1
+            or action.actor_key != "admin"
+            or action.expected_status != status
+            or result.get("actor_key") != "admin"
+            or result.get("actor_id") != admin_id
+            or result.get("target_key") != action.target_key
+            or result.get("outcome") != "completed"
+            or row.get("actor_key") != "admin"
+            or row.get("actor_id") != admin_id
+            or row.get("method") != ("POST" if sent else "DELETE")
+            or row.get("path") != path
+            or row.get("expected_status") != status
+            or row.get("status_code") != status
+            or row.get("primary_entity_type") != "users"
+            or row.get("primary_entity_id") != user_id
+            or row.get("primary_action") != "update"
+            or row.get("expected_audit_rows") != 1
+            or request_id is None
+            or request_id in request_ids
+            or before is None
+            or after is None
+        ):
+            valid = False
+            issues.append(f"Pending invitation receipt is invalid: {action.key}")
+        if request_id is not None:
+            request_ids.add(request_id)
+    return valid
 
 
 def _control_data(
@@ -63,7 +195,6 @@ def verify_access_controls(
     admin_id: str,
 ) -> tuple[dict[str, int], list[str]]:
     """Read back the restored guest, revoked invite and removed temporary group."""
-    del admin_id
     issues: list[str] = []
     actions, results = _control_data(manifest, "access_controls", issues)
     # People security shares this kind but has its own verifier.
@@ -78,12 +209,16 @@ def verify_access_controls(
         "delete_user",
         "restore_user",
         "resend_invitation",
+        "reconcile_invitation",
         "revoke_invitation",
     }
     if set(operations) != expected_operations:
         issues.append("Access control plan does not cover the required operations")
     if any(action.key not in results for action in actions):
         issues.append("Access control result journal is incomplete")
+    invitation_receipts_valid = _invitation_receipts(
+        actions, results, dataset, manifest, admin_id, issues
+    )
 
     groups_deleted = 0
     create = operations.get("create_temporary_group")
@@ -153,7 +288,7 @@ def verify_access_controls(
 
     invitations_revoked = 0
     revoke_invitation = operations.get("revoke_invitation")
-    if revoke_invitation is not None:
+    if revoke_invitation is not None and invitation_receipts_valid:
         user_id = _mapped_id_from_contextless_result(manifest, revoke_invitation.target_key)
         if user_id is None:
             issues.append("Pending invitation user mapping is missing")
@@ -163,12 +298,19 @@ def verify_access_controls(
                 user = response.json()
             except ValueError:
                 user = None
+            person = next(
+                (
+                    p
+                    for p in dataset.organization.actors.people
+                    if p.key == revoke_invitation.target_key
+                ),
+                None,
+            )
             if (
                 response.status_code != 200
-                or not isinstance(user, Mapping)
-                or user.get("status") != "pending"
-                or user.get("is_deleted") is not False
-                or user.get("invitation_sent_at") is not None
+                or person is None
+                or _pending_invitation(user, user_id, person.email, person.username, sent=False)
+                is None
             ):
                 issues.append("Pending invitation was not revoked")
             else:

@@ -121,6 +121,8 @@ class ScheduledWork(Base):
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     state: Mapped[WorkState] = mapped_column(String(16), nullable=False, default=WorkState.PENDING)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_token: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     run_id: Mapped[UUID | None] = mapped_column(ForeignKey("report_runs.id", ondelete="RESTRICT"))

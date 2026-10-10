@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import {
   departmentSchema,
+  groupAccessEntrySchema,
   groupSchema,
   invitationCreateSchema,
   invitationSchema,
@@ -39,6 +40,40 @@ test("responses shaped like the current backend models parse", () => {
   expect(pageSchema(groupSchema).parse(pageOf([group])).items).toHaveLength(1);
 });
 
+test("group responses carry server-resolved reach names while requests remain IDs and levels", () => {
+  const named = {
+    ...group,
+    access: group.access.map((entry) => ({
+      ...entry,
+      department_name: "Inventory",
+      module_name: entry.module_id === null ? null : "Prices",
+    })),
+  };
+  expect(groupSchema.safeParse(named).success).toBe(true);
+  expect(groupAccessEntrySchema.safeParse(named.access[0]).success).toBe(false);
+});
+
+test("member candidates carry nullable access expiry so expired access cannot be added", () => {
+  expect(
+    memberCandidateSchema.safeParse({
+      ...memberCandidate,
+      access_ends_at: null,
+    }).success,
+  ).toBe(true);
+  expect(
+    memberCandidateSchema.safeParse({
+      ...memberCandidate,
+      access_ends_at: "2026-01-01T00:00:00Z",
+    }).success,
+  ).toBe(true);
+  expect(
+    memberCandidateSchema.safeParse({
+      ...memberCandidate,
+      access_ends_at: "yesterday",
+    }).success,
+  ).toBe(false);
+});
+
 test("users carry a role and no longer carry role ids, kinds, or departments", () => {
   for (const role of ["admin", "member", "guest"])
     expect(userSchema.safeParse({ ...user, role }).success, role).toBe(true);
@@ -60,7 +95,15 @@ test("group access entries allow a whole department or one module at three level
     expect(
       groupSchema.safeParse({
         ...group,
-        access: [{ department_id: ids.department, module_id: null, level }],
+        access: [
+          {
+            department_id: ids.department,
+            department_name: "Inventory",
+            module_id: null,
+            module_name: null,
+            level,
+          },
+        ],
       }).success,
       level,
     ).toBe(true);
@@ -68,7 +111,13 @@ test("group access entries allow a whole department or one module at three level
     groupSchema.safeParse({
       ...group,
       access: [
-        { department_id: ids.department, module_id: null, level: "admin" },
+        {
+          department_id: ids.department,
+          department_name: "Inventory",
+          module_id: null,
+          module_name: null,
+          level: "admin",
+        },
       ],
     }).success,
   ).toBe(false);
@@ -76,7 +125,14 @@ test("group access entries allow a whole department or one module at three level
   expect(
     groupSchema.safeParse({
       ...group,
-      access: [{ department_id: ids.department, level: "read" }],
+      access: [
+        {
+          department_id: ids.department,
+          department_name: "Inventory",
+          module_name: null,
+          level: "read",
+        },
+      ],
     }).success,
   ).toBe(false);
   expect(groupSchema.safeParse({ ...group, extra: true }).success).toBe(false);

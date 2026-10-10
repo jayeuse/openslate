@@ -57,7 +57,12 @@ def plan_lifecycle(
         raise LifecycleUnsupportedOperation(
             f"Unsupported lifecycle operation: {operation}"
         ) from error
-    if resolved_target in {LifecycleTargetType.FILE, LifecycleTargetType.BOARD}:
+    if resolved_target not in {
+        LifecycleTargetType.DEPARTMENT,
+        LifecycleTargetType.MODULE,
+        LifecycleTargetType.FIELD,
+        LifecycleTargetType.RECORD,
+    }:
         raise LifecycleInvalidTarget(f"Unsupported lifecycle target: {target_type}")
 
     scope = load_lifecycle_scope(db, resolved_target, target_id, resolved_operation)
@@ -326,6 +331,21 @@ def plan_lifecycle(
     )
 
     internal_state, binding_ids = design_review_state(db, scope, resolved_target)
+    if resolved_target is LifecycleTargetType.RECORD:
+        record = scope.records[0]
+        module = modules_by_id[record.module_id]
+        title_field = db.get(Field, module.title_field_id) if module.title_field_id else None
+        if title_field is not None:
+            fields_by_id[title_field.id] = title_field
+        # The displayed name also depends on title-field selection and option labels.
+        # Retain them in the private digest and lock the field without deleting it.
+        internal_state = {
+            "confirmation_name": record_title(db, record, module),
+            "title_field_id": module.title_field_id,
+            "title_field": row_state("fields", title_field).model_dump(mode="json")
+            if title_field is not None
+            else None,
+        }
     if position_states:
         internal_state = {"design": internal_state, "field_order": position_states}
     digest = canonical_lifecycle_digest(

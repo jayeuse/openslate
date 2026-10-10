@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  aggregateBucketSchema,
+  validAggregateBucketWindow,
+} from "../../openview/domain/aggregate-buckets";
 
 export const EXPORT_FILENAME = "board-configuration.json";
 export const uuidSchema = z.string().uuid();
@@ -99,9 +103,12 @@ const widgetConfigSchema = z
     fields: z.array(fieldSchema).max(24),
     filters: z.array(filterSchema).max(8),
     logic: z.enum(["and", "or"]),
+    aggregation: z
+      .enum(["count", "sum", "average", "min", "max", "distinct"])
+      .optional(),
     metric: fieldSchema.nullable(),
     visualization: z.enum(["bar", "line", "pie"]),
-    size: z.enum(["half", "full"]),
+    size: z.enum(["S", "M", "L", "half", "full"]),
     refresh: z.enum(["manual", "one-minute", "five-minutes"]),
     pinned: z.boolean(),
   })
@@ -114,12 +121,154 @@ const widgetConfigSchema = z
       context.addIssue({ code: "custom", message: "Duplicate widget fields" });
     }
     if (
-      config.metric &&
-      !["number", "decimal", "int"].includes(config.metric.expected_type)
-    ) {
-      context.addIssue({ code: "custom", message: "Metric must be numeric" });
+      !namedMeasureIsValid({
+        aggregation:
+          config.aggregation ?? (config.metric === null ? "count" : "sum"),
+        measure: config.metric,
+      })
+    )
+      context.addIssue({ code: "custom", message: "Invalid named measure" });
+  });
+const namedSortSchema = fieldSchema
+  .extend({ direction: z.enum(["asc", "desc"]).default("asc") })
+  .strict();
+const namedDefinitionSchema = z
+  .object({
+    version: z.literal(1).default(1),
+    columns: z.array(fieldSchema).max(100).default([]),
+    filters: z.array(filterSchema).max(10).default([]),
+    logic: z.enum(["and", "or"]).default("and"),
+    sort: z.array(namedSortSchema).max(3).default([]),
+    search_fields: z.array(fieldSchema).max(100).default([]),
+    deleted: z.enum(["exclude", "include", "only"]).default("exclude"),
+    search: z
+      .string()
+      .max(240)
+      .nullable()
+      .default(null)
+      .transform((value) => value?.trim() || null),
+  })
+  .strict()
+  .superRefine((definition, context) => {
+    for (const references of [definition.columns, definition.sort]) {
+      if (
+        new Set(references.map((reference) => reference.name)).size !==
+        references.length
+      )
+        context.addIssue({
+          code: "custom",
+          message: "Duplicate named query references",
+        });
     }
   });
+const namedAggregateShape = {
+  definition: namedDefinitionSchema,
+  aggregation: z
+    .enum(["count", "sum", "average", "min", "max", "distinct"])
+    .default("count"),
+  measure: fieldSchema.nullable().default(null),
+};
+function namedMeasureIsValid(query: {
+  aggregation: string;
+  measure: { expected_type: string } | null;
+}): boolean {
+  if (query.aggregation === "count") return query.measure === null;
+  if (!query.measure) return false;
+  return (
+    query.aggregation === "distinct" ||
+    ["number", "decimal", "int"].includes(query.measure.expected_type)
+  );
+}
+const namedGroupsSchema = z
+  .object({
+    ...namedAggregateShape,
+    mode: z.literal("groups"),
+    dimension: fieldSchema,
+    date_field: fieldSchema.nullable().default(null),
+    from_date: z.iso.date().nullable().default(null),
+    to_date: z.iso.date().nullable().default(null),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if (!namedMeasureIsValid(query))
+      context.addIssue({ code: "custom", message: "Invalid named measure" });
+    if (
+      query.date_field === null &&
+      query.from_date === null &&
+      query.to_date === null
+    )
+      return;
+    if (
+      !query.date_field ||
+      !["date", "datetime"].includes(query.date_field.expected_type) ||
+      !query.from_date ||
+      !query.to_date ||
+      query.to_date < query.from_date ||
+      (Date.parse(`${query.to_date}T00:00:00Z`) -
+        Date.parse(`${query.from_date}T00:00:00Z`)) /
+        86_400_000 +
+        1 >
+        366
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Invalid named grouped date window",
+      });
+  });
+const namedDateSeriesSchema = z
+  .object({
+    ...namedAggregateShape,
+    mode: z.literal("date_series"),
+    date_field: fieldSchema,
+    from_date: z.iso.date(),
+    to_date: z.iso.date(),
+    bucket: aggregateBucketSchema.default("day"),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if (
+      !namedMeasureIsValid(query) ||
+      !["date", "datetime"].includes(query.date_field.expected_type) ||
+      !validAggregateBucketWindow(query.from_date, query.to_date, query.bucket)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Invalid named calendar query",
+      });
+  });
+const namedRecordsSchema = z
+  .object({ definition: namedDefinitionSchema })
+  .strict();
+const normalizedPresentation = {
+  version: z.literal(1).default(1),
+  size: z.enum(["S", "M", "L"]),
+  refresh: z.literal("manual"),
+  pinned: z.boolean(),
+};
+const normalizedChartSchema = z
+  .object({
+    ...normalizedPresentation,
+    chart_type: z.enum(["bar", "line", "pie"]),
+    query: z.union([namedGroupsSchema, namedDateSeriesSchema]),
+  })
+  .strict()
+  .refine(
+    (config) =>
+      (config.chart_type === "line") === (config.query.mode === "date_series"),
+  );
+const normalizedAggregateSchema = z
+  .object({ ...normalizedPresentation, query: namedGroupsSchema })
+  .strict();
+const normalizedRecordsSchema = z
+  .object({ ...normalizedPresentation, query: namedRecordsSchema })
+  .strict();
+const portableConfigSchema = z.union([
+  widgetConfigSchema,
+  normalizedChartSchema,
+  normalizedAggregateSchema,
+  normalizedRecordsSchema,
+]);
+
 const sourceSchema = z
   .object({
     department_name: named(150),
@@ -131,9 +280,25 @@ const widgetSchema = z
     name: named(80),
     widget_type: z.enum(["summary", "workload", "records", "chart"]),
     source: sourceSchema,
-    config: widgetConfigSchema,
+    config: portableConfigSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((widget, context) => {
+    if ("fields" in widget.config) return;
+    const config = widget.config;
+    const valid =
+      widget.widget_type === "chart"
+        ? "chart_type" in config
+        : !("chart_type" in config) &&
+          (widget.widget_type === "records"
+            ? !("mode" in config.query)
+            : "mode" in config.query && config.query.mode === "groups");
+    if (!valid)
+      context.addIssue({
+        code: "custom",
+        message: "Widget type does not match named query",
+      });
+  });
 export const bundleSchema = z
   .object({
     kind: z.literal("openslate-board"),

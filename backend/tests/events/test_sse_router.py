@@ -145,6 +145,39 @@ def test_event_stream_rechecks_changed_permissions_before_delivery() -> None:
     asyncio.run(exercise())
 
 
+def test_board_access_revoke_and_grant_resync_before_delivering_queued_events() -> None:
+    async def exercise() -> None:
+        hub = EventHub()
+        request = SimpleNamespace(is_disconnected=_not_disconnected)
+        board_id, user_id = uuid7(), uuid7()
+        allowed = EventViewer(user_id, "member", frozenset(), board_ids=frozenset({board_id}))
+        denied = EventViewer(user_id, "member", frozenset(), board_ids=frozenset())
+        stream = event_stream(
+            request,
+            hub,
+            EventPrincipal("token"),
+            heartbeat_seconds=0.1,
+            reauthorize=_sequence_authorizer(allowed, denied, denied, allowed, allowed),
+        )
+        event = InvalidationEvent("board_posts", board_id=board_id)
+
+        assert await anext(stream) == b"event: resync\ndata: {}\n\n"
+        await hub.publish(event)
+        assert await anext(stream) == b"event: resync\ndata: {}\n\n"
+        await hub.publish(event)
+        assert await anext(stream) == b": heartbeat\n\n"
+        assert await anext(stream) == b"event: resync\ndata: {}\n\n"
+        await hub.publish(event)
+        assert await anext(stream) == (
+            b'event: invalidate\ndata: {"board_id":"'
+            + str(board_id).encode()
+            + b'","entity":"board_posts"}\n\n'
+        )
+        await stream.aclose()
+
+    asyncio.run(exercise())
+
+
 def test_events_endpoint_requires_authenticated_user() -> None:
     application = FastAPI()
     application.state.events_hub = EventHub()

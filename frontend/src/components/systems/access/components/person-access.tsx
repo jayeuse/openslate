@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 
-import {
-  departmentListOptions,
-  moduleListOptions,
-  userAccessOptions,
-} from "../adapters/access-queries";
+import { userAccessOptions } from "../adapters/access-queries";
 import { presentAccess, type AccessRow } from "../helpers/people";
+import {
+  useAccessCatalog,
+  catalogDepartments,
+  catalogModules,
+} from "../hooks/use-access-catalog";
 import type { AccessUser } from "../state/api";
 
 // A person's effective access: per department and module, the level and the
@@ -74,14 +75,37 @@ export function PersonAccess({ person }: { person: AccessUser }) {
     ...userAccessOptions(person.id),
     enabled: !person.is_deleted,
   });
-  const departments = useQuery(departmentListOptions("exclude"));
-  const modules = useQuery(moduleListOptions("exclude"));
-  const failed = access.isError || departments.isError || modules.isError;
+  const departments = useAccessCatalog({
+    kind: "departments",
+    selectedIds: access.data?.entries.map((entry) => entry.department_id) ?? [],
+    listEnabled: false,
+    enabled: Boolean(access.data) && !person.is_deleted,
+  });
+  const modules = useAccessCatalog({
+    kind: "modules",
+    selectedIds:
+      access.data?.entries.flatMap((entry) =>
+        entry.module_id ? [entry.module_id] : [],
+      ) ?? [],
+    listEnabled: false,
+    enabled: Boolean(access.data) && !person.is_deleted,
+  });
+  const failed =
+    access.isError || Boolean(departments.error) || Boolean(modules.error);
   const loading =
-    !failed && (access.isPending || departments.isPending || modules.isPending);
+    !failed &&
+    (access.isPending ||
+      departments.selectedLoading ||
+      modules.selectedLoading);
   const view =
-    access.data && departments.data && modules.data
-      ? presentAccess(access.data, person, departments.data, modules.data, now)
+    access.data && !failed
+      ? presentAccess(
+          access.data,
+          person,
+          catalogDepartments(departments.selectedItems),
+          catalogModules(modules.selectedItems),
+          now,
+        )
       : null;
 
   return (
@@ -101,8 +125,8 @@ export function PersonAccess({ person }: { person: AccessUser }) {
             className="min-h-11"
             onClick={() => {
               if (access.isError) void access.refetch();
-              if (departments.isError) void departments.refetch();
-              if (modules.isError) void modules.refetch();
+              if (departments.error) void departments.retry();
+              if (modules.error) void modules.retry();
             }}
           >
             Retry

@@ -289,9 +289,23 @@ def verify_sample_data(
             )
             observed.update(phase_counts)
             issues.extend(phase_issues)
+            expected_content = dict(manifest["content_counts"])
+            if any(
+                isinstance(row, Mapping) and row.get("action_key") == "control:chart_lifecycle"
+                for row in manifest.get("control_results", [])
+            ):
+                from operations.sample.controls.charts_verification import (
+                    certify_retained_chart_dashboards,
+                )
+
+                retained, retained_issues = certify_retained_chart_dashboards(
+                    client, dataset, manifest, expected_admin_id, run_directory
+                )
+                issues.extend(retained_issues)
+                expected_content["dashboards"] += len(retained)
             content = verify_content(
                 client,
-                run_manifest={"expected": manifest["content_counts"]},
+                run_manifest={"expected": expected_content},
                 mappings=manifest["mappings"],
                 organization=dataset.organization,
             )

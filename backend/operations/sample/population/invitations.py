@@ -231,11 +231,14 @@ class InvitationMailbox:
     def recovery_token(self, baseline_ids: set[str], recipient: str) -> str:
         return self._action_token(baseline_ids, recipient, "recovery")
 
+    def email_change_token(self, baseline_ids: set[str], recipient: str) -> str:
+        return self._action_token(baseline_ids, recipient, "email_change")
+
     def _action_token(
         self,
         baseline_ids: set[str],
         recipient: str,
-        kind: Literal["invite", "recovery"],
+        kind: Literal["invite", "recovery", "email_change"],
     ) -> str:
         deadline = time.monotonic() + _WAIT_SECONDS
         while True:
@@ -321,7 +324,9 @@ class InvitationMailbox:
             for address in addresses
         )
 
-    def _email_token(self, message_id: str, kind: Literal["invite", "recovery"]) -> str | None:
+    def _email_token(
+        self, message_id: str, kind: Literal["invite", "recovery", "email_change"]
+    ) -> str | None:
         try:
             response = self.client.get(f"/api/v1/message/{message_id}")
             response.raise_for_status()
@@ -338,7 +343,11 @@ class InvitationMailbox:
                 link_origin = _origin(f"{link.scheme}://{link.netloc}")
             except SampleInvitationError:
                 continue
-            expected_path = "/auth/setup" if kind == "invite" else "/auth/recovery"
+            expected_path = {
+                "invite": "/auth/setup",
+                "recovery": "/auth/recovery",
+                "email_change": "/auth/email-change",
+            }[kind]
             if link_origin != self.origin or link.path != expected_path or link.query:
                 continue
             try:

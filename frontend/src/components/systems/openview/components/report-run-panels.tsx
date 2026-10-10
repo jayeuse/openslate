@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useDisplayRegion } from "@/components/use-display-region";
 import { Download, Printer } from "lucide-react";
 import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
 import { Alert } from "@/components/ui/alert";
@@ -53,7 +54,9 @@ export function SelectedReportRunPanel({
     action: ReportOutputAction,
   ) => void | Promise<void>;
 }) {
-  const region = useQuery(workspaceCalendarQueryOptions()).data;
+  const region = useDisplayRegion(
+    useQuery(workspaceCalendarQueryOptions()).data,
+  );
   const dateLabel = formatReportRunDate(run.createdAt, region);
   return (
     <section aria-label="Selected output">
@@ -83,7 +86,7 @@ export function SelectedReportRunPanel({
   );
 }
 
-/** Run times use the workspace region; callers without it get the device format. */
+/** Run metadata uses the display region; frozen output bytes are unchanged. */
 export function formatReportRunDate(
   value: string,
   region?: WorkspaceRegion,
@@ -174,7 +177,9 @@ function ReportRunsTable({
   onPageSizeChange,
   onOutputRun,
 }: ReportRunsTableProps) {
-  const region = useQuery(workspaceCalendarQueryOptions()).data;
+  const region = useDisplayRegion(
+    useQuery(workspaceCalendarQueryOptions()).data,
+  );
   return (
     <>
       <ul

@@ -6,7 +6,14 @@
  */
 export type WorkspaceInvalidation =
   | { type: "resync" }
-  | { type: "invalidate"; entity: string; moduleId?: string };
+  | { type: "invalidate"; entity: string; moduleId?: string; boardId?: string };
+
+const BOARD_ENTITIES = new Set([
+  "boards",
+  "board_posts",
+  "board_events",
+  "board_widgets",
+]);
 
 type Listener = (event: WorkspaceInvalidation) => void;
 
@@ -15,7 +22,7 @@ const UUID_PATTERN =
 
 function invalidationPayload(
   data: string,
-): { entity: string; moduleId?: string } | null {
+): { entity: string; moduleId?: string; boardId?: string } | null {
   try {
     const payload: unknown = JSON.parse(data);
     if (
@@ -26,6 +33,22 @@ function invalidationPayload(
       !/^[a-z][a-z0-9_]{0,63}$/.test(payload.entity)
     )
       return null;
+    if (BOARD_ENTITIES.has(payload.entity)) {
+      if (
+        Object.keys(payload).some(
+          (key) => key !== "entity" && key !== "board_id",
+        ) ||
+        !("board_id" in payload) ||
+        typeof payload.board_id !== "string" ||
+        !UUID_PATTERN.test(payload.board_id)
+      )
+        return null;
+      return {
+        entity: payload.entity,
+        boardId: payload.board_id.toLowerCase(),
+      };
+    }
+    if ("board_id" in payload) return null;
     if (!("module_id" in payload) || payload.module_id === undefined)
       return { entity: payload.entity };
     if (

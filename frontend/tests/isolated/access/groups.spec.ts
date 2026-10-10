@@ -174,7 +174,13 @@ test.describe("group list", () => {
       name: "Inventory clerks",
       description: "Stock counts",
       member_ids: ["a", "b"],
-      access: [entry(inventory, null, "write")],
+      access: [
+        {
+          ...entry(inventory, null, "write"),
+          department_name: "Inventory",
+          module_name: null,
+        },
+      ],
       created_at: "2026-01-01T00:00:00Z",
     },
     {
@@ -183,7 +189,13 @@ test.describe("group list", () => {
       name: "auditors",
       description: "",
       member_ids: [],
-      access: [entry(finance, null, "read")],
+      access: [
+        {
+          ...entry(finance, null, "read"),
+          department_name: "Finance",
+          module_name: null,
+        },
+      ],
       created_at: "2026-03-01T00:00:00Z",
     },
     {

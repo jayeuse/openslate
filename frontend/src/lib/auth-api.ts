@@ -7,6 +7,24 @@ const authenticatedResponse = z.object({
   setup_required: z.boolean(),
 });
 const noContentResponse = z.null();
+const emailRequestResponse = z
+  .object({ confirmation_required: z.literal(true) })
+  .strict();
+const emailConfirmationResponse = z.discriminatedUnion("authenticated", [
+  z
+    .object({
+      authenticated: z.literal(false),
+      confirmation_required: z.literal(true),
+    })
+    .strict(),
+  z
+    .object({
+      authenticated: z.literal(true),
+      confirmation_required: z.literal(false),
+      setup_required: z.boolean(),
+    })
+    .strict(),
+]);
 const sessionResponse = z.discriminatedUnion("authenticated", [
   z.object({
     authenticated: z.literal(true),
@@ -74,6 +92,42 @@ export async function signIn(email: string, password: string) {
 export async function signOut() {
   return apiFetch("/auth/logout", noContentResponse, {
     method: "POST",
+    refreshOnUnauthorized: false,
+  });
+}
+
+/** This landing-page probe never refreshes an occupied or expired browser context. */
+export async function probeEmailConfirmationSession(
+  signal?: AbortSignal,
+): Promise<SessionStatus> {
+  return apiFetch("/auth/session", sessionResponse, {
+    cache: "no-store",
+    signal,
+    refreshOnUnauthorized: false,
+  });
+}
+
+export async function requestEmailChange(
+  email: string,
+  currentPassword: string,
+  signal?: AbortSignal,
+) {
+  return apiFetch("/auth/me/email", emailRequestResponse, {
+    method: "POST",
+    body: JSON.stringify({ email, current_password: currentPassword }),
+    signal,
+    refreshOnUnauthorized: false,
+  });
+}
+
+export async function completeEmailChange(
+  tokenHash: string,
+  signal?: AbortSignal,
+) {
+  return apiFetch("/auth/email/complete", emailConfirmationResponse, {
+    method: "POST",
+    body: JSON.stringify({ token_hash: tokenHash }),
+    signal,
     refreshOnUnauthorized: false,
   });
 }

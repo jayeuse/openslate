@@ -30,7 +30,7 @@ def require_capacity(db: Session, purpose: str, expected_size: int) -> None:
             func.coalesce(
                 func.sum(
                     case(
-                        (File.purpose == "workspace_logo", LOGO_CHARGE),
+                        (File.purpose.in_(("workspace_logo", "user_avatar")), LOGO_CHARGE),
                         else_=File.expected_size,
                     )
                 ),
@@ -38,7 +38,7 @@ def require_capacity(db: Session, purpose: str, expected_size: int) -> None:
             ),
         ).where(File.state.in_(("awaiting_upload", "uploading")))
     ).one()
-    charge = LOGO_CHARGE if purpose == "workspace_logo" else expected_size
+    charge = LOGO_CHARGE if purpose in {"workspace_logo", "user_avatar"} else expected_size
     if count >= PENDING_UPLOAD_COUNT or size + charge > PENDING_UPLOAD_BYTES:
         raise error("file_uploads_full", "Pending upload capacity is full", 409)
 

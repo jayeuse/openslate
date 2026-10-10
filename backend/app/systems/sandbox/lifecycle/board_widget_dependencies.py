@@ -1,13 +1,15 @@
 """Retained Board widget dependencies for physical source purges."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.systems.boards.models import BoardWidget
+from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.lifecycle.chart_dependencies import query_references_fields
 from app.systems.sandbox.lifecycle.planning_scope import row_state
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleBlocker,
@@ -17,6 +19,8 @@ from app.systems.sandbox.lifecycle.schemas import (
 
 
 def _references_field(config: dict[str, object], field_ids: set[str]) -> bool:
+    if query_references_fields(config.get("query"), field_ids):
+        return True
     references: list[object] = []
     for key in ("fields", "filters"):
         entries = config.get(key)
@@ -36,14 +40,21 @@ def load_board_widget_purge_dependencies(
     module_ids: list[UUID],
     target_field: Field | None,
     fingerprint: Callable[[object], str],
+    charts: Mapping[UUID, Chart] | None = None,
 ) -> tuple[list[LifecycleRowState], list[LifecycleBlocker], dict[str, tuple[UUID, ...]]]:
     """Inspect all retained widgets for scoped modules, including deleted rows."""
 
+    retained_charts = charts or {}
     widgets = (
         list(
             db.scalars(
                 select(BoardWidget)
-                .where(BoardWidget.module_id.in_(module_ids))
+                .where(
+                    or_(
+                        BoardWidget.module_id.in_(module_ids),
+                        BoardWidget.chart_id.in_(retained_charts),
+                    )
+                )
                 .order_by(BoardWidget.id)
             )
         )
@@ -52,7 +63,12 @@ def load_board_widget_purge_dependencies(
     )
     if target_field is not None:
         field_ids = {str(target_field.id)}
-        widgets = [widget for widget in widgets if _references_field(widget.config, field_ids)]
+        widgets = [
+            widget
+            for widget in widgets
+            if widget.chart_id in retained_charts
+            or (widget.config is not None and _references_field(widget.config, field_ids))
+        ]
 
     rows: list[LifecycleRowState] = []
     blockers: list[LifecycleBlocker] = []
@@ -68,6 +84,9 @@ def load_board_widget_purge_dependencies(
                     "position",
                     "widget_type",
                     "config",
+                    "chart_id",
+                    "size",
+                    "pinned",
                 )
             }
         )

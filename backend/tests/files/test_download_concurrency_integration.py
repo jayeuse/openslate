@@ -22,7 +22,7 @@ from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.router import update_workspace
 from app.systems.manage.workspace.schemas import WorkspaceUpdate
-from app.systems.platform.files import service
+from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.storage import get_storage
 
@@ -151,7 +151,7 @@ def test_two_admitted_logo_readers_both_return_exact_content(committed_logo, mon
             second_holds_file.set()
             assert release_second.wait(10), "Test failed to release the second reader"
 
-    monkeypatch.setattr(service, "append_committed_security_event", lambda payload: None)
+    monkeypatch.setattr(delivery, "append_committed_security_event", lambda payload: None)
     event.listen(engine, "after_cursor_execute", after_sql)
     try:
         with client_for(engine, actor_id, Storage()) as client:
@@ -219,7 +219,7 @@ def test_logo_mutation_during_storage_read_prevents_stale_delivery(
                     )
             return content
 
-    monkeypatch.setattr(service, "append_committed_security_event", lambda payload: None)
+    monkeypatch.setattr(delivery, "append_committed_security_event", lambda payload: None)
     storage = Storage()
     monkeypatch.setattr("app.systems.manage.workspace.router.get_storage", lambda: storage)
     with client_for(engine, actor_id, storage) as client:

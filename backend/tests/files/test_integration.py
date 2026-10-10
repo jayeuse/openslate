@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
-from app.systems.platform.files import service
+from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import (
     ProviderRejected,
@@ -71,7 +71,7 @@ def test_upload_returns_ready_and_downloads_with_no_further_step(guarded_db, act
     stored = db.get(File, file_id)
     assert stored.operation_id is None and stored.operation_expires_at is None
     events = []
-    monkeypatch.setattr(service, "append_committed_security_event", events.append)
+    monkeypatch.setattr(delivery, "append_committed_security_event", events.append)
     downloaded, mime, filename = service.download(db, actor_id, file_id, storage)
     assert (downloaded, mime, filename) == (content, "image/png", "image.png")
     assert len(events) == 1 and events[0].event_type == "file.download"
@@ -162,9 +162,9 @@ def test_access_event_failure_releases_no_bytes(guarded_db, actor, monkeypatch):
     service.upload(db, actor_id, file_id, content, storage)
 
     def fail(event):
-        raise service.SecurityEventPersistenceError("unavailable")
+        raise delivery.SecurityEventPersistenceError("unavailable")
 
-    monkeypatch.setattr(service, "append_committed_security_event", fail)
+    monkeypatch.setattr(delivery, "append_committed_security_event", fail)
     with pytest.raises(HTTPException) as caught:
         service.download(db, actor_id, file_id, storage)
     assert caught.value.detail["code"] == "file_event_unavailable"
@@ -208,7 +208,7 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: actor
     app.dependency_overrides[get_storage] = lambda: storage
-    monkeypatch.setattr(service, "append_committed_security_event", lambda event: None)
+    monkeypatch.setattr(delivery, "append_committed_security_event", lambda event: None)
     with TestClient(app) as client:
         response = client.post(
             "/api/files",

@@ -49,10 +49,14 @@ export function ServerArchivedBoardEventsDisplay({
   page,
   canRestoreEvent,
   onRestoreEvent,
+  canPurgeEvent = () => false,
+  onPurgeEvent = () => undefined,
 }: {
   page: BoardEventPage;
   canRestoreEvent: (event: BoardEvent) => boolean;
   onRestoreEvent: (event: BoardEvent) => void;
+  canPurgeEvent?: (event: BoardEvent) => boolean;
+  onPurgeEvent?: (event: BoardEvent) => void;
 }) {
   return createElement(
     "section",
@@ -95,6 +99,19 @@ export function ServerArchivedBoardEventsDisplay({
                       "aria-label": `Restore ${event.title}`,
                     },
                     "Restore event",
+                  )
+                : null,
+              canPurgeEvent(event)
+                ? createElement(
+                    "button",
+                    {
+                      type: "button",
+                      className:
+                        "border-destructive text-destructive focus-visible:outline-ring min-h-11 rounded-md border px-4 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2",
+                      onClick: () => onPurgeEvent(event),
+                      "aria-label": `Permanently delete ${event.title}`,
+                    },
+                    "Permanently delete",
                   )
                 : null,
             ),

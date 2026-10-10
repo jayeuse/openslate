@@ -117,11 +117,18 @@ export function getManageAuditLog(
 
 export function getManageAuditOptions(
   signal?: AbortSignal,
+  search = "",
 ): Promise<ManageAuditOptions> {
-  return apiFetch("/audit-logs/options", auditLogOptionsSchema, {
-    cache: "no-store",
-    signal,
-  });
+  const query = new URLSearchParams();
+  if (search.trim()) query.set("search", search.trim());
+  return apiFetch(
+    `/audit-logs/options${query.size ? `?${query}` : ""}`,
+    auditLogOptionsSchema,
+    {
+      cache: "no-store",
+      signal,
+    },
+  );
 }
 
 export async function getManageAuditExportPreview(

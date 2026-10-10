@@ -17,6 +17,7 @@ from pydantic import (
 
 from app.common.listing.schemas import DeletedFilter, PaginationMetadata, SortOrder
 from app.systems.sandbox.fields.models import FieldType
+from app.systems.sandbox.records.aggregate_buckets import AggregateBucket, validate_bucket_window
 from app.systems.sandbox.records.schemas import RecordResponse
 
 Scalar = Annotated[str, Field(max_length=4000)] | StrictBool | StrictInt | StrictFloat
@@ -118,6 +119,17 @@ class RecordQuery(BaseModel):
     definition: QueryDefinition
     limit: int = Field(default=25, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
+
+
+class ExportRequest(RecordQuery):
+    format: Literal["csv", "xlsx"] = "csv"
+    view_id: UUID | None = None
+    title: str | None = Field(default=None, max_length=120)
+    include_details: StrictBool = True
+    include_record_id: StrictBool = False
+    accent: Literal["theme", "gray", "none"] = "theme"
+    banded: StrictBool = False
+    totals: StrictBool = False
 
 
 class WindowRecordQuery(BaseModel):
@@ -225,7 +237,7 @@ class AggregateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     module_id: UUID
     definition: QueryDefinition
-    aggregation: Literal["count", "sum", "average"] = "count"
+    aggregation: Literal["count", "sum", "average", "min", "max", "distinct"] = "count"
     measure: FieldReference | None = None
 
     @model_validator(mode="after")
@@ -233,8 +245,11 @@ class AggregateRequest(BaseModel):
         if self.aggregation == "count":
             if self.measure is not None:
                 raise ValueError("Count does not accept a measure field")
+        elif self.aggregation == "distinct":
+            if self.measure is None:
+                raise ValueError("Distinct requires a primitive measure field")
         elif self.measure is None or self.measure.expected_type not in NUMERIC_FIELD_TYPES:
-            raise ValueError("Sum and average require a numeric measure field")
+            raise ValueError("Sum, average, min and max require a numeric measure field")
         return self
 
 
@@ -250,14 +265,13 @@ class DateSeriesAggregateQuery(AggregateRequest):
     date_field: FieldReference
     from_date: date
     to_date: date
+    bucket: AggregateBucket = "day"
 
     @model_validator(mode="after")
     def validate_date_window(self) -> Self:
         if self.date_field.expected_type not in {FieldType.DATE, FieldType.DATETIME}:
             raise ValueError("Date series require a date or datetime field")
-        days = (self.to_date - self.from_date).days + 1
-        if days < 1 or days > 366:
-            raise ValueError("Date series windows must contain between 1 and 366 days")
+        validate_bucket_window(self.from_date, self.to_date, self.bucket)
         return self
 
 
@@ -291,6 +305,11 @@ AggregateSnapshotQuery = Annotated[
 ]
 
 
+class AggregateSnapshotsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    queries: list[AggregateSnapshotQuery] = Field(min_length=1, max_length=12)
+
+
 AggregateQuery = Annotated[
     GroupedAggregateQuery | DateSeriesAggregateQuery,
     Field(discriminator="mode"),
@@ -300,12 +319,12 @@ AggregateQuery = Annotated[
 class AggregateDatum(BaseModel):
     key: str | None
     label: str
-    value: int | Decimal
+    value: int | Decimal | None
     record_count: int
 
 
 class AggregatePaginationMetadata(PaginationMetadata):
-    limit: int = Field(ge=1, le=366)
+    limit: int = Field(ge=1)
 
 
 class AggregateResponse(BaseModel):
@@ -320,3 +339,7 @@ class AggregateSnapshotPaginationMetadata(PaginationMetadata):
 class AggregateSnapshotResponse(BaseModel):
     items: list[AggregateDatum]
     pagination: AggregateSnapshotPaginationMetadata
+
+
+class AggregateSnapshotsResponse(BaseModel):
+    items: list[AggregateSnapshotResponse]

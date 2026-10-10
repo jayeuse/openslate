@@ -85,21 +85,35 @@ jobs:
       fail-fast: false
       matrix:
         # Isolated tests finish in seconds; only the slow dev-server http project is sharded.
+        # Each http shard runs one Playwright worker: on a 2-vCPU runner, two browsers
+        # beside `next dev` starve page rendering and fail a different test each run.
         include:
           - suite: isolated
             args: --project=isolated
-          - suite: http 1/6
-            args: --project=http --shard=1/6
-          - suite: http 2/6
-            args: --project=http --shard=2/6
-          - suite: http 3/6
-            args: --project=http --shard=3/6
-          - suite: http 4/6
-            args: --project=http --shard=4/6
-          - suite: http 5/6
-            args: --project=http --shard=5/6
-          - suite: http 6/6
-            args: --project=http --shard=6/6
+          - suite: http 1/12
+            args: --project=http --shard=1/12
+          - suite: http 2/12
+            args: --project=http --shard=2/12
+          - suite: http 3/12
+            args: --project=http --shard=3/12
+          - suite: http 4/12
+            args: --project=http --shard=4/12
+          - suite: http 5/12
+            args: --project=http --shard=5/12
+          - suite: http 6/12
+            args: --project=http --shard=6/12
+          - suite: http 7/12
+            args: --project=http --shard=7/12
+          - suite: http 8/12
+            args: --project=http --shard=8/12
+          - suite: http 9/12
+            args: --project=http --shard=9/12
+          - suite: http 10/12
+            args: --project=http --shard=10/12
+          - suite: http 11/12
+            args: --project=http --shard=11/12
+          - suite: http 12/12
+            args: --project=http --shard=12/12
     defaults:
       run:
         working-directory: frontend
@@ -122,6 +136,14 @@ jobs:
       - name: Run retained frontend tests
         timeout-minutes: 15
         run: npm test -- ${{ matrix.args }}
+      - name: Keep failure context and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-test-results-${{ strategy.job-index }}
+          path: frontend/test-results/playwright/
+          retention-days: 7
+          if-no-files-found: ignore
 
   verify:
     needs: [changes, check, build, test]

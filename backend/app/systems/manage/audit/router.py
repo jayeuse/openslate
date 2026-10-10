@@ -139,10 +139,14 @@ def get_audit_log_options(
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
     department_id: UUID | None = None,
+    search: Annotated[str | None, Query(max_length=100)] = None,
 ) -> AuditLogOptionsResponse:
     _require_audit_list_visibility(user, db, department_id)
     entity_types, actor_options = list_audit_log_options(
-        db, department_id=department_id, reader=user
+        db,
+        department_id=department_id,
+        reader=user,
+        search=StandardListRequest.normalize_search(search),
     )
     actor_names = active_actor_names(db, (performed_by for performed_by, _ in actor_options))
     return AuditLogOptionsResponse(

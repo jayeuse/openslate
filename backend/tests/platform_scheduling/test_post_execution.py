@@ -105,6 +105,7 @@ def test_due_post_claim_publishes_one_immutable_result(integration_owner_db):
 
     claims = claim_due_post_work(db, now=NOW)
     assert len(claims) == 1 and claims[0].id == work.id
+    assert work.last_attempt_started_at == NOW and work.finished_at is None
     assert [claim.id for claim in claim_due_work(db, now=NOW)] == [report_work.id]
 
     result_id = finalize_post_claim(db, claims[0], now=NOW)
@@ -116,6 +117,7 @@ def test_due_post_claim_publishes_one_immutable_result(integration_owner_db):
     assert result.title == "Scheduled notice" and result.body == "Publish this content once"
     assert result.performed_by == actor.id
     assert work.state == WorkState.SUCCEEDED and work.publication_result_id == result.id
+    assert work.finished_at == NOW
     assert work.lease_token is None and work.lease_expires_at is None
     assert item.displayed_publication_number == result.publication_number
     assert item.status == "published" and board.revision == 2
@@ -147,6 +149,7 @@ def test_revoked_board_group_cancels_without_publication(integration_owner_db):
 
     assert finalize_post_claim(db, claim, now=NOW) is None
     assert work.state == WorkState.CANCELED
+    assert work.finished_at == NOW
     assert item.displayed_publication_number is None
 
 
@@ -233,12 +236,15 @@ def test_expired_lease_recovery_rejects_old_claim_and_current_claim_publishes(in
     first = claim_due_post_work(db, now=NOW)[0]
     second = claim_due_post_work(db, now=NOW + timedelta(minutes=3))[0]
     assert second.lease_token != first.lease_token
+    assert work.last_attempt_started_at == NOW + timedelta(minutes=3)
     assert not fail_post_work(db, first, now=NOW + timedelta(minutes=3))
     assert finalize_post_claim(db, first, now=NOW + timedelta(minutes=3)) is None
     assert work.state == WorkState.RUNNING
+    assert work.finished_at is None
     assert finalize_post_claim(db, second, now=NOW + timedelta(minutes=3)) is not None
     db.flush()
     assert item.status == "published" and work.state == WorkState.SUCCEEDED
+    assert work.finished_at == NOW + timedelta(minutes=3)
 
 
 def test_failed_post_claim_retries_with_backoff_and_terminal_limit(integration_owner_db):
@@ -247,15 +253,18 @@ def test_failed_post_claim_retries_with_backoff_and_terminal_limit(integration_o
     for attempt in range(1, 6):
         claim = claim_due_post_work(db, now=NOW)[0]
         assert work.attempt_count == attempt
+        assert work.last_attempt_started_at == NOW
         assert fail_post_work(db, claim, now=NOW)
         assert not fail_post_work(db, claim, now=NOW)
         if attempt < 5:
             assert work.state == WorkState.PENDING
+            assert work.finished_at is None
             assert work.next_attempt_at == NOW + timedelta(seconds=2**attempt)
             assert claim_due_post_work(db, now=NOW) == []
             work.next_attempt_at = NOW
         else:
             assert work.state == WorkState.FAILED
+            assert work.finished_at == NOW
             assert work.failure_code == "attempts_exhausted"
     assert claim_due_post_work(db, now=NOW + timedelta(hours=1)) == []
     assert item.displayed_publication_number is None

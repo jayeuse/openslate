@@ -17,6 +17,7 @@ import { authMeOptions } from "../adapters/openview-queries";
 import {
   subscribeWorkspaceLifecycleSettings,
   workspaceLifecycleQueryOptions,
+  workspaceCalendarQueryOptions,
 } from "../../manage/adapters/workspace-api";
 import type {
   OpenViewDataSourceField,
@@ -54,6 +55,8 @@ import { Button } from "@/components/ui/button";
 type Editing = {
   /** The complete stored record the form started from. */
   source: OpenViewRecord;
+  /** The complete field catalog that owns this editing draft. */
+  fields: readonly OpenViewDataSourceField[];
   values: RecordFormValues;
   errors: RecordFormErrors;
   stale: boolean;
@@ -65,6 +68,9 @@ type RecordDetailsControlsProps = {
   /** Every active field of the record's module, in order. */
   fields: readonly OpenViewDataSourceField[];
   canWrite: boolean;
+  fieldsHasMore?: boolean;
+  fieldsLoadingMore?: boolean;
+  onLoadMoreFields?: () => void;
   /** The read-only field list. */
   children: ReactNode;
   onChanged: (message: string) => void;
@@ -98,6 +104,9 @@ export function RecordDetailsControls({
   moduleId,
   fields,
   canWrite,
+  fieldsHasMore = false,
+  fieldsLoadingMore = false,
+  onLoadMoreFields,
   children,
   onChanged,
   onEditingChange,
@@ -111,6 +120,10 @@ export function RecordDetailsControls({
   const client = useQueryClient();
   const workspace = useQuery({
     ...workspaceLifecycleQueryOptions(),
+    enabled: isAdmin && record.isDeleted,
+  });
+  const region = useQuery({
+    ...workspaceCalendarQueryOptions(),
     enabled: isAdmin && record.isDeleted,
   });
   const canPurge =
@@ -159,6 +172,7 @@ export function RecordDetailsControls({
   }, [canPurge]);
 
   const startEditing = async (reload = false) => {
+    if (fieldsHasMore || fieldsLoadingMore) return;
     setPending(reload ? "reload" : "open");
     setError("");
     try {
@@ -171,6 +185,7 @@ export function RecordDetailsControls({
       }
       setEditing({
         source,
+        fields: [...fields],
         values: initialFormValues(fields, source.data),
         errors: {},
         stale: false,
@@ -191,9 +206,10 @@ export function RecordDetailsControls({
   };
 
   const save = async () => {
-    if (!editing) return;
+    if (!editing || busy || editing.stale || fieldsHasMore || fieldsLoadingMore)
+      return;
     const { data, errors, changed } = encodeRecordForm(
-      fields,
+      editing.fields,
       editing.values,
       editing.source.data,
     );
@@ -222,7 +238,7 @@ export function RecordDetailsControls({
       if (isStaleRecordSave(caught)) {
         setEditing({ ...editing, errors: {}, stale: true });
       } else {
-        const errors = fieldErrors(caught, fields);
+        const errors = fieldErrors(caught, editing.fields);
         setEditing({ ...editing, errors });
         if (Object.keys(errors).length > 0) focusFirstInvalid();
         if (Object.keys(errors).length === 0)
@@ -328,6 +344,30 @@ export function RecordDetailsControls({
   };
 
   const editable = canWrite && !record.isDeleted;
+  const metadataGuard =
+    editable && fieldsHasMore ? (
+      <Alert
+        role="note"
+        className="flex flex-wrap items-center justify-between gap-2"
+      >
+        <span>
+          {editing
+            ? "Field metadata refreshed. Load all fields before saving; your changes are kept."
+            : "Load all fields before editing so existing values are kept."}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={busy || fieldsLoadingMore}
+          onClick={onLoadMoreFields}
+        >
+          {fieldsLoadingMore
+            ? "Loading fields…"
+            : "Load more fields for editing"}
+        </Button>
+      </Alert>
+    ) : null;
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -346,6 +386,7 @@ export function RecordDetailsControls({
             void save();
           }}
         >
+          {metadataGuard}
           {editing.stale ? (
             <Alert role="alert" variant="destructive">
               <p className="font-medium">
@@ -359,7 +400,7 @@ export function RecordDetailsControls({
                 type="button"
                 variant="outline"
                 className="mt-3 min-h-11"
-                disabled={busy}
+                disabled={busy || fieldsHasMore || fieldsLoadingMore}
                 onClick={() => void startEditing(true)}
               >
                 {pending === "reload" ? "Loading…" : "Load latest values"}
@@ -368,7 +409,7 @@ export function RecordDetailsControls({
           ) : null}
           <RecordFormFields
             moduleId={moduleId}
-            fields={fields}
+            fields={editing.fields}
             values={editing.values}
             errors={editing.errors}
             disabled={busy}
@@ -392,7 +433,9 @@ export function RecordDetailsControls({
             <Button
               type="submit"
               className="min-h-11"
-              disabled={busy || editing.stale}
+              disabled={
+                busy || editing.stale || fieldsHasMore || fieldsLoadingMore
+              }
             >
               {pending === "save" ? "Saving…" : "Save changes"}
             </Button>
@@ -413,13 +456,14 @@ export function RecordDetailsControls({
         </form>
       ) : (
         <>
+          {metadataGuard}
           {editable ? (
             <div className="flex flex-wrap gap-2">
               <Button
                 ref={editButtonRef}
                 type="button"
                 className="min-h-11"
-                disabled={busy}
+                disabled={busy || fieldsHasMore || fieldsLoadingMore}
                 onClick={() => void startEditing()}
               >
                 {pending === "open" ? "Opening…" : "Edit record"}
@@ -465,7 +509,10 @@ export function RecordDetailsControls({
           ) : null}
           {canPurge && purgePreview ? (
             <div className="border-border space-y-4 rounded-lg border p-4">
-              <LifecyclePurgeReview impact={purgePreview.impact} />
+              <LifecyclePurgeReview
+                preview={purgePreview}
+                region={region.data}
+              />
               {purgePreview.impact.blockers.length > 0 ? null : (
                 <form
                   className="space-y-4"
@@ -475,18 +522,21 @@ export function RecordDetailsControls({
                   }}
                 >
                   <p className="text-sm" role="status">
-                    Type the exact record ID and enter your administrator
+                    Type the exact record name and enter your administrator
                     password to continue.
                   </p>
                   <p className="text-sm">
-                    Record ID: <code className="break-all">{record.id}</code>
+                    Record name:{" "}
+                    <code className="break-all">
+                      {purgePreview.confirmation_name}
+                    </code>
                   </p>
                   <div className="space-y-2">
                     <label
                       htmlFor={`${id}-purge-confirmation`}
                       className="text-sm font-medium"
                     >
-                      Type the record ID
+                      Type the record name
                     </label>
                     <input
                       id={`${id}-purge-confirmation`}

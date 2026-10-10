@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException, Response
+from fastapi import HTTPException, Request, Response
 from pydantic import ValidationError
 from record_queries.test_database import setup_rows
 from sqlalchemy import func, select
@@ -56,7 +56,13 @@ def test_view_is_shared_with_every_module_reader_and_hidden_from_others(query_db
 
     assert get_view(query_db, viewer, view.id).id == view.id
     assert [
-        item.id for item in list_views(admin, query_db, ViewList(module_id=module.id)).items
+        item.id
+        for item in list_views(
+            admin,
+            query_db,
+            ViewList(module_id=module.id),
+            Request({"type": "http", "query_string": b""}),
+        ).items
     ] == [view.id]
     for reader in (viewer, writer):
         with pytest.raises(HTTPException) as error:
@@ -66,7 +72,15 @@ def test_view_is_shared_with_every_module_reader_and_hidden_from_others(query_db
     with pytest.raises(HTTPException) as hidden:
         get_view(query_db, no_group, view.id)
     assert hidden.value.status_code == 404
-    assert list_views(no_group, query_db, ViewList(module_id=module.id)).items == []
+    assert (
+        list_views(
+            no_group,
+            query_db,
+            ViewList(module_id=module.id),
+            Request({"type": "http", "query_string": b""}),
+        ).items
+        == []
+    )
 
 
 def test_guest_with_module_read_cannot_create_a_view(query_db):
@@ -121,7 +135,15 @@ def test_manager_updates_revision_and_archives_without_exposing_predicates(query
     assert error.value.status_code == 409
     archive_view(view.id, 2, owner, query_db)
     assert query_db.get(SavedView, view.id).is_deleted
-    assert list_views(owner, query_db, ViewList(module_id=module.id)).items == []
+    assert (
+        list_views(
+            owner,
+            query_db,
+            ViewList(module_id=module.id),
+            Request({"type": "http", "query_string": b""}),
+        ).items
+        == []
+    )
 
 
 def test_same_normalized_view_patch_does_not_commit_or_bump_revision(query_db):

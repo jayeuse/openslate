@@ -49,6 +49,7 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
             "openslate_user_id": str(user.id),
             "openslate_invitation_operation_id": str(user.provider_invitation_operation_id),
         },
+        email_confirmed_at=now - timedelta(minutes=1),
     )
     client = Mock()
     client.password_grant.return_value = tokens
@@ -176,7 +177,7 @@ def test_expired_user_cannot_complete_provider_email_actions(monkeypatch, kind):
 @pytest.mark.parametrize("minutes", [15, 30, 60, 480])
 def test_admission_uses_workspace_session_timeout(monkeypatch, minutes):
     now, user, _session, _claims, client = _subject(monkeypatch, expired=False)
-    policy = WorkspaceProfile(session_timeout_minutes=minutes)
+    policy = WorkspaceProfile(session_timeout_minutes=minutes, ip_allow_list=[])
     monkeypatch.setattr(
         provider_sessions, "load_workspace_policy", lambda _db: policy, raising=False
     )

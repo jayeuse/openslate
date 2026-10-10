@@ -101,6 +101,8 @@ const wireWidget = {
   id: widgetId,
   position: 0,
   widget_type: "chart",
+  size: "M",
+  chart_id: null,
   config: { version: 1, chart_type: "bar", query: wireGroupQuery },
   created_at: timestamp,
   updated_at: timestamp,
@@ -173,6 +175,8 @@ function expectedDashboard(): OpenViewDashboard {
         id: widgetId,
         position: 0,
         widgetType: "chart",
+        size: "M",
+        chartId: null,
         config: {
           version: 1,
           chartType: "bar",
@@ -259,6 +263,8 @@ test("creates and replaces the complete ordered chart list using the strict wire
       widgets: [
         {
           widget_type: "chart",
+          size: "M",
+          chart_id: null,
           config: { version: 1, chart_type: "bar", query: wireGroupRequest },
         },
       ],
@@ -339,18 +345,26 @@ test("maps all live widget types and persists the visible refresh cadence", asyn
       widgets: [
         {
           widget_type: "chart",
+          size: "M",
+          chart_id: null,
           config: { version: 1, chart_type: "bar", query: wireGroupRequest },
         },
         {
           widget_type: "summary",
+          size: "M",
+          chart_id: null,
           config: { version: 1, query: wireGroupRequest },
         },
         {
           widget_type: "workload",
+          size: "M",
+          chart_id: null,
           config: { version: 1, query: wireGroupRequest },
         },
         {
           widget_type: "records",
+          size: "M",
+          chart_id: null,
           config: {
             version: 1,
             query: { module_id: moduleId, definition: wireDefinition },
@@ -420,7 +434,7 @@ test("serializes bounded date-series charts with numeric measures", async () => 
         },
       ],
     });
-    expect(result.widgets[0]?.config.query).toMatchObject({
+    expect(result.widgets[0]?.config?.query).toMatchObject({
       mode: "date_series",
       fromDate: "2026-01-01",
       toDate: "2027-01-01",

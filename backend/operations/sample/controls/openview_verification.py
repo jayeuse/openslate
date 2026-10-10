@@ -104,6 +104,7 @@ def verify_openview_controls(
                 "aggregate_date_series",
                 "aggregate_snapshot_groups",
                 "aggregate_snapshot_date_series",
+                "aggregate_snapshots",
             }
             for operation in expected_queries:
                 key = f"control:{operation}"
@@ -120,6 +121,20 @@ def verify_openview_controls(
                     issues.append(f"OpenView query outcome is missing for {operation}")
                 else:
                     counts["query_outcomes"] += 1
+                    if operation == "aggregate_snapshots" and isinstance(result, Mapping):
+                        totals = result.get("query_totals")
+                        if (
+                            not isinstance(totals, list)
+                            or len(totals) != 2
+                            or any(type(value) is not int or value < 0 for value in totals)
+                            or sum(totals) != total
+                        ):
+                            issues.append("OpenView batch snapshot outcome is incomplete")
     except (SampleClientError, SampleVerificationError, ValueError):
         issues.append("OpenView final control state could not be read")
+    from operations.sample.controls.charts_verification import verify_chart_controls
+
+    chart_counts, chart_issues = verify_chart_controls(admin, dataset, manifest, admin_id)
+    counts.update(chart_counts)
+    issues.extend(chart_issues)
     return counts, issues

@@ -12,7 +12,7 @@ import { ConfirmAction } from "./ui";
 export { prepareBoardPostLifecycleAction } from "../hooks/use-server-board-post-lifecycle";
 
 export type PostLifecycleAction = {
-  kind: "archive" | "restore" | "delete";
+  kind: "unpublish" | "archive" | "restore" | "delete";
   boardId: string;
   postId: string;
   title: string;
@@ -236,6 +236,20 @@ export function ServerBoardPostLifecycleDisplay({
                 ? e(
                     "div",
                     { className: "flex flex-wrap gap-2" },
+                    item.status === "published" &&
+                      item.publicationNumber !== null
+                      ? e(
+                          "button",
+                          {
+                            type: "button",
+                            className: secondaryClass,
+                            disabled: view.pending,
+                            onClick: () => onBeginAction(item, "unpublish"),
+                            "aria-label": `Unpublish post ${item.title}`,
+                          },
+                          "Unpublish post",
+                        )
+                      : null,
                     item.status !== "archived"
                       ? e(
                           "button",
@@ -342,12 +356,23 @@ export function ServerBackedBoardPostLifecycle({
         !panel.view.conflict &&
         confirmation !== null,
       title:
-        confirmation?.kind === "delete" ? "Delete draft?" : "Archive post?",
+        confirmation?.kind === "unpublish"
+          ? "Unpublish post?"
+          : confirmation?.kind === "delete"
+            ? "Delete draft?"
+            : "Archive post?",
       description:
-        confirmation?.kind === "delete"
-          ? `Delete “${confirmation.title}”? It was never published, so it is removed with its files and record links. This cannot be undone.`
-          : `Archive “${confirmation?.title ?? "this post"}”? Readers no longer see it. Its edit history stays, and you can restore it.`,
-      action: confirmation?.kind === "delete" ? "Delete draft" : "Archive post",
+        confirmation?.kind === "unpublish"
+          ? `Unpublish “${confirmation.title}”? Readers no longer see the published version. Any scheduled replacement is canceled. Its draft and edit history stay.`
+          : confirmation?.kind === "delete"
+            ? `Delete “${confirmation.title}”? It was never published, so it is removed with its files and record links. This cannot be undone.`
+            : `Archive “${confirmation?.title ?? "this post"}”? Readers no longer see it. Its edit history stays, and you can restore it.`,
+      action:
+        confirmation?.kind === "unpublish"
+          ? "Unpublish post"
+          : confirmation?.kind === "delete"
+            ? "Delete draft"
+            : "Archive post",
       phrase: confirmation?.kind === "delete" ? confirmation.title : undefined,
       disabled: panel.view.pending,
       onConfirm: panel.confirm,

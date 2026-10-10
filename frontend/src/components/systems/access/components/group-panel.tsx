@@ -14,8 +14,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-import type { GroupRow, MemberOption } from "../helpers/groups";
-import type { AccessDepartment, AccessModule } from "../state/api";
+import type { GroupRow } from "../helpers/groups";
 import { useAccessDraftNavigation } from "../state/draft-navigation";
 import { GroupEditor, type GroupEditorTab } from "./group-editor";
 import { DiscardChangesDialog } from "./people-fields";
@@ -27,18 +26,12 @@ import { DiscardChangesDialog } from "./people-fields";
 export function GroupPanel({
   row,
   mode,
-  departments,
-  modules,
-  memberOptions,
   listFresh,
   initialTab,
   onClose,
 }: {
   row: GroupRow | null;
   mode: "admin" | "manager";
-  departments: readonly AccessDepartment[];
-  modules: readonly AccessModule[];
-  memberOptions: readonly MemberOption[];
   listFresh: boolean;
   initialTab: GroupEditorTab | null;
   onClose: () => void;
@@ -107,9 +100,6 @@ export function GroupPanel({
                 key={group.id}
                 group={group}
                 mode={mode}
-                departments={departments}
-                modules={modules}
-                memberOptions={memberOptions}
                 listFresh={listFresh}
                 tab={tab ?? initialTab ?? defaultTab}
                 onTabChange={setTab}

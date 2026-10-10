@@ -746,16 +746,19 @@ test("a refusal seen in Dashboards hides the cached Views catalog", async ({
   await expect(source).toHaveCount(1);
 
   // Dashboards reads the catalog itself, without the cache, and is refused.
+  // Clicks are dispatched without hover or focus: a pointer resting on a
+  // sidebar link starts an intent prefetch of the catalog 120 ms later, at a
+  // moment this journey does not control.
   api.denyCatalog(true);
   const reads = api.catalogReads.length;
-  await sidebarLink(page, "Dashboards").click();
+  await sidebarLink(page, "Dashboards").dispatchEvent("click");
   await expect.poll(() => api.catalogReads.length).toBeGreaterThan(reads);
 
   // Back in Views the cached catalog reads again. While those reads are
   // out, the refusal Dashboards saw already hides the cached names.
   const release = api.holdCatalog();
   const before = api.catalogReads.length;
-  await sidebarLink(page, "Views").click();
+  await sidebarLink(page, "Views").dispatchEvent("click");
   await expect(page).toHaveURL(/section=views/);
   await expect.poll(() => api.catalogReads.length).toBeGreaterThan(before);
   await expect(source).toHaveCount(0);

@@ -1,11 +1,16 @@
 import { z } from "zod";
-import type { BoardWidget } from "../adapters/board-widgets-api";
+import type {
+  BoardWidget,
+  BoardLegacyWidgetConfig,
+} from "../adapters/board-widgets-api";
+import type { OpenViewDashboardWidgetConfig } from "../../openview/adapters/dashboards-api";
 import type {
   OpenViewAggregateRequest,
   OpenViewAggregateSnapshotRequest,
   OpenViewAggregateSnapshotResult,
 } from "../../openview/adapters/analytics-api";
 import type { OpenViewQueryDefinition } from "../../openview/adapters/views-api";
+import { CATEGORICAL_TYPES } from "../../openview/domain/chart-query";
 
 type RecordRequest = {
   moduleId: string;
@@ -16,12 +21,19 @@ type RecordRequest = {
 
 export type BoardWidgetQueryPlan =
   | {
+      kind: "reference";
+      widgetType: BoardWidget["widgetType"];
+      chartId: string;
+      moduleId: string;
+    }
+  | {
       kind: "unavailable";
       reason:
         | "missing-dimension"
         | "unsupported-dimension"
         | "missing-workspace-date"
-        | "invalid-workspace-date";
+        | "invalid-workspace-date"
+        | "invalid-source";
     }
   | {
       kind: "records";
@@ -36,31 +48,26 @@ export type BoardWidgetQueryPlan =
     }
   | {
       kind: "snapshot";
-      widgetType: "chart";
-      visualization: "pie" | "line";
+      widgetType: "chart" | "summary" | "workload";
+      visualization: "bar" | "pie" | "line";
       request: OpenViewAggregateSnapshotRequest;
     };
 
-const categoricalTypes = new Set([
-  "text",
-  "long_text",
-  "email",
-  "url",
-  "boolean",
-  "select",
-]);
 const millisecondsPerDay = 86_400_000;
 const pieVisibleGroups = 8;
 
-function definitionFor(widget: BoardWidget): OpenViewQueryDefinition {
+function definitionFor(
+  widget: BoardWidget,
+  config: BoardLegacyWidgetConfig,
+): OpenViewQueryDefinition {
   return {
     version: 1,
-    logic: widget.config.logic,
+    logic: config.logic,
     columns:
       widget.widgetType === "records"
-        ? widget.config.fields.map((field) => ({ ...field }))
+        ? config.fields.map((field) => ({ ...field }))
         : [],
-    filters: widget.config.filters.map((filter) => ({ ...filter })),
+    filters: config.filters.map((filter) => ({ ...filter })),
     sort: [],
     deleted: "exclude",
     search: null,
@@ -68,15 +75,14 @@ function definitionFor(widget: BoardWidget): OpenViewQueryDefinition {
   };
 }
 
-function aggregateBase(widget: BoardWidget) {
+function aggregateBase(widget: BoardWidget, config: BoardLegacyWidgetConfig) {
   return {
     moduleId: widget.moduleId,
-    definition: definitionFor(widget),
+    definition: definitionFor(widget, config),
     aggregation:
-      widget.config.metric === null ? ("count" as const) : ("sum" as const),
-    ...(widget.config.metric === null
-      ? {}
-      : { measure: { ...widget.config.metric } }),
+      config.aggregation ??
+      (config.metric === null ? ("count" as const) : ("sum" as const)),
+    ...(config.metric === null ? {} : { measure: { ...config.metric } }),
   };
 }
 
@@ -89,23 +95,34 @@ export function buildBoardWidgetQueryPlan(
   widget: BoardWidget,
   options: { workspaceToday?: string } = {},
 ): BoardWidgetQueryPlan {
+  if (widget.chartId !== null)
+    return {
+      kind: "reference",
+      widgetType: widget.widgetType,
+      chartId: widget.chartId,
+      moduleId: widget.moduleId,
+    };
+  const config = widget.config;
+  if (config === null) return { kind: "unavailable", reason: "invalid-source" };
+  if (!("fields" in config))
+    return buildNativeBoardWidgetPlan(widget.widgetType, config);
   if (widget.widgetType === "summary" || widget.widgetType === "records") {
     return {
       kind: "records",
       widgetType: widget.widgetType,
       request: {
         moduleId: widget.moduleId,
-        definition: definitionFor(widget),
+        definition: definitionFor(widget, config),
         limit: widget.widgetType === "summary" ? 1 : 5,
         offset: 0,
       },
     };
   }
 
-  const dimension = widget.config.fields[0];
+  const dimension = config.fields[0];
   if (!dimension) return { kind: "unavailable", reason: "missing-dimension" };
 
-  if (widget.widgetType === "chart" && widget.config.visualization === "line") {
+  if (widget.widgetType === "chart" && config.visualization === "line") {
     if (
       dimension.expectedType !== "date" &&
       dimension.expectedType !== "datetime"
@@ -128,7 +145,7 @@ export function buildBoardWidgetQueryPlan(
       widgetType: "chart",
       visualization: "line",
       request: {
-        ...aggregateBase(widget),
+        ...aggregateBase(widget, config),
         mode: "date_series",
         dateField: { ...dimension },
         fromDate: new Date(start).toISOString().slice(0, 10),
@@ -137,16 +154,16 @@ export function buildBoardWidgetQueryPlan(
     };
   }
 
-  if (!categoricalTypes.has(dimension.expectedType)) {
+  if (!CATEGORICAL_TYPES.has(dimension.expectedType)) {
     return { kind: "unavailable", reason: "unsupported-dimension" };
   }
-  if (widget.widgetType === "chart" && widget.config.visualization === "pie") {
+  if (widget.widgetType === "chart" && config.visualization === "pie") {
     return {
       kind: "snapshot",
       widgetType: "chart",
       visualization: "pie",
       request: {
-        ...aggregateBase(widget),
+        ...aggregateBase(widget, config),
         mode: "groups",
         dimension: { ...dimension },
       },
@@ -157,12 +174,41 @@ export function buildBoardWidgetQueryPlan(
     widgetType: widget.widgetType,
     visualization: "bar",
     request: {
-      ...aggregateBase(widget),
+      ...aggregateBase(widget, config),
       mode: "groups",
       dimension: { ...dimension },
       limit: widget.widgetType === "workload" ? 8 : 12,
       offset: 0,
     },
+  };
+}
+
+/** Native queries are already validated; preserve their window/metric/definition. */
+export function buildNativeBoardWidgetPlan(
+  widgetType: BoardWidget["widgetType"],
+  config: OpenViewDashboardWidgetConfig,
+): BoardWidgetQueryPlan {
+  if (widgetType === "records") {
+    if ("mode" in config.query)
+      return { kind: "unavailable", reason: "invalid-source" };
+    return {
+      kind: "records",
+      widgetType,
+      request: {
+        moduleId: config.query.moduleId,
+        definition: config.query.definition,
+        limit: 5,
+        offset: 0,
+      },
+    };
+  }
+  if (!("mode" in config.query))
+    return { kind: "unavailable", reason: "invalid-source" };
+  return {
+    kind: "snapshot",
+    widgetType,
+    visualization: "chartType" in config ? config.chartType : "bar",
+    request: config.query,
   };
 }
 
@@ -187,6 +233,7 @@ export type BoardWidgetPieProjection =
 
 export function collapseBoardWidgetPie(
   result: OpenViewAggregateSnapshotResult,
+  rollUp = true,
 ): BoardWidgetPieProjection {
   if (
     result.pagination.hasMore ||
@@ -198,6 +245,7 @@ export function collapseBoardWidgetPie(
   }
   const points: BoardWidgetPiePoint[] = [];
   for (const item of result.items) {
+    if (item.value === null) continue;
     const value = Number(item.value);
     if (!Number.isFinite(value) || value < 0) {
       return { kind: "unavailable", reason: "unrepresentable-value" };
@@ -209,7 +257,9 @@ export function collapseBoardWidgetPie(
       recordCount: item.recordCount,
     });
   }
-  const rolledUpGroups = Math.max(0, points.length - pieVisibleGroups);
+  const rolledUpGroups = rollUp
+    ? Math.max(0, points.length - pieVisibleGroups)
+    : 0;
   if (rolledUpGroups === 0) {
     return {
       kind: "ready",

@@ -23,6 +23,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.modules.models import Module
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -190,6 +191,22 @@ def test_manager_lists_only_the_groups_they_may_change(world: _World) -> None:
         str(world.module_group.id),
         str(world.manager_group.id),
     }
+    groups = {item["id"]: item for item in response.json()["items"]}
+    department_access = groups[str(world.inventory_group.id)]["access"][0]
+    assert department_access["department_name"] == world.inventory.department_name
+    assert department_access["module_name"] is None
+    module_access = groups[str(world.module_group.id)]["access"][0]
+    assert module_access["department_name"] == world.inventory.department_name
+    module = world.db.get(Module, module_access["module_id"])
+    assert module is not None
+    assert module_access["module_name"] == module.module_name
+
+    page = world.client(world.manager).get(
+        "/api/access/groups", params={"search": world.module_group.name, "limit": 1}
+    )
+    assert page.status_code == 200
+    assert page.json()["pagination"]["total"] == 1
+    assert page.json()["items"][0]["access"] == [module_access]
 
 
 def test_manager_cannot_rename_a_group_or_change_its_access(world: _World) -> None:
@@ -336,8 +353,10 @@ def test_member_candidates_are_the_non_administrator_accounts(world: _World) -> 
         "email",
         "role",
         "status",
+        "access_ends_at",
     }
     assert items[str(world.pending.id)]["status"] == "pending"
+    assert items[str(world.pending.id)]["access_ends_at"] is None
     assert world.client(world.admin).get("/api/access/member-candidates").status_code == 200
 
 

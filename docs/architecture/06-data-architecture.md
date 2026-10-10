@@ -35,6 +35,8 @@ OpenView persists department Dashboards and widget configurations in [`dashboard
 
 `report_run_eligible_users` records the module readers at the time each run is created. A run read also requires current read access on the module.
 
+[`charts`](../../backend/app/systems/openview/charts/models.py) stores shared, revisioned chart definitions with source `module_id`, derived `department_id`, query and presentation configuration. The forward migration [`c64062dacada`](../../backend/migrations/versions/c64062dacada_add_saved_charts_and_widget_query_.py) adds that table and widget `chart_id`/query support after the fresh root. The removal of the old personal chart-preference table does not mean that current Charts are page-local only. Results are queried at read time under current access; saved definitions contain no materialized Record output.
+
 ## Fresh-root construction and lifecycle
 
 The root was produced by Alembic autogeneration from the final registered

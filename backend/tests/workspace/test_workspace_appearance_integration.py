@@ -1,4 +1,4 @@
-"""Organization appearance through real Auth and the guarded runtime database."""
+"""Organization appearance through the real login route (fake provider) and the runtime DB."""
 
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -15,7 +15,7 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
 _FIELDS = (
     "revision",
@@ -53,8 +53,8 @@ def test_public_appearance_is_anonymous_theme_only_and_no_store():
 
 
 @pytest.fixture
-def appearance_workspace(provider_account):
-    email, password, provider_id, local_id, owner = provider_account
+def appearance_workspace(fake_provider_account):
+    email, password, provider_id, local_id, owner = fake_provider_account
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None

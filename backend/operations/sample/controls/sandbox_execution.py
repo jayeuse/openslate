@@ -6,14 +6,11 @@ from collections.abc import Callable
 
 from operations.sample.blueprint import SampleDataset
 from operations.sample.controls.sandbox import (
-    _IMPORT_CHECKPOINT_KEY,
     _PAGE_SIZE,
     OPERATIONS,
     _document,
-    _revision,
     _test_matches,
     _version_id,
-    _version_list,
 )
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import (
@@ -174,97 +171,6 @@ def _checkpoint_action(
     raise SamplePhaseActionError("Unsupported Sandbox checkpoint operation", step=action.key)
 
 
-def _export_import(
-    action: PhaseAction,
-    context: PhaseExecutionContext,
-    evidence: list[dict[str, object]],
-    mappings: list[dict[str, str]],
-    *,
-    on_substep: Callable[[str], None] | None,
-) -> dict[str, object]:
-    before_document, revision = _document(
-        action, context, evidence, step="read_document_before_export", on_substep=on_substep
-    )
-    bundle = _request_object(
-        action,
-        context,
-        evidence,
-        actor_key=action.actor_key,
-        path="/api/sandbox/export",
-        params={"includeVersions": "false"},
-        step="export_document",
-        on_substep=on_substep,
-    )
-    if bundle != before_document:
-        raise SamplePhaseActionError(
-            "Sandbox export did not match the current document", step="export_document"
-        )
-    before_versions = _version_list(
-        action, context, evidence, step="list_versions_before_import", on_substep=on_substep
-    )
-    before_ids = {row.get("id") for row in before_versions if isinstance(row.get("id"), str)}
-    response = _request(
-        action,
-        context,
-        evidence,
-        actor_key=action.actor_key,
-        method="POST",
-        path="/api/sandbox/imports",
-        step="import_document",
-        expected=action.expected_status,
-        on_substep=on_substep,
-        json_body={"expectedRevision": revision, "bundle": bundle},
-        primary_entity_type="sandbox_documents",
-        primary_action="update",
-        expected_audit_rows=1,
-        related_entity_types=("sandbox_versions",),
-    )
-    imported = _read_json(response, step="import_document")
-    imported_document = imported.get("document")
-    if not isinstance(imported_document, dict) or imported_document != bundle:
-        raise SamplePhaseActionError(
-            "Sandbox import changed the exported document", step="import_document"
-        )
-    next_revision = _revision(imported, step="import_document")
-    after_versions = _version_list(
-        action, context, evidence, step="list_versions_after_import", on_substep=on_substep
-    )
-    new_checkpoints = [
-        row
-        for row in after_versions
-        if row.get("id") not in before_ids
-        and row.get("kind") == "checkpoint"
-        and row.get("label") == "Before import"
-    ]
-    if len(new_checkpoints) != 1 or not isinstance(new_checkpoints[0].get("id"), str):
-        raise SamplePhaseActionError(
-            "Sandbox import did not create one review checkpoint", step="list_versions_after_import"
-        )
-    checkpoint_id = _id(
-        {"version": new_checkpoints[0]["id"]},
-        "version",
-        label="Sandbox version",
-        step="list_versions_after_import",
-    )
-    client = context.clients[action.actor_key]
-    _record_mapping(
-        context,
-        client,
-        "sandbox_control_versions",
-        _IMPORT_CHECKPOINT_KEY,
-        checkpoint_id,
-        mappings,
-    )
-    evidence[-1]["primary_entity_id"] = None
-    return _result(
-        action,
-        context,
-        evidence,
-        mappings,
-        extra={"document_round_trip": True, "import_revision": next_revision},
-    )
-
-
 def _test_history_action(
     action: PhaseAction,
     dataset: SampleDataset,
@@ -403,6 +309,10 @@ def execute_sandbox_control(
     evidence: list[dict[str, object]] = []
     mappings: list[dict[str, str]] = []
     operation = action.values.get("operation")
+    if operation == "prune_versions":
+        from operations.sample.controls.version_prune import execute_version_prune
+
+        return execute_version_prune(action, dataset, context, on_substep=on_substep)
     from operations.sample.controls.lifecycle import execute_lifecycle_control
 
     if operation in OPERATIONS:
@@ -422,7 +332,9 @@ def execute_sandbox_control(
             on_substep=on_substep,
         )
     if operation == "export_import_document":
-        return _export_import(action, context, evidence, mappings, on_substep=on_substep)
+        from operations.sample.controls.sandbox_export import execute_export_import
+
+        return execute_export_import(action, context, evidence, mappings, on_substep=on_substep)
     if operation in {"clear_test_history", "restore_test_history"}:
         return _test_history_action(
             action,

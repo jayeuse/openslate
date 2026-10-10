@@ -1,5 +1,6 @@
 """Board structure export, and import or duplicate into a new project Board."""
 
+import json
 from typing import Annotated
 from uuid import UUID
 
@@ -10,35 +11,54 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_admin
+from app.common.dependencies.auth import (
+    CurrentIdentity,
+    get_current_identity,
+    require_fresh_exact_admin,
+)
 from app.core.database import get_db
+from app.systems.access.policy.checks import (
+    require_fresh_module_access,
+    require_live_session,
+    require_module_access,
+)
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardScope, BoardStatus, BoardWidget
 from app.systems.boards.portability import (
     MAX_PORTABLE_BOARD_BYTES,
     PortabilityError,
+    ResolvedBoardConfiguration,
     parse_portable_board,
-    reject_nonportable_person_filter,
     resolve_portable_board,
-    select_filter_labels,
 )
+from app.systems.boards.portability_queries import portable_config
 from app.systems.boards.portability_schemas import (
     PortableBoardBundle,
     PortableBoardConfiguration,
-    PortableFieldReference,
-    PortableQueryFilter,
     PortableWidget,
-    PortableWidgetConfig,
     PortableWidgetSource,
 )
 from app.systems.boards.router import _board_with_access
 from app.systems.boards.router import _response as board_response
 from app.systems.boards.schemas import BoardResponse
-from app.systems.boards.widget_schemas import BoardWidgetConfig
+from app.systems.boards.widget_schemas import BoardInlineConfig, BoardWidgetConfig, BoardWidgetSpec
+from app.systems.openview.charts.models import Chart
+from app.systems.openview.charts.service import (
+    read_chart,
+    validate_query,
+    widget_source_transaction,
+)
+from app.systems.openview.dashboards.schemas import (
+    DashboardAggregateConfig,
+    DashboardChartConfig,
+    DashboardRecordsConfig,
+    DashboardRecordsQuery,
+)
 from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.records.query_schemas import QueryFilter
+from app.systems.sandbox.records.query_schemas import GroupedAggregateSnapshotQuery
 
 
 def _private_cache(response: Response) -> None:
@@ -49,6 +69,7 @@ router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_pri
 Reader = Annotated[User, Depends(get_current_user)]
 Admin = Annotated[User, Depends(require_admin)]
 Database = Annotated[Session, Depends(get_db)]
+Identity = Annotated[CurrentIdentity, Depends(get_current_identity)]
 
 
 def _source_unavailable() -> PortabilityError:
@@ -60,6 +81,7 @@ def _http_error(error: PortabilityError) -> HTTPException:
         return HTTPException(
             status.HTTP_413_CONTENT_TOO_LARGE,
             detail={"code": error.code, "message": "Board configuration is too large"},
+            headers={"Cache-Control": "private, no-store"},
         )
     if error.code == "board_bundle_invalid":
         return HTTPException(
@@ -68,10 +90,12 @@ def _http_error(error: PortabilityError) -> HTTPException:
                 "code": error.code,
                 "message": error.message or "Board configuration is invalid",
             },
+            headers={"Cache-Control": "private, no-store"},
         )
     return HTTPException(
         status.HTTP_409_CONFLICT,
         detail={"code": error.code, "message": "A Board source is unavailable"},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
@@ -90,7 +114,7 @@ def _locked_departments(db: Session, ids: set[UUID]) -> dict[UUID, Department]:
             Department.deleted_at.is_(None),
         )
         .order_by(Department.id)
-        .with_for_update()
+        .with_for_update(nowait=True)
         .execution_options(populate_existing=True)
     ).all()
     found = {row.id: row for row in rows if _active(row)}
@@ -110,7 +134,7 @@ def _locked_modules(db: Session, ids: set[UUID]) -> dict[UUID, Module]:
             Module.deleted_at.is_(None),
         )
         .order_by(Module.id)
-        .with_for_update()
+        .with_for_update(nowait=True)
         .execution_options(populate_existing=True)
     ).all()
     found = {row.id: row for row in rows if _active(row)}
@@ -126,7 +150,7 @@ def _locked_fields(db: Session, ids: set[UUID]) -> dict[UUID, Field]:
         select(Field)
         .where(Field.id.in_(sorted(ids)), Field.is_deleted.is_(False), Field.deleted_at.is_(None))
         .order_by(Field.id)
-        .with_for_update()
+        .with_for_update(nowait=True)
         .execution_options(populate_existing=True)
     ).all()
     found = {row.id: row for row in rows if _active(row)}
@@ -135,34 +159,61 @@ def _locked_fields(db: Session, ids: set[UUID]) -> dict[UUID, Field]:
     return found
 
 
-def _portable_field(
-    reference_id: UUID, expected_type: str, module_id: UUID, fields: dict[UUID, Field]
-) -> PortableFieldReference:
-    field = fields.get(reference_id)
-    if field is None or field.module_id != module_id or field.type != expected_type:
-        raise _source_unavailable()
-    return PortableFieldReference(name=field.name, expected_type=field.type)
-
-
-def _portable_filter(
-    reference: QueryFilter, module_id: UUID, fields: dict[UUID, Field]
-) -> PortableQueryFilter:
-    portable = _portable_field(reference.field_id, reference.expected_type, module_id, fields)
-    field = fields[reference.field_id]
-    reject_nonportable_person_filter(field, reference.value)
-    value = (
-        select_filter_labels(field, reference.value)
-        if field.type == FieldType.SELECT
-        else reference.value
+def _widget_state(widget: BoardWidget) -> tuple[object, ...]:
+    return (
+        widget.id,
+        widget.position,
+        widget.name,
+        widget.widget_type,
+        widget.module_id,
+        widget.chart_id,
+        widget.size,
+        widget.pinned,
+        widget.updated_at,
+        json.dumps(widget.config, sort_keys=True, separators=(",", ":")),
     )
-    return PortableQueryFilter(**portable.model_dump(), operator=reference.operator, value=value)
+
+
+def _inline_chart(spec: BoardWidgetSpec, chart: Chart) -> BoardWidgetSpec:
+    category = "chart" if chart.chart_type in {"bar", "line", "pie"} else chart.chart_type
+    if category != spec.widget_type or chart.module_id != spec.module_id:
+        raise _source_unavailable()
+    document: dict[str, object] = {"version": 1, "query": chart.query}
+    if category == "chart":
+        document["chart_type"] = chart.chart_type
+        config: BoardInlineConfig = DashboardChartConfig.model_validate(document)
+    elif category == "records":
+        config = DashboardRecordsConfig.model_validate(document)
+    else:
+        config = DashboardAggregateConfig.model_validate(document)
+    return BoardWidgetSpec.model_validate({**spec.model_dump(), "chart_id": None, "config": config})
+
+
+def _field_ids(config: BoardInlineConfig) -> set[UUID]:
+    if isinstance(config, BoardWidgetConfig):
+        refs = [*config.fields, *config.filters, *((config.metric,) if config.metric else ())]
+    else:
+        query = config.query
+        definition = query.definition
+        refs = [
+            *definition.columns,
+            *definition.filters,
+            *definition.sort,
+            *definition.search_fields,
+        ]
+        if not isinstance(query, DashboardRecordsQuery):
+            refs.extend(ref for ref in (query.measure, query.date_field) if ref is not None)
+            if isinstance(query, GroupedAggregateSnapshotQuery):
+                refs.append(query.dimension)
+    return {ref.field_id for ref in refs}
 
 
 def _bundle_from_board(
-    db: Session, board_id: UUID, actor: User, *, mutation: bool
-) -> PortableBoardBundle:
-    board = _board_with_access(db, actor, board_id, AccessLevel.MANAGE, lock=mutation)
-    widgets = db.scalars(
+    db: Session, board_id: UUID, actor: User, identity: CurrentIdentity, *, mutation: bool
+) -> tuple[PortableBoardBundle, ResolvedBoardConfiguration]:
+    board = _board_with_access(db, actor, board_id, AccessLevel.MANAGE)
+    board_state = (board.name, board.description, board.revision, board.updated_at)
+    statement = (
         select(BoardWidget)
         .where(
             BoardWidget.board_id == board.id,
@@ -170,74 +221,114 @@ def _bundle_from_board(
             BoardWidget.deleted_at.is_(None),
         )
         .order_by(BoardWidget.position, BoardWidget.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    ).all()
+    )
+    widgets = db.scalars(statement).all()
+    before = [_widget_state(widget) for widget in widgets]
     if len(widgets) > 12:
         raise _source_unavailable()
-
     try:
-        configs = {widget.id: BoardWidgetConfig.model_validate(widget.config) for widget in widgets}
-    except ValidationError as error:
-        raise _source_unavailable() from error
-    module_ids = {widget.module_id for widget in widgets}
-    # Read IDs without locks only to discover departments; locked rows are rechecked below.
-    candidates = db.scalars(select(Module).where(Module.id.in_(sorted(module_ids)))).all()
-    if {module.id for module in candidates} != module_ids:
-        raise _source_unavailable()
-    department_ids = {module.department_id for module in candidates}
-    departments = _locked_departments(db, department_ids)
-    modules = _locked_modules(db, module_ids)
-    if any(modules[module.id].department_id != module.department_id for module in candidates):
-        raise _source_unavailable()
-
-    field_ids = {
-        reference.field_id
-        for config in configs.values()
-        for reference in (
-            *config.fields,
-            *config.filters,
-            *((config.metric,) if config.metric else ()),
+        specs = [
+            BoardWidgetSpec.model_validate(
+                {
+                    "name": widget.name,
+                    "widget_type": widget.widget_type,
+                    "module_id": widget.module_id,
+                    "chart_id": widget.chart_id,
+                    "config": widget.config,
+                    "size": widget.size,
+                    "pinned": widget.pinned,
+                }
+            )
+            for widget in widgets
+        ]
+        chart_ids = {spec.chart_id for spec in specs if spec.chart_id is not None}
+        discovered = {key: read_chart(db, actor, key) for key in sorted(chart_ids)}
+        read_ids = {
+            spec.module_id for spec in specs if not isinstance(spec.config, BoardWidgetConfig)
+        } | {chart.module_id for chart in discovered.values()}
+        for module_id in sorted(read_ids):
+            require_module_access(db, actor, module_id, AccessLevel.READ)
+            actor = require_fresh_module_access(
+                db,
+                actor_id=actor.id,
+                session_id=identity.session_id,
+                module_id=module_id,
+                level=AccessLevel.READ,
+            )
+        if mutation:
+            if read_ids:
+                require_admin(actor)
+            else:
+                actor = require_fresh_exact_admin(db, actor.id)
+                require_live_session(db, actor_id=actor.id, session_id=identity.session_id)
+        module_ids = {spec.module_id for spec in specs} | read_ids
+        discovered_departments = {
+            row.id: row.department_id
+            for row in db.scalars(select(Module).where(Module.id.in_(sorted(module_ids)))).all()
+        }
+        if discovered_departments.keys() != module_ids:
+            raise _source_unavailable()
+        departments = _locked_departments(db, set(discovered_departments.values()))
+        modules = _locked_modules(db, module_ids)
+        if any(
+            modules[key].department_id != value for key, value in discovered_departments.items()
+        ):
+            raise _source_unavailable()
+        charts = (
+            {
+                row.id: row
+                for row in db.scalars(
+                    select(Chart)
+                    .where(Chart.id.in_(sorted(chart_ids)))
+                    .order_by(Chart.id)
+                    .with_for_update(nowait=True)
+                    .execution_options(populate_existing=True)
+                ).all()
+            }
+            if chart_ids
+            else {}
         )
-    }
-    fields = _locked_fields(db, field_ids)
-    try:
+        if charts.keys() != chart_ids or any(
+            row.is_deleted
+            or row.deleted_at is not None
+            or row.module_id not in modules
+            or row.department_id != modules[row.module_id].department_id
+            for row in charts.values()
+        ):
+            raise _source_unavailable()
+        inline = [
+            _inline_chart(spec, charts[spec.chart_id]) if spec.chart_id is not None else spec
+            for spec in specs
+        ]
+        configs = [spec.config for spec in inline]
+        if any(config is None for config in configs):
+            raise _source_unavailable()
+        fields = _locked_fields(
+            db, {key for config in configs if config for key in _field_ids(config)}
+        )
         portable_widgets: list[PortableWidget] = []
-        for widget in widgets:
-            module = modules[widget.module_id]
-            config = configs[widget.id]
+        for spec in inline:
+            config = spec.config
+            assert config is not None
+            if not isinstance(config, BoardWidgetConfig):
+                kind = (
+                    config.chart_type
+                    if isinstance(config, DashboardChartConfig)
+                    else spec.widget_type
+                )
+                validate_query(
+                    db, actor, spec.module_id, kind, config.query.model_dump(mode="json")
+                )
+            module = modules[spec.module_id]
             portable_widgets.append(
                 PortableWidget(
-                    name=widget.name,
-                    widget_type=widget.widget_type,
+                    name=spec.name,
+                    widget_type=spec.widget_type,
                     source=PortableWidgetSource(
                         department_name=departments[module.department_id].department_name,
                         module_name=module.module_name,
                     ),
-                    config=PortableWidgetConfig(
-                        fields=[
-                            _portable_field(ref.field_id, ref.expected_type, module.id, fields)
-                            for ref in config.fields
-                        ],
-                        filters=[
-                            _portable_filter(ref, module.id, fields) for ref in config.filters
-                        ],
-                        logic=config.logic,
-                        metric=(
-                            _portable_field(
-                                config.metric.field_id,
-                                config.metric.expected_type,
-                                module.id,
-                                fields,
-                            )
-                            if config.metric is not None
-                            else None
-                        ),
-                        visualization=config.visualization,
-                        size=config.size,
-                        refresh=config.refresh,
-                        pinned=config.pinned,
-                    ),
+                    config=portable_config(config, module.id, fields, spec.size, spec.pinned),
                 )
             )
         bundle = PortableBoardBundle(
@@ -249,22 +340,45 @@ def _bundle_from_board(
                 widgets=portable_widgets,
             ),
         )
-    except (ValidationError, KeyError) as error:
+        if len(bundle.model_dump_json().encode()) > MAX_PORTABLE_BOARD_BYTES:
+            raise PortabilityError("board_bundle_too_large")
+        resolved = resolve_portable_board(db, bundle)
+        for mapped, original in zip(resolved.widgets, inline, strict=True):
+            assert mapped.config is not None and original.config is not None
+            if mapped.model_dump(mode="json", exclude={"config"}) != original.model_dump(
+                mode="json", exclude={"config"}
+            ) or mapped.config.model_dump(
+                mode="json", exclude={"refresh"}
+            ) != original.config.model_dump(mode="json", exclude={"refresh"}):
+                raise _source_unavailable()
+    except ValidationError as error:
         raise _source_unavailable() from error
-    if len(bundle.model_dump_json().encode()) > MAX_PORTABLE_BOARD_BYTES:
-        raise PortabilityError("board_bundle_too_large")
-    resolved = resolve_portable_board(db, bundle)
-    if any(
-        mapped.module_id != original.module_id
-        or mapped.config.model_dump(mode="json") != configs[original.id].model_dump(mode="json")
-        for mapped, original in zip(resolved.widgets, widgets, strict=True)
-    ):
+    except HTTPException as error:
+        if error.status_code in {403, 404, 409, 422}:
+            raise _source_unavailable() from error
+        raise
+    # Every source is fixed before the consumer lock; contention never waits or retries.
+    db.scalar(
+        select(Board)
+        .where(Board.id == board_id)
+        .with_for_update(nowait=True)
+        .execution_options(populate_existing=True)
+    )
+    board = _board_with_access(db, actor, board_id, AccessLevel.MANAGE)
+    current = db.scalars(
+        statement.with_for_update(nowait=True).execution_options(populate_existing=True)
+    ).all()
+    if board_state != (
+        board.name,
+        board.description,
+        board.revision,
+        board.updated_at,
+    ) or before != [_widget_state(widget) for widget in current]:
         raise _source_unavailable()
-    return bundle
+    return bundle, resolved
 
 
-def _create_project_board(db: Session, bundle: PortableBoardBundle) -> Board:
-    resolved = resolve_portable_board(db, bundle)
+def _create_project_board(db: Session, resolved: ResolvedBoardConfiguration) -> Board:
     board = Board(
         scope=BoardScope.PROJECT.value,
         name=resolved.board.name,
@@ -282,7 +396,12 @@ def _create_project_board(db: Session, bundle: PortableBoardBundle) -> Board:
                     name=spec.name,
                     widget_type=spec.widget_type,
                     module_id=spec.module_id,
-                    config=spec.config.model_dump(mode="json"),
+                    config=spec.config.model_dump(mode="json", exclude={"refresh"})
+                    if spec.config
+                    else None,
+                    chart_id=None,
+                    size=spec.size,
+                    pinned=spec.pinned,
                 )
             )
         db.commit()
@@ -301,13 +420,13 @@ def _create_project_board(db: Session, bundle: PortableBoardBundle) -> Board:
 
 @router.get("/{board_id}/configuration", response_model=PortableBoardBundle)
 def export_board_configuration(
-    board_id: UUID, actor: Reader, db: Database, response: Response
+    board_id: UUID, actor: Reader, identity: Identity, db: Database, response: Response
 ) -> PortableBoardBundle:
-    try:
-        bundle = _bundle_from_board(db, board_id, actor, mutation=False)
-    except PortabilityError as error:
-        db.rollback()
-        raise _http_error(error) from error
+    with widget_source_transaction(db):
+        try:
+            bundle, _ = _bundle_from_board(db, board_id, actor, identity, mutation=False)
+        except PortabilityError as error:
+            raise _http_error(error) from error
     response.headers["Content-Disposition"] = 'attachment; filename="board-configuration.json"'
     return bundle
 
@@ -319,12 +438,13 @@ def import_board_configuration(
     db: Database,
     response: Response,
 ) -> BoardResponse:
-    try:
-        bundle = parse_portable_board(raw)
-        board = _create_project_board(db, bundle)
-    except PortabilityError as error:
-        db.rollback()
-        raise _http_error(error) from error
+    with widget_source_transaction(db):
+        try:
+            bundle = parse_portable_board(raw)
+            actor = require_fresh_exact_admin(db, actor.id)
+            board = _create_project_board(db, resolve_portable_board(db, bundle))
+        except PortabilityError as error:
+            raise _http_error(error) from error
     response.headers["Location"] = f"/api/boards/{board.id}"
     return board_response(db, actor, board)
 
@@ -333,14 +453,14 @@ def import_board_configuration(
     "/{board_id}/duplicate", response_model=BoardResponse, status_code=status.HTTP_201_CREATED
 )
 def duplicate_board(
-    board_id: UUID, actor: Admin, db: Database, response: Response
+    board_id: UUID, actor: Admin, identity: Identity, db: Database, response: Response
 ) -> BoardResponse:
-    try:
-        bundle = _bundle_from_board(db, board_id, actor, mutation=True)
-        bundle.configuration.name = f"{bundle.configuration.name[:193]} (copy)"
-        board = _create_project_board(db, bundle)
-    except PortabilityError as error:
-        db.rollback()
-        raise _http_error(error) from error
+    with widget_source_transaction(db):
+        try:
+            bundle, resolved = _bundle_from_board(db, board_id, actor, identity, mutation=True)
+            resolved.board.name = f"{bundle.configuration.name[:193]} (copy)"
+            board = _create_project_board(db, resolved)
+        except PortabilityError as error:
+            raise _http_error(error) from error
     response.headers["Location"] = f"/api/boards/{board.id}"
     return board_response(db, actor, board)

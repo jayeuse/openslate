@@ -1,8 +1,24 @@
 "use client";
 
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api";
+import { TablePagination } from "@/components/ui/table-pagination";
+import { getSandboxVersionMetadata } from "../state/api";
+import {
+  invalidateSandboxHistoryVersion,
+  useSandboxHistoryAccess,
+} from "../state/sandbox-history-access";
+import {
+  sandboxKeys,
+  sandboxVersionPageOptions,
+} from "../state/sandbox-queries";
 import { ArrowRight } from "lucide-react";
 import { VersionComparison } from "./version-comparison";
+import {
+  VersionCapacityBanner,
+  type VersionCapacityActions,
+} from "./version-capacity-banner";
 import { SearchField } from "@/components/ui/search-field";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
@@ -30,11 +46,13 @@ import type { SandboxCommandResult } from "../state/commands";
 import type {
   SandboxDocumentResponse,
   SandboxVersion,
+  SandboxVersionPage,
   SandboxVersionDetail,
 } from "../state/api";
 
 type Props = {
-  versions: SandboxVersion[];
+  versionCapacity: VersionCapacityActions;
+  refreshKey: number;
   getVersion: (
     id: string,
   ) => Promise<SandboxCommandResult<SandboxVersionDetail>>;
@@ -51,7 +69,7 @@ type Props = {
   pending: boolean;
 };
 
-type VersionFilter = "all" | "checkpoint" | "published";
+type VersionFilter = "all" | "checkpoint" | "published" | "imported";
 
 type CheckpointLabelEdit = {
   id: string;
@@ -205,7 +223,8 @@ export function versionCompareHint(
 }
 
 export function VersionsWorkspace({
-  versions,
+  versionCapacity,
+  refreshKey,
   getVersion,
   updateVersion,
   restoreVersion,
@@ -214,13 +233,154 @@ export function VersionsWorkspace({
   notifyDone,
   pending,
 }: Props) {
-  const newestFirst = [...versions].sort(
-    (first, second) => second.sequence - first.sequence,
+  const [compareA, setCompareA] = useState("");
+  const [compareB, setCompareB] = useState("");
+  const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [retainedVersions, setRetainedVersions] = useState<SandboxVersion[]>(
+    [],
   );
-  const [compareA, setCompareA] = useState(versions[0]?.id ?? "");
-  const [compareB, setCompareB] = useState(versions.at(-1)?.id ?? "");
-  const selectedCompareA = validVersionSelection(versions, compareA, "first");
-  const selectedCompareB = validVersionSelection(versions, compareB, "last");
+  const [filter, setFilter] = useState<VersionFilter>("all");
+  const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const access = useSandboxHistoryAccess();
+  const denied = access.denied;
+  const pageScope = JSON.stringify([appliedSearch.trim(), filter, pageSize]);
+  const [lastAuthorizedPage, setLastAuthorizedPage] = useState<{
+    scope: string;
+    page: SandboxVersionPage;
+  } | null>(null);
+  const history = useQuery({
+    ...sandboxVersionPageOptions(
+      {
+        limit: pageSize,
+        offset,
+        search: appliedSearch.trim() || undefined,
+        kind: filter === "all" ? undefined : filter,
+      },
+      refreshKey,
+    ),
+  });
+  useEffect(() => {
+    if (denied) {
+      setLastAuthorizedPage(null);
+      setRetainedVersions([]);
+      return;
+    }
+    if (history.isSuccess && history.data)
+      setLastAuthorizedPage({ scope: pageScope, page: history.data });
+  }, [
+    denied,
+    history.data,
+    history.dataUpdatedAt,
+    history.isSuccess,
+    pageScope,
+  ]);
+  const transientPageFailure =
+    history.error instanceof TypeError ||
+    (history.error instanceof ApiError &&
+      (history.error.status >= 500 ||
+        history.error.status === 408 ||
+        history.error.status === 429));
+  const displayedPage = denied
+    ? undefined
+    : (history.data ??
+      (lastAuthorizedPage?.scope === pageScope &&
+      (history.isFetching || transientPageFailure)
+        ? lastAuthorizedPage.page
+        : undefined));
+  // This bounded first-page read shares the initial History request. Its total
+  // preserves the last-version deletion guard after search or paging.
+  const historyTotal = useQuery({
+    ...sandboxVersionPageOptions(
+      { limit: 25, offset: 0, search: undefined, kind: undefined },
+      refreshKey,
+    ),
+    select: (page) => page.total,
+  });
+  const targetIds = [
+    ...new Set(
+      [selectedVersionId, compareA, compareB].filter(
+        (id) => id && !history.data?.items.some((version) => version.id === id),
+      ),
+    ),
+  ];
+  const targetReads = useQueries({
+    queries: targetIds.map((id) => ({
+      queryKey: sandboxKeys.version(id, refreshKey),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        getSandboxVersionMetadata(id, { signal }),
+      enabled: history.isSuccess,
+      retry: false,
+    })),
+  });
+  const invalidTargets = new Set([
+    ...access.missingVersionIds,
+    ...targetIds.filter((_, index) => {
+      const read = targetReads[index];
+      const transient =
+        read.error instanceof TypeError ||
+        (read.error instanceof ApiError &&
+          (read.error.status >= 500 ||
+            read.error.status === 408 ||
+            read.error.status === 429));
+      return read.isError && !transient;
+    }),
+  ]);
+  const versions = denied
+    ? []
+    : (displayedPage?.items ?? []).filter(
+        (version) => !invalidTargets.has(version.id),
+      );
+  const newestFirst = versions;
+  const knownVersions = denied
+    ? []
+    : [
+        ...new Map(
+          [
+            ...retainedVersions.filter(
+              (version) => !invalidTargets.has(version.id),
+            ),
+            ...targetReads.flatMap((read) =>
+              read.isError ||
+              !read.data ||
+              read.data.isDeleted ||
+              invalidTargets.has(read.data.id)
+                ? []
+                : [read.data],
+            ),
+            ...versions,
+          ].map((version) => [version.id, version]),
+        ).values(),
+      ];
+  const selectedCompareA = validVersionSelection(
+    knownVersions,
+    compareA,
+    "first",
+  );
+  const selectedCompareB = validVersionSelection(
+    knownVersions,
+    compareB,
+    "last",
+  );
+  const selectedVersion =
+    knownVersions.find((version) => version.id === selectedVersionId) ??
+    newestFirst[0] ??
+    knownVersions[0];
+  function retainTargets() {
+    if (denied) return;
+    setSelectedVersionId(selectedVersion?.id ?? "");
+    setCompareA(selectedCompareA);
+    setCompareB(selectedCompareB);
+    setRetainedVersions(
+      knownVersions.filter((version) =>
+        [selectedVersion?.id, selectedCompareA, selectedCompareB].includes(
+          version.id,
+        ),
+      ),
+    );
+  }
   const [comparing, setComparing] = useState(false);
   const [actionError, setActionError] = useState("");
   const [checkpointLabelEdit, setCheckpointLabelEdit] =
@@ -233,28 +393,22 @@ export function VersionsWorkspace({
     first: SandboxVersionDetail;
     second: SandboxVersionDetail;
   } | null>(null);
-  const [selectedVersionId, setSelectedVersionId] = useState(
-    newestFirst[0]?.id ?? "",
-  );
-  const [filter, setFilter] = useState<VersionFilter>("all");
-  const [search, setSearch] = useState("");
+  const comparisonUnavailable =
+    comparison !== null &&
+    (denied ||
+      invalidTargets.has(comparison.first.id) ||
+      invalidTargets.has(comparison.second.id));
+  useEffect(() => {
+    if (!comparisonUnavailable) return;
+    setComparison(null);
+    setComparing(false);
+  }, [comparisonUnavailable]);
   const versionActionReturnFocus = useRef<HTMLElement | null>(null);
   const versionsHeading = useRef<HTMLHeadingElement | null>(null);
   const confirmVersion = confirm
-    ? versions.find((version) => version.id === confirm.id)
+    ? knownVersions.find((version) => version.id === confirm.id)
     : undefined;
-  const selectedVersion =
-    versions.find((version) => version.id === selectedVersionId) ??
-    newestFirst[0];
-  const normalizedSearch = search.trim().toLocaleLowerCase();
-  const filteredVersions = newestFirst.filter((version) => {
-    if (filter === "checkpoint" && version.kind !== "checkpoint") return false;
-    if (filter === "published" && version.kind !== "published") return false;
-    if (!normalizedSearch) return true;
-    return `${version.label} ${version.note ?? ""}`
-      .toLocaleLowerCase()
-      .includes(normalizedSearch);
-  });
+  const filteredVersions = newestFirst;
   const timelineGroups = filteredVersions.reduce<
     { label: string; versions: SandboxVersion[] }[]
   >((groups, version) => {
@@ -279,7 +433,9 @@ export function VersionsWorkspace({
     if (!confirm || pending) return;
     setActionError("");
     const action = confirm;
-    const version = versions.find((candidate) => candidate.id === action.id);
+    const version = knownVersions.find(
+      (candidate) => candidate.id === action.id,
+    );
     if (!version) {
       notifyError("This version is no longer available.");
       return;
@@ -290,6 +446,15 @@ export function VersionsWorkspace({
         setActionError(result.error);
         return;
       }
+      setRetainedVersions((items) =>
+        items.filter((item) => item.id !== action.id),
+      );
+      invalidateSandboxHistoryVersion(action.id);
+      setOffset(0);
+      if (selectedVersionId === action.id) setSelectedVersionId("");
+      if (compareA === action.id) setCompareA("");
+      if (compareB === action.id) setCompareB("");
+      setComparison(null);
       notifyDone(`${version.label} deleted from shared history.`);
     } else {
       const result = await restoreVersion(action.id);
@@ -341,17 +506,25 @@ export function VersionsWorkspace({
                   History
                 </h2>
                 <p className="text-muted-foreground mt-1 text-xs">
-                  {versions.length} saved version
-                  {versions.length === 1 ? "" : "s"}
+                  {displayedPage?.total ?? 0} saved version
+                  {displayedPage?.total === 1 ? "" : "s"}
                 </p>
               </div>
             </div>
 
             <div className="grid gap-3">
+              <VersionCapacityBanner {...versionCapacity} />
               <SearchField
                 label="Find a version"
                 value={search}
-                onValueChange={setSearch}
+                onValueChange={(value) => {
+                  retainTargets();
+                  const next = value.slice(0, 100);
+                  setSearch(next);
+                  setAppliedSearch(next.trim());
+                  setOffset(0);
+                }}
+                maxLength={100}
                 placeholder="Search labels and notes"
                 autoComplete="off"
               />
@@ -363,11 +536,15 @@ export function VersionsWorkspace({
                   if (
                     next === "all" ||
                     next === "checkpoint" ||
-                    next === "published"
-                  )
+                    next === "published" ||
+                    next === "imported"
+                  ) {
+                    retainTargets();
                     setFilter(next);
+                    setOffset(0);
+                  }
                 }}
-                className="bg-muted grid w-full grid-cols-3 gap-1 rounded-lg p-1"
+                className="bg-muted grid w-full grid-cols-2 gap-1 rounded-lg p-1"
               >
                 <ToggleGroupItem
                   value="all"
@@ -390,10 +567,51 @@ export function VersionsWorkspace({
                 >
                   Published
                 </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="imported"
+                  aria-label="Imported versions"
+                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
+                >
+                  Imported
+                </ToggleGroupItem>
               </ToggleGroup>
             </div>
 
-            {versions.length === 0 ? (
+            {history.isFetching && (
+              <p role="status" className="text-muted-foreground mt-4 text-sm">
+                Loading versions…
+              </p>
+            )}
+            {denied ||
+            history.isError ||
+            targetReads.some((read) => read.isError) ? (
+              <Alert variant="destructive" className="mt-4">
+                <p>
+                  {denied
+                    ? "History unavailable. Check your access or retry."
+                    : "Versions could not be loaded. Retry."}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-2 min-h-11"
+                  onClick={() => {
+                    void history.refetch();
+                    void historyTotal.refetch();
+                    for (const read of targetReads) void read.refetch();
+                  }}
+                >
+                  Retry versions
+                </Button>
+              </Alert>
+            ) : null}
+            {denied ||
+            (!displayedPage &&
+              (history.isPending ||
+                history.isError)) ? null : versions.length === 0 &&
+              displayedPage?.total === 0 &&
+              !appliedSearch &&
+              filter === "all" ? (
               <Empty className="border-0 py-10">
                 <EmptyHeader>
                   <EmptyTitle>No saved versions yet</EmptyTitle>
@@ -492,10 +710,36 @@ export function VersionsWorkspace({
             ) : (
               <Empty className="border-0 py-8">
                 <EmptyHeader>
-                  <EmptyTitle>No matching versions</EmptyTitle>
+                  <EmptyTitle>
+                    {displayedPage && displayedPage.total > 0
+                      ? "No versions on this page"
+                      : "No matching versions"}
+                  </EmptyTitle>
                 </EmptyHeader>
               </Empty>
             )}
+            {displayedPage && !denied ? (
+              <TablePagination
+                ariaLabel="History pages"
+                total={displayedPage.total}
+                offset={displayedPage.offset}
+                rowCount={versions.length}
+                pageSize={pageSize}
+                disabled={
+                  history.isFetching || pending || checkpointLabelEdit !== null
+                }
+                onPageIndexChange={(index) => {
+                  retainTargets();
+                  setOffset(index * pageSize);
+                }}
+                onPageSizeChange={(size) => {
+                  retainTargets();
+                  setPageSize(size);
+                  setOffset(0);
+                }}
+                className="mt-4 px-0"
+              />
+            ) : null}
           </section>
 
           <section
@@ -511,12 +755,12 @@ export function VersionsWorkspace({
               </p>
             </div>
 
-            {versions.length ? (
+            {knownVersions.length ? (
               <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] sm:items-end">
                 <VersionChoice
                   label="Compare first version"
                   value={selectedCompareA}
-                  versions={versions}
+                  versions={knownVersions}
                   onChange={setCompareA}
                 />
                 <span
@@ -528,7 +772,7 @@ export function VersionsWorkspace({
                 <VersionChoice
                   label="Compare second version"
                   value={selectedCompareB}
-                  versions={versions}
+                  versions={knownVersions}
                   onChange={setCompareB}
                 />
                 <Button
@@ -555,7 +799,7 @@ export function VersionsWorkspace({
               </div>
             ) : null}
 
-            {comparing && comparison ? (
+            {comparing && comparison && !comparisonUnavailable ? (
               <VersionComparison
                 first={comparison.first}
                 second={comparison.second}
@@ -569,7 +813,7 @@ export function VersionsWorkspace({
                 <EmptyHeader>
                   <EmptyTitle>
                     {versionCompareHint(
-                      versions,
+                      knownVersions,
                       selectedCompareA,
                       selectedCompareB,
                     )}
@@ -653,6 +897,11 @@ export function VersionsWorkspace({
                         });
                         return;
                       }
+                      setRetainedVersions((items) =>
+                        items.map((item) =>
+                          item.id === result.value.id ? result.value : item,
+                        ),
+                      );
                       setCheckpointLabelEdit(null);
                       notifyDone("Checkpoint label updated in shared history.");
                     }}
@@ -748,7 +997,8 @@ export function VersionsWorkspace({
                     disabled={
                       pending ||
                       selectedVersion.kind === "published" ||
-                      versions.length === 1
+                      historyTotal.data === undefined ||
+                      historyTotal.data <= 1
                     }
                     onClick={(event) => {
                       versionActionReturnFocus.current = event.currentTarget;

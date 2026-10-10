@@ -5,14 +5,16 @@ removes the saved views of its modules. A widget whose saved query reads a purge
 module or field from another department's Dashboard blocks the purge.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.systems.openview.charts.models import Chart
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.lifecycle.chart_dependencies import query_references_fields
 from app.systems.sandbox.lifecycle.planning_scope import row_state
 from app.systems.sandbox.lifecycle.schemas import (
     LifecycleBlocker,
@@ -22,27 +24,8 @@ from app.systems.sandbox.lifecycle.schemas import (
 from app.systems.sandbox.modules.models import Module
 
 
-def _widget_references_field(config: dict[str, object], field_ids: set[str]) -> bool:
-    query = config.get("query")
-    if not isinstance(query, dict):
-        return False
-    references: list[object] = [query.get(key) for key in ("dimension", "date_field", "measure")]
-    definition = query.get("definition")
-    if isinstance(definition, dict):
-        for key in ("columns", "filters", "sort", "search_fields"):
-            entries = definition.get(key)
-            if isinstance(entries, list):
-                references.extend(entries)
-    return any(
-        isinstance(reference, dict)
-        and isinstance(reference.get("field_id"), str)
-        and reference["field_id"] in field_ids
-        for reference in references
-    )
-
-
 def _widgets_reading(
-    db: Session, module_ids: Sequence[UUID], field_ids: Sequence[UUID]
+    db: Session, module_ids: Sequence[UUID], field_ids: Sequence[UUID], charts: Mapping[UUID, Chart]
 ) -> list[DashboardWidget]:
     if not module_ids:
         return []
@@ -50,9 +33,12 @@ def _widgets_reading(
         db.scalars(
             select(DashboardWidget)
             .where(
-                DashboardWidget.config["query"]["module_id"]
-                .as_string()
-                .in_([str(module_id) for module_id in module_ids])
+                or_(
+                    DashboardWidget.config["query"]["module_id"]
+                    .as_string()
+                    .in_([str(module_id) for module_id in module_ids]),
+                    DashboardWidget.chart_id.in_(charts),
+                )
             )
             .order_by(DashboardWidget.id)
         ).all()
@@ -61,7 +47,13 @@ def _widgets_reading(
         return widgets
     field_ids_as_text = {str(field_id) for field_id in field_ids}
     return [
-        widget for widget in widgets if _widget_references_field(widget.config, field_ids_as_text)
+        widget
+        for widget in widgets
+        if widget.chart_id in charts
+        or (
+            widget.config is not None
+            and query_references_fields(widget.config.get("query"), field_ids_as_text)
+        )
     ]
 
 
@@ -73,6 +65,7 @@ def load_dashboard_purge_dependencies(
     target_field: Field | None,
     modules: Sequence[Module],
     fingerprint: Callable[[object], str],
+    charts: Mapping[UUID, Chart] | None = None,
 ) -> tuple[list[LifecycleRowState], list[LifecycleBlocker], dict[str, tuple[UUID, ...]]]:
     """Return the Dashboard rows of a purge, and a blocker for each foreign widget.
 
@@ -102,9 +95,10 @@ def load_dashboard_purge_dependencies(
         if owned_ids
         else []
     )
+    retained_charts = charts or {}
     blocking = [
         widget
-        for widget in _widgets_reading(db, widget_module_ids, field_ids)
+        for widget in _widgets_reading(db, widget_module_ids, field_ids, retained_charts)
         if widget.dashboard_id not in owned_ids
     ]
     blocking_ids = sorted({widget.dashboard_id for widget in blocking})
@@ -144,14 +138,21 @@ def load_dashboard_purge_dependencies(
                 "position": widget.position,
                 "widget_type": widget.widget_type,
                 "config": widget.config,
+                "chart_id": widget.chart_id,
+                "size": widget.size,
             }
         )
         rows.append(state)
         if widget.dashboard_id in owned_ids:
             continue
         widget_dashboard = dashboards_by_id.get(widget.dashboard_id)
-        query_config = widget.config.get("query")
-        module_id = query_config.get("module_id") if isinstance(query_config, dict) else None
+        chart = retained_charts.get(widget.chart_id) if widget.chart_id is not None else None
+        query_config = widget.config.get("query") if widget.config is not None else None
+        module_id = (
+            str(chart.module_id)
+            if chart is not None
+            else (query_config.get("module_id") if isinstance(query_config, dict) else None)
+        )
         module = modules_by_id.get(module_id) if isinstance(module_id, str) else None
         dashboard_name = widget_dashboard.name if widget_dashboard is not None else ""
         blockers.append(

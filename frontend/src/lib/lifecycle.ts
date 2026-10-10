@@ -6,6 +6,7 @@ import type {
   LifecycleImpact,
   LifecycleMutationResponse,
   LifecyclePreviewResponse,
+  LifecyclePurgePreviewResponse,
   LifecycleTargetType,
 } from "./api";
 
@@ -19,6 +20,8 @@ const lifecycleTargetTypeSchema = z.enum([
   "record",
   "file",
   "board",
+  "report",
+  "board_event",
 ]);
 
 const lifecycleBlockerCodeSchema: z.ZodType<LifecycleBlockerCode> = z.enum([
@@ -32,6 +35,7 @@ const lifecycleBlockerCodeSchema: z.ZodType<LifecycleBlockerCode> = z.enum([
   "record_close_unsupported",
   "purge_board_dependency",
   "purge_dashboard_dependency",
+  "purge_chart_dependency",
   "purge_report_dependency",
   "purge_report_run_dependency",
   "purge_trigger_dependency",
@@ -106,15 +110,24 @@ export const lifecycleImpactSchema: z.ZodType<LifecycleImpact> = z
   })
   .strict();
 
-export const lifecyclePurgePreviewSchema: z.ZodType<LifecyclePreviewResponse> =
-  z
-    .object({
-      impact: lifecycleImpactSchema,
-      token: z.string().min(1).max(128),
-      expires_at: timestampSchema,
-      confirmation_name: z.string().min(1).max(150),
-    })
-    .strict();
+const lifecyclePreviewFields = {
+  impact: lifecycleImpactSchema,
+  token: z.string().min(1).max(128),
+  expires_at: timestampSchema,
+};
+
+export const lifecycleClosePreviewSchema: z.ZodType<LifecyclePreviewResponse> =
+  z.strictObject({
+    ...lifecyclePreviewFields,
+    confirmation_name: z.string().min(1).max(150),
+  });
+
+export const lifecyclePurgePreviewSchema: z.ZodType<LifecyclePurgePreviewResponse> =
+  z.strictObject({
+    ...lifecyclePreviewFields,
+    confirmation_name: z.string().min(1),
+    last_successful_backup_at: timestampSchema.nullable(),
+  });
 
 export const lifecyclePurgeResultSchema: z.ZodType<LifecycleMutationResponse> =
   z
@@ -127,10 +140,14 @@ export const lifecyclePurgeResultSchema: z.ZodType<LifecycleMutationResponse> =
 export const lifecyclePurgeInputSchema = z
   .object({
     token: z.string().min(1).max(128),
-    confirmationName: z.string().trim().min(1).max(150),
+    confirmationName: z.string().min(1),
     password: z.string().min(1).max(256),
   })
   .strict();
+
+export const lifecycleCloseInputSchema = lifecyclePurgeInputSchema.extend({
+  confirmationName: z.string().trim().min(1).max(150),
+});
 
 export type LifecyclePurgePreview = z.output<
   typeof lifecyclePurgePreviewSchema
@@ -147,7 +164,7 @@ export function assertLifecyclePurgePreviewFor(
 }
 
 export function assertLifecyclePreviewFor(
-  preview: LifecyclePurgePreview,
+  preview: LifecyclePreviewResponse,
   targetType: LifecycleTargetType,
   targetId: string,
   operation: "close" | "purge",
@@ -187,7 +204,7 @@ const safeLifecycleErrors: Partial<
 > = {
   purge_disabled: {
     status: 403,
-    message: "Permanent deletion is disabled for this workspace.",
+    message: "Permanent delete is turned off for this installation.",
   },
   purge_requires_closed: {
     status: 409,
@@ -195,7 +212,7 @@ const safeLifecycleErrors: Partial<
   },
   confirmation_name_mismatch: {
     status: 422,
-    message: "The ID confirmation did not match. Request a new review.",
+    message: "The name confirmation did not match. Request a new review.",
   },
   challenge_not_found: {
     status: 404,
@@ -266,7 +283,7 @@ export function lifecycleErrorMessage(
   return safe?.status === error.status ? safe.message : fallback;
 }
 
-/** Structural targets confirm the server's name; Record and Board keep ID copy. */
+/** Structural targets share the server-supplied confirmation name. */
 export function structuralLifecycleErrorMessage(
   error: unknown,
   operation: "close" | "purge" | "reopen",

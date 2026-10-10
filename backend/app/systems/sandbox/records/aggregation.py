@@ -1,4 +1,4 @@
-"""Server-side categorical aggregates and complete daily date series."""
+"""Server-side categorical aggregates and complete calendar date series."""
 
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -15,6 +15,7 @@ from app.systems.access.policy.checks import module_hidden
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.fields.models import Field, FieldType
+from app.systems.sandbox.records.aggregate_buckets import calendar_buckets, sql_bucket_start
 from app.systems.sandbox.records.display import FieldDisplayResolver
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import (
@@ -31,6 +32,8 @@ from app.systems.sandbox.records.query_schemas import (
     AggregateSnapshotPaginationMetadata,
     AggregateSnapshotQuery,
     AggregateSnapshotResponse,
+    AggregateSnapshotsRequest,
+    AggregateSnapshotsResponse,
     DateSeriesAggregateQuery,
     FieldReference,
     GroupedAggregateQuery,
@@ -50,6 +53,15 @@ def _workspace_timezone(db: Session) -> tuple[str, ZoneInfo]:
         raise HTTPException(503, detail="Workspace timezone is unavailable") from error
 
 
+def _workspace_week_start(db: Session) -> str:
+    value = db.scalar(
+        select(WorkspaceProfile.week_start).where(WorkspaceProfile.singleton_key.is_(True))
+    )
+    if value not in {"monday", "sunday"}:
+        raise HTTPException(503, detail="Workspace configuration is unavailable")
+    return str(value)
+
+
 def _aggregate_expression(
     aggregation: str, measure: FieldReference | None, fields: dict[UUID, Field]
 ) -> ColumnElement[Any]:
@@ -57,6 +69,10 @@ def _aggregate_expression(
         return func.count(Record.id)
     assert measure is not None
     expression = field_expression(fields[measure.field_id])
+    if aggregation == "distinct":
+        return func.count(func.distinct(expression))
+    if aggregation in {"min", "max"}:
+        return func.min(expression) if aggregation == "min" else func.max(expression)
     function = func.sum(expression) if aggregation == "sum" else func.avg(expression)
     return func.coalesce(function, 0)
 
@@ -105,7 +121,7 @@ def _grouped_aggregate(
         )
         .group_by(dimension_expression)
         .order_by(
-            aggregate_expression.desc(),
+            aggregate_expression.desc().nulls_last(),
             dimension_expression.asc().nulls_last(),
         )
     )
@@ -149,11 +165,19 @@ def _date_series_aggregate(
 ) -> AggregateResponse:
     field = fields[payload.date_field.field_id]
     date_expression = field_expression(field)
-    bucket_expression = (
+    local_date = (
         date_expression
         if field.type == FieldType.DATE
         else func.timezone(_workspace_timezone(db)[0], date_expression).cast(Date())
     )
+    week_start = _workspace_week_start(db) if payload.bucket == "week" else "monday"
+    try:
+        starts = calendar_buckets(payload.from_date, payload.to_date, payload.bucket, week_start)
+    except ValueError as error:
+        raise HTTPException(
+            422, detail={"code": "aggregate_date_range_invalid", "message": str(error)}
+        ) from error
+    bucket_expression = sql_bucket_start(local_date, payload.bucket, week_start)
     date_filter = _date_window_predicates(db, field, payload.from_date, payload.to_date)
 
     aggregate_expression = _aggregate_expression(payload.aggregation, payload.measure, fields)
@@ -172,11 +196,16 @@ def _date_series_aggregate(
         .order_by(bucket_expression.asc())
     )
     by_day = {row.day: (row.value, row.record_count) for row in db.execute(series_query).all()}
-    length = (payload.to_date - payload.from_date).days + 1
-    zero: int | Decimal = 0 if payload.aggregation == "count" else Decimal(0)
+    length = len(starts)
+    zero: int | Decimal | None = (
+        None
+        if payload.aggregation in {"average", "min", "max"}
+        else 0
+        if payload.aggregation in {"count", "distinct"}
+        else Decimal(0)
+    )
     items = []
-    for index in range(length):
-        day = payload.from_date + timedelta(days=index)
+    for day in starts:
         value, record_count = by_day.get(day, (zero, 0))
         label = day.isoformat()
         items.append(
@@ -245,7 +274,7 @@ def _grouped_aggregate_snapshot(
         )
         .group_by(dimension_expression)
         .order_by(
-            aggregate_expression.desc(),
+            aggregate_expression.desc().nulls_last(),
             dimension_expression.asc().nulls_last(),
         )
     )
@@ -333,3 +362,26 @@ def aggregate_snapshot(
             if len(content) > MAX_AGGREGATE_SNAPSHOT_BYTES:
                 raise _snapshot_limit_exceeded()
             return content, len(result.items)
+
+
+def aggregate_snapshots(
+    engine: Engine, payload: AggregateSnapshotsRequest, *, reader_id: UUID
+) -> tuple[bytes, int]:
+    """Materialize the ordered batch in one read snapshot with combined limits."""
+    with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+        with Session(bind=connection) as snapshot:
+            reader = snapshot.get(User, reader_id)
+            if reader is None:
+                raise module_hidden()
+            items = []
+            bucket_count = 0
+            for query in payload.queries:
+                result = aggregate_snapshot_records(snapshot, query, reader=reader)
+                bucket_count += len(result.items)
+                if bucket_count > MAX_AGGREGATE_SNAPSHOT_BUCKETS:
+                    raise _snapshot_limit_exceeded()
+                items.append(result)
+            content = AggregateSnapshotsResponse(items=items).model_dump_json().encode("utf-8")
+            if len(content) > MAX_AGGREGATE_SNAPSHOT_BYTES:
+                raise _snapshot_limit_exceeded()
+            return content, bucket_count

@@ -10,6 +10,7 @@ import {
 import { ChevronDown, FileText, Plus, X } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +52,7 @@ export type PostEditorView = {
   scheduleLocal: string;
   deviceTimeZone: string;
   scheduleError: string | null;
+  expiryError: string | null;
   conflict: boolean;
   pending: boolean;
   error: string | null;
@@ -118,7 +120,9 @@ export function ServerBoardPostEditorDisplay({
       ),
     );
   }
-  if (view.status === "loading" || view.status === "error") {
+  // A live refresh keeps the confirmed access and the open draft, so the form
+  // stays mounted while it runs; only a first load or a failure replaces it.
+  if ((view.status === "loading" && !view.canEdit) || view.status === "error") {
     return createElement(
       "section",
       { "aria-label": "Manage posts", className: "min-w-0" },
@@ -217,7 +221,12 @@ export function ServerBoardPostEditorDisplay({
       ? createElement(
           "p",
           { role: "alert", className: "text-muted-foreground text-sm" },
-          "This draft changed elsewhere. Your text and links are kept. Copy them if needed, then discard changes and choose the latest draft.",
+          createElement(
+            "span",
+            { className: "block font-medium" },
+            "Changed by someone else — review latest",
+          ),
+          "Your text, links, pin and expiry are kept. Copy them if needed, then discard changes and choose the latest draft.",
         )
       : null,
     view.notice
@@ -551,6 +560,73 @@ export function ServerBoardPostEditorDisplay({
                 "Add link",
               ),
             ),
+            view.canManage
+              ? createElement(
+                  "label",
+                  {
+                    htmlFor: "board-post-pinned",
+                    className:
+                      "flex min-h-11 items-center gap-3 text-sm font-medium",
+                  },
+                  createElement(Checkbox, {
+                    id: "board-post-pinned",
+                    checked: form.pinned,
+                    disabled: view.pending || view.conflict,
+                    onCheckedChange: (checked: boolean) =>
+                      onChange({ ...form, pinned: checked }),
+                  }),
+                  "Pin to top",
+                )
+              : null,
+            createElement(
+              "div",
+              { className: "space-y-2" },
+              createElement(
+                "label",
+                {
+                  htmlFor: "board-post-expires-on",
+                  className: "text-sm font-medium",
+                },
+                "Expires on",
+              ),
+              createElement(
+                "p",
+                {
+                  id: "board-post-expiry-help",
+                  className: "text-muted-foreground text-sm",
+                },
+                `Times use ${view.deviceTimeZone} and are sent to the server in UTC. Leave blank for no expiry.`,
+              ),
+              createElement("input", {
+                id: "board-post-expires-on",
+                type: "datetime-local",
+                step: "1",
+                value: form.expiresLocal,
+                disabled: view.pending || view.conflict,
+                "aria-describedby": view.expiryError
+                  ? "board-post-expiry-help board-post-expiry-error"
+                  : "board-post-expiry-help",
+                "aria-invalid": view.expiryError ? "true" : undefined,
+                onChange: (event: ChangeEvent<HTMLInputElement>) =>
+                  onChange({
+                    ...form,
+                    expiresLocal: event.currentTarget.value,
+                  }),
+                className:
+                  "border-input bg-background text-foreground focus-visible:outline-ring min-h-11 w-full rounded-md border px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2",
+              }),
+              view.expiryError
+                ? createElement(
+                    "p",
+                    {
+                      id: "board-post-expiry-error",
+                      role: "alert",
+                      className: "text-destructive text-sm",
+                    },
+                    view.expiryError,
+                  )
+                : null,
+            ),
             selected?.status === "published"
               ? createElement(
                   "p",
@@ -844,7 +920,7 @@ export function ServerBackedBoardPostEditor({
     [boardId, onDraftStateChange],
   );
   const view = editor.view;
-  const canEdit = view.active && view.status === "ready" && view.canEdit;
+  const canEdit = view.active && view.canEdit;
   const hasUnsavedChanges = view.dirty || view.scheduleDirty;
 
   function requestClose() {

@@ -24,6 +24,7 @@ from app.main import create_app
 from app.systems.access.identity import mfa as mfa_service
 from app.systems.access.identity import provider_sessions
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.provider_user_cache import forget_provider_user
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -175,6 +176,8 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
             )
             db.commit()
         get_supabase_auth_client().admin_delete_factor(provider_id, UUID(factor_id))
+        # A removal made directly in Supabase may wait out the 10 s account reuse.
+        forget_provider_user(provider_id)
         missing = browser.get("/api/auth/mfa")
         assert missing.status_code == 200
         assert missing.json()["assurance_level"] == "aal2"

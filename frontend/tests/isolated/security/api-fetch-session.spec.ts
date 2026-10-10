@@ -236,8 +236,9 @@ for (const aborted of [true, false]) {
     const body = new Promise((resolve) => {
       release = resolve;
     });
-    globalThis.fetch = async () =>
-      ({ status: 401, ok: false, json: () => body }) as Response;
+    const response = new Response(null, { status: 401 });
+    response.json = () => body;
+    globalThis.fetch = async () => response;
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: { location },

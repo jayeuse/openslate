@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
-import type { BoardWidget } from "../../../src/components/systems/boards/adapters/board-widgets-api";
+import type {
+  BoardWidget,
+  BoardLegacyWidgetConfig,
+} from "../../../src/components/systems/boards/adapters/board-widgets-api";
 import {
   buildBoardWidgetQueryPlan,
   collapseBoardWidgetPie,
@@ -10,7 +13,11 @@ const dateFieldId = "00000000-0000-4000-8000-000000000002";
 const metricId = "00000000-0000-4000-8000-000000000003";
 const moduleId = "00000000-0000-4000-8000-000000000004";
 
-function widget(overrides: Partial<BoardWidget> = {}): BoardWidget {
+type LegacyFixture = BoardWidget & {
+  config: BoardLegacyWidgetConfig;
+  chartId: null;
+};
+function widget(overrides: Partial<LegacyFixture> = {}): LegacyFixture {
   return {
     id: "00000000-0000-4000-8000-000000000005",
     boardId: "00000000-0000-4000-8000-000000000006",
@@ -18,6 +25,9 @@ function widget(overrides: Partial<BoardWidget> = {}): BoardWidget {
     widgetType: "summary",
     moduleId,
     position: 0,
+    size: "M",
+    pinned: false,
+    chartId: null,
     config: {
       version: 1,
       fields: [{ fieldId, expectedType: "select" }],
@@ -27,9 +37,7 @@ function widget(overrides: Partial<BoardWidget> = {}): BoardWidget {
       logic: "and",
       metric: null,
       visualization: "bar",
-      size: "half",
       refresh: "manual",
-      pinned: false,
     },
     createdAt: "2026-09-23T00:00:00Z",
     updatedAt: "2026-09-23T00:00:00Z",

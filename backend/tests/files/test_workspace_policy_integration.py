@@ -13,7 +13,7 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel, GroupAccess
 from app.systems.access.users.models import User, UserRole
-from app.systems.platform.files import service
+from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router
@@ -107,7 +107,7 @@ def test_record_attachment_routes_allow_a_member_who_can_write_the_module(guarde
     actor, _grant, record = _actor_with_record(db, level=AccessLevel.WRITE)
     content = _png()
     storage = _Store(db)
-    monkeypatch.setattr(service, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
 
     with _client(db, actor, storage) as client:
         created = client.post(
@@ -214,7 +214,7 @@ def test_attachment_download_reauthorizes_after_storage_latency(guarded_db, monk
 
     storage = _RevokingStore(db)
     storage.objects[file.object_key] = content
-    monkeypatch.setattr(service, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
 
     with _client(db, actor, storage) as client:
         response = client.get(f"/api/files/{file.id}/content")

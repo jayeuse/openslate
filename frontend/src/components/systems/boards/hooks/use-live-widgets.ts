@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, ApiContractError } from "@/lib/api";
 import {
   listBoardWidgets,
@@ -8,10 +8,12 @@ import {
 } from "../adapters/board-widgets-api";
 import {
   buildBoardWidgetQueryPlan,
+  buildNativeBoardWidgetPlan,
   type BoardWidgetQueryPlan,
 } from "../domain/live-widget-query";
 import {
-  listOpenViewDataSourceFields,
+  getOpenViewDataSourceField,
+  type OpenViewDataSourceField,
   queryOpenViewRecords,
   type OpenViewPage,
   type OpenViewRecord,
@@ -22,17 +24,29 @@ import {
   type OpenViewAggregateResult,
   type OpenViewAggregateSnapshotResult,
 } from "../../openview/adapters/analytics-api";
-import { subscribeWorkspaceInvalidations } from "../../shared/adapters/invalidation-events";
+import {
+  getOpenViewChart,
+  chartMatchesWidget,
+  chartSourceStamp,
+  type SavedChart,
+} from "../../openview/adapters/charts-api";
+import type { WorkspaceInvalidation } from "../../shared/adapters/invalidation-events";
+import { useInvalidationRefresh } from "../../shared/adapters/use-invalidation-refresh";
 import { invalidatesRecords } from "../../openview/adapters/openview-queries";
 
-export type LiveWidgetData =
+type ResolvedBoardPlan = Exclude<
+  BoardWidgetQueryPlan,
+  { kind: "unavailable" | "reference" }
+>;
+export type LiveWidgetData = (
   | {
       kind: "records";
       result: OpenViewPage<OpenViewRecord>;
       fieldNames: Record<string, string>;
     }
   | { kind: "aggregate"; result: OpenViewAggregateResult }
-  | { kind: "snapshot"; result: OpenViewAggregateSnapshotResult };
+  | { kind: "snapshot"; result: OpenViewAggregateSnapshotResult }
+) & { resolvedPlan?: ResolvedBoardPlan; sourceStamp?: string };
 
 export type LiveWidgetItem = {
   widget: BoardWidget;
@@ -100,6 +114,10 @@ function widgetSignature(widget: BoardWidget): string {
     widget.moduleId,
     widget.widgetType,
     widget.config,
+    widget.chartId,
+    widget.size,
+    widget.pinned,
+    widget.updatedAt,
   ]);
 }
 
@@ -141,12 +159,14 @@ export function transitionLiveWidgetsState(
         const data =
           widget.widgetType !== "records" &&
           retained?.signature === signature &&
-          retained.plan.kind === plan.kind
+          (retained.plan.kind === plan.kind ||
+            (plan.kind === "reference" &&
+              retained.data?.resolvedPlan?.kind === retained.plan.kind))
             ? retained.data
             : null;
         return {
           widget,
-          plan,
+          plan: data && plan.kind === "reference" ? retained!.plan : plan,
           signature,
           status: plan.kind === "unavailable" ? "unavailable" : "loading",
           data: plan.kind === "unavailable" ? null : data,
@@ -182,8 +202,15 @@ export function transitionLiveWidgetsState(
       )
         return item;
       if (event.type === "result") {
-        if (item.plan.kind !== event.data.kind) return item;
-        return { ...item, status: "ready", data: event.data, error: null };
+        const plan = event.data.resolvedPlan ?? item.plan;
+        if (plan.kind !== event.data.kind) return item;
+        return {
+          ...item,
+          plan,
+          status: "ready",
+          data: event.data,
+          error: null,
+        };
       }
       const data = event.retain ? item.data : null;
       return {
@@ -217,26 +244,57 @@ export async function loadLiveWidgetMetadata(
 
 export async function loadLiveWidgetData(
   plan: Exclude<BoardWidgetQueryPlan, { kind: "unavailable" }>,
-  catalogs: Map<string, Promise<Map<string, string>>> = new Map(),
+  fields: Map<string, Promise<OpenViewDataSourceField>> = new Map(),
+  charts: Map<string, Promise<SavedChart>> = new Map(),
+  signal?: AbortSignal,
 ): Promise<LiveWidgetData> {
+  if (plan.kind === "reference") {
+    let read = charts.get(plan.chartId);
+    if (!read) {
+      read = getOpenViewChart(plan.chartId, signal);
+      charts.set(plan.chartId, read);
+    }
+    const chart = await read;
+    signal?.throwIfAborted();
+    if (!chartMatchesWidget(chart, plan.widgetType, plan.moduleId))
+      throw new ApiContractError();
+    const resolvedPlan = buildNativeBoardWidgetPlan(
+      plan.widgetType,
+      chart.config,
+    );
+    if (
+      resolvedPlan.kind === "unavailable" ||
+      resolvedPlan.kind === "reference"
+    )
+      throw new ApiContractError();
+    const data = await loadLiveWidgetData(resolvedPlan, fields, charts, signal);
+    return { ...data, resolvedPlan, sourceStamp: chartSourceStamp(chart) };
+  }
   if (plan.kind === "records") {
     const fieldNames: Record<string, string> = {};
     if (
       plan.widgetType === "records" &&
       plan.request.definition.columns.length > 0
     ) {
-      let catalog = catalogs.get(plan.request.moduleId);
-      if (!catalog) {
-        catalog = loadOpenViewFieldCatalog(plan.request.moduleId);
-        catalogs.set(plan.request.moduleId, catalog);
-      }
-      const names = await catalog;
-      for (const field of plan.request.definition.columns) {
-        const name = names.get(field.fieldId)?.trim();
-        if (!name) throw new ApiContractError();
-        fieldNames[field.fieldId] = name;
+      for (const column of plan.request.definition.columns) {
+        const key = `${plan.request.moduleId}:${column.fieldId}`;
+        let request = fields.get(key);
+        if (!request) {
+          request = getOpenViewDataSourceField(
+            plan.request.moduleId,
+            column.fieldId,
+          );
+          fields.set(key, request);
+        }
+        const field = await request;
+        signal?.throwIfAborted();
+        const name = field.name.trim();
+        if (!name || field.type !== column.expectedType)
+          throw new ApiContractError();
+        fieldNames[column.fieldId] = name;
       }
     }
+    signal?.throwIfAborted();
     return {
       kind: "records",
       fieldNames,
@@ -244,46 +302,17 @@ export async function loadLiveWidgetData(
     };
   }
   if (plan.kind === "aggregate") {
+    signal?.throwIfAborted();
     return {
       kind: "aggregate",
       result: await queryOpenViewAggregates(plan.request),
     };
   }
+  signal?.throwIfAborted();
   return {
     kind: "snapshot",
     result: await queryOpenViewAggregateSnapshot(plan.request),
   };
-}
-
-const FIELD_CATALOG_PAGE_SIZE = 100;
-const MAX_FIELD_CATALOG_PAGES = 3;
-
-async function loadOpenViewFieldCatalog(
-  moduleId: string,
-): Promise<Map<string, string>> {
-  const names = new Map<string, string>();
-  let offset = 0;
-  for (
-    let pageNumber = 0;
-    pageNumber < MAX_FIELD_CATALOG_PAGES;
-    pageNumber += 1
-  ) {
-    const page = await listOpenViewDataSourceFields(moduleId, {
-      limit: FIELD_CATALOG_PAGE_SIZE,
-      offset,
-    });
-    if (
-      page.pagination.offset !== offset ||
-      page.pagination.count !== page.items.length ||
-      page.pagination.total < offset + page.items.length
-    )
-      throw new ApiContractError();
-    for (const field of page.items) names.set(field.id, field.name);
-    if (!page.pagination.hasMore) break;
-    if (page.items.length === 0) throw new ApiContractError();
-    offset += page.items.length;
-  }
-  return names;
 }
 
 export function classifyLiveWidgetFailure(
@@ -307,7 +336,6 @@ export function useLiveBoardWidgets(
 ) {
   const [state, setState] = useState<LiveWidgetsState>(emptyLiveWidgetsState);
   const [retryKey, setRetryKey] = useState(0);
-  const [invalidationKey, setInvalidationKey] = useState(0);
   const sequence = useRef(0);
   const stateRef = useRef(state);
   const key = boardId === null ? null : `${boardId}:${workspaceToday ?? ""}`;
@@ -316,25 +344,23 @@ export function useLiveBoardWidgets(
     stateRef.current = state;
   }, [state]);
 
-  useEffect(() => {
-    if (boardId === null || key === null) return;
-    const refresh = () => setInvalidationKey((value) => value + 1);
-    return subscribeWorkspaceInvalidations((event) => {
-      if (event.type === "resync") {
-        refresh();
-        return;
-      }
-      if (!invalidatesRecords(event.entity)) return;
+  const acceptsInvalidation = useCallback(
+    (event: WorkspaceInvalidation) => {
+      if (event.type !== "invalidate") return false;
+      if (event.entity === "board_widgets" || event.entity === "boards")
+        return event.boardId === boardId;
+      if (!invalidatesRecords(event.entity)) return false;
       const current = stateRef.current;
-      if (
+      return (
         current.key !== key ||
         (current.status !== "ready" && current.items.length === 0) ||
         event.moduleId === undefined ||
         current.items.some((item) => item.widget.moduleId === event.moduleId)
-      )
-        refresh();
-    }, refresh);
-  }, [boardId, key]);
+      );
+    },
+    [boardId, key],
+  );
+  const invalidationKey = useInvalidationRefresh(key, acceptsInvalidation);
 
   useEffect(() => {
     if (boardId === null || key === null) {
@@ -344,6 +370,7 @@ export function useLiveBoardWidgets(
     }
     const requestKey = key;
     const request = ++sequence.current;
+    const controller = new AbortController();
     setState((current) =>
       transitionLiveWidgetsState(current, {
         type: "begin",
@@ -369,13 +396,19 @@ export function useLiveBoardWidgets(
             ? []
             : [{ id: widget.id, signature: widgetSignature(widget), plan }];
         });
-        const catalogs = new Map<string, Promise<Map<string, string>>>();
+        const fields = new Map<string, Promise<OpenViewDataSourceField>>();
+        const charts = new Map<string, Promise<SavedChart>>();
         let next = 0;
         async function work(): Promise<void> {
           while (request === sequence.current && next < tasks.length) {
             const task = tasks[next++];
             try {
-              const data = await loadLiveWidgetData(task.plan, catalogs);
+              const data = await loadLiveWidgetData(
+                task.plan,
+                fields,
+                charts,
+                controller.signal,
+              );
               if (request !== sequence.current) return;
               setState((current) =>
                 transitionLiveWidgetsState(current, {
@@ -399,7 +432,11 @@ export function useLiveBoardWidgets(
                     sequence: request,
                     retain: false,
                     error:
-                      "Widgets unavailable. Check your access or try again.",
+                      error instanceof ApiError &&
+                      error.code === "chart_source_unavailable" &&
+                      error.status === 403
+                        ? "You do not have access to this data."
+                        : "Widgets unavailable. Check your access or try again.",
                   }),
                 );
                 return;
@@ -447,6 +484,7 @@ export function useLiveBoardWidgets(
         );
       });
     return () => {
+      controller.abort();
       sequence.current += 1;
     };
   }, [boardId, key, workspaceToday, refreshKey, retryKey, invalidationKey]);

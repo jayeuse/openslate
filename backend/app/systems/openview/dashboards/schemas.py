@@ -16,6 +16,7 @@ from app.systems.sandbox.records.query_schemas import (
 
 DashboardRefreshCadence = Literal["manual", "one-minute", "five-minutes"]
 DashboardWidgetType = Literal["summary", "workload", "records", "chart"]
+DashboardWidgetSize = Literal["S", "M", "L"]
 DASHBOARD_POSITION_MAX = 10_000
 
 
@@ -81,11 +82,17 @@ class DashboardWidgetSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     widget_type: DashboardWidgetType
-    config: DashboardWidgetConfig
+    size: DashboardWidgetSize = "M"
+    chart_id: UUID | None = None
+    config: DashboardWidgetConfig | None = None
 
     @model_validator(mode="after")
     def config_matches_widget_type(self) -> Self:
-        if not _configuration_matches_widget(self.widget_type, self.config):
+        if (self.config is None) == (self.chart_id is None):
+            raise ValueError("Exactly one widget config or Chart reference is required")
+        if self.config is not None and not _configuration_matches_widget(
+            self.widget_type, self.config
+        ):
             raise ValueError("Dashboard widget config does not match its widget type")
         return self
 
@@ -150,13 +157,19 @@ class DashboardWidgetResponse(BaseModel):
     id: UUID
     position: int = Field(ge=0, lt=12)
     widget_type: DashboardWidgetType
-    config: DashboardWidgetConfig
+    size: DashboardWidgetSize
+    chart_id: UUID | None
+    config: DashboardWidgetConfig | None
     created_at: datetime
     updated_at: datetime
 
     @model_validator(mode="after")
     def config_matches_widget_type(self) -> Self:
-        if not _configuration_matches_widget(self.widget_type, self.config):
+        if (self.config is None) == (self.chart_id is None):
+            raise ValueError("Exactly one widget config or Chart reference is required")
+        if self.config is not None and not _configuration_matches_widget(
+            self.widget_type, self.config
+        ):
             raise ValueError("Dashboard widget config does not match its widget type")
         return self
 

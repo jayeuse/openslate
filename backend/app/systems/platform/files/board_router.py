@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import require_admin, require_fresh_exact_admin, require_non_guest
 from app.common.listing import execute_standard_list
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.boards.attachment_models import (
@@ -30,6 +31,10 @@ from app.systems.platform.files.schemas import (
 )
 from app.systems.platform.files.storage import get_storage
 from app.systems.sandbox.lifecycle.exceptions import LifecycleError
+from app.systems.sandbox.lifecycle.purge_support import (
+    PURGE_DISABLED_MESSAGE,
+    last_successful_backup_at,
+)
 from app.systems.sandbox.lifecycle.schemas import (
     LifecyclePurgePreviewResponse,
     LifecyclePurgeRequest,
@@ -64,9 +69,7 @@ def _unlinked(db: Session, actor: User, board_id: UUID, file_id: UUID) -> File:
         )
     )
     published = db.scalar(
-        select(BoardPostRevisionAttachment.id).where(
-            BoardPostRevisionAttachment.file_id == file_id
-        )
+        select(BoardPostRevisionAttachment.id).where(BoardPostRevisionAttachment.file_id == file_id)
     )
     if active is not None or published is not None:
         raise error("file_not_found", "File not found", 404)
@@ -101,9 +104,7 @@ def list_unlinked_board_files(
         )
     )
     published = exists(
-        select(BoardPostRevisionAttachment.id).where(
-            BoardPostRevisionAttachment.file_id == File.id
-        )
+        select(BoardPostRevisionAttachment.id).where(BoardPostRevisionAttachment.file_id == File.id)
     )
     statement = select(File).where(
         File.board_id == board_id, File.purpose == "board_attachment", ~active, ~published
@@ -187,7 +188,8 @@ def preview_board_file_purge(
         impact=impact,
         token=issued.token,
         expires_at=issued.expires_at,
-        confirmation_name=str(file_id),
+        confirmation_name=load(db, file_id).filename,
+        last_successful_backup_at=last_successful_backup_at(db),
     )
 
 
@@ -202,8 +204,10 @@ def execute_board_file_purge(
     storage: Store,
 ) -> FileResponse:
     with hold_file_worker(request):
-        if payload.confirmation_name != str(file_id):
-            raise error("confirmation_name_mismatch", "Confirmation must match the file ID", 422)
+        if not get_settings().lifecycle_purge_enabled:
+            raise error("purge_disabled", PURGE_DISABLED_MESSAGE, 403)
+        if payload.confirmation_name != load(db, file_id).filename:
+            raise error("confirmation_name_mismatch", "Confirmation must match the file name", 422)
         try:
             digest = challenge_impact_digest(db, payload.token, actor.id, "purge", "file", file_id)
             challenge = verify_challenge(
@@ -223,6 +227,10 @@ def execute_board_file_purge(
 
         def validate_locked() -> None:
             impact = purge_impact(db, actor.id, file_id, board_id=board_id)
+            if payload.confirmation_name != load(db, file_id).filename:
+                raise error(
+                    "confirmation_name_mismatch", "Confirmation must match the file name", 422
+                )
             if impact.impact_digest != expected:
                 db.rollback()
                 raise error("plan_drift", "File changed after preview; obtain a new preview")

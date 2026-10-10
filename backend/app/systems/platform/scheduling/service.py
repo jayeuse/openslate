@@ -1,5 +1,6 @@
 """Short, caller-committed transactions for durable scheduled Report work."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -151,12 +152,14 @@ def claim_due_work(
     for work in rows:
         if work.attempt_count >= MAX_ATTEMPTS:
             work.state = WorkState.FAILED
+            work.finished_at = current
             work.failure_code = "attempts_exhausted"
             work.lease_token = None
             work.lease_expires_at = None
             _notify_failed_report(db, work)
             continue
         work.state = WorkState.RUNNING
+        work.last_attempt_started_at = current
         work.attempt_count += 1
         work.lease_token = uuid7()
         work.lease_expires_at = current + LEASE_DURATION
@@ -200,6 +203,7 @@ def complete_report_work(
         return False
     if report is None or source is None:
         work.state = WorkState.CANCELED
+        work.finished_at = current
         work.failure_code = "source_unavailable"
         work.lease_token = None
         work.lease_expires_at = None
@@ -213,6 +217,7 @@ def complete_report_work(
     ):
         raise ValueError("Report run does not match the scheduled occurrence")
     work.state = WorkState.SUCCEEDED
+    work.finished_at = current
     work.run_id = run.id
     work.failure_code = None
     work.lease_token = None
@@ -224,18 +229,16 @@ def complete_report_work(
         context.request_path = "/internal/reports/scheduler"
     context.performed_by = None
     context.actor_label = scheduled_actor_label(report)
-    for recipient_id in db.scalars(
-        select(ReportRunEligibleUser.user_id).where(ReportRunEligibleUser.run_id == run.id)
-    ):
-        db.add(
-            InAppNotification(
-                work_id=work.id,
-                recipient_id=recipient_id,
-                kind=NotificationKind.REPORT_RUN,
-                subject_type="report_run",
-                subject_id=run.id,
-            )
-        )
+    _notify_work(
+        db,
+        work,
+        db.scalars(
+            select(ReportRunEligibleUser.user_id).where(ReportRunEligibleUser.run_id == run.id)
+        ),
+        kind=NotificationKind.REPORT_RUN,
+        subject_type="report_run",
+        subject_id=run.id,
+    )
     return True
 
 
@@ -248,6 +251,7 @@ def fail_report_work(db: Session, claim: WorkClaim, *, now: datetime | None = No
         return False
     if work.attempt_count >= MAX_ATTEMPTS:
         work.state = WorkState.FAILED
+        work.finished_at = current
         work.failure_code = "attempts_exhausted"
     else:
         work.state = WorkState.PENDING
@@ -267,16 +271,49 @@ def _notify_failed_report(db: Session, work: ScheduledWork) -> None:
     )
     if report_source(db, report, lock=False) is None or report is None:
         return
-    for recipient_id in sorted(module_reader_ids(db, report.module_id), key=str):
-        db.add(
-            InAppNotification(
-                work_id=work.id,
-                recipient_id=recipient_id,
-                kind=NotificationKind.REPORT_RUN_FAILED,
-                subject_type="scheduled_work",
-                subject_id=work.id,
-            )
+    _notify_work(
+        db,
+        work,
+        sorted(module_reader_ids(db, report.module_id), key=str),
+        kind=NotificationKind.REPORT_RUN_FAILED,
+        subject_type="scheduled_work",
+        subject_id=work.id,
+    )
+
+
+def _notify_work(
+    db: Session,
+    work: ScheduledWork,
+    recipient_ids: Iterable[UUID],
+    *,
+    kind: NotificationKind,
+    subject_type: str,
+    subject_id: UUID,
+) -> None:
+    """Keep one notice per reader and occurrence; a retried outcome replaces the last one."""
+    existing = {
+        notice.recipient_id: notice
+        for notice in db.scalars(
+            select(InAppNotification).where(InAppNotification.work_id == work.id)
         )
+    }
+    for recipient_id in recipient_ids:
+        notice = existing.get(recipient_id)
+        if notice is None:
+            db.add(
+                InAppNotification(
+                    work_id=work.id,
+                    recipient_id=recipient_id,
+                    kind=kind,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                )
+            )
+        else:
+            notice.kind = kind
+            notice.subject_type = subject_type
+            notice.subject_id = subject_id
+            notice.read_at = None
 
 
 def current_user_notification_query(

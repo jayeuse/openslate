@@ -5,15 +5,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_admin
-from app.common.dependencies.auth import CurrentIdentity, get_current_identity
+from app.common.dependencies.auth import CurrentIdentity, _bearer, get_current_identity
 from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.auth.cookies import clear_browser_session
 from app.systems.access.policy.scope import explain_access
+from app.systems.access.users.avatar_delivery import deliver_avatar
 from app.systems.access.users.coordination import (
     InvitationConflict,
     InvitationError,
@@ -31,9 +33,12 @@ from app.systems.access.users.directory import (
 )
 from app.systems.access.users.directory import UserSortField as UserSortField
 from app.systems.access.users.models import User
+from app.systems.access.users.person_visibility import visible_person
 from app.systems.access.users.schemas import (
     InvitationCreate,
     InvitationResponse,
+    PersonCardPublicResponse,
+    PersonCardResponse,
     UserAccessResponse,
     UserCreate,
     UserListResponse,
@@ -51,6 +56,8 @@ from app.systems.access.users.security import read_security, recover_person, res
 from app.systems.access.users.service import (
     invite_user,
 )
+from app.systems.platform.files.providers import StorageBackend
+from app.systems.platform.files.storage import get_storage
 
 router = APIRouter(prefix="/users", tags=["users"])
 AdminUser = Annotated[User, Depends(require_admin)]
@@ -107,6 +114,39 @@ def get_user_preferences(
     return UserPreferencesResponse.model_validate(
         {"user_id": actor.id, "theme": actor.theme_preference, "appearance": actor.appearance}
     )
+
+
+@router.get("/{user_id}/card", response_model=PersonCardResponse | PersonCardPublicResponse)
+def get_person_card(
+    user_id: UUID,
+    actor: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+    response: Response,
+) -> PersonCardResponse | PersonCardPublicResponse:
+    target = visible_person(db, actor, user_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    public = {
+        "display_name": target.display_name or target.username,
+        "job_title": target.job_title,
+        "avatar_url": f"/api/users/{user_id}/avatar" if target.avatar_file_id else None,
+    }
+    if actor.role == "guest":
+        return PersonCardPublicResponse.model_validate(public)
+    return PersonCardResponse.model_validate(
+        {**public, "email": target.email, "phone": target.phone, "bio": target.bio}
+    )
+
+
+@router.get("/{user_id}/avatar")
+def get_person_avatar(
+    user_id: UUID,
+    request: Request,
+    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage)],
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> Response:
+    return deliver_avatar(request, db, identity, user_id, storage, bearer)
 
 
 @router.patch("/{user_id}/preferences", response_model=UserPreferencesResponse)

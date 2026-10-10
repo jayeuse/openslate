@@ -291,3 +291,75 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
         result = api.get(f"/api/boards/{board.id}/posts?view=published&limit=1{suffix}")
         assert result.status_code == 200 and result.json()["pagination"]["total"] == 2
         assert result.json()["items"][0]["id"] == str(expected)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("view", ("published", "editable", "draft", "archive"))
+def test_default_post_order_is_pinned_first_before_paging(
+    integration_owner_db: Session, view: str
+) -> None:
+    db = integration_owner_db
+    owner = _actor(db, "pinned-order-owner")
+    board = _board(db, owner)
+    _grant(db, board, owner, "manage")
+    now = datetime.now(UTC)
+    items = []
+    for index, (title, pinned, age) in enumerate(
+        (("Z pinned", True, 3), ("B recent", False, 1), ("A recent", False, 1))
+    ):
+        timestamp = now - timedelta(days=age)
+        item = BoardPost(
+            board_id=board.id,
+            author_id=owner.id,
+            title=title,
+            body="Private draft body",
+            pinned=pinned,
+            status="archived" if view == "archive" else "draft",
+            displayed_publication_number=1,
+            created_at=timestamp,
+            # The private replacement must not choose the published order.
+            updated_at=timestamp if view != "published" else now + timedelta(days=index),
+        )
+        db.add(item)
+        db.flush()
+        db.add(
+            BoardPostRevision(
+                post_id=item.id,
+                publication_number=1,
+                publication_key=uuid7(),
+                content_fingerprint="a" * 64,
+                author_id=owner.id,
+                title=title,
+                body="Displayed publication body",
+                published_at=timestamp,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+        )
+        items.append(item)
+    db.commit()
+    api = _client(db, owner)
+    root = f"/api/boards/{board.id}/posts"
+    for suffix in ("", "&sort_by=updated_at&sort_order=desc"):
+        returned = []
+        for offset in range(3):
+            result = api.get(f"{root}?view={view}&limit=1&offset={offset}{suffix}")
+            assert result.status_code == 200, result.text
+            page = result.json()
+            assert page["pagination"] == {
+                "limit": 1,
+                "offset": offset,
+                "count": 1,
+                "total": 3,
+                "has_more": offset < 2,
+            }
+            returned.append(page["items"][0]["id"])
+        assert returned == [str(items[0].id), str(items[2].id), str(items[1].id)]
+    for suffix, expected in (
+        ("&sort_by=title&sort_order=asc", items[2].id),
+        ("&sort_by=created_at&sort_order=desc", items[2].id),
+        ("&sort_by=updated_at&sort_order=asc", items[0].id),
+    ):
+        result = api.get(f"{root}?view={view}&limit=1{suffix}")
+        assert result.status_code == 200, result.text
+        assert result.json()["items"][0]["id"] == str(expected)

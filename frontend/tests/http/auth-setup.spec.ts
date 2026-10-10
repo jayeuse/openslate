@@ -183,8 +183,10 @@ test("recovery requests email and confirms a fragment only on submission", async
 test("login accepts email and does not send a username field", async ({
   page,
 }) => {
+  let authenticated = false;
   const requests: unknown[] = [];
   await page.route("**/api/auth/login", async (route) => {
+    authenticated = true;
     requests.push(route.request().postDataJSON());
     await route.fulfill({
       json: { authenticated: true, setup_required: false },
@@ -192,13 +194,18 @@ test("login accepts email and does not send a username field", async ({
   });
   await page.route("**/api/auth/session", async (route) => {
     await route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8",
-        setup_required: false,
-      },
+      json: authenticated
+        ? {
+            authenticated: true,
+            user_id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8",
+            setup_required: false,
+          }
+        : { authenticated: false },
     });
   });
+  await page.route("**/api/auth/refresh", (route) =>
+    route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
+  );
   await page.route("**/api/auth/me", async (route) => {
     await route.fulfill({
       json: {

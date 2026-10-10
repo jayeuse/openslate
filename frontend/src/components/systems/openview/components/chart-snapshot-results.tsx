@@ -56,6 +56,7 @@ type ChartSnapshotResultsProps = {
 };
 
 function chartNumber(value: OpenViewAggregateDatum["value"]): number | null {
+  if (value === null) return null;
   const converted = Number(value);
   return Number.isFinite(converted) ? converted : null;
 }
@@ -69,6 +70,7 @@ function chartDataFor(
     chartType === "line"
       ? result.items
       : result.items
+          .filter((item) => item.value !== null)
           .map((item, index) => ({ item, index }))
           .sort((left, right) => {
             const difference =
@@ -89,10 +91,10 @@ function chartDataFor(
   }));
   const data = displayItems.map((item) => ({
     ...item,
-    value: chartNumber(item.value) ?? 0,
+    value: chartNumber(item.value),
   }));
   const hasUnchartableValue = displayItems.some(
-    (item) => chartNumber(item.value) === null,
+    (item) => item.value !== null && chartNumber(item.value) === null,
   );
   return {
     data,
@@ -162,6 +164,17 @@ export function ChartSnapshotResults({
     tablePage * tablePageSize,
     (tablePage + 1) * tablePageSize,
   );
+  const bucket =
+    applied.request.mode === "date_series"
+      ? (applied.request.bucket ?? "day")
+      : "day";
+  const period = {
+    day: "daily",
+    week: "weekly",
+    month: "monthly",
+    quarter: "quarterly",
+    year: "yearly",
+  }[bucket];
 
   return (
     <>
@@ -196,7 +209,9 @@ export function ChartSnapshotResults({
           <p className="text-muted-foreground text-sm">
             {chart.data.length} chart points · {applied.result.pagination.total}{" "}
             total{" "}
-            {applied.chartType === "line" ? "daily values" : "aggregate groups"}
+            {applied.chartType === "line"
+              ? `${period} values`
+              : "aggregate groups"}
             . Chart decimal values are numeric approximations; the table and
             exports preserve the returned value strings.
           </p>
@@ -259,7 +274,7 @@ export function ChartSnapshotResults({
                 >
                   <span className="min-w-0 break-words">{item.label}</span>
                   <span className="min-w-0 text-right break-all tabular-nums">
-                    {String(item.value)}
+                    {item.value === null ? "—" : String(item.value)}
                   </span>
                 </li>
               ))}
@@ -271,7 +286,7 @@ export function ChartSnapshotResults({
             </summary>
             <p className="text-muted-foreground pb-3 text-sm">
               {applied.chartType === "line"
-                ? "Each point represents the selected measure for one day in the applied date window."
+                ? `Each point represents the selected measure for one ${bucket} in the applied date window.`
                 : `Each bar or slice represents a ${applied.labelName.toLowerCase()} group.`}{" "}
               The preview may be limited or approximate. The complete table and
               exports below preserve every returned value and record count.
@@ -287,7 +302,7 @@ export function ChartSnapshotResults({
             <CardDescription>
               {applied.result.pagination.total}{" "}
               {applied.chartType === "line"
-                ? "daily values"
+                ? `${period} values`
                 : "aggregate groups"}{" "}
               · one complete snapshot · no record list is loaded
             </CardDescription>
@@ -331,7 +346,9 @@ export function ChartSnapshotResults({
                     key={`${item.key ?? item.label}-${tablePage * tablePageSize + index}`}
                   >
                     <TableCell>{item.label}</TableCell>
-                    <TableCell>{String(item.value)}</TableCell>
+                    <TableCell>
+                      {item.value === null ? "—" : String(item.value)}
+                    </TableCell>
                     <TableCell>{item.recordCount}</TableCell>
                   </TableRow>
                 ))}
@@ -368,7 +385,7 @@ export function ChartSnapshotResults({
         </h1>
         <p className="mb-4 text-sm">
           Complete aggregate snapshot: {allRows.length}{" "}
-          {applied.chartType === "line" ? "daily values" : "groups"}.
+          {applied.chartType === "line" ? `${period} values` : "groups"}.
         </p>
         <Table aria-label="Printable complete aggregate data">
           <TableHeader>
@@ -388,7 +405,9 @@ export function ChartSnapshotResults({
                 data-testid="charts-print-row"
               >
                 <TableCell>{item.label}</TableCell>
-                <TableCell>{String(item.value)}</TableCell>
+                <TableCell>
+                  {item.value === null ? "—" : String(item.value)}
+                </TableCell>
                 <TableCell>{item.recordCount}</TableCell>
               </TableRow>
             ))}

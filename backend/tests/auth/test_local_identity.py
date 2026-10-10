@@ -21,6 +21,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import revoke_provider_refresh_session
 from app.systems.access.identity.rate_limits import cleanup_expired_buckets, login_fingerprint
 from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.local_identity_support import request as _request
 
 
@@ -56,7 +57,10 @@ def test_browser_session_cookies_reach_all_api_routes_and_origin_is_exact(
 ) -> None:
     from app.systems.access.auth.router import _require_browser_origin, _set_browser_session
 
-    monkeypatch.setattr("app.systems.access.auth.router.get_settings", lambda: _settings())
+    monkeypatch.setattr("app.systems.access.auth.cookies.get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        "app.systems.access.auth.request_security.get_settings", lambda: _settings()
+    )
     response = Response()
     _set_browser_session(response, "access", "refresh", "csrf")
     cookie_headers = response.headers.getlist("set-cookie")
@@ -90,7 +94,11 @@ def test_registered_logout_returns_204_clears_cookies_and_revokes_session(
     )
     db = Mock(spec=Session)
     db.get.return_value = session
-    monkeypatch.setattr("app.systems.access.auth.router.get_settings", lambda: _settings())
+    db.scalar.return_value = WorkspaceProfile(ip_allow_list=[])
+    monkeypatch.setattr("app.systems.access.auth.cookies.get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        "app.systems.access.auth.request_security.get_settings", lambda: _settings()
+    )
     monkeypatch.setattr(
         "app.systems.access.auth.router.get_mfa_identity",
         lambda *_args: CurrentIdentity(user, session.id, True, False),

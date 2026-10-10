@@ -89,9 +89,11 @@ def execute_board_action(
         )
         body = _read_json(response, step="preview_board_purge", request_id=_request_id(response))
         impact = body.get("impact")
+        confirmation_name = body.get("confirmation_name")
         if (
             not isinstance(body.get("token"), str)
-            or body.get("confirmation_name") != board_id
+            or not isinstance(confirmation_name, str)
+            or not confirmation_name
             or not isinstance(impact, dict)
             or impact.get("target_id") != board_id
             or impact.get("operation") != "purge"
@@ -101,7 +103,7 @@ def execute_board_action(
             )
         context.private_values.setdefault("board_purge_previews", {})[action.target_key] = {
             "token": body["token"],
-            "confirmation_name": board_id,
+            "confirmation_name": confirmation_name,
         }
         return _result(action, context, evidence, mappings)
     if kind == "board_purge":

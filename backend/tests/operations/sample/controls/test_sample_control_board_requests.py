@@ -7,11 +7,13 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+import pytest
 
+from app.systems.boards.widget_schemas import BoardWidgetWrite
 from operations.sample.client import SampleClient
 from operations.sample.controls.boards import execute_board_control, plan_board_controls
 from operations.sample.packs.registry import get_pack
-from operations.sample.phases.actions import PhaseExecutionContext
+from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.scenario import build_dataset
 
 ACTOR_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
@@ -363,29 +365,66 @@ def test_event_record_link_create_and_delete_use_frontend_revision_shapes(
     assert json.loads(delete.content) == {"board_revision": 6, "content_revision": 3}
 
 
-def test_widget_patch_and_duplicate_use_frontend_revision_bodies(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("size", "pinned", "reference", "corrupt"),
+    [
+        (size, pin, ref, None)
+        for size in ("S", "M", "L")
+        for pin in (False, True)
+        for ref in (False, True)
+    ]
+    + [
+        ("S", True, True, fault)
+        for fault in (
+            "patch_size",
+            "patch_pinned",
+            "patch_chart_id",
+            "patch_revision",
+            "duplicate_chart_id",
+        )
+    ],
+)
+def test_widget_patch_and_duplicate_use_frontend_revision_bodies(
+    tmp_path: Path, size: str, pinned: bool, reference: bool, corrupt: str | None
+) -> None:
     dataset = build_dataset("small", 42, date(2026, 10, 1), organization=get_pack("harbor"))
     patch_action = _action(dataset, "widget_patch")
     duplicate_action = _action(dataset, "widget_duplicate")
     module_id = "4dc2a986-8827-478b-95cb-3de4a5ae35c6"
     duplicate_id = "599ed0d7-5ee5-4761-9b4b-a7438f209ee7"
+    chart_id = "13fdb130-0127-4e0e-b988-cd43a105c8a0" if reference else None
+    config = (
+        None
+        if reference
+        else {
+            "version": 1,
+            "fields": [],
+            "filters": [],
+            "logic": "and",
+            "metric": None,
+            "aggregation": "count",
+            "visualization": "bar",
+            "refresh": "manual",
+        }
+    )
+    wanted = {
+        "name": "Fleet Reliability progress",
+        "widget_type": "summary",
+        "module_id": module_id,
+        "size": size,
+        "pinned": pinned,
+        "chart_id": chart_id,
+        "config": config,
+    }
     widgets = [
         {
+            **wanted,
             "id": WIDGET_IDS[0],
             "name": "Monthly snapshot",
-            "widget_type": "summary",
-            "module_id": module_id,
-            "config": {
-                "version": 1,
-                "fields": [],
-                "filters": [],
-                "logic": "and",
-                "metric": None,
-                "visualization": "bar",
-                "size": "half",
-                "refresh": "manual",
-                "pinned": False,
-            },
+            "board_id": BOARD_ID,
+            "position": 0,
+            "created_at": "2026-10-01T00:00:00Z",
+            "updated_at": "2026-10-01T00:00:00Z",
         }
     ]
     revision = 4
@@ -407,20 +446,31 @@ def test_widget_patch_and_duplicate_use_frontend_revision_bodies(tmp_path: Path)
             return _response(200, {"board_revision": revision, "items": list(widgets)})
         body = json.loads(request.content)
         if request.method == "PATCH":
-            assert body["revision"] == revision
-            assert body["widget"]["name"] == "Fleet Reliability progress"
-            widgets[0] = {**widgets[0], **body["widget"]}
+            BoardWidgetWrite.model_validate(body)
+            assert body["widget"] == wanted
+            widgets[0]["name"] = "Fleet Reliability progress"
             revision += 1
-            return _response(
-                200,
-                {"widget": widgets[0], "board_revision": revision},
-            )
-        assert request.method == "POST"
-        assert body == {"revision": revision}
-        duplicate = {**widgets[0], "id": duplicate_id}
-        widgets.append(duplicate)
-        revision += 1
-        return _response(201, {"widget": duplicate, "board_revision": revision})
+            reply = {"widget": dict(widgets[0]), "board_revision": revision}
+            status, stage = 200, "patch"
+        else:
+            assert request.method == "POST"
+            assert body == {"revision": revision}
+            duplicate = {**widgets[0], "id": duplicate_id, "position": 1}
+            widgets.append(duplicate)
+            revision += 1
+            reply = {"widget": dict(duplicate), "board_revision": revision}
+            status, stage = 201, "duplicate"
+        if corrupt is not None and corrupt.startswith(stage):
+            field = corrupt.removeprefix(stage + "_")
+            if field == "revision":
+                reply["board_revision"] = revision - 1
+            else:
+                reply["widget"][field] = {
+                    "size": "M",
+                    "pinned": False,
+                    "chart_id": duplicate_id,
+                }[field]
+        return _response(status, reply)
 
     context = _context(
         tmp_path,
@@ -429,31 +479,23 @@ def test_widget_patch_and_duplicate_use_frontend_revision_bodies(tmp_path: Path)
         mappings={"control_boards": {"control:duplicate": BOARD_ID}},
     )
 
-    execute_board_control(patch_action, dataset, context)
-    execute_board_control(duplicate_action, dataset, context)
+    try:
+        if corrupt is not None:
+            with pytest.raises(SamplePhaseActionError, match="did not match"):
+                execute_board_control(patch_action, dataset, context)
+                execute_board_control(duplicate_action, dataset, context)
+            assert len([item for item in seen if item.method == "POST"]) == int(
+                corrupt.startswith("duplicate")
+            )
+            return
+        execute_board_control(patch_action, dataset, context)
+        execute_board_control(duplicate_action, dataset, context)
+    finally:
+        context.clients[patch_action.actor_key].close()
 
     patch_request = next(request for request in seen if request.method == "PATCH")
     assert patch_request.url.path == f"/api/boards/{BOARD_ID}/widgets/{WIDGET_IDS[0]}"
-    patch_body = json.loads(patch_request.content)
-    assert patch_body == {
-        "revision": 4,
-        "widget": {
-            "name": f"{widgets[0]['name']}",
-            "widget_type": "summary",
-            "module_id": module_id,
-            "config": {
-                "version": 1,
-                "fields": [],
-                "filters": [],
-                "logic": "and",
-                "metric": None,
-                "visualization": "bar",
-                "size": "half",
-                "refresh": "manual",
-                "pinned": False,
-            },
-        },
-    }
+    assert json.loads(patch_request.content) == {"revision": 4, "widget": wanted}
     duplicate = next(request for request in seen if request.method == "POST")
     assert duplicate.url.path == f"/api/boards/{BOARD_ID}/widgets/{WIDGET_IDS[0]}/duplicate"
     assert json.loads(duplicate.content) == {"revision": 5}

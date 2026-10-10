@@ -55,19 +55,22 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.account import plan_account_controls
     from operations.sample.controls.backups import plan_backup_controls
     from operations.sample.controls.boards import plan_board_controls
+    from operations.sample.controls.email_change import plan_email_change_controls
     from operations.sample.controls.files import plan_file_controls
     from operations.sample.controls.host_delivery import plan_host_controls
+    from operations.sample.controls.jobs import plan_job_controls
     from operations.sample.controls.manage import plan_manage_controls
     from operations.sample.controls.mfa import plan_mfa_controls
     from operations.sample.controls.notifications import plan_notification_controls
     from operations.sample.controls.openview import plan_openview_controls
     from operations.sample.controls.people_security import plan_people_security_controls
     from operations.sample.controls.platform import plan_platform_controls
+    from operations.sample.controls.profile import plan_profile_controls
     from operations.sample.controls.read_reviews import plan_read_reviews
     from operations.sample.controls.reads import plan_read_controls
     from operations.sample.controls.sandbox import plan_sandbox_controls
 
-    sandbox = plan_sandbox_controls(dataset)
+    prune, *sandbox = plan_sandbox_controls(dataset)
     platform = plan_platform_controls(dataset)
     split = (
         next(
@@ -77,9 +80,23 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         )
         + 1
     )
+    prepare, observe, recover = plan_job_controls(dataset)
+    lifecycle = []
+    for row in sandbox[split:]:
+        operation = row.values["operation"]
+        if operation == "close_field":
+            lifecycle.append(prepare)
+        lifecycle.append(row)
+        if operation == "close_field":
+            lifecycle.append(observe)
+        elif operation == "reopen_field":
+            lifecycle.append(recover)
 
     return (
+        prune,
         *plan_account_controls(dataset),
+        *plan_email_change_controls(dataset),
+        *plan_profile_controls(dataset),
         *plan_mfa_controls(dataset),
         *plan_people_security_controls(dataset),
         *plan_board_controls(dataset),
@@ -87,7 +104,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *plan_access_controls(dataset),
         *sandbox[:split],
         *platform[:3],
-        *sandbox[split:],
+        *lifecycle,
         *platform[3:],
         *_audit_actions(dataset),
         *plan_read_reviews(dataset),
@@ -300,18 +317,25 @@ def execute_control_action(
     from operations.sample.controls.account import execute_account_control
     from operations.sample.controls.backups import execute_backup_control
     from operations.sample.controls.boards import execute_board_control
+    from operations.sample.controls.email_change import execute_email_change_control
     from operations.sample.controls.files import FILE_OPERATIONS, execute_file_control
+    from operations.sample.controls.jobs import execute_job_control
     from operations.sample.controls.manage import execute_manage_control
     from operations.sample.controls.mfa import execute_mfa_control
     from operations.sample.controls.notifications import execute_notification_control
     from operations.sample.controls.openview import execute_openview_control
     from operations.sample.controls.people_security import execute_people_security_control
     from operations.sample.controls.platform import execute_platform_control
+    from operations.sample.controls.profile import execute_profile_control
     from operations.sample.controls.read_reviews import execute_read_review
     from operations.sample.controls.reads import execute_read_control
     from operations.sample.controls.sandbox import execute_sandbox_control
 
     operation = action.values.get("operation")
+    if operation == "self_email_change":
+        return execute_email_change_control(action, dataset, context, on_substep=on_substep)
+    if operation == "self_profile":
+        return execute_profile_control(action, dataset, context, on_substep=on_substep)
     if operation == "physical_backup_export":
         callback = context.private_values.get("host_control")
         if not callable(callback):
@@ -331,6 +355,7 @@ def execute_control_action(
         "account_controls": execute_account_control,
         "manage_controls": execute_manage_control,
         "backup_controls": execute_backup_control,
+        "jobs_controls": execute_job_control,
         "platform_controls": execute_platform_control,
         "board_controls": execute_board_control,
         "openview_controls": execute_openview_control,

@@ -387,6 +387,12 @@ class _LifecycleWire:
                         "confirmation_name": row["name"]
                         if self.fault != "empty_confirmation"
                         else "",
+                        # The server's purge preview also reports the recovery point.
+                        **(
+                            {"last_successful_backup_at": None}
+                            if operation == "purge"
+                            else {}
+                        ),
                     },
                 )
             body = json.loads(request.content)

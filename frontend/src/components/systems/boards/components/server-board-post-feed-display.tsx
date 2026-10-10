@@ -3,6 +3,7 @@
 import { createElement, useEffect, useState } from "react";
 import { ArrowUpRight, History, Pin, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { PersonCardPopover } from "@/components/person-card";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,6 +43,15 @@ function postSummary(body: string): string {
   const characters = Array.from(body.trim());
   if (characters.length <= SUMMARY_LIMIT) return body.trim();
   return `${characters.slice(0, SUMMARY_LIMIT).join("").trimEnd()}…`;
+}
+
+function expiryLabel(
+  timestamp: string,
+  region: WorkspaceRegion | undefined,
+  now: number,
+): string {
+  const expired = Date.parse(timestamp) <= now;
+  return `${expired ? "Expired" : "Expires"} on ${publishedLabel(timestamp, region)}`;
 }
 
 export function ServerBoardPostReaderContent({ post }: { post: BoardPost }) {
@@ -137,11 +147,18 @@ export function ServerBoardPostReader({
   onRetry?: () => void;
   finalFocus?: DialogContentProps["finalFocus"];
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => setNow(Date.now()), [post]);
   if (!post && !loading && !error) return null;
 
   const metadata = post
     ? [
-        createElement("span", { key: "author" }, authorLabel),
+        createElement(PersonCardPopover, {
+          key: "author",
+          personId: post.authorId,
+          label: authorLabel,
+          unavailableLabel: "Author unavailable",
+        }),
         post.publishedAt
           ? createElement(
               "time",
@@ -150,6 +167,13 @@ export function ServerBoardPostReader({
             )
           : null,
         post.pinned ? createElement("span", { key: "pinned" }, "Pinned") : null,
+        post.expiresAt
+          ? createElement(
+              "time",
+              { key: "expiry", dateTime: post.expiresAt },
+              expiryLabel(post.expiresAt, region, now),
+            )
+          : null,
         post.edited
           ? createElement(
               "button",
@@ -242,20 +266,34 @@ export function ServerBoardPostFeedDisplay({
   appliedSearch = "",
   authorLabels = null,
   onReadPost,
+  onHistoryAuthorChange,
 }: {
   page: BoardPostPage;
   region: WorkspaceRegion | undefined;
   appliedSearch?: string;
   authorLabels?: Record<string, string> | null;
   onReadPost?: (postId: string) => void;
+  onHistoryAuthorChange?: (authorId: string | null) => void;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => setNow(Date.now()), [page]);
   const [readerPostId, setReaderPostId] = useState<string | null>(null);
   const readerPost =
     page.items.find(
       (item) => item.id === readerPostId && item.publicationNumber !== null,
     ) ?? null;
   const [history, setHistory] = useState<BoardPost | null>(null);
+  const openHistory = (post: BoardPost) => {
+    onHistoryAuthorChange?.(post.authorId);
+    setHistory(post);
+  };
+  const closeHistory = () => {
+    setHistory(null);
+    onHistoryAuthorChange?.(null);
+  };
   const { offset, count, total } = page.pagination;
+
+  useEffect(() => () => onHistoryAuthorChange?.(null), [onHistoryAuthorChange]);
 
   useEffect(() => {
     if (
@@ -354,7 +392,10 @@ export function ServerBoardPostFeedDisplay({
                         createElement(
                           "span",
                           { className: "text-sm font-medium" },
-                          authorLabel,
+                          createElement(PersonCardPopover, {
+                            personId: item.authorId,
+                            label: authorLabel,
+                          }),
                         ),
                         item.publishedAt
                           ? createElement(
@@ -383,13 +424,30 @@ export function ServerBoardPostFeedDisplay({
                                 type: "button",
                                 className: `${editedLinkClass} text-sm`,
                                 "aria-label": `Edit history of ${item.title}`,
-                                onClick: () => setHistory(item),
+                                onClick: () => openHistory(item),
                               },
                               createElement(History, {
                                 "aria-hidden": "true",
                                 className: "mr-1 size-4",
                               }),
                               "Edited",
+                            )
+                          : null,
+                        item.expiresAt && Date.parse(item.expiresAt) <= now
+                          ? createElement(
+                              Badge,
+                              { variant: "secondary" },
+                              "Expired",
+                            )
+                          : null,
+                        item.expiresAt
+                          ? createElement(
+                              "time",
+                              {
+                                dateTime: item.expiresAt,
+                                className: "text-muted-foreground text-sm",
+                              },
+                              expiryLabel(item.expiresAt, region, now),
                             )
                           : null,
                       ),
@@ -448,7 +506,7 @@ export function ServerBoardPostFeedDisplay({
         : "Author unavailable",
       onHistory: (post: BoardPost) => {
         setReaderPostId(null);
-        setHistory(post);
+        openHistory(post);
       },
       onClose: () => setReaderPostId(null),
     }),
@@ -459,7 +517,7 @@ export function ServerBoardPostFeedDisplay({
           postId: history.id,
           title: history.title,
           authorLabels,
-          onClose: () => setHistory(null),
+          onClose: closeHistory,
         })
       : null,
   );

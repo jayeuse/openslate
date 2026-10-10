@@ -21,7 +21,7 @@ def settings_values(**overrides: Any) -> dict[str, Any]:
         "supabase_session_encryption_key": _SESSION_ENCRYPTION_KEY,
         "publication_signing_key": "a" * 64,
         "security_event_server_key": "test-security-event-key",
-        "lifecycle_purge_enabled": False,
+        "lifecycle_purge_enabled": True,
         "public_origin": "http://frontend.test",
         "request_body_max_bytes": 1_048_576,
         "database_pool_size": 5,

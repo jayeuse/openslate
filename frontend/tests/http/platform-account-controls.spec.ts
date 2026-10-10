@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from "./helpers/test";
 import { mockAccessApi, ids, created } from "./helpers/access-api";
+import { profileSelf } from "./helpers/profile-api";
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 import {
@@ -79,7 +80,27 @@ async function openAccount(
     }),
   );
   await page.route("**/api/workspace", workspaceHandler);
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({ json: profileSelf(accountUser, "admin") }),
+  );
   await page.goto("/platform?section=account");
+  await expect(page).toHaveURL(/\/profile#security$/);
+}
+
+// A revoked current session is signed out, so /login keeps the sign-in form
+// instead of sending a still-authenticated session to its start page.
+async function signedOutAfter(page: Page, revoked: () => boolean) {
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: revoked()
+        ? { authenticated: false }
+        : {
+            authenticated: true,
+            user_id: "00000000-0000-4000-8000-000000000001",
+            setup_required: false,
+          },
+    }),
+  );
 }
 
 test("loads own sessions and exposes a retryable denied and empty state", async ({
@@ -518,6 +539,7 @@ test("warns before ending the current session and routes to sign-in after confir
     await route.fulfill({ status: 204 });
   });
   await openAccount(page);
+  await signedOutAfter(page, () => requests.length > 0);
 
   const current = page
     .getByRole("listitem")
@@ -572,6 +594,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
     };
   });
   await openAccount(page);
+  await signedOutAfter(page, () => revocations > 0);
   await page.goto("/comms");
   await page
     .getByRole("textbox", { name: "Message", exact: true })
@@ -584,7 +607,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
   await expect(page.getByText("owned-note.txt", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "Account settings", exact: true })
+    .getByRole("menuitem", { name: "Your profile", exact: true })
     .click();
   await expect(
     page.getByText("Chrome on macOS", { exact: true }),
@@ -710,7 +733,7 @@ for (const [index, failure] of ["Access", "workspace", "Comms"].entries()) {
     await expect(
       page.getByRole("button", { name: "Retry clearing drafts" }),
     ).toBeVisible();
-    await expect(page).toHaveURL(/\/platform\?section=account$/);
+    await expect(page).toHaveURL(/\/profile#security$/);
     expect(endedSessionChecks).toBe(0);
     expect(revocations).toBe(1);
     for (const [keyIndex, key] of cleanupKeys.entries())
@@ -792,7 +815,7 @@ test("failed current-session revocation keeps drafts active and restores focus a
     ).toBe("Retained before rejection");
 });
 
-test("Account explains its mixed sources and associates password validation with both controls", async ({
+test("Profile explains its account sources and associates password validation with both controls", async ({
   page,
 }) => {
   await page.route("**/api/auth/sessions", (route) =>
@@ -805,10 +828,14 @@ test("Account explains its mixed sources and associates password validation with
   });
   await openAccount(page);
   await expect(
-    page.getByRole("note", { name: "Account data", exact: true }),
-  ).toContainText(
-    "Password, device sessions, and theme use your signed-in account",
-  );
+    page.getByRole("heading", { name: "Your profile", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Your identity, sign-in security, and personal preferences. Organization settings stay in Manage.",
+      { exact: true },
+    ),
+  ).toContainText("Organization settings stay in Manage.");
   await expect(
     page.getByRole("button", { name: "Review sign-out", exact: true }),
   ).toHaveCount(0);
@@ -1071,9 +1098,9 @@ test.describe("U4 evidence-only Account directory cache", () => {
       primedAt = Date.now();
       await page.getByRole("button", { name: "Account", exact: true }).click();
       await page
-        .getByRole("menuitem", { name: "Account settings", exact: true })
+        .getByRole("menuitem", { name: "Your profile", exact: true })
         .click();
-      await expect(page).toHaveURL(/\/platform\?section=account$/);
+      await expect(page).toHaveURL(/\/profile$/);
       const sessions = page.getByRole("list", {
         name: "Active sessions",
         exact: true,

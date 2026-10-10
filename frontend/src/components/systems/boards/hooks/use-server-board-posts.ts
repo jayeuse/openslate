@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiError } from "@/lib/api";
+import { ApiContractError, ApiError } from "@/lib/api";
 import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
 import { listBoardPosts } from "../adapters/board-posts-api";
 import type {
@@ -11,12 +11,14 @@ import type {
 import {
   listBoardPostAuthors,
   type BoardPostAuthorChoice,
+  type BoardPostAuthorPage,
 } from "../adapters/board-post-author-api";
 
 export type PostAuthorsState = {
   key: string | null;
   sequence: number;
   data: BoardPostAuthorChoice[] | null;
+  pagination: BoardPostAuthorPage["pagination"] | null;
   status: "idle" | "loading" | "ready" | "error" | "denied";
   error: string | null;
 };
@@ -28,6 +30,8 @@ export type PostAuthorsEvent =
       key: string;
       sequence: number;
       data: BoardPostAuthorChoice[];
+      pagination?: BoardPostAuthorPage["pagination"];
+      append?: boolean;
     }
   | {
       type: "reject";
@@ -42,6 +46,7 @@ export const initialPostAuthorsState: PostAuthorsState = {
   key: null,
   sequence: 0,
   data: null,
+  pagination: null,
   status: "idle",
   error: null,
 };
@@ -55,17 +60,34 @@ export function transitionPostAuthors(
       key: event.key,
       sequence: event.sequence,
       data: state.key === event.key ? state.data : null,
+      pagination: state.key === event.key ? state.pagination : null,
       status: "loading",
       error: null,
     };
   if (state.key !== event.key || state.sequence !== event.sequence)
     return state;
   if (event.type === "resolve")
-    return { ...state, data: event.data, status: "ready", error: null };
+    return {
+      ...state,
+      data: event.append
+        ? [
+            ...new Map(
+              [...(state.data ?? []), ...event.data].map((choice) => [
+                choice.id,
+                choice,
+              ]),
+            ).values(),
+          ]
+        : event.data,
+      pagination: event.pagination ?? null,
+      status: "ready",
+      error: null,
+    };
   const data = event.retain && !event.denied ? state.data : null;
   return {
     ...state,
     data,
+    pagination: data ? state.pagination : null,
     status: event.denied ? "denied" : data ? "ready" : "error",
     error: event.error,
   };
@@ -80,7 +102,10 @@ export function visiblePostAuthorId(
     : null;
 }
 
-export function postAuthorChoiceFailure(error: unknown): {
+export function postAuthorChoiceFailure(
+  error: unknown,
+  subject: "choices" | "labels" = "choices",
+): {
   error: string;
   retain: boolean;
   denied: boolean;
@@ -93,43 +118,163 @@ export function postAuthorChoiceFailure(error: unknown): {
       (error.status >= 500 || error.status === 408 || error.status === 429));
   return denied
     ? {
-        error: "Author choices unavailable. Check your access or retry.",
+        error: `Author ${subject} unavailable. Check your access or retry.`,
         retain: false,
         denied: true,
       }
     : transient
       ? {
-          error:
-            "Could not refresh author choices. Showing the last loaded options.",
+          error: `Could not refresh author ${subject}. Showing the last loaded ${subject === "choices" ? "options" : "labels"}.`,
           retain: true,
           denied: false,
         }
       : {
-          error: "Author choices unavailable. Retry.",
+          error: `Author ${subject} unavailable. Retry.`,
           retain: false,
           denied: false,
         };
 }
 
-export function useServerBoardPostAuthors(boardId: string, refreshKey: number) {
+export function useServerBoardPostAuthors(
+  boardId: string,
+  refreshKey: number,
+  search = "",
+) {
   const actorId = useVerifiedWorkspaceUserId();
   const [state, setState] = useState<PostAuthorsState>(initialPostAuthorsState);
   const [retryKey, setRetryKey] = useState(0);
+  const [readableKey, setReadableKey] = useState<string | null>(null);
+  const [requestedPage, setRequestedPage] = useState<{
+    key: string;
+    offset: number;
+  } | null>(null);
   const sequence = useRef(0);
-  const key = JSON.stringify([boardId, actorId]);
+  const scopeKey = JSON.stringify([boardId, actorId]);
+  const key = JSON.stringify([boardId, actorId, search.trim()]);
+  const pageKey = `${key}:${refreshKey}:${retryKey}`;
+  const offset = requestedPage?.key === pageKey ? requestedPage.offset : 0;
 
   useEffect(() => {
     const request = ++sequence.current;
+    const controller = new AbortController();
     setState((current) =>
-      transitionPostAuthors(current, {
-        type: "begin",
-        key,
-        sequence: request,
-      }),
+      transitionPostAuthors(current, { type: "begin", key, sequence: request }),
     );
-    void listBoardPostAuthors(boardId)
+    const timer = setTimeout(
+      () => {
+        void listBoardPostAuthors(boardId, {
+          limit: 25,
+          offset,
+          search,
+          signal: controller.signal,
+        })
+          .then((page) => {
+            if (request !== sequence.current || controller.signal.aborted)
+              return;
+            setReadableKey(scopeKey);
+            setState((current) =>
+              transitionPostAuthors(current, {
+                type: "resolve",
+                key,
+                sequence: request,
+                data: page.items,
+                pagination: page.pagination,
+                append: offset > 0,
+              }),
+            );
+          })
+          .catch((error: unknown) => {
+            if (request !== sequence.current || controller.signal.aborted)
+              return;
+            const failure = postAuthorChoiceFailure(error);
+            if (!failure.retain) setReadableKey(null);
+            setState((current) =>
+              transitionPostAuthors(current, {
+                type: "reject",
+                key,
+                sequence: request,
+                ...failure,
+              }),
+            );
+          });
+      },
+      search ? 200 : 0,
+    );
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+      sequence.current += 1;
+    };
+  }, [boardId, key, offset, refreshKey, retryKey, scopeKey, search]);
+
+  const visibleState =
+    state.key === key
+      ? state
+      : { ...initialPostAuthorsState, key, status: "loading" as const };
+  return {
+    state: visibleState,
+    readyToRead: readableKey === scopeKey && visibleState.status !== "denied",
+    loadingMore: offset > 0 && visibleState.status === "loading",
+    retry: () => setRetryKey((value) => value + 1),
+    loadMore: () => {
+      const page = visibleState.pagination;
+      if (visibleState.status === "ready" && page?.hasMore)
+        setRequestedPage({ key: pageKey, offset: page.offset + page.count });
+    },
+  };
+}
+
+/** Current post labels are detail reads, independent of the author picker. */
+export function useServerBoardPostAuthorLabels(
+  boardId: string,
+  refreshKey: number,
+  authorIds: readonly string[],
+  enabled: boolean,
+) {
+  const actorId = useVerifiedWorkspaceUserId();
+  const key = JSON.stringify([boardId, actorId]);
+  const idsKey = [...new Set(authorIds)].sort().join(",");
+  const [state, setState] = useState<PostAuthorsState>(initialPostAuthorsState);
+  const [retryKey, setRetryKey] = useState(0);
+  const [refusedKey, setRefusedKey] = useState<string | null>(null);
+  const sequence = useRef(0);
+
+  useEffect(() => {
+    const request = ++sequence.current;
+    const controller = new AbortController();
+    if (!enabled || !idsKey) {
+      setState((current) =>
+        current.key === key && current.status === "denied"
+          ? current
+          : initialPostAuthorsState,
+      );
+      return () => {
+        controller.abort();
+        sequence.current += 1;
+      };
+    }
+    setState((current) =>
+      transitionPostAuthors(current, { type: "begin", key, sequence: request }),
+    );
+    const read = async () => {
+      const ids = idsKey.split(",");
+      const choices: BoardPostAuthorChoice[] = [];
+      for (let start = 0; start < ids.length; start += 100) {
+        const page = await listBoardPostAuthors(boardId, {
+          limit: 100,
+          offset: 0,
+          ids: ids.slice(start, start + 100),
+          signal: controller.signal,
+        });
+        if (page.pagination.hasMore) throw new ApiContractError();
+        choices.push(...page.items);
+      }
+      return choices;
+    };
+    void read()
       .then((data) => {
-        if (request !== sequence.current) return;
+        if (request !== sequence.current || controller.signal.aborted) return;
+        setRefusedKey(null);
         setState((current) =>
           transitionPostAuthors(current, {
             type: "resolve",
@@ -140,30 +285,33 @@ export function useServerBoardPostAuthors(boardId: string, refreshKey: number) {
         );
       })
       .catch((error: unknown) => {
-        if (request !== sequence.current) return;
+        if (request !== sequence.current || controller.signal.aborted) return;
+        const failure = postAuthorChoiceFailure(error, "labels");
+        if (failure.denied) setRefusedKey(key);
         setState((current) =>
           transitionPostAuthors(current, {
             type: "reject",
             key,
             sequence: request,
-            ...postAuthorChoiceFailure(error),
+            ...failure,
           }),
         );
       });
     return () => {
+      controller.abort();
       sequence.current += 1;
     };
-  }, [actorId, boardId, key, refreshKey, retryKey]);
+  }, [boardId, enabled, idsKey, key, refreshKey, retryKey]);
 
   return {
-    state:
-      state.key === key
+    state: !enabled
+      ? initialPostAuthorsState
+      : state.key === key
         ? state
-        : {
-            ...initialPostAuthorsState,
-            key,
-            status: "loading" as const,
-          },
+        : idsKey
+          ? { ...initialPostAuthorsState, key, status: "loading" as const }
+          : initialPostAuthorsState,
+    denied: refusedKey === key,
     retry: () => setRetryKey((value) => value + 1),
   };
 }

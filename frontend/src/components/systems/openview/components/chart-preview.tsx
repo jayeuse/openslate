@@ -26,7 +26,7 @@ import {
 export type OpenViewChartDatum = {
   key: string;
   label: string;
-  value: number;
+  value: number | null;
 };
 
 export function OpenViewChartPreview({
@@ -34,6 +34,7 @@ export function OpenViewChartPreview({
   type,
   valueLabel,
   showLabels = true,
+  showPoints = showLabels,
   showLegend = true,
   allowDecimals = true,
   className = "border-border/70 bg-muted/15 h-[20rem] w-full rounded-[var(--radius)] border p-3",
@@ -46,6 +47,7 @@ export function OpenViewChartPreview({
   type: "bar" | "line" | "pie";
   valueLabel: string;
   showLabels?: boolean;
+  showPoints?: boolean;
   showLegend?: boolean;
   allowDecimals?: boolean;
   className?: string;
@@ -54,10 +56,12 @@ export function OpenViewChartPreview({
   pieInnerRadius?: number;
   pieOuterRadius?: number;
 }) {
+  const points =
+    type === "line" ? data : data.filter((item) => item.value !== null);
   const config: ChartConfig = {
     value: { label: valueLabel, color: "var(--chart-1)" },
     ...Object.fromEntries(
-      data.map((item, index) => [
+      points.map((item, index) => [
         item.key,
         {
           label: item.label,
@@ -76,7 +80,7 @@ export function OpenViewChartPreview({
   return (
     <ChartContainer config={config} className={className}>
       {type === "bar" ? (
-        <BarChart accessibilityLayer data={data} margin={margin}>
+        <BarChart accessibilityLayer data={points} margin={margin}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
           <XAxis
             dataKey="label"
@@ -93,17 +97,18 @@ export function OpenViewChartPreview({
           {showLegend ? <Legend content={<ChartLegendContent />} /> : null}
           <Bar
             dataKey="value"
+            isAnimationActive={false}
             radius={[barRadius, barRadius, 0, 0]}
             maxBarSize={maxBarSize}
           >
-            {data.map((item) => (
+            {points.map((item) => (
               <Cell key={item.key} fill={`var(--color-${item.key})`} />
             ))}
             {showLabels ? <LabelList dataKey="value" position="top" /> : null}
           </Bar>
         </BarChart>
       ) : type === "line" ? (
-        <LineChart accessibilityLayer data={data} margin={margin}>
+        <LineChart accessibilityLayer data={points} margin={margin}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
           <XAxis
             dataKey="label"
@@ -120,11 +125,13 @@ export function OpenViewChartPreview({
           {showLegend ? <Legend content={<ChartLegendContent />} /> : null}
           <Line
             dataKey="value"
+            isAnimationActive={false}
+            connectNulls={false}
             type="monotone"
             stroke="var(--color-value)"
             strokeWidth={3}
             dot={
-              showLabels
+              showPoints
                 ? {
                     r: 5,
                     fill: "var(--color-value)",
@@ -145,7 +152,8 @@ export function OpenViewChartPreview({
             <Legend content={<ChartLegendContent nameKey="label" />} />
           ) : null}
           <Pie
-            data={data}
+            data={points}
+            isAnimationActive={false}
             dataKey="value"
             nameKey="label"
             innerRadius={pieInnerRadius}
@@ -159,7 +167,7 @@ export function OpenViewChartPreview({
                 : false
             }
           >
-            {data.map((item) => (
+            {points.map((item) => (
               <Cell key={item.key} fill={`var(--color-${item.key})`} />
             ))}
           </Pie>

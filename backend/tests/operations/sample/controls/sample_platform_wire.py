@@ -11,12 +11,12 @@ from app.systems.boards.event_schemas import EventResponse
 from app.systems.boards.post_schemas import PostResponse
 from app.systems.boards.schemas import BoardResponse
 from app.systems.sandbox.fields.models import Field
-from app.systems.sandbox.records.export import encode_csv
 from app.systems.sandbox.records.import_router import RecordImportRequest
 from app.systems.sandbox.records.importing import creation_schema_digest
-from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import RecordQuery
 from tests.operations.sample.controls.sample_lifecycle_wire import _LifecycleWire
+from tests.operations.sample.controls.sample_platform_export import export_response
+from tests.operations.sample.controls.sample_record_batch import batch_response
 from tests.operations.sample.controls.test_sample_control_sandbox import ADMIN_ID, _login_response
 
 
@@ -72,7 +72,7 @@ class PlatformWire:
         return {
             **row,
             "created_at": "2026-10-03T00:00:00Z",
-            "updated_at": "2026-10-03T00:00:00Z",
+            "updated_at": row.get("updated_at", "2026-10-03T00:00:00Z"),
             "deleted_at": "2026-10-03T00:00:00Z" if row["is_deleted"] else None,
             "performed_by": ADMIN_ID,
             "display_values": {},
@@ -102,6 +102,8 @@ class PlatformWire:
     def request(self, request):
         path, method = request.url.path, request.method
         body = json.loads(request.content) if request.content else None
+        if path == "/api/records/batch-update":
+            return batch_response(self, request)
         if path == "/api/records/import":
             parsed = RecordImportRequest.model_validate(body)
             assert parsed.module_id == UUID(
@@ -141,6 +143,7 @@ class PlatformWire:
                         "module_id": str(parsed.module_id),
                         "data": data,
                         "is_deleted": False,
+                        "updated_at": "2026-10-03T00:00:00+00:00",
                     }
                     self.created.append(key)
                 rows.append(
@@ -171,7 +174,9 @@ class PlatformWire:
             if self.fault == "wrong_data" and parsed.mode == "import":
                 rows[0]["data"] = {}
             return httpx.Response(200, json=result)
-        if path in ("/api/records/query", "/api/records/export"):
+        if path == "/api/records/export":
+            return export_response(self, request)
+        if path == "/api/records/query":
             parsed = RecordQuery.model_validate(body)
             fields = self.fields()
             assert list(body) == ["module_id", "definition"]
@@ -181,34 +186,13 @@ class PlatformWire:
             active = [
                 self.record(key) for key, row in self.records.items() if not row["is_deleted"]
             ]
-            if path.endswith("query"):
-                return httpx.Response(200, json=self.page(active, 25))
-            content, count = encode_csv(
-                [Record(id=UUID(row["id"]), data=row["data"]) for row in active],
-                fields,
-                self.dataset.organization.identity.timezone,
-                self.dataset.organization.identity.locale,
-            )
-            assert count == 2
-            if self.fault == "csv_count":
-                content += b"extra,wrong,wrong\r\n"
-            if self.fault == "csv_content":
-                content = content.replace(b"opening review", b"wrong review")
-            return httpx.Response(
-                200,
-                content=content,
-                headers={
-                    "Content-Type": "application/json"
-                    if self.fault == "csv_mime"
-                    else "text/csv; charset=utf-8",
-                    "Content-Disposition": 'attachment; filename="records.csv"',
-                },
-            )
+            return httpx.Response(200, json=self.page(active, 25))
         if path.startswith("/api/records/"):
             key = path.split("/")[3]
             row = self.records.get(key)
             if path.endswith("/purge/preview"):
                 assert row and row["is_deleted"]
+                module = self.lifecycle.live[row["module_id"]]
                 n = self.pending_reviews.get(key, 0)
                 self.pending_reviews[key] = n + 1
                 blockers = (
@@ -231,7 +215,7 @@ class PlatformWire:
                     200,
                     json={
                         "token": token,
-                        "confirmation_name": key,
+                        "confirmation_name": row["data"][module["title_field_id"]],
                         "expires_at": "2026-10-03T01:00:00Z",
                         "impact": {
                             "target_type": "record",
@@ -248,7 +232,9 @@ class PlatformWire:
                 )
             if path.endswith("/purge"):
                 assert set(body) == {"token", "confirmation_name", "password"}
-                assert self.tokens.pop(body["token"]) == body["confirmation_name"] == key
+                assert self.tokens.pop(body["token"]) == key
+                module = self.lifecycle.live[row["module_id"]]
+                assert body["confirmation_name"] == row["data"][module["title_field_id"]]
                 assert body["password"] == "fixture-admin-password"
                 self.purges += 1
                 if self.fault != "purge_remains":

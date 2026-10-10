@@ -19,6 +19,7 @@ from app.systems.sandbox.lifecycle.board_record_link_dependencies import (
 from app.systems.sandbox.lifecycle.board_widget_dependencies import (
     load_board_widget_purge_dependencies,
 )
+from app.systems.sandbox.lifecycle.chart_dependencies import load_chart_purge_dependencies
 from app.systems.sandbox.lifecycle.dashboard_dependencies import (
     load_dashboard_purge_dependencies,
 )
@@ -126,8 +127,13 @@ def load_purge_dependencies(
         else module_ids
     )
     target_field = scope.fields[0] if target is LifecycleTargetType.FIELD and scope.fields else None
+    chart_rows, chart_blockers, charts = load_chart_purge_dependencies(
+        db, widget_module_ids, target_field, scope.modules, fingerprint
+    )
     board_widget_rows, board_widget_blockers, board_widget_ids = (
-        load_board_widget_purge_dependencies(db, widget_module_ids, target_field, fingerprint)
+        load_board_widget_purge_dependencies(
+            db, widget_module_ids, target_field, fingerprint, charts
+        )
     )
     department_owned_widget_ids = set(department_board_ids["board_widgets"])
     board_widget_rows = [
@@ -146,6 +152,7 @@ def load_purge_dependencies(
         target_field,
         scope.modules,
         fingerprint,
+        charts,
     )
     definition_filters = []
     if module_ids:
@@ -275,9 +282,9 @@ def load_purge_dependencies(
         else []
     )
     rows = access_rows + board_rows
-    rows += record_link_rows + report_rows + board_widget_rows
+    rows += record_link_rows + report_rows + board_widget_rows + chart_rows
     blockers = board_blockers + record_link_blockers
-    blockers += report_blockers + board_widget_blockers
+    blockers += report_blockers + board_widget_blockers + chart_blockers
     for file in files:
         state = row_state("files", file)
         state.byte_count = file.actual_size or file.expected_size
@@ -417,6 +424,7 @@ def load_purge_dependencies(
             ),
             **report_ids,
             **dashboard_ids,
+            "charts": tuple(charts),
             "files": tuple(file.id for file in files),
             "saved_views": tuple(view.id for view in views),
             "record_triggers": tuple(definition.id for definition in definitions),

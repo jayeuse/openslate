@@ -40,7 +40,15 @@ def test_openview_has_no_personal_routes_or_owner_and_audience_fields() -> None:
     schema = app.openapi()
     paths = {path for path in schema["paths"] if path.startswith(OPENVIEW_PREFIXES)}
     assert not paths & REMOVED_PATHS
-    assert not any(path.startswith("/api/charts") for path in paths)
+    assert {
+        ("/api/charts", "GET"),
+        ("/api/charts", "POST"),
+        ("/api/charts/{chart_id}", "GET"),
+        ("/api/charts/{chart_id}", "PATCH"),
+        ("/api/charts/{chart_id}", "DELETE"),
+        ("/api/charts/{chart_id}/restore", "POST"),
+        ("/api/charts/{chart_id}/usage", "GET"),
+    } <= _mounted()
     parameters = {
         parameter["name"]
         for path in paths

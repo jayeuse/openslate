@@ -23,18 +23,27 @@ const routeTitles = [
   ["/openview", "OpenView | OpenSlate"],
   ["/manage", "Manage | OpenSlate"],
   ["/platform", "Platform | OpenSlate"],
-  ["/settings/appearance", "Appearance | OpenSlate"],
+  ["/profile", "Your profile | OpenSlate"],
   ["/login", "Sign in | OpenSlate"],
   ["/setup", "Setup guide | OpenSlate"],
 ] as const;
 
-test("each route names itself in the browser tab", async ({ page }) => {
-  await signIn(page);
-  for (const [path, title] of routeTitles) {
+// One test per route: each navigation gets its own time budget.
+for (const [path, title] of routeTitles) {
+  test(`${path} names itself in the browser tab`, async ({ page }) => {
+    await signIn(page);
+    if (path === "/login") {
+      await page.route("**/api/auth/session", (route) =>
+        route.fulfill({ json: { authenticated: false } }),
+      );
+      await page.route("**/api/auth/refresh", (route) =>
+        route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
+      );
+    }
     await page.goto(path);
     await expect(page, path).toHaveTitle(title);
-  }
-});
+  });
+}
 
 test("the breadcrumb names the workspace and its open section", async ({
   page,
@@ -166,7 +175,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
-  await page.goto("/settings/appearance");
+  await page.goto("/profile#look");
   const textSize = page.getByRole("combobox", { name: "Text size" });
   await expect(textSize).toHaveValue("100");
   const sidebar = page.locator("#primary-sidebar");
@@ -179,7 +188,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
     .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
     .toBeCloseTo(baseline * 1.25, 0);
   await expect(
-    page.getByRole("heading", { name: "Appearance", exact: true }),
+    page.getByRole("heading", { name: "Your profile", exact: true }),
   ).toHaveCSS("font-size", "37.5px");
   await resize.focus();
   await resize.press("ArrowRight");

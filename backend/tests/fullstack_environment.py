@@ -22,7 +22,7 @@ def api_environment(
     database_manifest: Path,
     private: Path,
     public_origin: str,
-    purge_enabled: bool = False,
+    purge_enabled: bool = True,
 ) -> dict[str, str]:
     """Test-mode settings with strict origin, host, body and concurrency limits."""
 

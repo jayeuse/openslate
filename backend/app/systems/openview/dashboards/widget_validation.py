@@ -1,100 +1,58 @@
-"""Live source validation for saved Dashboard widget configurations."""
+"""Current source admission for inline and referenced Dashboard widget queries."""
 
 from uuid import UUID
 
-from fastapi import HTTPException, status
-from sqlalchemy import select
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.common.dependencies.auth import CurrentIdentity
 from app.systems.access.users.models import User
-from app.systems.openview.dashboards.schemas import (
-    DashboardAggregateConfig,
-    DashboardChartConfig,
-    DashboardRecordsConfig,
-    DashboardRecordsQuery,
-    DashboardWidgetSpec,
-)
-from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.records.query import validate_definition
-from app.systems.sandbox.records.query_schemas import (
-    DateSeriesAggregateQuery,
-    FieldReference,
-    GroupedAggregateSnapshotQuery,
-)
+from app.systems.openview.charts import service as charts
+from app.systems.openview.dashboards.schemas import DashboardChartConfig, DashboardWidgetSpec
 
 
 def _invalid_dashboard() -> HTTPException:
     return HTTPException(
-        status.HTTP_409_CONFLICT,
+        409,
         detail={
             "code": "dashboard_invalid",
             "message": "A Dashboard widget references unavailable or changed fields",
         },
+        headers=charts.CACHE,
     )
 
 
 def validate_dashboard_widgets(
-    db: Session, user: User, department_id: UUID, widgets: list[DashboardWidgetSpec]
-) -> None:
-    """Reject stale field references and modules that are inactive or in another department."""
-    module_ids = {widget.config.query.module_id for widget in widgets}
-    if not module_ids:
-        return
-    active_module_ids = set(
-        db.scalars(
-            select(Module.id)
-            .where(
-                Module.id.in_(module_ids),
-                Module.department_id == department_id,
-                Module.is_deleted.is_(False),
-            )
-            .order_by(Module.id)
-            .with_for_update()
-        ).all()
-    )
-    if active_module_ids != module_ids:
-        raise _invalid_dashboard()
-
-    for widget in widgets:
-        config = widget.config
-        query: DashboardRecordsQuery | GroupedAggregateSnapshotQuery | DateSeriesAggregateQuery
-        if isinstance(config, DashboardRecordsConfig):
-            query = config.query
-            additional_references: tuple[FieldReference | None, ...] = ()
-        elif isinstance(config, DashboardAggregateConfig):
-            query = config.query
-            additional_references = (query.dimension, query.measure)
-        else:
-            assert isinstance(config, DashboardChartConfig)
-            query = config.query
-            if isinstance(query, GroupedAggregateSnapshotQuery):
-                additional_references = (query.dimension, query.measure)
-            else:
-                additional_references = (query.date_field, query.measure)
-        references = tuple(
-            reference for reference in additional_references if reference is not None
-        )
-        try:
-            fields = validate_definition(
-                db,
-                query.module_id,
-                query.definition,
-                extra_references=references,
-                reader=user,
-            )
-        except HTTPException as error:
-            if error.status_code == status.HTTP_409_CONFLICT:
-                raise _invalid_dashboard() from error
-            raise
-        field_ids = {
-            reference.field_id
-            for reference in (
-                *query.definition.columns,
-                *query.definition.filters,
-                *query.definition.sort,
-                *query.definition.search_fields,
-                *references,
-            )
-        }
-        if any(fields[field_id].is_deleted for field_id in field_ids):
+    db: Session, identity: CurrentIdentity, department_id: UUID, widgets: list[DashboardWidgetSpec]
+) -> User:
+    """Lock sources before the consumer; Chart attachment needs only current READ."""
+    inline_ids = {widget.config.query.module_id for widget in widgets if widget.config is not None}
+    chart_ids = {widget.chart_id for widget in widgets if widget.chart_id is not None}
+    try:
+        modules, references, actor = charts.lock_widget_sources(db, identity, inline_ids, chart_ids)
+        if any(module.department_id != department_id for module in modules.values()):
             raise _invalid_dashboard()
+        for widget in widgets:
+            if widget.chart_id is not None:
+                chart = references[widget.chart_id]
+                category = (
+                    chart.chart_type
+                    if chart.chart_type in {"summary", "workload", "records"}
+                    else "chart"
+                )
+                if widget.widget_type != category:
+                    raise _invalid_dashboard()
+            else:
+                config = widget.config
+                assert config is not None
+                kind = (
+                    config.chart_type
+                    if isinstance(config, DashboardChartConfig)
+                    else widget.widget_type
+                )
+                charts.validate_query(db, actor, config.query.module_id, kind, config.query)
+    except HTTPException as error:
+        if error.status_code == 409:
+            raise _invalid_dashboard() from error
+        raise
+    return actor

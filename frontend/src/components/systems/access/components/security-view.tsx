@@ -4,7 +4,6 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useReducer,
   useRef,
   useState,
   type MouseEvent,
@@ -63,7 +62,7 @@ import {
   type ConfirmState,
 } from "./security-dialogs";
 import { SecurityPanel, SecurityPolicyForm } from "./security-panel";
-import { SecurityEventsView } from "./security-events-view";
+import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 
 function policySummary(
   fields: SecuritySettingsFormFields,
@@ -133,10 +132,6 @@ export function SecurityView({
   const mfaOpener = useRef<HTMLButtonElement | null>(null);
   const confirmOpener = useRef<HTMLElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
-  const [, notifySecurityReads] = useReducer(
-    (version: number) => version + 1,
-    0,
-  );
   const refusalRechecked = useRef(false);
   const mfa = useMfaFlow();
   const mfaFactorId = mfa.credentials?.id ?? null;
@@ -300,14 +295,6 @@ export function SecurityView({
     eventsDenied,
     queryClient,
   ]);
-  const onEventsReadChange = useCallback(() => {
-    if (
-      mounted.current &&
-      admission.current.active &&
-      admission.current.admitted
-    )
-      notifySecurityReads();
-  }, []);
 
   function clearDraft() {
     if (operation.current) return false;
@@ -818,12 +805,16 @@ export function SecurityView({
           onRetry={() => void retrySessions()}
           actions={{ endSession, endAllRemoteSessions }}
         />
-        <SecurityEventsView
-          active={active}
-          admitted={admitted}
-          pending={livePending}
-          onReadChange={onEventsReadChange}
-        />
+        <GuardedWorkspaceLink
+          href="/manage?view=audit&audit=security-events"
+          className="text-primary focus-visible:outline-ring inline-flex min-h-11 items-center text-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2"
+          aria-disabled={livePending}
+          onClick={(event) => {
+            if (livePending) event.preventDefault();
+          }}
+        >
+          View security events in Audit
+        </GuardedWorkspaceLink>
       </fieldset>
       <Dialog
         open={policyOpen}

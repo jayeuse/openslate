@@ -24,6 +24,7 @@ from app.systems.access.users.models import User
 from app.systems.boards.access import has_level
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_occurrences import expand_board_event_occurrences
+from app.systems.boards.event_purge_router import router as purge_router
 from app.systems.boards.event_schemas import (
     EventArchiveFilter,
     EventCreate,
@@ -43,7 +44,6 @@ from app.systems.boards.models import Board, BoardStatus
 from app.systems.boards.reminder_service import (
     TIMING_FIELDS,
     clear_pending_reminder_work,
-    delete_event_reminders,
     set_event_reminders,
     timings_by_event,
 )
@@ -70,6 +70,7 @@ def _private_cache(response: Response) -> None:
 
 
 router = APIRouter(prefix="/boards", tags=["boards"], dependencies=[Depends(_private_cache)])
+router.include_router(purge_router)
 Reader = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
 
@@ -374,21 +375,3 @@ def restore_board_event(
     board.revision += 1
     _commit(db)
     return _mutation(event, board)
-
-
-@router.delete("/{board_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_board_event(
-    board_id: UUID, event_id: UUID, payload: EventRevisionWrite, actor: Reader, db: Database
-) -> None:
-    board, event = _lifecycle_event(db, board_id, event_id, actor, payload)
-    if not event.archived:
-        raise _conflict("event_not_archived", "Archive the event before deleting it")
-    from app.systems.boards.attachment_service import delete_event_attachments
-    from app.systems.boards.record_link_service import delete_content_links
-
-    delete_event_attachments(db, event.id)
-    delete_content_links(db, "event", event.id)
-    delete_event_reminders(db, event.id)
-    db.delete(event)
-    board.revision += 1
-    _commit(db)

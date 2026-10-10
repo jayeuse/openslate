@@ -11,6 +11,8 @@ import {
   listOpenViewReports,
   listOpenViewReportRuns,
   listOpenViewSharedReportRuns,
+  previewReportPurge,
+  purgeReport,
   restoreOpenViewReport,
   updateOpenViewReport,
   type OpenViewReport,
@@ -710,5 +712,64 @@ test("does not expose malformed wire responses or unsafe CSV error bodies", asyn
     expect((error as Error).message).not.toContain("internal proxy secret");
   } finally {
     failedCsv.restore();
+  }
+});
+
+const purgeImpact = {
+  target_type: "report",
+  target_id: reportId,
+  operation: "purge",
+  actor_id: null,
+  rows: [],
+  external_impacts: [],
+  key_strips: [],
+  blockers: [],
+  impact_digest: "a".repeat(64),
+};
+const purgePreview = {
+  impact: purgeImpact,
+  token: "synthetic-report-challenge",
+  expires_at: timestamp,
+  confirmation_name: "Finance report ".repeat(15).trim(),
+  last_successful_backup_at: timestamp,
+};
+
+test("Report purge carries a guarded exact-name challenge and refuses mismatched impact", async () => {
+  const responses = [
+    jsonResponse(purgePreview),
+    jsonResponse({ impact: purgeImpact, operation_id: null }),
+    jsonResponse({
+      ...purgePreview,
+      impact: { ...purgeImpact, target_type: "record" },
+    }),
+  ];
+  const mock = installFetch(() => responses.shift()!);
+  try {
+    await expect(previewReportPurge(reportId)).resolves.toEqual(purgePreview);
+    await expect(
+      purgeReport(reportId, {
+        token: purgePreview.token,
+        confirmationName: purgePreview.confirmation_name,
+        password: "synthetic-passphrase",
+      }),
+    ).resolves.toEqual({ impact: purgeImpact, operation_id: null });
+    expect(
+      mock.requests
+        .slice(0, 2)
+        .map(({ input, init }) => [String(input), init?.method]),
+    ).toEqual([
+      [`/api/reports/${reportId}/purge/preview`, "POST"],
+      [`/api/reports/${reportId}/purge`, "POST"],
+    ]);
+    expect(JSON.parse(String(mock.requests[1]?.init?.body))).toEqual({
+      token: purgePreview.token,
+      confirmation_name: purgePreview.confirmation_name,
+      password: "synthetic-passphrase",
+    });
+    await expect(previewReportPurge(reportId)).rejects.toBeInstanceOf(
+      ApiContractError,
+    );
+  } finally {
+    mock.restore();
   }
 });

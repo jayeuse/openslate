@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 
-import { expect, test, type Route } from "./helpers/test";
+import { expect, test, type Route, type Page } from "./helpers/test";
 import { mockMfa } from "./helpers/mfa";
+import { profilePreferences, profileSelf } from "./helpers/profile-api";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000201";
 const NULL_LABEL_ACTOR_ID = "00000000-0000-4000-8000-000000000202";
@@ -174,7 +175,9 @@ function createAuditRoute(logs: AuditLogFixture[]) {
           )
             latestActorUse.set(log.performed_by, log);
         }
+        const needle = (url.searchParams.get("search") ?? "").toLowerCase();
         const entityTypes = [...latestEntityUse.entries()]
+          .filter(([type]) => !needle || type.toLowerCase().includes(needle))
           .sort(
             ([leftType, leftDate], [rightType, rightDate]) =>
               rightDate.localeCompare(leftDate) ||
@@ -183,6 +186,13 @@ function createAuditRoute(logs: AuditLogFixture[]) {
           .slice(0, 200)
           .map(([entityType]) => entityType);
         const actors = [...latestActorUse.entries()]
+          .filter(
+            ([, log]) =>
+              !needle ||
+              [log.actor_name ?? "", log.actor_label ?? ""].some((label) =>
+                label.toLowerCase().includes(needle),
+              ),
+          )
           .sort(
             ([leftId, leftLog], [rightId, rightLog]) =>
               rightLog.created_at.localeCompare(leftLog.created_at) ||
@@ -373,9 +383,13 @@ test("Audit uses server filters, sort and page requests, with server-named actor
   await expect(
     table.getByText("Mara Santos", { exact: true }).first(),
   ).toBeVisible();
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
   await expect(
-    page.locator(`#audit-user option[value="${NULL_LABEL_ACTOR_ID}"]`),
-  ).toHaveText("Tara Reyes");
+    page.getByRole("option", { name: "Tara Reyes", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
   await expect(
     table.getByText("Unknown person", { exact: true }).first(),
   ).toBeVisible();
@@ -408,16 +422,14 @@ test("Audit uses server filters, sort and page requests, with server-named actor
   await expect(table.getByText("Delete", { exact: true })).toHaveCount(4);
 
   await page.getByRole("button", { name: "More filters" }).click();
-  await page
-    .getByLabel("Person", { exact: true })
-    .selectOption(NULL_LABEL_ACTOR_ID);
+  await chooseAuditFilter(page, "Person", "Tara Reyes");
   await expect(
     page.getByText("Person: Tara Reyes", { exact: true }),
   ).toBeVisible();
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("performed_by"))
     .toBe(NULL_LABEL_ACTOR_ID);
-  await page.getByLabel("Entity", { exact: true }).selectOption("user");
+  await chooseAuditFilter(page, "Entity", "User");
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("entity_type"))
     .toBe("user");
@@ -444,9 +456,9 @@ test("Audit uses server filters, sort and page requests, with server-named actor
   await page
     .getByRole("button", { name: "Clear filters", exact: true })
     .click();
-  await expect(page.getByLabel("Person", { exact: true })).toHaveValue(
-    "All users",
-  );
+  await expect(
+    page.getByRole("combobox", { name: "Person", exact: true }),
+  ).toContainText("All people");
   await page
     .getByRole("searchbox", { name: "Search activity", exact: true })
     .fill("active");
@@ -522,7 +534,7 @@ test("Audit paging is server-backed and detail reads the selected audit ID", asy
   ).toBe(true);
   await details.getByRole("button", { name: "Close detail" }).click();
   await page.getByRole("button", { name: "More filters" }).click();
-  await page.getByLabel("Entity", { exact: true }).selectOption("record");
+  await chooseAuditFilter(page, "Entity", "Record");
   await expect
     .poll(() => ({
       entity: api.requests.at(-1)?.searchParams.get("entity_type"),
@@ -1186,15 +1198,14 @@ test("Audit shows server actor names, meaningful targets and workspace-local dat
   ).toBeVisible();
   await expect(table).not.toContainText(logs[2]!.entity_id!);
   await page.getByRole("button", { name: "More filters" }).click();
-  await expect(
-    page.locator(`#audit-user option[value="${ACTOR_ID}"]`),
-  ).toHaveText("Server display name");
-  await expect(
-    page.locator(`#audit-user option[value="${NULL_LABEL_ACTOR_ID}"]`),
-  ).toHaveText("Historical person label");
-  await expect(
-    page.locator(`#audit-user option[value="${UNKNOWN_ACTOR_ID}"]`),
-  ).toHaveText("Unknown person");
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
+  for (const name of [
+    "Server display name",
+    "Historical person label",
+    "Unknown person",
+  ])
+    await expect(page.getByRole("option", { name, exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "More filters" }).click();
   await namedRow
     .getByRole("button", { name: "View audit New record title", exact: true })
@@ -1253,70 +1264,124 @@ test("Audit search waits for typing to settle before sending its server query", 
   ).toEqual(["delete"]);
 });
 
-test("Audit date filters use workspace-local day bounds across a daylight-saving change", async ({
-  page,
-}) => {
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({
-      json: {
-        id: fixtureId(77),
-        display_name: "Harbor workspace",
-        legal_name: null,
-        description: null,
-        contact_email: null,
-        contact_phone: null,
-        postal_address: null,
-        locale: "en-US",
-        timezone: "America/New_York",
-        logo_file_id: null,
-        mark: "RS",
-        currency: "PHP",
-        week_start: "monday",
-        business_hours: "09:00–18:00",
-        theme: "slate",
-        revision: 4,
-      },
-    }),
-  );
-  const logs = makeAuditLogs(5);
-  const localDayRows = [
-    ["2026-03-08T04:59:59.999Z", "Before local day"],
-    ["2026-03-08T05:00:00.000Z", "At local day start"],
-    ["2026-03-08T07:00:00.000Z", "After clock change"],
-    ["2026-03-09T03:59:59.999Z", "At local day end"],
-    ["2026-03-09T04:00:00.000Z", "After local day"],
-  ] as const;
-  logs.forEach((log, index) => {
-    log.created_at = localDayRows[index]![0];
-    log.after = { name: localDayRows[index]![1] };
-  });
-  const api = createAuditRoute(logs);
-  await page.route("**/api/audit-logs**", (route) => api.handle(route));
-  await page.goto("/manage?view=audit");
-  const table = page.getByRole("table", {
-    name: "Activity history table",
-    exact: true,
-  });
-  await expect(table).toBeVisible();
-  await page.getByRole("button", { name: "More filters" }).click();
-  await page.getByLabel("From", { exact: true }).fill("2026-03-08");
-  await page.getByLabel("To", { exact: true }).fill("2026-03-08");
+for (const personal of [false, true]) {
+  test(
+    personal
+      ? "S21 Audit personal display preserves workspace DST day bounds and server CSV"
+      : "Audit date filters use workspace-local day bounds across a daylight-saving change",
+    async ({ page }, testInfo) => {
+      await page.clock.setFixedTime(new Date("2026-03-10T12:00:00Z"));
+      if (personal) {
+        const userId = "00000000-0000-4000-8000-000000000101";
+        await page.route("**/api/auth/me", (route) =>
+          route.fulfill({ json: profileSelf(userId, "admin") }),
+        );
+        await page.route(`**/api/users/${userId}/preferences`, (route) =>
+          route.fulfill({
+            json: profilePreferences(userId, {
+              timezone: "America/Los_Angeles",
+              date_format: "ymd",
+              time_format: "24h",
+            }),
+          }),
+        );
+      }
+      await page.route("**/api/workspace", (route) =>
+        route.fulfill({
+          json: {
+            id: fixtureId(77),
+            display_name: "Harbor workspace",
+            legal_name: null,
+            description: null,
+            contact_email: null,
+            contact_phone: null,
+            postal_address: null,
+            locale: "en-US",
+            timezone: "America/New_York",
+            logo_file_id: null,
+            mark: "RS",
+            currency: "PHP",
+            week_start: "monday",
+            business_hours: "09:00–18:00",
+            theme: "slate",
+            revision: 4,
+          },
+        }),
+      );
+      const logs = makeAuditLogs(5);
+      const localDayRows = [
+        ["2026-03-08T04:59:59.999Z", "Before local day"],
+        ["2026-03-08T05:00:00.000Z", "At local day start"],
+        ["2026-03-08T07:00:00.000Z", "After clock change"],
+        ["2026-03-09T03:59:59.999Z", "At local day end"],
+        ["2026-03-09T04:00:00.000Z", "After local day"],
+      ] as const;
+      logs.forEach((log, index) => {
+        log.created_at = localDayRows[index]![0];
+        log.after = { name: localDayRows[index]![1] };
+      });
+      const api = createAuditRoute(logs);
+      await page.route("**/api/audit-logs**", (route) => api.handle(route));
+      await page.goto("/manage?view=audit");
+      const table = page.getByRole("table", {
+        name: "Activity history table",
+        exact: true,
+      });
+      await expect(table).toBeVisible();
+      await page.getByRole("button", { name: "More filters" }).click();
+      await page.getByLabel("From", { exact: true }).fill("2026-03-08");
+      await page.getByLabel("To", { exact: true }).fill("2026-03-08");
 
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
-    .toBe("2026-03-08T05:00:00.000Z");
-  await expect
-    .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
-    .toBe("2026-03-09T03:59:59.999Z");
-  await expect(
-    page.getByText("Showing 1–3 of 3", { exact: true }),
-  ).toBeVisible();
-  await expect(table).toContainText("At local day start");
-  await expect(table).toContainText("After clock change");
-  await expect(table).toContainText("At local day end");
-  await expect(table).not.toContainText("Before local day");
-  await expect(table).not.toContainText("After local day");
-});
+      await expect
+        .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
+        .toBe("2026-03-08T05:00:00.000Z");
+      await expect
+        .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
+        .toBe("2026-03-09T03:59:59.999Z");
+      await expect(
+        page.getByText("Showing 1–3 of 3", { exact: true }),
+      ).toBeVisible();
+      await expect(table).toContainText("At local day start");
+      await expect(table).toContainText("After clock change");
+      await expect(table).toContainText("At local day end");
+      await expect(table).not.toContainText("Before local day");
+      await expect(table).not.toContainText("After local day");
+      if (personal) {
+        const row = table
+          .getByRole("row")
+          .filter({ hasText: "At local day start" });
+        await expect(row).toContainText("2026-03-07");
+        await expect(row).toContainText("21:00");
+        await page
+          .getByRole("button", { name: "Export audit preview", exact: true })
+          .click();
+        const preview = page.getByRole("dialog", {
+          name: "Audit export preview",
+          exact: true,
+        });
+        await expect(preview).toContainText("3 filtered entries");
+        const downloaded = page.waitForEvent("download");
+        await preview
+          .getByRole("button", { name: "Download CSV", exact: true })
+          .click();
+        const download = await downloaded;
+        const path = testInfo.outputPath("s21-audit-workspace-day.csv");
+        await download.saveAs(path);
+        const csv = await readFile(path, "utf8");
+        expect(csv).toContain('"2026-03-08T05:00:00.000Z"');
+        expect(csv).toContain('"2026-03-09T03:59:59.999Z"');
+        expect(csv).not.toContain("2026-03-07");
+        expect(api.exports).toHaveLength(1);
+        expect(api.exports[0]?.searchParams.get("created_after")).toBe(
+          "2026-03-08T05:00:00.000Z",
+        );
+        expect(api.exports[0]?.searchParams.get("created_before")).toBe(
+          "2026-03-09T03:59:59.999Z",
+        );
+      }
+    },
+  );
+}
 
 test("Audit export uses the last settled search while a newer search is debouncing", async ({
   page,
@@ -1495,3 +1560,73 @@ test("Audit export refuses more than 10000 rows and exports the header after fil
     page.getByText("Downloaded 0 filtered audit entries.", { exact: true }),
   ).toBeVisible();
 });
+
+test("S08 Audit option search finds actors outside the capped first result and preserves selection", async ({
+  page,
+}) => {
+  const api = createAuditRoute(makeAuditLogs());
+  const reads: URL[] = [];
+  await page.route("**/api/audit-logs**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname !== "/api/audit-logs/options") return api.handle(route);
+    reads.push(url);
+    await route.fulfill({
+      json:
+        url.searchParams.get("search") === "Remote actor"
+          ? {
+              actors: [
+                {
+                  performed_by: ACTOR_ID,
+                  actor_name: "Remote actor",
+                  actor_label: null,
+                },
+              ],
+              entity_types: [],
+            }
+          : {
+              actors: [
+                {
+                  performed_by: NULL_LABEL_ACTOR_ID,
+                  actor_name: "Tara Reyes",
+                  actor_label: null,
+                },
+              ],
+              entity_types: ["record"],
+            },
+    });
+  });
+  await page.goto("/manage?view=audit");
+  await expect(
+    page.getByRole("table", { name: "Activity history table", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
+  const person = page.getByRole("combobox", { name: "Person", exact: true });
+  await person.click();
+  await page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Person", exact: true })
+    .fill("Remote actor");
+  await page.getByRole("option", { name: "Remote actor", exact: true }).click();
+  await expect(
+    page.getByText("Person: Remote actor", { exact: true }),
+  ).toBeVisible();
+  await person.click();
+  await page
+    .getByRole("dialog")
+    .getByRole("combobox", { name: "Person", exact: true })
+    .fill("Tara");
+  await expect(
+    page.getByRole("option", { name: "Tara Reyes", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(person).toContainText("Remote actor");
+  expect(
+    reads.some((url) => url.searchParams.get("search") === "Remote actor"),
+  ).toBe(true);
+  expect(api.requests.at(-1)?.searchParams.get("performed_by")).toBe(ACTOR_ID);
+});
+
+async function chooseAuditFilter(page: Page, label: string, option: string) {
+  await page.getByRole("combobox", { name: label, exact: true }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+}

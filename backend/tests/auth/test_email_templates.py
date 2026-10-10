@@ -9,7 +9,11 @@ def test_supabase_can_fetch_raw_templates_without_consuming_email_actions() -> N
     app = FastAPI()
     app.include_router(router, prefix="/api")
     with TestClient(app) as client:
-        for name, page in (("invite", "setup"), ("recovery", "recovery")):
+        for name, page in (
+            ("invite", "setup"),
+            ("recovery", "recovery"),
+            ("email-change", "email-change"),
+        ):
             response = client.get(f"/api/auth/email-templates/{name}.html")
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/html")
@@ -26,12 +30,12 @@ def test_template_endpoint_cannot_read_arbitrary_installation_files() -> None:
 
 
 @pytest.mark.parametrize("host", ["api", "host.docker.internal"])
-def test_internal_provider_host_can_only_fetch_the_two_public_templates(host: str) -> None:
+def test_internal_provider_host_can_only_fetch_public_templates(host: str) -> None:
     from app.main import create_app
 
     client = TestClient(create_app(), base_url=f"http://{host}:8000")
     try:
-        for name in ("invite", "recovery"):
+        for name in ("invite", "recovery", "email-change"):
             response = client.get(f"/api/auth/email-templates/{name}.html")
             assert response.status_code == 200
             assert "{{ .TokenHash }}" in response.text

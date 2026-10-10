@@ -1,6 +1,7 @@
 "use client";
+import { RecordPersonCard } from "./live-record-cards";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useId, type Dispatch, type SetStateAction } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,6 +16,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { OpenViewAggregateSnapshotResult } from "../adapters/analytics-api";
+import type { OpenViewAggregateSnapshotRequest } from "../adapters/analytics-api";
+import type {
+  OpenViewDashboardWidgetConfig,
+  OpenViewDashboardChartConfig,
+} from "../adapters/dashboards-api";
 import type { OpenViewDataSourceField } from "../adapters/views-api";
 import { openViewRecordFieldValue } from "../domain/record-display";
 import {
@@ -24,6 +30,18 @@ import {
 import { OpenViewChartPreview } from "./chart-preview";
 
 const PREVIEW_POINTS = 12;
+function aggregateDefinition(
+  query: OpenViewDashboardWidgetConfig["query"],
+): query is OpenViewAggregateSnapshotRequest {
+  return (
+    "mode" in query && (query.mode === "groups" || query.mode === "date_series")
+  );
+}
+function chartDefinition(
+  config: OpenViewDashboardWidgetConfig,
+): config is OpenViewDashboardChartConfig {
+  return "chartType" in config;
+}
 
 type DashboardWidgetResultsProps = {
   widget: DraftWidget;
@@ -46,11 +64,18 @@ function chartValues(
 ) {
   const items = completeSeries
     ? result.items
-    : result.items.slice(0, PREVIEW_POINTS);
+    : result.items
+        .filter((item) => item.value !== null)
+        .slice(0, PREVIEW_POINTS);
   return items.map((item, index) => ({
     key: `dashboard-point-${index}`,
     label: item.label,
-    value: Number.isFinite(Number(item.value)) ? Number(item.value) : 0,
+    value:
+      item.value === null
+        ? null
+        : Number.isFinite(Number(item.value))
+          ? Number(item.value)
+          : null,
   }));
 }
 
@@ -77,8 +102,14 @@ export function DashboardWidgetResults({
   setTablePage,
   setTablePageSize,
 }: DashboardWidgetResultsProps) {
+  const headingId = useId();
+  const config = snapshot?.data.config ?? widget.config ?? null;
+  const aggregateQuery =
+    config !== null && aggregateDefinition(config.query) ? config.query : null;
+  const chartConfig =
+    config !== null && chartDefinition(config) ? config : null;
   const activeIsDateSeries =
-    widget.widgetType === "chart" && widget.config.query.mode === "date_series";
+    widget.widgetType === "chart" && aggregateQuery?.mode === "date_series";
   const aggregateSnapshot =
     snapshot?.data.kind === "aggregate" ? snapshot.data.result : null;
   const recordsSnapshot =
@@ -87,8 +118,22 @@ export function DashboardWidgetResults({
     aggregateSnapshot && widget.widgetType === "chart"
       ? chartValues(aggregateSnapshot, activeIsDateSeries)
       : [];
+  const bucket =
+    widget.widgetType === "chart" && aggregateQuery?.mode === "date_series"
+      ? (aggregateQuery.bucket ?? "day")
+      : "day";
+  const periods =
+    bucket === "day"
+      ? "days"
+      : bucket === "week"
+        ? "weeks"
+        : bucket === "month"
+          ? "months"
+          : bucket === "quarter"
+            ? "quarters"
+            : "years";
   const chartPointDescription = activeIsDateSeries
-    ? `${chartPreview.length} daily points; point labels and dots are suppressed`
+    ? `${chartPreview.length} ${bucket === "day" ? "daily" : bucket} points; point labels and dots are suppressed`
     : `${chartPreview.length} categories`;
   const snapshotRows = aggregateSnapshot?.items ?? [];
   const tablePageCount = Math.max(
@@ -102,9 +147,9 @@ export function DashboardWidgetResults({
     firstRowIndex + tablePageSize,
   );
   const recordsFields =
-    widget.widgetType === "records"
-      ? widget.config.query.definition.columns.map((column, index) => {
-          const field = fieldsByModule[widget.config.query.moduleId]?.find(
+    widget.widgetType === "records" && config !== null
+      ? config.query.definition.columns.map((column, index) => {
+          const field = fieldsByModule[config.query.moduleId]?.find(
             (candidate) => candidate.id === column.fieldId,
           );
           return {
@@ -127,14 +172,14 @@ export function DashboardWidgetResults({
 
   return (
     <section
-      aria-labelledby="dashboard-widget-preview"
+      aria-labelledby={headingId}
       className="border-border flex min-w-0 flex-col gap-4 border-t pt-5"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2
             data-slot="section-title"
-            id="dashboard-widget-preview"
+            id={headingId}
             className="text-lg font-semibold"
           >
             {title}
@@ -172,7 +217,9 @@ export function DashboardWidgetResults({
       ) : null}
       {snapshot &&
       snapshot.data.kind === "aggregate" &&
-      widget.widgetType === "summary" ? (
+      widget.widgetType === "summary" &&
+      widget.chartId == null &&
+      aggregateQuery?.aggregation === "count" ? (
         <Card className="max-w-xl">
           <CardContent className="flex flex-col gap-2 pt-6">
             <p className="text-muted-foreground text-sm">
@@ -185,7 +232,8 @@ export function DashboardWidgetResults({
         </Card>
       ) : snapshot &&
         snapshot.data.kind === "aggregate" &&
-        widget.widgetType === "workload" ? (
+        (widget.widgetType === "workload" ||
+          widget.widgetType === "summary") ? (
         <div className="flex min-w-0 flex-col gap-3">
           <h3 data-slot="section-title" className="font-semibold">
             Workload breakdown
@@ -208,7 +256,9 @@ export function DashboardWidgetResults({
                     key={`${item.key ?? item.label}-${firstRowIndex + index}`}
                   >
                     <TableCell>{item.label}</TableCell>
-                    <TableCell>{String(item.value)}</TableCell>
+                    <TableCell>
+                      {item.value === null ? "—" : String(item.value)}
+                    </TableCell>
                     <TableCell>{item.recordCount}</TableCell>
                   </TableRow>
                 ))}
@@ -247,9 +297,11 @@ export function DashboardWidgetResults({
                   <TableRow key={record.id}>
                     {recordsFields.map((field) => (
                       <TableCell key={field.id}>
-                        {displayRecordValue(
-                          openViewRecordFieldValue(record, field),
-                        )}
+                        <RecordPersonCard row={record} field={field}>
+                          {displayRecordValue(
+                            openViewRecordFieldValue(record, field),
+                          )}
+                        </RecordPersonCard>
                       </TableCell>
                     ))}
                   </TableRow>
@@ -273,7 +325,7 @@ export function DashboardWidgetResults({
         <>
           <p role="status" className="text-muted-foreground text-sm">
             {activeIsDateSeries
-              ? `Showing all ${snapshotRows.length} days in chronological order.`
+              ? `Showing all ${snapshotRows.length} ${periods} in chronological order.`
               : `Preview shows up to ${Math.min(PREVIEW_POINTS, snapshotRows.length)} of ${snapshotRows.length} chart buckets. The complete values remain in the table.`}
           </p>
           <div
@@ -282,15 +334,15 @@ export function DashboardWidgetResults({
           >
             <OpenViewChartPreview
               data={chartPreview}
-              type={widget.config.chartType}
+              type={chartConfig?.chartType ?? "bar"}
               valueLabel={
-                widget.config.query.aggregation === "count"
+                aggregateQuery?.aggregation === "count"
                   ? "Records"
-                  : widget.config.query.aggregation
+                  : (aggregateQuery?.aggregation ?? "count")
               }
               showLabels={false}
               showLegend={false}
-              allowDecimals={widget.config.query.aggregation !== "count"}
+              allowDecimals={aggregateQuery?.aggregation !== "count"}
               className="border-border/70 bg-muted/15 [&_.recharts-cartesian-axis-tick-value]:fill-muted-foreground [&_.recharts-label]:fill-foreground h-[18rem] w-full rounded-[var(--radius)] border p-3"
             />
           </div>
@@ -320,7 +372,9 @@ export function DashboardWidgetResults({
                       key={`${item.key ?? item.label}-${firstRowIndex + index}`}
                     >
                       <TableCell>{item.label}</TableCell>
-                      <TableCell>{String(item.value)}</TableCell>
+                      <TableCell>
+                        {item.value === null ? "—" : String(item.value)}
+                      </TableCell>
                       <TableCell>{item.recordCount}</TableCell>
                     </TableRow>
                   ))}

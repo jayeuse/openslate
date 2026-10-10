@@ -23,6 +23,7 @@ from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.provider_sessions import resolve_provider_session
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import allowed_module_ids
+from app.systems.boards.access import readable_board_ids
 from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
 from app.systems.platform.events.hub import (
     EventHub,
@@ -223,7 +224,7 @@ async def event_stream(
 
 
 async def reauthorize_event_principal(principal: EventPrincipal) -> EventViewer | None:
-    """Validate token, user, session and readable modules using a short-lived DB session."""
+    """Validate identity and readable scopes using a short-lived DB session."""
 
     return await asyncio.to_thread(_reauthorize_in_database, principal)
 
@@ -254,6 +255,7 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
                 user_id=user.id,
                 role=user.role,
                 module_ids=allowed_module_ids(db, user, AccessLevel.READ),
+                board_ids=readable_board_ids(db, user),
             )
     except MFARequired as error:
         raise HTTPException(

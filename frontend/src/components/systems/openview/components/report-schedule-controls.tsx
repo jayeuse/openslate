@@ -1,4 +1,5 @@
 "use client";
+import { useDisplayRegion } from "@/components/use-display-region";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -150,7 +151,9 @@ export function ReportScheduleControls({
   disabled,
   disabledReason,
 }: ReportScheduleControlsProps) {
-  const region = useQuery(workspaceCalendarQueryOptions()).data;
+  const region = useDisplayRegion(
+    useQuery(workspaceCalendarQueryOptions()).data,
+  );
   const [loadVersion, setLoadVersion] = useState(0);
   const [loadState, setLoadState] = useState<
     "loading" | "ready" | "denied" | "failed"
@@ -373,6 +376,38 @@ export function ReportScheduleControls({
                 {schedule
                   ? "No next run while this schedule is disabled."
                   : "No next run is scheduled."}
+              </p>
+            )}
+            {schedule?.lastRun ? (
+              <p
+                role="status"
+                aria-label="Last scheduled run"
+                className="text-sm"
+              >
+                Last run:{" "}
+                {schedule.lastRun.state.charAt(0).toUpperCase() +
+                  schedule.lastRun.state.slice(1)}
+                {" · "}
+                {schedule.lastRun.finishedAt ? (
+                  <time dateTime={schedule.lastRun.finishedAt}>
+                    {region
+                      ? formatWorkspaceDateTime(
+                          schedule.lastRun.finishedAt,
+                          region,
+                          { dateStyle: "medium", timeStyle: "short" },
+                        )
+                      : "Date unavailable"}
+                  </time>
+                ) : (
+                  "Finish time not recorded"
+                )}
+                {schedule.lastRun.failureLabel ? (
+                  <> · {schedule.lastRun.failureLabel}</>
+                ) : null}
+              </p>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                Last run: No runs yet
               </p>
             )}
             {!canManage ? (

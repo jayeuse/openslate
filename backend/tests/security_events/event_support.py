@@ -1,4 +1,8 @@
-"""Owned real-auth/runtime PostgreSQL setup; event rows remain append-only until teardown."""
+"""Owned signed-auth/runtime PostgreSQL setup; event rows remain append-only until teardown.
+
+The actor signs in through the real login route against the fake provider: these tests
+check OpenSlate's security events, not Supabase Auth.
+"""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,7 +22,8 @@ from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.session_policy_support import DEFAULTS, POLICY_FIELDS
-from tests.auth.test_provider_auth_integration import provider_account as provider_account
+from tests.fake_provider_support import fake_provider as fake_provider
+from tests.fake_provider_support import fake_provider_account as fake_provider_account
 
 
 @dataclass
@@ -62,8 +67,8 @@ class EventWorld:
 
 
 @pytest.fixture
-def event_world(provider_account):
-    email, password, provider_id, actor_id, owner = provider_account
+def event_world(fake_provider_account):
+    email, password, provider_id, actor_id, owner = fake_provider_account
     with Session(owner) as db:
         actor = db.get(User, actor_id)
         actor.supabase_user_id, actor.role = provider_id, "admin"

@@ -18,6 +18,7 @@ import { getMyBoardAccess } from "../adapters/board-tools-api";
 import type { PostEditorView } from "../components/server-backed-board-post-editor";
 import {
   postCancellationPatch,
+  postExpiryTimeToUtc,
   postLocalScheduleValue,
   postPatchForForm,
   postScheduleTimeToUtc,
@@ -76,6 +77,7 @@ export function useServerBoardPostEditor({
   const loadSequence = useRef(0);
   const mutationSequence = useRef(0);
   const operationPendingRef = useRef(false);
+  const deferredReload = useRef(false);
   const attachmentPendingRef = useRef(false);
   const recordLinkPendingRef = useRef(false);
   const mountedRef = useRef(false);
@@ -105,9 +107,33 @@ export function useServerBoardPostEditor({
     };
   }, []);
 
+  function flushDeferredReload() {
+    if (
+      deferredReload.current &&
+      mountedRef.current &&
+      activeKeyRef.current === key &&
+      !operationPendingRef.current &&
+      !attachmentPendingRef.current &&
+      !recordLinkPendingRef.current
+    ) {
+      deferredReload.current = false;
+      setRetryKey((value) => value + 1);
+    }
+  }
+
   useEffect(() => {
-    const request = ++loadSequence.current;
     const switched = activeKeyRef.current !== key;
+    if (
+      !switched &&
+      (operationPendingRef.current ||
+        attachmentPendingRef.current ||
+        recordLinkPendingRef.current)
+    ) {
+      deferredReload.current = true;
+      return;
+    }
+    deferredReload.current = false;
+    const request = ++loadSequence.current;
     activeKeyRef.current = key;
     if (switched) {
       selectedRef.current = null;
@@ -201,9 +227,11 @@ export function useServerBoardPostEditor({
   ]);
 
   const access = current.access;
+  // A background re-check keeps this Board's last confirmed access, so open menus
+  // and editors stay mounted; a denial or failure clears it.
   const canEdit =
     boardStatus === "active" &&
-    current.status === "ready" &&
+    (current.status === "ready" || current.status === "loading") &&
     access?.edit === true;
   const canManage = access?.manage === true;
   const canArchiveSelected =
@@ -236,6 +264,7 @@ export function useServerBoardPostEditor({
     scheduleLocal: canEdit ? current.scheduleLocal : "",
     deviceTimeZone,
     scheduleError: canEdit ? current.scheduleError : null,
+    expiryError: canEdit ? current.expiryError : null,
     pending:
       current.pending || current.attachmentPending || current.recordLinkPending,
     conflict: current.conflict,
@@ -259,7 +288,7 @@ export function useServerBoardPostEditor({
     setState((previous) => ({
       ...previous,
       selected: null,
-      form: { title: "", body: "", links: [] },
+      form: { title: "", body: "", links: [], pinned: false, expiresLocal: "" },
       scheduleLocal: "",
       scheduleError: null,
       displayed: null,
@@ -287,6 +316,7 @@ export function useServerBoardPostEditor({
       ...previous,
       selected: item,
       form: formFor(item),
+      expiryError: null,
       scheduleLocal: postLocalScheduleValue(item),
       scheduleError: null,
       displayed: null,
@@ -306,7 +336,19 @@ export function useServerBoardPostEditor({
     )
       return;
     setState((previous) =>
-      previous.key === key ? { ...previous, form, error: null } : previous,
+      previous.key === key
+        ? {
+            ...previous,
+            form: {
+              ...form,
+              pinned: canManage
+                ? form.pinned
+                : (previous.form?.pinned ?? false),
+            },
+            expiryError: null,
+            error: null,
+          }
+        : previous,
     );
   }
 
@@ -323,6 +365,21 @@ export function useServerBoardPostEditor({
       return;
     const form = current.form;
     const selected = current.selected;
+    let expiresAt: string | null;
+    try {
+      expiresAt = postExpiryTimeToUtc(form.expiresLocal);
+    } catch {
+      setState((previous) =>
+        previous.key === key
+          ? {
+              ...previous,
+              expiryError:
+                "Choose a valid local expiry time. Clock changes can make some local times unavailable.",
+            }
+          : previous,
+      );
+      return;
+    }
     if (selected && !dirty(form, selected)) return;
     if (selected && selected.authorId !== actorId && !canManage) return;
     const operation = ++mutationSequence.current;
@@ -337,13 +394,15 @@ export function useServerBoardPostEditor({
         ? await updateBoardPost(
             boardId,
             selected.id,
-            postPatchForForm(selected, form, current.boardRevision),
+            postPatchForForm(selected, form, current.boardRevision, canManage),
           )
         : await createBoardPost(boardId, {
             boardRevision: current.boardRevision,
             title: form.title,
             body: form.body,
             links: form.links,
+            expiresAt,
+            ...(canManage ? { pinned: form.pinned } : {}),
           });
       const saved = await readBoardPost(boardId, result.id, "draft");
       if (operation !== mutationSequence.current) return;
@@ -355,6 +414,7 @@ export function useServerBoardPostEditor({
               ...previous,
               selected: saved,
               form: formFor(saved),
+              expiryError: null,
               scheduleLocal: postLocalScheduleValue(saved),
               scheduleError: null,
               boardRevision: result.boardRevision,
@@ -375,8 +435,10 @@ export function useServerBoardPostEditor({
         previous.key === key ? editorFailure(previous, error) : previous,
       );
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -450,6 +512,7 @@ export function useServerBoardPostEditor({
               ...previous,
               selected: saved,
               form: formFor(saved),
+              expiryError: null,
               scheduleLocal: postLocalScheduleValue(saved),
               scheduleError: null,
               boardRevision: result.boardRevision,
@@ -480,8 +543,10 @@ export function useServerBoardPostEditor({
         };
       });
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -529,6 +594,7 @@ export function useServerBoardPostEditor({
               ...previous,
               selected: saved,
               form: formFor(saved),
+              expiryError: null,
               scheduleLocal: "",
               scheduleError: null,
               boardRevision: result.boardRevision,
@@ -550,8 +616,10 @@ export function useServerBoardPostEditor({
         previous.key === key ? editorFailure(previous, error) : previous,
       );
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -642,8 +710,10 @@ export function useServerBoardPostEditor({
         previous.key === key ? editorFailure(previous, error) : previous,
       );
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -705,8 +775,10 @@ export function useServerBoardPostEditor({
         previous.key === key ? editorFailure(previous, error) : previous,
       );
     } finally {
-      if (operation === mutationSequence.current)
+      if (operation === mutationSequence.current) {
         operationPendingRef.current = false;
+        flushDeferredReload();
+      }
     }
   }
 
@@ -739,6 +811,7 @@ export function useServerBoardPostEditor({
 
   function setAttachmentPending(pending: boolean) {
     attachmentPendingRef.current = pending;
+    if (!pending) flushDeferredReload();
     setState((previous) =>
       previous.key === key
         ? { ...previous, attachmentPending: pending }
@@ -748,6 +821,7 @@ export function useServerBoardPostEditor({
 
   function setRecordLinkPending(pending: boolean) {
     recordLinkPendingRef.current = pending;
+    if (!pending) flushDeferredReload();
     setState((previous) =>
       previous.key === key
         ? { ...previous, recordLinkPending: pending }

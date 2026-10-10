@@ -86,15 +86,19 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     first = claim_due_work(db, now=now, limit=2)
     assert len(first) == 1 and first[0].id == work.id
     assert work.attempt_count == 1
+    assert work.last_attempt_started_at == now
+    assert work.finished_at is None
     assert future.state == WorkState.PENDING
 
     later = now + timedelta(minutes=3)
     second = claim_due_work(db, now=later, limit=2)
     assert len(second) == 1 and second[0].id == work.id
     assert second[0].lease_token != first[0].lease_token
+    assert work.last_attempt_started_at == later
     run = _run(db, report, work)
     assert not complete_report_work(db, first[0], run.id, now=later)
     assert complete_report_work(db, second[0], run.id, now=later)
+    assert work.finished_at == later
     assert not complete_report_work(db, second[0], run.id, now=later)
 
     notifications = list_current_user_notifications(db, owner.id)
@@ -222,6 +226,7 @@ def test_failed_work_retries_with_backoff_then_stops_after_five_attempts(integra
     for attempt in range(1, 6):
         claim = claim_due_work(db, now=now)
         assert len(claim) == 1 and claim[0].id == work.id
+        assert work.last_attempt_started_at == now
         assert fail_report_work(db, claim[0], now=now)
         assert not fail_report_work(db, claim[0], now=now)
         if attempt < 5:
@@ -235,10 +240,12 @@ def test_failed_work_retries_with_backoff_then_stops_after_five_attempts(integra
                 == []
             )
             assert work.state == WorkState.PENDING
+            assert work.finished_at is None
             assert claim_due_work(db, now=now) == []
             now += timedelta(seconds=2**attempt)
         else:
             assert work.state == WorkState.FAILED
+            assert work.finished_at == now
             assert claim_due_work(db, now=now + timedelta(days=1)) == []
     db.commit()
     notices = list(
@@ -266,6 +273,8 @@ def test_expired_final_report_lease_notifies_once_or_rolls_back_with_state(
     work.attempt_count = 5
     work.lease_token = uuid7()
     work.lease_expires_at = now - timedelta(seconds=1)
+    prior_start = now - timedelta(minutes=3)
+    work.last_attempt_started_at = prior_start
     db.commit()
     assert claim_due_work(db, now=now) == []
     db.flush()
@@ -275,10 +284,12 @@ def test_expired_final_report_lease_notifies_once_or_rolls_back_with_state(
     assert len(notices) == 1
     assert notices[0].recipient_id == owner.id
     assert work.state == WorkState.FAILED
+    assert work.finished_at == now and work.last_attempt_started_at == prior_start
     if rollback:
         db.rollback()
         db.expire_all()
         assert work.state == WorkState.RUNNING
+        assert work.finished_at is None
         assert (
             list(db.scalars(select(InAppNotification).where(InAppNotification.work_id == work.id)))
             == []

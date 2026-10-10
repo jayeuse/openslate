@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "next";
 import { z } from "zod";
 import { ApiError } from "@/lib/api";
+import { useInvalidationRefresh } from "../../shared/adapters/use-invalidation-refresh";
+import type { WorkspaceInvalidation } from "../../shared/adapters/invalidation-events";
 import {
   listBoards,
   readBoard,
@@ -14,6 +16,8 @@ import {
 
 const uuidSchema = z.string().uuid();
 const SECTIONS = ["overview", "calendar", "posts"] as const;
+const invalidatesBoardList = (event: WorkspaceInvalidation) =>
+  event.type === "invalidate" && event.entity === "boards";
 export type BoardSection = (typeof SECTIONS)[number];
 export type BoardListStatus = "active" | "archived" | "all";
 export type BoardRoute =
@@ -234,6 +238,7 @@ export function useServerBoardsResource(
   }, []);
 
   const listKey = boardListKey(status, offset, search, scope);
+  const listLiveKey = useInvalidationRefresh(listKey, invalidatesBoardList);
   useEffect(() => {
     const sequence = ++listSequence.current;
     setList((current) =>
@@ -288,12 +293,29 @@ export function useServerBoardsResource(
     return () => {
       listSequence.current += 1;
     };
-  }, [listKey, status, offset, search, scope, listRetry, invalidateAccess]);
+  }, [
+    listKey,
+    status,
+    offset,
+    search,
+    scope,
+    listRetry,
+    listLiveKey,
+    invalidateAccess,
+  ]);
 
   const listItems = list.key === listKey ? (list.data?.items ?? []) : [];
   const candidate = chooseBoardCandidate(route, listItems);
   const candidateId = candidate?.id ?? null;
   const candidateSource = candidate?.source ?? null;
+  const invalidatesDetail = useCallback(
+    (event: WorkspaceInvalidation) =>
+      event.type === "invalidate" &&
+      event.entity === "boards" &&
+      event.boardId === candidateId,
+    [candidateId],
+  );
+  const detailLiveKey = useInvalidationRefresh(candidateId, invalidatesDetail);
 
   useEffect(() => {
     if (!candidateId || !candidateSource) {
@@ -351,7 +373,13 @@ export function useServerBoardsResource(
     return () => {
       detailSequence.current += 1;
     };
-  }, [candidateId, candidateSource, detailRetry, invalidateAccess]);
+  }, [
+    candidateId,
+    candidateSource,
+    detailRetry,
+    detailLiveKey,
+    invalidateAccess,
+  ]);
 
   const refresh = useCallback(() => {
     setListRetry((value) => value + 1);

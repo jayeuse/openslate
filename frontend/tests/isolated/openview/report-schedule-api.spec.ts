@@ -53,6 +53,7 @@ function wireSchedule(overrides: Record<string, unknown> = {}) {
     weekday: null,
     month_day: null,
     next_due_at: null,
+    last_run: null,
     created_at: timestamp,
     updated_at: timestamp,
     ...overrides,
@@ -60,7 +61,10 @@ function wireSchedule(overrides: Record<string, unknown> = {}) {
 }
 
 test("reads a private schedule without caching or inferring due time", async () => {
-  const mock = installFetch(() => jsonResponse(wireSchedule()));
+  let lastRun: Record<string, unknown> | null = null;
+  const mock = installFetch(() =>
+    jsonResponse(wireSchedule({ last_run: lastRun })),
+  );
   try {
     await expect(getOpenViewReportSchedule(reportId)).resolves.toEqual({
       id: scheduleId,
@@ -73,11 +77,28 @@ test("reads a private schedule without caching or inferring due time", async () 
       weekday: null,
       monthDay: null,
       nextDueAt: null,
+      lastRun: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
     expect(String(mock.requests[0]?.input)).toBe(path);
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
+    lastRun = { state: "running", finished_at: null, failure_label: null };
+    await expect(getOpenViewReportSchedule(reportId)).resolves.toMatchObject({
+      lastRun: { state: "running", finishedAt: null, failureLabel: null },
+    });
+    lastRun = {
+      state: "failed",
+      finished_at: timestamp,
+      failure_label: "Source unavailable",
+    };
+    await expect(getOpenViewReportSchedule(reportId)).resolves.toMatchObject({
+      lastRun: {
+        state: "failed",
+        finishedAt: timestamp,
+        failureLabel: "Source unavailable",
+      },
+    });
   } finally {
     mock.restore();
   }
@@ -152,6 +173,7 @@ test("creates an enabled policy with an exact 201 Location and no client due cur
       reportId,
       enabled: true,
       nextDueAt: "2026-09-28T01:30:00Z",
+      lastRun: null,
     });
     expect(String(mock.requests[0]?.input)).toBe(path);
     expect(mock.requests[0]?.init?.method).toBe("POST");
@@ -304,6 +326,36 @@ test("rejects mismatched, incomplete, or invalid schedule responses", async () =
       Location: "/api/reports/other/schedule",
     }),
     jsonResponse(wireSchedule(), 200, { Location: path }),
+    jsonResponse(wireSchedule({ last_run: undefined })),
+    jsonResponse(
+      wireSchedule({
+        last_run: { state: "waiting", finished_at: null, failure_label: null },
+      }),
+    ),
+    jsonResponse(
+      wireSchedule({
+        last_run: {
+          state: "failed",
+          finished_at: "yesterday",
+          failure_label: null,
+        },
+      }),
+    ),
+    jsonResponse(
+      wireSchedule({
+        last_run: { state: "failed", finished_at: null, failure_label: 42 },
+      }),
+    ),
+    jsonResponse(
+      wireSchedule({
+        last_run: {
+          state: "failed",
+          finished_at: null,
+          failure_label: null,
+          exception: "private",
+        },
+      }),
+    ),
   ];
   const mock = installFetch(() => responses.shift()!);
   try {
@@ -334,6 +386,10 @@ test("rejects mismatched, incomplete, or invalid schedule responses", async () =
         localTime: "09:30",
       }),
     ).rejects.toBeInstanceOf(ApiContractError);
+    for (let index = 0; index < 5; index += 1)
+      await expect(getOpenViewReportSchedule(reportId)).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
   } finally {
     mock.restore();
   }

@@ -149,6 +149,7 @@ def test_published_versions_do_not_consume_checkpoint_capacity(
 
 def test_version_listing_read_and_metadata_update(monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row()
+    monkeypatch.setattr(service, "_document_row", lambda *_args, **_kwargs: row)
     version = _version(row)
     db = Mock(spec=Session)
     db.scalar.return_value = 2

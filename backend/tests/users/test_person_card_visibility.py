@@ -1,0 +1,205 @@
+"""Person cards use existing module, Board, group and administrator visibility."""
+
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.access.users.models import User
+from app.systems.boards.models import Board, BoardGroup
+from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.modules.models import Module
+from tests.files.user_avatar_support import (
+    actor_role,
+    native_avatar,
+)
+from tests.files.user_avatar_support import (
+    avatar_world as avatar_world,
+)
+from tests.files.user_avatar_support import (
+    policy_world as policy_world,
+)
+
+pytestmark = pytest.mark.integration
+
+
+def card(world):
+    return world.client.get(f"/api/users/{world.target_id}/card", headers=world.headers())
+
+
+@pytest.fixture
+def person_world(avatar_world):
+    """Temporarily remove company sharing only in the runner-owned disposable fixture."""
+    world = avatar_world
+    owned = []
+    with Session(world.owner) as db:
+        company = db.scalar(select(Board).where(Board.scope == "company"))
+        saved = company.is_deleted, company.deleted_at
+        company.is_deleted = True
+        target = db.get(User, world.target_id)
+        target.display_name, target.job_title = "Visible person", "Editor"
+        target.phone, target.bio = "Private phone", "Private bio"
+        db.commit()
+        company_id = company.id
+    actor_role(world, "member")
+    world.person_owned = owned
+    try:
+        yield world
+    finally:
+        with Session(world.owner) as db:
+            company = db.get(Board, company_id)
+            company.is_deleted, company.deleted_at = saved
+            for model, identity in reversed(owned):
+                row = db.get(model, identity)
+                if row is not None:
+                    db.delete(row)
+                    db.flush()
+            db.commit()
+
+
+def shared(world, mode):
+    with Session(world.owner) as db:
+
+        def add(row):
+            db.add(row)
+            db.flush()
+            world.person_owned.append((type(row), row.id))
+            return row
+
+        if mode == "admin":
+            db.get(User, world.actor_id).role = "admin"
+        elif mode == "company":
+            db.scalar(select(Board).where(Board.scope == "company")).is_deleted = False
+        else:
+            left = add(Group(name=f"card-left-{uuid4()}"))
+            right = left if mode == "group" else add(Group(name=f"card-right-{uuid4()}"))
+            add(GroupMember(group_id=left.id, user_id=world.actor_id))
+            add(GroupMember(group_id=right.id, user_id=world.target_id))
+            if mode == "module":
+                department = add(Department(department_name=f"card-{uuid4()}"))
+                module = add(Module(department_id=department.id, module_name="Shared module"))
+                for group in (left, right):
+                    add(
+                        GroupAccess(
+                            group_id=group.id,
+                            department_id=department.id,
+                            module_id=module.id,
+                            level="read",
+                        )
+                    )
+            elif mode in ("project_board", "department_board"):
+                if mode == "project_board":
+                    board = add(Board(scope="project", name=f"card-{uuid4()}"))
+                    for group in (left, right):
+                        add(BoardGroup(board_id=board.id, group_id=group.id, level="read"))
+                else:
+                    department = add(Department(department_name=f"card-{uuid4()}"))
+                    add(Board(scope="department", department_id=department.id, name="Department"))
+                    for group in (left, right):
+                        add(
+                            GroupAccess(
+                                group_id=group.id, department_id=department.id, level="read"
+                            )
+                        )
+        db.commit()
+
+
+@pytest.mark.parametrize(
+    "scope", ["module", "group", "project_board", "department_board", "company", "admin"]
+)
+def test_member_card_and_avatar_follow_each_existing_visibility_path(person_world, scope):
+    world = person_world
+    _, key = native_avatar(world, owner_id=world.target_id, bind=True)
+    shared(world, scope)
+    response = card(world)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "display_name": "Visible person",
+        "job_title": "Editor",
+        "avatar_url": f"/api/users/{world.target_id}/avatar",
+        "email": f"target-{world.target_id}@example.test",
+        "phone": "Private phone",
+        "bio": "Private bio",
+    }
+    assert "no-store" in response.headers["cache-control"]
+    avatar = world.client.get(response.json()["avatar_url"], headers=world.headers())
+    assert avatar.status_code == 200 and avatar.content == world.storage.objects[key]
+
+
+def test_guest_card_omits_private_keys_including_own_card_but_self_read_stays_private(person_world):
+    world = person_world
+    shared(world, "company")
+    actor_role(world, "guest")
+    response = card(world)
+    assert response.status_code == 200
+    assert response.json() == {
+        "display_name": "Visible person",
+        "job_title": "Editor",
+        "avatar_url": None,
+    }
+    own = world.client.get(f"/api/users/{world.actor_id}/card", headers=world.headers())
+    assert own.status_code == 200 and {"email", "phone", "bio"}.isdisjoint(own.json())
+    assert {"phone", "bio", "avatar_file_id"} <= world.client.get(
+        "/api/auth/me", headers=world.headers()
+    ).json().keys()
+
+
+def test_removed_live_group_membership_hides_card_and_avatar_without_company_sharing(person_world):
+    world = person_world
+    shared(world, "group")
+    native_avatar(world, owner_id=world.target_id, bind=True)
+    assert card(world).status_code == 200
+    with Session(world.owner) as db:
+        db.scalar(
+            select(GroupMember).where(GroupMember.user_id == world.actor_id)
+        ).is_deleted = True
+        db.commit()
+    assert card(world).status_code == 404
+    assert (
+        world.client.get(
+            f"/api/users/{world.target_id}/avatar", headers=world.headers()
+        ).status_code
+        == 404
+    )
+
+
+@pytest.mark.parametrize("defect", ["disabled", "pending", "deleted", "unaccepted"])
+def test_ineligible_target_is_hidden_even_to_admin(person_world, defect):
+    world = person_world
+    shared(world, "admin")
+    with Session(world.owner) as db:
+        target = db.get(User, world.target_id)
+        if defect in ("disabled", "pending"):
+            target.status = defect
+        elif defect == "deleted":
+            target.is_deleted = True
+        else:
+            target.invitation_sent_at = world.clock
+            target.invitation_accepted_at = None
+        db.commit()
+    assert card(world).status_code == 404
+    assert (
+        world.client.get(
+            f"/api/users/{world.target_id}/avatar", headers=world.headers()
+        ).status_code
+        == 404
+    )
+
+
+def test_absent_sharing_and_absent_identity_are_indistinguishable_and_username_fallback(
+    person_world,
+):
+    world = person_world
+    assert card(world).status_code == 404
+    assert (
+        world.client.get(f"/api/users/{uuid4()}/card", headers=world.headers()).status_code == 404
+    )
+    shared(world, "admin")
+    with Session(world.owner) as db:
+        target = db.get(User, world.target_id)
+        target.display_name = None
+        expected = target.username
+        db.commit()
+    assert card(world).json()["display_name"] == expected

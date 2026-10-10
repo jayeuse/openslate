@@ -1,4 +1,6 @@
 "use client";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { formatDateTime } from "../helpers/people";
 
 import {
   Info,
@@ -32,7 +34,7 @@ import {
 } from "@/components/ui/native-select";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
-import type { PageResult } from "../../shared/helpers/sample-collections";
+import type { PageResult } from "../../shared/helpers/page-collections";
 import {
   defaultAccessSessionsRequest,
   sessionDeviceSchema,
@@ -103,6 +105,7 @@ export function SecurityPanel({
   onRetry,
   actions,
 }: SecurityPanelProps) {
+  const region = useWorkspaceDisplayRegion();
   const response = sessions.status === "loading" ? undefined : sessions.page;
   const page: PageResult<AccessAdminSession> | undefined = response
     ? {
@@ -142,10 +145,7 @@ export function SecurityPanel({
     onRequestChange({ ...defaultAccessSessionsRequest, limit: request.limit });
   }
   function refreshedAt(value: string) {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(value));
+    return formatDateTime(value, region);
   }
 
   const columns: DataTableColumn<AccessAdminSession>[] = [

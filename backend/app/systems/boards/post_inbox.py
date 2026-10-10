@@ -52,11 +52,13 @@ def stage_publication_inbox(
             scheduled_for=published_at,
             next_attempt_at=published_at,
             state=WorkState.SUCCEEDED,
+            finished_at=published_at,
             publication_result_id=published.id,
         )
         db.add(work)
     elif scheduled_work is None:
         work.state = WorkState.SUCCEEDED
+        work.finished_at = published_at
         work.scheduled_for = published_at
         work.next_attempt_at = published_at
         work.publication_result_id = published.id

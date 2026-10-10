@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { X } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
@@ -19,6 +20,7 @@ import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/
 
 import { formatDate, roleLabels, type DirectoryRow } from "../helpers/people";
 import type { AccessUser } from "../state/api";
+import type { PersonMemberships } from "../hooks/use-people-memberships";
 import { useAccessDraftNavigation } from "../state/draft-navigation";
 import { DiscardChangesDialog } from "./people-fields";
 import { PersonAccess } from "./person-access";
@@ -35,16 +37,19 @@ type PanelTab = "details" | "access" | "sessions" | "security";
  */
 export function PersonPanel({
   row,
+  membership,
   people,
   listFresh,
   onClose,
 }: {
   row: DirectoryRow | null;
+  membership?: PersonMemberships;
   people: readonly AccessUser[];
   listFresh: boolean;
   onClose: () => void;
 }) {
   const signedInId = useVerifiedWorkspaceUserId();
+  const region = useWorkspaceDisplayRegion();
   const { hasUnsavedDraft, hasPendingOperation, discardUnsavedDrafts } =
     useAccessDraftNavigation();
   const [blocked, setBlocked] = useState(false);
@@ -88,7 +93,7 @@ export function PersonPanel({
                   <Badge variant={row.state.tone}>{row.state.label}</Badge>
                   {row.state.expiresSoon ? (
                     <Badge variant="warning">
-                      Ends {formatDate(person.expires_at)}
+                      Ends {formatDate(person.expires_at, region)}
                     </Badge>
                   ) : null}
                 </div>
@@ -170,6 +175,7 @@ export function PersonPanel({
                       key={`account-${person.id}`}
                       person={person}
                       groups={row.groups}
+                      membership={membership}
                       self={person.id === signedInId}
                     />
                   </div>

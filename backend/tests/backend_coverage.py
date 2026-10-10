@@ -23,6 +23,17 @@ DURATIONS = "tests/.test_durations"
 MAX_DURATION_ID = 500
 
 
+def newest_durations(backend):
+    """Split shards by the newest measured durations: the last local combined run, if it
+    is newer than the committed file. New tests then stop falling back to the average."""
+    candidates = [
+        path
+        for path in (backend / DURATIONS, backend / "test-results/coverage/test-durations.json")
+        if path.exists()
+    ]
+    return max(candidates, key=lambda path: path.stat().st_mtime, default=None)
+
+
 def source_inventory(backend):
     return {
         str(path.relative_to(backend)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -127,8 +138,9 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
         # A shard measures part of the suite; the combine step owns the 90% gate.
         group, total = shard
         durations = output / "test-durations.json"
-        if (backend / DURATIONS).exists():
-            shutil.copyfile(backend / DURATIONS, durations)
+        source = newest_durations(backend)
+        if source is not None:
+            shutil.copyfile(source, durations)
         reports = [
             f"--splits={total}",
             f"--group={group}",

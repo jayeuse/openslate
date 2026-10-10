@@ -1,4 +1,4 @@
-"""Partial preferences through real Auth, CSRF, runtime PostgreSQL and audit."""
+"""Partial preferences through signed sessions (fake provider), CSRF, runtime PostgreSQL, audit."""
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -15,10 +15,17 @@ from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
-from tests.auth.test_provider_auth_integration import provider_account  # noqa: F401
+from tests.fake_provider_support import fake_provider, fake_provider_account  # noqa: F401
 
 pytestmark = pytest.mark.integration
 DEFAULT_APPEARANCE = {"motion": "system", "keyboard_shortcuts": True}
+REGIONAL_DEFAULTS = {
+    "timezone": None,
+    "date_format": "organization",
+    "time_format": "organization",
+    "week_start": "organization",
+    "start_page": "automatic",
+}
 
 
 def _login(account):
@@ -41,8 +48,8 @@ def _login(account):
 
 
 @pytest.fixture
-def preferences_client(provider_account):  # noqa: F811
-    _, _, provider_id, local_id, owner = provider_account
+def preferences_client(fake_provider_account):  # noqa: F811
+    _, _, provider_id, local_id, owner = fake_provider_account
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None
@@ -50,9 +57,9 @@ def preferences_client(provider_account):  # noqa: F811
         # An existing explicit choice isolates transport tests from the new-user default.
         user.theme_preference = "light"
         db.commit()
-    client = _login(provider_account)
+    client = _login(fake_provider_account)
     try:
-        yield client, provider_account, f"/api/users/{local_id}/preferences"
+        yield client, fake_provider_account, f"/api/users/{local_id}/preferences"
     finally:
         client.close()
 
@@ -90,7 +97,7 @@ def test_preferences_read_includes_strict_appearance_without_general_profile_exp
     assert response.json() == {
         "user_id": str(account[3]),
         "theme": "light",
-        "appearance": DEFAULT_APPEARANCE,
+        "appearance": {**DEFAULT_APPEARANCE, **REGIONAL_DEFAULTS},
     }
     assert "no-store" in response.headers["Cache-Control"]
     profile = client.get("/api/auth/me")
@@ -110,7 +117,7 @@ def test_partial_nested_preferences_persist_preserve_omissions_and_audit_once(pr
     ):
         saved = client.patch(path, json=payload)
         assert saved.status_code == 200
-        assert saved.json()["appearance"] == expected
+        assert saved.json()["appearance"] == {**expected, **REGIONAL_DEFAULTS}
         assert "no-store" in saved.headers["Cache-Control"]
     state = _state(account)
     assert state[:2] == ("system", {"motion": "reduce", "keyboard_shortcuts": False})
@@ -124,7 +131,7 @@ def test_partial_nested_preferences_persist_preserve_omissions_and_audit_once(pr
         assert fresh.get(path).json() == {
             "user_id": str(account[3]),
             "theme": "system",
-            "appearance": {"motion": "reduce", "keyboard_shortcuts": False},
+            "appearance": {"motion": "reduce", "keyboard_shortcuts": False, **REGIONAL_DEFAULTS},
         }
     finally:
         fresh.close()
@@ -133,7 +140,7 @@ def test_partial_nested_preferences_persist_preserve_omissions_and_audit_once(pr
     assert combined.json() == {
         "user_id": str(account[3]),
         "theme": "dark",
-        "appearance": DEFAULT_APPEARANCE,
+        "appearance": {**DEFAULT_APPEARANCE, **REGIONAL_DEFAULTS},
     }
     assert _state(account)[:2] == ("dark", DEFAULT_APPEARANCE)
     assert len(_state(account)[3]) == 4
@@ -148,7 +155,7 @@ def test_empty_and_same_value_preferences_do_not_write(preferences_client):
         assert response.json() == {
             "user_id": str(account[3]),
             "theme": "light",
-            "appearance": DEFAULT_APPEARANCE,
+            "appearance": {**DEFAULT_APPEARANCE, **REGIONAL_DEFAULTS},
         }
         assert _state(account) == before
 
@@ -215,7 +222,11 @@ def test_nested_merge_uses_fresh_locked_values_after_authentication(preferences_
     try:
         saved = client.patch(path, json={"appearance": {"keyboard_shortcuts": False}})
         assert saved.status_code == 200
-        assert saved.json()["appearance"] == {"motion": "reduce", "keyboard_shortcuts": False}
+        assert saved.json()["appearance"] == {
+            "motion": "reduce",
+            "keyboard_shortcuts": False,
+            **REGIONAL_DEFAULTS,
+        }
     finally:
         event.remove(AuditSession, "loaded_as_persistent", change_after_auth_read)
     assert changed and _state(account)[:2] == (
@@ -255,3 +266,54 @@ def test_concurrent_sessions_preserve_disjoint_nested_updates(preferences_client
     finally:
         attempts.abort()
         second.close()
+
+
+def test_personal_regional_preferences_merge_and_do_not_change_workspace_semantics(
+    preferences_client,
+):
+    from app.systems.manage.workspace.models import WorkspaceProfile
+
+    client, account, path = preferences_client
+    with Session(account[4]) as db:
+        workspace = db.scalar(select(WorkspaceProfile))
+        before = (workspace.timezone, workspace.week_start, workspace.revision)
+    values = {
+        "timezone": "America/New_York",
+        "date_format": "dmy",
+        "time_format": "24h",
+        "week_start": "sunday",
+        "start_page": "sandbox",
+    }
+    saved = client.patch(path, json={"appearance": values})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["appearance"] == {**DEFAULT_APPEARANCE, **values}
+    assert _state(account)[1] == {**DEFAULT_APPEARANCE, **values}
+    unchanged = _state(account)
+    assert client.patch(path, json={"appearance": values}).status_code == 200
+    assert _state(account) == unchanged
+    cleared = client.patch(path, json={"appearance": {"timezone": None}})
+    assert cleared.status_code == 200
+    assert cleared.json()["appearance"] == {**DEFAULT_APPEARANCE, **values, "timezone": None}
+    assert client.get(path).json() == cleared.json()
+    with Session(account[4]) as db:
+        workspace = db.scalar(select(WorkspaceProfile))
+        assert (workspace.timezone, workspace.week_start, workspace.revision) == before
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("timezone", "Not/AZone"),
+        ("timezone", 1),
+        ("date_format", "locale"),
+        ("time_format", "iso"),
+        ("week_start", "tuesday"),
+        ("start_page", "profile"),
+        ("start_page", None),
+    ],
+)
+def test_personal_preferences_refuse_invalid_regional_values(preferences_client, key, value):
+    client, account, path = preferences_client
+    before = _state(account)
+    assert client.patch(path, json={"appearance": {key: value}}).status_code == 422
+    assert _state(account) == before

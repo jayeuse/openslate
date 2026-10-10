@@ -35,7 +35,7 @@ pytestmark = pytest.mark.integration
 _EXPECTED_REUSE_INTERVAL_SECONDS = 10
 _REUSE_WAIT_MARGIN_SECONDS = 0.25
 _REUSE_WAIT_DEADLINE_MARGIN_SECONDS = 2
-_MAX_PROVIDER_JWT_WAIT_SECONDS = 75
+_MAX_PROVIDER_JWT_WAIT_SECONDS = 60
 
 
 def _fingerprint(value: str | bytes) -> str:

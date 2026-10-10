@@ -1,7 +1,14 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useMemo,
+} from "react";
 import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import type { OpenViewDataSource, OpenViewRecord } from "../adapters/views-api";
@@ -9,7 +16,7 @@ import {
   assignOpenViewRecordLink,
   getOpenViewRecord,
   linkOpenViewRecords,
-  listOpenViewFieldLinks,
+  listOpenViewLinks,
   listOpenViewRecordLinks,
   listOpenViewRelationshipFields,
   searchOpenViewLinkTargets,
@@ -18,8 +25,10 @@ import {
   type OpenViewRelationshipField,
 } from "../adapters/records-api";
 import {
-  boundedItems,
-  departmentsOptions,
+  extendsRead,
+  readStamp,
+  isAuthorizationDenied,
+  recordPageDenial,
   fieldsFirstPageOptions,
 } from "../adapters/openview-queries";
 import { openViewRecordTitle } from "../domain/record-display";
@@ -27,6 +36,11 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+
+import {
+  useOpenViewDepartmentNames,
+  useOpenViewSource,
+} from "../hooks/use-openview-catalog";
 
 const SEARCHABLE = new Set(["text", "long_text", "email", "url", "select"]);
 
@@ -57,8 +71,11 @@ type RelationshipLinkState = {
   writeCheck: RelationshipWriteCheck | null;
   setWriteCheck: (next: RelationshipWriteCheck | null) => void;
   getWriteCheck: () => RelationshipWriteCheck | null;
-  readLinks: () => Promise<OpenViewRelationship[]>;
-  storeLinks: (next: OpenViewRelationship[]) => void;
+  readLinks: (check: RelationshipWriteCheck) => Promise<OpenViewRelationship[]>;
+  storeLinks: (
+    next: OpenViewRelationship[],
+    check: RelationshipWriteCheck,
+  ) => void;
   invalidateLinks: () => void;
 };
 
@@ -106,13 +123,14 @@ function useOtherDepartmentName(
   homeModuleId: string,
   linkedModuleId: string | undefined,
 ): string | null {
-  const departments = useQuery(departmentsOptions());
-  const departmentOf = (moduleId: string | undefined) =>
-    dataSources.find((item) => item.id === moduleId)?.departmentId;
-  const home = departmentOf(homeModuleId);
-  const linked = departmentOf(linkedModuleId);
-  if (!home || !linked || home === linked) return null;
-  return departments.data?.find((item) => item.id === linked)?.name ?? null;
+  const homeSource = useOpenViewSource(dataSources, homeModuleId);
+  const linkedSource = useOpenViewSource(dataSources, linkedModuleId);
+  const home = homeSource?.departmentId;
+  const linked = linkedSource?.departmentId;
+  const names = useOpenViewDepartmentNames(
+    linked && home !== linked ? [linked] : [],
+  );
+  return home && linked && home !== linked ? (names.get(linked) ?? null) : null;
 }
 
 function LinkedRecordName({
@@ -132,6 +150,7 @@ function LinkedRecordName({
     queryFn: () => getOpenViewRecord(recordId),
     retry: false,
   });
+  const source = useOpenViewSource(dataSources, linked.data?.moduleId);
   const department = useOtherDepartmentName(
     dataSources,
     homeModuleId,
@@ -149,7 +168,6 @@ function LinkedRecordName({
         Record unavailable
       </span>
     );
-  const source = dataSources.find((item) => item.id === linked.data.moduleId);
   return (
     <span id={id} className="min-w-0">
       <span className="block wrap-anywhere">
@@ -202,7 +220,7 @@ function LinkPicker({
     };
   }, [searchId]);
   const targetFields = useQuery(fieldsFirstPageOptions(field.targetModuleId));
-  const target = dataSources.find((item) => item.id === field.targetModuleId);
+  const target = useOpenViewSource(dataSources, field.targetModuleId);
   const targetDepartment = useOtherDepartmentName(
     dataSources,
     record.moduleId,
@@ -213,18 +231,8 @@ function LinkPicker({
     fields.find((item) => item.id === target?.titleFieldId) ??
     fields.find((item) => SEARCHABLE.has(item.type)) ??
     fields[0];
-  // In a field where a record has one source, a record linked from elsewhere
-  // cannot be chosen, so it is not offered.
-  const taken = useQuery({
-    queryKey: ["openview", "record-controls", "field-links", field.id],
-    enabled: !field.multipleSources,
-    retry: false,
-    queryFn: () =>
-      boundedItems((page) => listOpenViewFieldLinks(field.id, page)),
-  });
-  const takenIds = new Set(
-    (taken.data?.items ?? []).map((link) => link.targetRecordId),
-  );
+  const client = useQueryClient();
+  const [resultOffset, setResultOffset] = useState(0);
   const results = useQuery({
     queryKey: [
       "openview",
@@ -232,12 +240,16 @@ function LinkPicker({
       "link-search",
       field.targetModuleId,
       submitted,
+      resultOffset,
+      titleField?.id,
+      fields.map((item) => item.id),
     ],
     enabled: submitted !== null && targetFields.isSuccess,
     retry: false,
     queryFn: () =>
       searchOpenViewLinkTargets({
         moduleId: field.targetModuleId,
+        offset: resultOffset,
         definition: {
           version: 1,
           logic: "and",
@@ -254,12 +266,64 @@ function LinkPicker({
         },
       }),
   });
+  const [resultPages, setResultPages] = useState<{
+    search: string;
+    items: OpenViewRecord[];
+  } | null>(null);
+  const candidates = useMemo(
+    () => [
+      ...(resultPages?.search === submitted ? resultPages.items : []),
+      ...(results.data?.items ?? []),
+    ],
+    [resultPages, submitted, results.data],
+  );
+  // Only the current candidate collection needs occupancy checks. Exact target
+  // filters cannot miss an edge beyond an unrelated field-link page.
+  const taken = useQuery({
+    queryKey: [
+      "openview",
+      "record-controls",
+      "candidate-occupancy",
+      field.id,
+      (results.data?.items ?? []).map((item) => item.id),
+    ],
+    enabled: !field.multipleSources && results.isSuccess,
+    queryFn: async ({ signal }) => {
+      const occupied: string[] = [];
+      // Bound concurrency to one: these are at most the user-requested search
+      // pages, never a crawl of the field's complete relationship collection.
+      for (const candidate of results.data?.items ?? []) {
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+        const page = await client.fetchQuery({
+          queryKey: [
+            "openview",
+            "record-controls",
+            "target-occupancy",
+            field.id,
+            candidate.id,
+          ],
+          queryFn: () =>
+            listOpenViewLinks({
+              fieldId: field.id,
+              targetRecordId: candidate.id,
+              limit: 1,
+              offset: 0,
+              signal,
+            }),
+          staleTime: 0,
+        });
+        if (page.pagination.total > 0) occupied.push(candidate.id);
+      }
+      return occupied;
+    },
+  });
+  const takenIds = new Set(taken.data ?? []);
 
   const reconcileLink = async (check: RelationshipWriteCheck) => {
     try {
-      const refreshed = await linkState.readLinks();
+      const refreshed = await linkState.readLinks(check);
       if (linkState.getWriteCheck()?.id !== check.id) return;
-      linkState.storeLinks(refreshed);
+      linkState.storeLinks(refreshed, check);
       if (containsRelationship(refreshed, check)) {
         linkState.setWriteCheck(null);
         if (mounted.current) {
@@ -367,7 +431,7 @@ function LinkPicker({
         : "";
   const visibleError = error || resolutionNotice;
 
-  const rows = (results.data?.items ?? []).filter(
+  const rows = candidates.filter(
     (row) =>
       row.id !== record.id && !linkedIds.has(row.id) && !takenIds.has(row.id),
   );
@@ -377,7 +441,13 @@ function LinkPicker({
         className="flex min-w-0 flex-wrap items-end gap-2"
         onSubmit={(event) => {
           event.preventDefault();
+          if (submitted === search.trim() && resultOffset === 0) {
+            void results.refetch();
+            if (!field.multipleSources) void taken.refetch();
+          }
           setSubmitted(search.trim());
+          setResultOffset(0);
+          setResultPages(null);
         }}
       >
         <Field className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
@@ -473,9 +543,12 @@ function LinkPicker({
         <p role="status" className="text-muted-foreground text-sm">
           Searching…
         </p>
-      ) : results.isError ? (
+      ) : results.isError || (!field.multipleSources && taken.isError) ? (
         <p role="alert" className="text-destructive text-sm">
-          {apiErrorMessage(results.error, "Records could not be searched.")}
+          {apiErrorMessage(
+            results.error ?? taken.error,
+            "Records could not be searched. Retry the search.",
+          )}
         </p>
       ) : rows.length === 0 ? (
         <p className="text-muted-foreground text-sm">
@@ -521,6 +594,30 @@ function LinkPicker({
           })}
         </ul>
       )}
+      {results.data?.pagination.hasMore ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 self-start"
+          disabled={
+            results.isFetching ||
+            unresolvedCheck ||
+            (!field.multipleSources && !taken.isSuccess)
+          }
+          onClick={() => {
+            if (!results.data || submitted === null) return;
+            setResultPages({
+              search: submitted,
+              items: candidates.filter((item) => !takenIds.has(item.id)),
+            });
+            setResultOffset(
+              results.data.pagination.offset + results.data.pagination.count,
+            );
+          }}
+        >
+          Load more records to link
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -577,18 +674,15 @@ function FieldLinks({
   const [error, setError] = useState("");
   // Linking needs read access to the target; a data source the person cannot
   // read is absent from their catalog, so no Add link is offered for it.
-  const targetModuleId = dataSources.some(
-    (item) => item.id === field.targetModuleId,
-  )
-    ? field.targetModuleId
-    : null;
+  const targetSource = useOpenViewSource(dataSources, field.targetModuleId);
+  const targetModuleId = targetSource?.id ?? null;
   const full = !field.multipleTargets && links.length > 0;
 
   const reconcileUnlink = async (check: RelationshipWriteCheck) => {
     try {
-      const refreshed = await linkState.readLinks();
+      const refreshed = await linkState.readLinks(check);
       if (linkState.getWriteCheck()?.id !== check.id) return;
-      linkState.storeLinks(refreshed);
+      linkState.storeLinks(refreshed, check);
       const stillPresent = refreshed.some(
         (link) => link.id === check.relationshipId,
       );
@@ -799,6 +893,94 @@ export function RecordLinksPanel({
     queryFn: () => listOpenViewRecordLinks(record.id),
     retry: false,
   });
+  const [moreFields, setMoreFields] = useState<{
+    readAt: number;
+    items: OpenViewRelationshipField[];
+    hasMore: boolean;
+    nextOffset: number;
+  } | null>(null);
+  const [moreLinks, setMoreLinks] = useState<{
+    readAt: number;
+    items: OpenViewRelationship[];
+    hasMore: boolean;
+    nextOffset: number;
+  } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState("");
+  const fieldExtension =
+    moreFields && extendsRead(moreFields.readAt, fields) ? moreFields : null;
+  const linkExtension =
+    moreLinks && extendsRead(moreLinks.readAt, links) ? moreLinks : null;
+  const fieldItems = [
+    ...(fields.data?.items ?? []),
+    ...(fieldExtension?.items ?? []),
+  ];
+  const linkItems = [
+    ...(links.data?.items ?? []),
+    ...(linkExtension?.items ?? []),
+  ];
+  const fieldsHasMore =
+    fieldExtension?.hasMore ?? fields.data?.pagination.hasMore ?? false;
+  const linksHasMore =
+    linkExtension?.hasMore ?? links.data?.pagination.hasMore ?? false;
+  const loadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setMoreError("");
+    const fieldReadAt = readStamp(fields);
+    const linkReadAt = readStamp(links);
+    try {
+      const [fieldPage, linkPage] = await Promise.all([
+        fieldsHasMore
+          ? listOpenViewRelationshipFields(record.moduleId, {
+              limit: 100,
+              offset:
+                fieldExtension?.nextOffset ??
+                fields.data?.pagination.count ??
+                0,
+            })
+          : null,
+        linksHasMore
+          ? listOpenViewRecordLinks(record.id, {
+              limit: 100,
+              offset:
+                linkExtension?.nextOffset ?? links.data?.pagination.count ?? 0,
+            })
+          : null,
+      ]);
+      if (fieldPage)
+        setMoreFields({
+          readAt: fieldReadAt,
+          items: [...(fieldExtension?.items ?? []), ...fieldPage.items],
+          hasMore: fieldPage.pagination.hasMore,
+          nextOffset: fieldPage.pagination.offset + fieldPage.pagination.count,
+        });
+      if (linkPage)
+        setMoreLinks({
+          readAt: linkReadAt,
+          items: [...(linkExtension?.items ?? []), ...linkPage.items],
+          hasMore: linkPage.pagination.hasMore,
+          nextOffset: linkPage.pagination.offset + linkPage.pagination.count,
+        });
+    } catch (caught) {
+      if (isAuthorizationDenied(caught)) {
+        recordPageDenial(
+          client,
+          [linkKeys.fields(record.moduleId), linkKeys.links(record.id)],
+          caught,
+        );
+        return;
+      }
+      setMoreError(
+        apiErrorMessage(
+          caught,
+          "More linked records could not be loaded. Try again.",
+        ),
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  };
   const writeCheckKey = linkKeys.writeCheck(record.id);
   const writeCheckQuery = useQuery<RelationshipWriteCheck | null>({
     queryKey: writeCheckKey,
@@ -819,8 +1001,37 @@ export function RecordLinksPanel({
     setWriteCheck: (next) => client.setQueryData(writeCheckKey, next),
     getWriteCheck: () =>
       client.getQueryData<RelationshipWriteCheck | null>(writeCheckKey) ?? null,
-    readLinks: () => listOpenViewRecordLinks(record.id),
-    storeLinks: (next) => client.setQueryData(linkKeys.links(record.id), next),
+    readLinks: async (check) =>
+      (
+        await listOpenViewLinks({
+          fieldId: check.fieldId,
+          sourceRecordId: check.sourceRecordId,
+          targetRecordId: check.targetRecordId,
+          limit: 1,
+          offset: 0,
+        })
+      ).items,
+    storeLinks: (next, check) => {
+      client.setQueryData(
+        linkKeys.links(record.id),
+        (
+          previous:
+            Awaited<ReturnType<typeof listOpenViewRecordLinks>> | undefined,
+        ) =>
+          previous
+            ? {
+                ...previous,
+                items: [
+                  ...previous.items.filter(
+                    (item) => !containsRelationship([item], check),
+                  ),
+                  ...next,
+                ],
+              }
+            : previous,
+      );
+      setMoreLinks(null);
+    },
     invalidateLinks: () => {
       void client.invalidateQueries({
         queryKey: linkKeys.links(record.id),
@@ -859,10 +1070,10 @@ export function RecordLinksPanel({
       </div>
     );
 
-  const outgoing = links.data.filter(
+  const outgoing = linkItems.filter(
     (link) => link.sourceRecordId === record.id,
   );
-  const incoming = links.data.filter(
+  const incoming = linkItems.filter(
     (link) => link.targetRecordId === record.id,
   );
   const canChange = canWrite && !record.isDeleted;
@@ -874,14 +1085,14 @@ export function RecordLinksPanel({
           change them.
         </Alert>
       ) : null}
-      {fields.data.length === 0 && incoming.length === 0 ? (
+      {fieldItems.length === 0 && incoming.length === 0 ? (
         <p className="text-muted-foreground py-4 text-sm">
           This data source has no link fields, and no records link to this
           record.
         </p>
       ) : null}
       <div className="divide-y">
-        {fields.data.map((field) => (
+        {fieldItems.map((field) => (
           <FieldLinks
             key={field.id}
             field={field}
@@ -909,6 +1120,22 @@ export function RecordLinksPanel({
             ))}
           </ul>
         </section>
+      ) : null}
+      {moreError ? (
+        <p role="alert" className="text-destructive text-sm">
+          {moreError}
+        </p>
+      ) : null}
+      {fieldsHasMore || linksHasMore ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 self-start"
+          disabled={loadingMore}
+          onClick={() => void loadMore()}
+        >
+          {loadingMore ? "Loading linked records…" : "Load more linked records"}
+        </Button>
       ) : null}
     </div>
   );

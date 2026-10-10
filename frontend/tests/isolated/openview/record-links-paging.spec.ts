@@ -15,8 +15,8 @@ function edge(index: number) {
   };
 }
 
-test("record links page through every visible link instead of the first 100", async () => {
-  // The links panel treats this list as complete, so a truncated page hid links.
+test("record links return one explicit page and preserve its continuation", async () => {
+  // A visible page must not trigger an eager crawl or conceal its continuation.
   const { listOpenViewRecordLinks } =
     await import("../../../src/components/systems/openview/adapters/records-api");
   const all = Array.from({ length: 101 }, (_, index) => edge(index + 1));
@@ -42,7 +42,16 @@ test("record links page through every visible link instead of the first 100", as
   }) as typeof fetch;
   try {
     const links = await listOpenViewRecordLinks(recordId);
-    expect(links).toHaveLength(101);
+    expect(links.items).toHaveLength(100);
+    expect(links.pagination.hasMore).toBe(true);
+    expect(links.pagination.total).toBe(101);
+    expect(offsets).toEqual(["0"]);
+    const next = await listOpenViewRecordLinks(recordId, {
+      limit: 100,
+      offset: 100,
+    });
+    expect(next.items).toHaveLength(1);
+    expect(next.pagination.hasMore).toBe(false);
     expect(offsets).toEqual(["0", "100"]);
   } finally {
     globalThis.fetch = originalFetch;

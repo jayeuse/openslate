@@ -133,6 +133,7 @@ export async function prepareRecordCsv(
     body: JSON.stringify({
       module_id: moduleId,
       definition: serializeOpenViewQueryDefinition(definition),
+      include_record_id: true,
     }),
   });
   if (!response.ok) {

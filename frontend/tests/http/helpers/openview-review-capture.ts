@@ -31,6 +31,7 @@ export async function captureOpenViewReview(
     await page.screenshot({
       path: join(directory, `${name}-${viewport.width}x${viewport.height}.png`),
       fullPage: true,
+      animations: "disabled",
     });
   }
   if (originalViewport) await page.setViewportSize(originalViewport);

@@ -14,7 +14,7 @@ from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_router import router
 from app.systems.boards.event_schemas import EventCreate
 from app.systems.boards.models import Board
-from tests.boards.support import client, grant, member, project_board
+from tests.boards.support import admin, client, grant, member, project_board
 
 
 def _client(db: Session, actor: User) -> TestClient:
@@ -88,7 +88,9 @@ def test_event_input_rejects_temporal_ambiguity_and_unsupported_content() -> Non
 
 
 @pytest.mark.integration
-def test_event_revisioned_author_and_manager_lifecycle(integration_owner_db: Session) -> None:
+def test_event_revisioned_author_and_manager_lifecycle(
+    integration_owner_db: Session, monkeypatch
+) -> None:
     db = integration_owner_db
     editor, manager, other, reader = member(db), member(db), member(db), member(db)
     board = project_board(db)
@@ -146,17 +148,41 @@ def test_event_revisioned_author_and_manager_lifecycle(integration_owner_db: Ses
     live_delete = manager_client.request(
         "DELETE", f"{root}/{event_id}", json={"board_revision": 7, "event_revision": 5}
     )
-    assert live_delete.json()["detail"]["code"] == "event_not_archived"
+    assert live_delete.status_code == 405
     assert (
         manager_client.post(
             f"{root}/{event_id}/archive", json={"board_revision": 7, "event_revision": 5}
         ).status_code
         == 200
     )
-    deleted = manager_client.request(
-        "DELETE", f"{root}/{event_id}", json={"board_revision": 8, "event_revision": 6}
+    assert (
+        manager_client.request(
+            "DELETE", f"{root}/{event_id}", json={"board_revision": 8, "event_revision": 6}
+        ).status_code
+        == 405
     )
-    assert deleted.status_code == 204
+    purger = admin(db)
+    db.commit()
+    monkeypatch.setattr(
+        "app.systems.boards.event_purge_router.get_settings",
+        lambda: type("Settings", (), {"lifecycle_purge_enabled": True})(),
+    )
+    monkeypatch.setattr(
+        "app.systems.sandbox.lifecycle.password.ProviderPasswordGrantClient.verify_password",
+        lambda *args: purger.id,
+    )
+    purge_api = _client(db, purger)
+    preview = purge_api.post(f"{root}/{event_id}/purge/preview")
+    assert preview.status_code == 200, preview.text
+    deleted = purge_api.post(
+        f"{root}/{event_id}/purge",
+        json={
+            "token": preview.json()["token"],
+            "confirmation_name": "Managed",
+            "password": "synthetic-step-up",
+        },
+    )
+    assert deleted.status_code == 200, deleted.text
     assert manager_client.get(f"{root}/{event_id}").status_code == 404
 
     mine_create = editor_client.post(root, json=_payload(9))

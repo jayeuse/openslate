@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Workflow,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import {
   accessNavigationFor,
@@ -24,10 +24,17 @@ import {
 } from "@/components/workspace-navigation";
 import { useWorkspaceNavigationRequest } from "@/components/workspace-navigation-guard";
 import {
+  useVerifiedWorkspaceUserId,
+  useWorkspaceInteractionSuspended,
+} from "@/components/systems/shared/runtime/workspace-identity";
+import {
   authMeOptions,
   prefetchOpenViewSection,
 } from "@/components/systems/openview/adapters/openview-queries";
-import { prefetchManageWorkspace } from "@/components/systems/manage/adapters/manage-queries";
+import {
+  prefetchManageJobs,
+  prefetchManageWorkspace,
+} from "@/components/systems/manage/adapters/manage-queries";
 import { prefetchPlatformSection } from "@/components/systems/platform/adapters/platform-queries";
 import {
   Collapsible,
@@ -86,10 +93,50 @@ export function AppNavigation({
   // Access shows only what the signed-in role and manage access allow; it
   // stays hidden until the identity is known.
   const identity = useQuery(authMeOptions());
+  const userId = useVerifiedWorkspaceUserId();
+  const suspended = useWorkspaceInteractionSuspended();
+  const [jobsAwaitingRole, setJobsAwaitingRole] = useState(false);
+  const jobsCycle = useRef(0);
+  const jobsAdmission = useRef(false);
+  const jobsAdmitted =
+    !suspended &&
+    !jobsAwaitingRole &&
+    identity.isSuccess &&
+    !identity.isError &&
+    identity.data.id === userId &&
+    identity.data.role === "admin";
+  useLayoutEffect(() => {
+    jobsAdmission.current = jobsAdmitted;
+    if (suspended) {
+      jobsCycle.current += 1;
+      setJobsAwaitingRole(true);
+    }
+  }, [suspended, jobsAdmitted]);
+  useEffect(() => {
+    if (suspended || !jobsAwaitingRole) return;
+    const cycle = jobsCycle.current;
+    let cancelled = false;
+    void queryClient
+      .cancelQueries({ queryKey: authMeOptions().queryKey, exact: true })
+      .then(() =>
+        !cancelled && cycle === jobsCycle.current
+          ? queryClient.fetchQuery({ ...authMeOptions(), staleTime: 0 })
+          : undefined,
+      )
+      .then((result) => {
+        if (result && !cancelled && cycle === jobsCycle.current)
+          setJobsAwaitingRole(false);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [suspended, jobsAwaitingRole, queryClient]);
   const groups = getWorkspaceNavigation(
     pathname,
     searchParams,
     accessNavigationFor(identity.data),
+    jobsAdmitted,
   );
   const search = searchParams.toString();
   const activeGroupId = groups.find((group) =>
@@ -192,6 +239,8 @@ export function AppNavigation({
       // the cache skips reads that are still fresh.
       prefetchOpenViewSection(queryClient, href);
       prefetchPlatformSection(queryClient, href, identity.data?.id);
+      if (href === "/manage?view=jobs" && jobsAdmission.current)
+        void prefetchManageJobs(queryClient);
       if (
         identity.data?.role === "admin" &&
         href === "/manage?view=organization"

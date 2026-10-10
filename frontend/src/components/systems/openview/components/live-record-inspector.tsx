@@ -1,4 +1,5 @@
 "use client";
+import { RecordPersonCard } from "./live-record-cards";
 
 import type { ReactNode } from "react";
 import type { OpenViewGroupSelector } from "../adapters/analytics-api";
@@ -64,6 +65,9 @@ export type RecordControls = {
   departmentId: string;
   /** Every active field of the data source, for editing and history. */
   editableFields: readonly OpenViewDataSourceField[];
+  fieldsHasMore?: boolean;
+  fieldsLoadingMore?: boolean;
+  onLoadMoreFields?: () => void;
   dataSources: readonly OpenViewDataSource[];
   canWrite: boolean;
   canReadHistory: boolean;
@@ -132,7 +136,9 @@ export function LiveRecordInspector({
           >
             <dt className="text-muted-foreground text-sm">{field.name}</dt>
             <dd className="min-w-0 text-sm wrap-anywhere">
-              {readableValue(openViewRecordFieldValue(record, field))}
+              <RecordPersonCard row={record} field={field}>
+                {readableValue(openViewRecordFieldValue(record, field))}
+              </RecordPersonCard>
             </dd>
           </div>
         ))}
@@ -201,6 +207,9 @@ export function LiveRecordInspector({
                   record={record}
                   moduleId={controls.moduleId}
                   fields={controls.editableFields}
+                  fieldsHasMore={controls.fieldsHasMore}
+                  fieldsLoadingMore={controls.fieldsLoadingMore}
+                  onLoadMoreFields={controls.onLoadMoreFields}
                   canWrite={controls.canWrite}
                   onChanged={controls.onChanged}
                   onEditingChange={controls.onEditingChange}

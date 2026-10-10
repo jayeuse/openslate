@@ -3,9 +3,19 @@ import {
   ApiContractError,
   ApiError,
   apiFetch,
-  apiRequest,
   type ApiRequestInit,
 } from "@/lib/api";
+
+import {
+  assertLifecyclePurgePreviewFor,
+  assertLifecyclePurgeResultFor,
+  lifecyclePurgeInputSchema,
+  lifecyclePurgePreviewSchema,
+  lifecyclePurgeResultSchema,
+  type LifecyclePurgeInput,
+  type LifecyclePurgePreview,
+  type LifecyclePurgeResult,
+} from "@/lib/lifecycle";
 
 import {
   uuid,
@@ -304,79 +314,44 @@ export function restoreBoardEvent(
   );
 }
 
-async function boundedErrorDetail(response: Response): Promise<unknown> {
-  const maximum = 8192;
-  const declared = response.headers.get("Content-Length");
-  if (
-    declared !== null &&
-    (!/^\d+$/.test(declared) || Number(declared) > maximum)
-  )
-    return null;
-  if (!response.body) return null;
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maximum) {
-        await reader.cancel().catch(() => undefined);
-        return null;
-      }
-      chunks.push(value);
-    }
-  } catch {
-    return null;
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    const body: unknown = JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-    );
-    const envelope = z
-      .object({ detail: z.unknown() })
-      .passthrough()
-      .safeParse(body);
-    return envelope.success ? envelope.data.detail : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function deleteBoardEvent(
+export async function previewBoardEventPurge(
   rawBoardId: string,
   rawEventId: string,
-  rawBoardRevision: number,
-  rawEventRevision: number,
-): Promise<void> {
+): Promise<LifecyclePurgePreview> {
   const boardId = uuid.parse(rawBoardId);
   const eventId = uuid.parse(rawEventId);
-  const boardRevision = revision.parse(rawBoardRevision);
-  const eventRevision = revision.parse(rawEventRevision);
-  const response = await apiRequest(`/boards/${boardId}/events/${eventId}`, {
-    method: "DELETE",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      board_revision: boardRevision,
-      event_revision: eventRevision,
-    }),
-  });
-  if (response.status === 204) return;
-  if (response.ok) throw new ApiContractError();
-  return throwSafeEventError(
-    response.status,
-    await boundedErrorDetail(response),
+  const preview = await apiFetch(
+    `/boards/${boardId}/events/${eventId}/purge/preview`,
+    lifecyclePurgePreviewSchema,
+    { method: "POST", cache: "no-store" },
   );
+  assertLifecyclePurgePreviewFor(preview, "board_event", eventId);
+  return preview;
+}
+
+export async function purgeBoardEvent(
+  rawBoardId: string,
+  rawEventId: string,
+  rawInput: LifecyclePurgeInput,
+): Promise<LifecyclePurgeResult> {
+  const boardId = uuid.parse(rawBoardId);
+  const eventId = uuid.parse(rawEventId);
+  const input = lifecyclePurgeInputSchema.parse(rawInput);
+  const result = await apiFetch(
+    `/boards/${boardId}/events/${eventId}/purge`,
+    lifecyclePurgeResultSchema,
+    {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify({
+        token: input.token,
+        confirmation_name: input.confirmationName,
+        password: input.password,
+      }),
+    },
+  );
+  assertLifecyclePurgeResultFor(result, "board_event", eventId);
+  return result;
 }
 
 export async function listBoardEventOccurrences(

@@ -16,6 +16,7 @@ import {
   readStamp,
   recordPageDenial,
   boundedCatalogOptions,
+  dataSourceOptions,
   invalidatesRecords,
   isAuthorizationDenied,
   moduleWorkspaceOptions,
@@ -30,6 +31,8 @@ import {
   type OpenViewDataSource,
   type OpenViewSavedView,
 } from "../adapters/views-api";
+
+import { uuidSchema } from "../adapters/views-schemas";
 
 export type { ModuleWorkspace };
 
@@ -82,6 +85,22 @@ export function useServerViewsResource(requestedModule: string | null) {
 
   const catalogBatch = catalogQuery.data;
   const catalogReadAt = readStamp(catalogQuery);
+  const sourceMissing = Boolean(
+    catalogBatch &&
+    requestedModule &&
+    ![
+      ...catalogBatch.items,
+      ...(catalogExtension && extendsRead(catalogExtension.readAt, catalogQuery)
+        ? catalogExtension.items
+        : []),
+    ].some((source) => source.id === requestedModule),
+  );
+  const selectedSource = useQuery(
+    dataSourceOptions(
+      requestedModule ?? "",
+      sourceMissing && uuidSchema.safeParse(requestedModule).success,
+    ),
+  );
   const catalogMore =
     catalogExtension && extendsRead(catalogExtension.readAt, catalogQuery)
       ? catalogExtension
@@ -89,12 +108,24 @@ export function useServerViewsResource(requestedModule: string | null) {
   // The workspace keys effects (route sync, deep-link lookup) on the
   // catalog array, so it keeps one identity per loaded batch,
   // as the former state did.
+  const resolvedSource = selectedSource.isSuccess
+    ? selectedSource.data
+    : undefined;
   const loadedCatalog = useMemo(
     () =>
       catalogBatch
-        ? [...catalogBatch.items, ...(catalogMore?.items ?? [])]
+        ? [
+            ...catalogBatch.items,
+            ...(catalogMore?.items ?? []),
+            ...(resolvedSource &&
+            ![...catalogBatch.items, ...(catalogMore?.items ?? [])].some(
+              (source) => source.id === resolvedSource.id,
+            )
+              ? [resolvedSource]
+              : []),
+          ]
         : null,
-    [catalogBatch, catalogMore],
+    [catalogBatch, catalogMore, resolvedSource],
   );
   const catalogHasMore = catalogMore
     ? catalogMore.hasMore
@@ -105,11 +136,14 @@ export function useServerViewsResource(requestedModule: string | null) {
 
   // The module follows the loaded catalog even while access is denied, so a
   // retry can clear a denial from any of the three reads.
-  const loadedModuleId = loadedCatalog?.length
-    ? loadedCatalog.some((source) => source.id === requestedModule)
-      ? (requestedModule ?? undefined)
-      : loadedCatalog[0]?.id
-    : undefined;
+  const loadedModuleId =
+    sourceMissing && selectedSource.isFetching
+      ? undefined
+      : loadedCatalog?.length
+        ? loadedCatalog.some((source) => source.id === requestedModule)
+          ? (requestedModule ?? undefined)
+          : loadedCatalog[0]?.id
+        : undefined;
   const moduleQuery = useQuery(moduleWorkspaceOptions(loadedModuleId ?? ""));
 
   // A settled error counts; a retry in flight clears its message first.
@@ -119,12 +153,13 @@ export function useServerViewsResource(requestedModule: string | null) {
   // through a retry, so retained data stays hidden while access is checked.
   const authorizationDenied =
     accessDenied ||
-    [catalogQuery, moduleQuery].some((query) =>
+    [catalogQuery, selectedSource, moduleQuery].some((query) =>
       isAuthorizationDenied(query.error),
     );
 
   const catalog = authorizationDenied ? null : loadedCatalog;
-  const catalogLoading = catalogQuery.isFetching;
+  const catalogLoading =
+    catalogQuery.isFetching || (sourceMissing && selectedSource.isFetching);
   const catalogLoadError = settledError(catalogQuery);
   const catalogError = authorizationDenied
     ? AUTHORIZATION_ERROR
@@ -273,10 +308,11 @@ export function useServerViewsResource(requestedModule: string | null) {
   }, [moduleQuery]);
 
   const retryCatalog = useCallback(() => {
-    // A denial may have come from either read.
+    // Retry the refused source detail as well as the catalog and workspace.
     void catalogQuery.refetch();
+    if (selectedSource.isError) void selectedSource.refetch();
     if (moduleQuery.isError) void moduleQuery.refetch();
-  }, [catalogQuery, moduleQuery]);
+  }, [catalogQuery, selectedSource, moduleQuery]);
 
   const retryMetadata = useCallback(() => {
     if (metadataRetryTarget === "catalog") void loadMoreCatalog();

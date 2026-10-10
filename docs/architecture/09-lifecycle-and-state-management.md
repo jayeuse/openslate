@@ -2,7 +2,15 @@
 
 > **Scope:** Domain close/reopen/purge state and file upload state.
 
-Departments, modules, fields, records, and relationships have explicit lifecycle behavior. Ordinary deletion requests a controlled close flow where required. Services compute impact, require confirmations, acquire locks, revalidate scope, make individual ORM changes, and record audit entries. Purge is disabled by default through `LIFECYCLE_PURGE_ENABLED=false`.
+Departments, modules, fields, records, and relationships have explicit lifecycle behavior. Ordinary deletion requests a controlled close flow where required. Services compute impact, require confirmations, acquire locks, revalidate scope, make individual ORM changes, and record audit entries. New installations enable purge through `.env.example` (`LIFECYCLE_PURGE_ENABLED=true`). The setting remains required; upgrading an existing installation keeps its configured value. An installation with purge turned off returns "Permanent delete is turned off for this installation."
+
+## Relationship lifecycle
+
+A relationship is a field owned by its source module; it may target a module in the same or another active department. [`plan_lifecycle`](../../backend/app/systems/sandbox/lifecycle/planning.py) and the [executor](../../backend/app/systems/sandbox/lifecycle/execution.py) include its edge rows in the locked impact scope. Closing or reopening the relationship field or an endpoint's module/department hierarchy preserves link rows; current parent/field state controls whether they can be read or changed. Records support purge, not close/reopen. Reopening structure does not invent or recreate links.
+
+Purging a relationship field removes its active and closed edges but preserves both endpoint records. Record/module/department purge removes the incident edges of the rows being purged. A surviving relationship field targeting a purged module blocks that module or department purge (`PURGE_EXTERNAL_SCHEMA_DEPENDENCY`), including a closed field and a source in another department. The planner reports the external dependency, and execution revalidates it rather than silently deleting another module's schema. See [domain authorization](03-domain-architecture.md) and [`test_relationship_field_routes_close_reopen_and_purge_links_keep_records`](../../backend/tests/lifecycle_integration/test_relationship_design_lifecycle.py).
+
+Department library metadata belongs to the department purge scope; its private bytes must pass the existing confirmed file-purge flow first. Library archive/reopen uses the file lifecycle routes and does not move a file between departments.
 
 Password challenges for destructive lifecycle work ask Supabase Auth to verify the current email/password through [`ProviderPasswordGrantClient`](../../backend/app/systems/sandbox/lifecycle/password.py). The verified provider subject must resolve to the same eligible OpenSlate actor that opened the challenge; its temporary provider session is signed out rather than admitted as an application session. [`verify_challenge`](../../backend/app/systems/sandbox/lifecycle/challenge_verification.py) locks and validates the challenge before consuming it, rejects expired or already-used challenges, and does not treat a browser cookie as proof of the requested password action.
 

@@ -18,18 +18,25 @@ const recovery = (userId = ids.ben, revoke = false) => ({
 });
 async function setup(page: Page) {
   const api = await mockAccessApi(page);
+  // A self recovery that signs out everywhere ends the signed-in session, so
+  // /login keeps its form instead of sending a live session to its start page.
+  let signedOut = false;
+  api.on("GET", "/api/auth/session", (route) =>
+    signedOut
+      ? route.fulfill({ json: { authenticated: false } })
+      : Promise.resolve("next" as const),
+  );
   for (const userId of [ids.ben, ids.rosa, ids.ana]) {
     api.on("GET", `/api/users/${userId}/security`, (route) =>
       route.fulfill({ json: status(userId) }),
     );
-    api.on("POST", `/api/users/${userId}/recovery`, (route, call) =>
-      route.fulfill({
-        json: recovery(
-          userId,
-          Boolean((call.body as { revoke_sessions?: boolean }).revoke_sessions),
-        ),
-      }),
-    );
+    api.on("POST", `/api/users/${userId}/recovery`, (route, call) => {
+      const revoke = Boolean(
+        (call.body as { revoke_sessions?: boolean }).revoke_sessions,
+      );
+      if (revoke && userId === ids.rosa) signedOut = true;
+      return route.fulfill({ json: recovery(userId, revoke) });
+    });
     api.on("POST", `/api/users/${userId}/mfa/reset`, (route) =>
       route.fulfill({
         json: {
@@ -271,7 +278,7 @@ test("pending security blocks close, tab and route while preserving an existing 
   await page.getByRole("link", { name: "People", exact: true }).first().click();
   await page
     .getByRole("table", { name: "People" })
-    .getByRole("button", { name: /^Ben Cruz/ })
+    .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
   const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
   await sheet.getByLabel("Job title").fill("Retained draft");
@@ -307,8 +314,23 @@ test("partial revocation is truthful and performs session read-back without repl
   page,
 }) => {
   const api = await setup(page);
-  api.on("POST", `/api/users/${ids.ben}/recovery`, (route) =>
-    route.fulfill({
+  const template = api.sessions[0]!;
+  const devices = (start: number, label: string) =>
+    Array.from({ length: 13 }, (_, index) => ({
+      ...template,
+      id: `00000000-0000-4000-8000-${String(start + index).padStart(12, "0")}`,
+      user_agent: `${label} ${index}`,
+    }));
+  api.sessions.splice(0, api.sessions.length, ...devices(9000, "Old device"));
+  api.on("POST", `/api/users/${ids.ben}/recovery`, (route) => {
+    // The old sessions were committed as revoked. New concurrent logins can
+    // exist by read-back, and must replace every cached page of old devices.
+    api.sessions.splice(
+      0,
+      api.sessions.length,
+      ...devices(10000, "New device"),
+    );
+    return route.fulfill({
       status: 503,
       json: {
         detail: {
@@ -320,9 +342,22 @@ test("partial revocation is truthful and performs session read-back without repl
           factors_cleared: null,
         },
       },
-    }),
-  );
+    });
+  });
   const sheet = await open(page);
+  await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await sheet
+    .getByRole("navigation", { name: "Session pages", exact: true })
+    .getByRole("button", { name: "Go to next page", exact: true })
+    .click();
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).toContainText("Old device 12");
+  await sheet.getByRole("tab", { name: "Security", exact: true }).click();
+  const readsBeforeRecovery = api.sent(
+    "GET",
+    `/api/users/${ids.ben}/sessions`,
+  ).length;
   await confirmRecovery(page, true);
   await expect(sheet.getByRole("alert")).toContainText(
     "Signed out everywhere. We could not confirm the recovery email was sent.",
@@ -330,7 +365,21 @@ test("partial revocation is truthful and performs session read-back without repl
   await expect(sheet).not.toContainText("Private diagnostic");
   await expect
     .poll(() => api.sent("GET", `/api/users/${ids.ben}/sessions`).length)
-    .toBeGreaterThan(0);
+    .toBeGreaterThan(readsBeforeRecovery);
+  await sheet.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).toContainText("New device 0");
+  await sheet
+    .getByRole("navigation", { name: "Session pages", exact: true })
+    .getByRole("button", { name: "Go to next page", exact: true })
+    .click();
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).toContainText("New device 12");
+  await expect(
+    sheet.getByRole("list", { name: "Sessions", exact: true }),
+  ).not.toContainText("Old device");
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(1);
 });
 
@@ -442,7 +491,7 @@ test("browser Back safely departs and delayed command cannot overwrite its new o
   await page.getByRole("link", { name: "People", exact: true }).first().click();
   await page
     .getByRole("table", { name: "People" })
-    .getByRole("button", { name: /^Ben Cruz/ })
+    .getByRole("button", { name: "Manage Ben Cruz", exact: true })
     .click();
   await page
     .getByRole("dialog", { name: "Ben Cruz", exact: true })
@@ -465,7 +514,7 @@ test("browser Back safely departs and delayed command cannot overwrite its new o
   else {
     await page
       .getByRole("table", { name: "People" })
-      .getByRole("button", { name: /^Ben Cruz/ })
+      .getByRole("button", { name: "Manage Ben Cruz", exact: true })
       .click();
     await sheet.getByRole("tab", { name: "Security", exact: true }).click();
   }

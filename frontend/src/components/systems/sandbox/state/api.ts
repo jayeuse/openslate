@@ -1,12 +1,16 @@
 import { z } from "zod";
 import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
 import {
-  parseSandboxDocument,
+  trackSandboxHistoryList,
+  trackSandboxHistoryVersion,
+} from "./sandbox-history-access";
+import {
   parseSandboxDocumentForApi,
   SANDBOX_DOCUMENT_SCHEMA_VERSION,
   type SandboxFieldValue,
   type SandboxDocumentV4,
 } from "../domain/document";
+import { parseSandboxExportDocument } from "../domain/document-parser";
 
 export type SandboxValidationIssue = {
   code: string;
@@ -62,6 +66,8 @@ export type SandboxVersionPage = {
   count: number;
   total: number;
   hasMore: boolean;
+  mutableCount: number;
+  versionCap: number;
 };
 
 export type SandboxExport = {
@@ -417,6 +423,8 @@ const versionPageSchema = z.strictObject({
   count: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
   hasMore: z.boolean(),
+  mutableCount: z.number().int().nonnegative(),
+  versionCap: z.literal(50),
 });
 
 function jsonBody(value: unknown): string {
@@ -565,53 +573,77 @@ export async function clearSandboxTests(
   });
 }
 
-export function listSandboxVersions(
-  options: RequestOptions & { limit?: number; offset?: number } = {},
-): Promise<SandboxVersionPage> {
-  const limit = options.limit ?? 20;
-  const offset = options.offset ?? 0;
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-    throw new RangeError("Sandbox version limit must be between 1 and 100");
-  if (!Number.isInteger(offset) || offset < 0)
-    throw new RangeError("Sandbox version offset must be non-negative");
-  const query = new URLSearchParams({
-    limit: String(limit),
-    offset: String(offset),
-  });
-  return apiFetch(`/sandbox/versions?${query}`, versionPageSchema, {
-    cache: "no-store",
-    signal: options.signal,
-  });
-}
+export type SandboxVersionListOptions = RequestOptions & {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  kind?: SandboxVersionKind;
+};
 
-export async function listAllSandboxVersions(
-  options: RequestOptions = {},
-): Promise<SandboxVersion[]> {
-  const items: SandboxVersion[] = [];
-  let offset = 0;
-  while (true) {
-    const page = await listSandboxVersions({
-      limit: 100,
-      offset,
-      signal: options.signal,
-    });
-    if (page.offset !== offset || page.count !== page.items.length)
+export async function listSandboxVersions(
+  options: SandboxVersionListOptions = {},
+): Promise<SandboxVersionPage> {
+  const request = z
+    .object({
+      limit: z.number().int().min(1).max(100).default(20),
+      offset: z.number().int().min(0).default(0),
+      search: z.string().trim().max(100).optional(),
+      kind: z.enum(["checkpoint", "published", "imported"]).optional(),
+    })
+    .parse(options);
+  const query = new URLSearchParams({
+    limit: String(request.limit),
+    offset: String(request.offset),
+  });
+  if (request.search) query.set("search", request.search);
+  if (request.kind) query.set("kind", request.kind);
+  return trackSandboxHistoryList(async () => {
+    const page = await apiFetch(
+      `/sandbox/versions?${query}`,
+      versionPageSchema,
+      {
+        cache: "no-store",
+        signal: options.signal,
+      },
+    );
+    if (
+      page.limit !== request.limit ||
+      page.offset !== request.offset ||
+      page.count !== page.items.length ||
+      page.count > page.limit ||
+      (page.count > 0 && page.offset + page.count > page.total) ||
+      page.hasMore !== page.offset + page.count < page.total ||
+      (page.hasMore && page.count === 0) ||
+      new Set(page.items.map((item) => item.id)).size !== page.count
+    )
       throw new ApiContractError();
-    items.push(...page.items);
-    if (!page.hasMore) return items;
-    if (page.count === 0) throw new ApiContractError();
-    offset += page.count;
-  }
+    return page;
+  });
 }
 
 export function getSandboxVersion(
   versionId: string,
   options: RequestOptions = {},
 ): Promise<SandboxVersionDetail> {
-  return versionRequest(versionPath(versionId), {
-    cache: "no-store",
-    signal: options.signal,
-  });
+  return trackSandboxHistoryVersion(versionId, () =>
+    versionRequest(versionPath(versionId), {
+      cache: "no-store",
+      signal: options.signal,
+    }),
+  );
+}
+
+/** Cached History selections need metadata; full comparison documents stay local. */
+export async function getSandboxVersionMetadata(
+  versionId: string,
+  options: RequestOptions = {},
+): Promise<SandboxVersion> {
+  const detail = await getSandboxVersion(versionId, options);
+  return versionSchema.parse(
+    Object.fromEntries(
+      Object.entries(detail).filter(([name]) => name !== "document"),
+    ),
+  );
 }
 
 export function createSandboxVersion(
@@ -631,6 +663,21 @@ export function createSandboxVersion(
     }),
     signal: request.signal,
   });
+}
+
+export function pruneSandboxVersions(
+  request: RevisionRequest,
+): Promise<{ deletedCount: number }> {
+  return apiFetch(
+    "/sandbox/versions/prune",
+    z.strictObject({ deletedCount: z.number().int().nonnegative() }),
+    {
+      method: "POST",
+      cache: "no-store",
+      body: jsonBody({ expectedRevision: request.expectedRevision }),
+      signal: request.signal,
+    },
+  );
 }
 
 export function updateSandboxVersion(
@@ -726,7 +773,7 @@ export async function exportSandboxBundle(
     if (error instanceof Error && error.name === "AbortError") throw error;
     throw new ApiContractError();
   }
-  const parsed = parseSandboxDocument(text);
+  const parsed = parseSandboxExportDocument(text);
   if (!parsed.ok) throw new ApiContractError();
   return { document: parsed.document, filename: exportFilename(response) };
 }

@@ -7,13 +7,19 @@ import {
 } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { getAuthMe } from "@/lib/auth-api";
-import { listOpenViewDepartments } from "./departments-api";
+import { listOpenViewCharts } from "./charts-api";
+import {
+  getOpenViewDepartment,
+  listOpenViewDepartments,
+} from "./departments-api";
 import { listRecordFiles } from "./record-files-api";
 import {
   listOpenViewReports,
   listOpenViewSharedReportRuns,
 } from "./reports-api";
 import {
+  getOpenViewDataSource,
+  getOpenViewDataSourceField,
   listOpenViewAssignableUsers,
   listOpenViewDataSourceFields,
   listOpenViewDataSources,
@@ -35,12 +41,21 @@ export const CATALOG_PAGE_SIZE = 100;
 export const openViewKeys = {
   all: ["openview"] as const,
   catalog: ["openview", "catalog"] as const,
-  /** The complete catalog, read in bounded pages (Views). */
+  chartLists: ["openview", "catalog", "charts"] as const,
+  chartList: (search: string, moduleId?: string, deleted = "exclude") =>
+    ["openview", "catalog", "charts", { search, moduleId, deleted }] as const,
+  /** The first catalog batch; Views loads more only on request. */
   boundedCatalog: () => ["openview", "catalog", "bounded"] as const,
   /** The first catalog page (Charts and Reports load more on request). */
   catalogFirstPage: () => ["openview", "catalog", "first-page"] as const,
   /** Readable departments, which own Dashboards and name data sources. */
-  departments: () => ["openview", "catalog", "departments"] as const,
+  departments: (search = "") =>
+    ["openview", "catalog", "departments", { search }] as const,
+  department: (id: string) =>
+    ["openview", "catalog", "department", id] as const,
+  dataSource: (id: string) => ["openview", "catalog", "source", id] as const,
+  field: (moduleId: string, id: string) =>
+    ["openview", "fields", moduleId, "detail", id] as const,
   fields: ["openview", "fields"] as const,
   assignableUsers: ["openview", "assignable-users"] as const,
   assignableUsersPage: (moduleId: string, search: string) =>
@@ -72,24 +87,6 @@ export const openViewKeys = {
 };
 
 export type ItemBatch<T> = { items: T[]; hasMore: boolean; nextOffset: number };
-
-export async function boundedItems<T>(
-  read: (options: {
-    limit: number;
-    offset: number;
-  }) => Promise<OpenViewPage<T>>,
-): Promise<ItemBatch<T>> {
-  const items: T[] = [];
-  let offset = 0;
-  for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
-    const page = await read({ limit: 100, offset });
-    items.push(...page.items);
-    if (!page.pagination.hasMore || page.items.length === 0)
-      return { items, hasMore: false, nextOffset: offset + page.items.length };
-    offset += page.pagination.count;
-  }
-  return { items, hasMore: true, nextOffset: offset };
-}
 
 export function isAuthorizationDenied(error: unknown): error is ApiError {
   return error instanceof ApiError && [401, 403].includes(error.status);
@@ -170,13 +167,48 @@ export type ModuleWorkspace = {
 export const boundedCatalogOptions = () =>
   queryOptions({
     queryKey: openViewKeys.boundedCatalog(),
-    queryFn: () => boundedItems((options) => listOpenViewDataSources(options)),
+    queryFn: async () => {
+      const page = await listOpenViewDataSources({
+        limit: CATALOG_PAGE_SIZE,
+        offset: 0,
+      });
+      return {
+        items: page.items,
+        hasMore: page.pagination.hasMore,
+        nextOffset: page.pagination.offset + page.pagination.count,
+      };
+    },
   });
 
-export const departmentsOptions = () =>
+export const departmentsOptions = (search = "") =>
   queryOptions({
-    queryKey: openViewKeys.departments(),
-    queryFn: ({ signal }) => listOpenViewDepartments(signal),
+    queryKey: openViewKeys.departments(search),
+    queryFn: ({ signal }) =>
+      listOpenViewDepartments({
+        limit: CATALOG_PAGE_SIZE,
+        offset: 0,
+        search,
+        signal,
+      }),
+  });
+
+export const departmentOptions = (id: string, enabled = true) =>
+  queryOptions({
+    queryKey: openViewKeys.department(id),
+    queryFn: ({ signal }) => getOpenViewDepartment(id, signal),
+    enabled: Boolean(id) && enabled,
+  });
+export const dataSourceOptions = (id: string, enabled = true) =>
+  queryOptions({
+    queryKey: openViewKeys.dataSource(id),
+    queryFn: ({ signal }) => getOpenViewDataSource(id, signal),
+    enabled: Boolean(id) && enabled,
+  });
+export const fieldOptions = (moduleId: string, id: string) =>
+  queryOptions({
+    queryKey: openViewKeys.field(moduleId, id),
+    queryFn: ({ signal }) => getOpenViewDataSourceField(moduleId, id, signal),
+    enabled: Boolean(moduleId && id),
   });
 
 export const catalogFirstPageOptions = () =>
@@ -184,6 +216,17 @@ export const catalogFirstPageOptions = () =>
     queryKey: openViewKeys.catalogFirstPage(),
     queryFn: () =>
       listOpenViewDataSources({ limit: CATALOG_PAGE_SIZE, offset: 0 }),
+  });
+
+export const chartListOptions = (
+  search: string,
+  moduleId?: string,
+  deleted: "exclude" | "include" | "only" = "exclude",
+) =>
+  queryOptions({
+    queryKey: openViewKeys.chartList(search, moduleId, deleted),
+    queryFn: ({ signal }) =>
+      listOpenViewCharts({ search, moduleId, deleted, signal }),
   });
 
 export const fieldsFirstPageOptions = (moduleId: string) =>
@@ -219,21 +262,25 @@ export const moduleWorkspaceOptions = (moduleId: string) =>
     queryKey: openViewKeys.moduleWorkspace(moduleId),
     queryFn: async (): Promise<ModuleWorkspace> => {
       const [fields, views] = await Promise.all([
-        boundedItems((options) =>
-          listOpenViewDataSourceFields(moduleId, options),
-        ),
-        boundedItems((options) =>
-          listOpenViewSavedViews({ moduleId, deleted: "include", ...options }),
-        ),
+        listOpenViewDataSourceFields(moduleId, {
+          limit: CATALOG_PAGE_SIZE,
+          offset: 0,
+        }),
+        listOpenViewSavedViews({
+          moduleId,
+          deleted: "include",
+          limit: CATALOG_PAGE_SIZE,
+          offset: 0,
+        }),
       ]);
       return {
         moduleId,
         fields: fields.items,
-        fieldsHasMore: fields.hasMore,
-        fieldsNextOffset: fields.nextOffset,
+        fieldsHasMore: fields.pagination.hasMore,
+        fieldsNextOffset: fields.pagination.offset + fields.pagination.count,
         views: views.items,
-        viewsHasMore: views.hasMore,
-        viewsNextOffset: views.nextOffset,
+        viewsHasMore: views.pagination.hasMore,
+        viewsNextOffset: views.pagination.offset + views.pagination.count,
       };
     },
     enabled: Boolean(moduleId),
@@ -303,6 +350,7 @@ export function invalidatesRecords(entity: string): boolean {
   return (
     entity === "records" ||
     entity === "relationships" ||
+    entity === "charts" ||
     CATALOG_ENTITIES.has(entity) ||
     USER_DISPLAY_ENTITIES.has(entity)
   );
@@ -310,6 +358,7 @@ export function invalidatesRecords(entity: string): boolean {
 
 /** The cached reads that depend on one invalidated entity. */
 export function openViewKeysForEntity(entity: string): QueryKey[] {
+  if (entity === "charts") return [openViewKeys.chartLists];
   const fileKeys =
     entity === "files" ||
     entity === "records" ||

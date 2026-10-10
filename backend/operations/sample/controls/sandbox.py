@@ -47,6 +47,7 @@ CONTROL_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/sandbox/publications"),
         ("GET", "/api/sandbox/versions"),
         ("POST", "/api/sandbox/versions"),
+        ("POST", "/api/sandbox/versions/prune"),
         ("GET", "/api/sandbox/versions/{version_id}"),
         ("PATCH", "/api/sandbox/versions/{version_id}"),
         ("DELETE", "/api/sandbox/versions/{version_id}"),
@@ -163,7 +164,9 @@ def plan_sandbox_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             expected_end_state={"active_runs": len(dataset.test_vectors)},
         ),
     )
-    return actions + plan_lifecycle_controls(dataset)
+    from operations.sample.controls.version_prune import plan_version_prune
+
+    return plan_version_prune(dataset) + actions + plan_lifecycle_controls(dataset)
 
 
 def _revision(body: Mapping[str, Any], *, step: str) -> int:

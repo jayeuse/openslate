@@ -15,12 +15,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import get_current_user
+from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.policy.checks import department_filter, forbidden
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import effective_levels
 from app.systems.access.users.models import User
+from app.systems.openview.charts import service as charts
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget
 from app.systems.openview.dashboards.schemas import (
     DashboardCreate,
@@ -48,6 +50,7 @@ router = APIRouter(
 Reader = Annotated[User, Depends(get_current_user)]
 # Changing a Dashboard needs ``manage`` on its department; each route checks it.
 Writer = Annotated[User, Depends(get_current_user)]
+SourceWriter = Annotated[CurrentIdentity, Depends(get_current_identity)]
 Database = Annotated[Session, Depends(get_db)]
 
 DASHBOARD_LIST_SPEC = ListQuerySpec(
@@ -99,14 +102,22 @@ def _require_manager(db: Session, user: User, department_id: UUID) -> None:
 
 
 def _dashboard(
-    db: Session, user: User, dashboard_id: UUID, *, lock: bool = False, manage: bool = False
+    db: Session,
+    user: User,
+    dashboard_id: UUID,
+    *,
+    lock: bool = False,
+    manage: bool = False,
+    nowait: bool = False,
 ) -> Dashboard:
     statement = select(Dashboard).where(
         Dashboard.id == dashboard_id,
         department_filter(db, user, Dashboard.department_id),
     )
     if lock:
-        statement = statement.with_for_update().execution_options(populate_existing=True)
+        statement = statement.with_for_update(nowait=nowait).execution_options(
+            populate_existing=True
+        )
     dashboard = db.scalar(statement)
     if dashboard is None:
         raise _not_found()
@@ -121,6 +132,8 @@ def _widget_response(widget: DashboardWidget) -> DashboardWidgetResponse:
         position=widget.position,
         widget_type=widget.widget_type,
         config=widget.config,
+        chart_id=widget.chart_id,
+        size=widget.size,
         created_at=widget.created_at,
         updated_at=widget.updated_at,
     )
@@ -163,8 +176,8 @@ def _dashboard_response(db: Session, dashboard: Dashboard) -> DashboardResponse:
     return _dashboard_responses(db, [dashboard])[0]
 
 
-def _stored_config(widget: DashboardWidgetSpec) -> dict[str, Any]:
-    return widget.config.model_dump(mode="json")
+def _stored_config(widget: DashboardWidgetSpec) -> dict[str, Any] | None:
+    return widget.config.model_dump(mode="json") if widget.config is not None else None
 
 
 def _replace_widgets(
@@ -183,14 +196,19 @@ def _replace_widgets(
             .order_by(DashboardWidget.position, DashboardWidget.id)
         ).all()
     )
-    desired = [(widget.widget_type, _stored_config(widget)) for widget in widgets]
+    desired = [
+        (widget.widget_type, _stored_config(widget), widget.chart_id, widget.size)
+        for widget in widgets
+    ]
     current_by_position = {widget.position: widget for widget in current}
     preserved_positions = {
         position
-        for position, (widget_type, config) in enumerate(desired)
+        for position, (widget_type, config, chart_id, size) in enumerate(desired)
         if position in current_by_position
         and current_by_position[position].widget_type == widget_type
         and current_by_position[position].config == config
+        and current_by_position[position].chart_id == chart_id
+        and current_by_position[position].size == size
     }
     if len(current) == len(desired) == len(preserved_positions):
         return False
@@ -200,7 +218,7 @@ def _replace_widgets(
         db.delete(widget)
     if removed:
         db.flush()
-    for position, (widget_type, config) in enumerate(desired):
+    for position, (widget_type, config, chart_id, size) in enumerate(desired):
         if position in preserved_positions:
             continue
         db.add(
@@ -209,6 +227,8 @@ def _replace_widgets(
                 position=position,
                 widget_type=widget_type,
                 config=config,
+                chart_id=chart_id,
+                size=size,
             )
         )
     return True
@@ -241,44 +261,50 @@ def list_dashboards(
 @router.post("", response_model=DashboardResponse, status_code=status.HTTP_201_CREATED)
 def create_dashboard(
     payload: DashboardCreate,
-    user: Writer,
+    identity: SourceWriter,
     db: Database,
     response: Response,
 ) -> DashboardResponse:
-    _require_manager(db, user, payload.department_id)
-    department = db.scalar(
-        select(Department)
-        .where(Department.id == payload.department_id, Department.is_deleted.is_(False))
-        .with_for_update(read=True)
-    )
-    if department is None:
-        raise _conflict("dashboard_invalid", "The department is unavailable")
-    validate_dashboard_widgets(db, user, payload.department_id, payload.widgets)
-    dashboard = Dashboard(
-        department_id=payload.department_id,
-        position=payload.position,
-        name=payload.name,
-        refresh_cadence=payload.refresh_cadence,
-    )
-    db.add(dashboard)
-    try:
-        db.flush()
-        for position, widget in enumerate(payload.widgets):
-            db.add(
-                DashboardWidget(
-                    dashboard_id=dashboard.id,
-                    position=position,
-                    widget_type=widget.widget_type,
-                    config=_stored_config(widget),
+    with charts.widget_source_transaction(db):
+        user = get_current_user(identity)
+        _require_manager(db, user, payload.department_id)
+        actor = validate_dashboard_widgets(db, identity, payload.department_id, payload.widgets)
+        department = db.scalar(
+            select(Department)
+            .where(Department.id == payload.department_id, Department.is_deleted.is_(False))
+            .with_for_update(read=True, nowait=True)
+            .execution_options(populate_existing=True)
+        )
+        if department is None:
+            raise _conflict("dashboard_invalid", "The department is unavailable")
+        _require_manager(db, actor, department.id)
+        dashboard = Dashboard(
+            department_id=department.id,
+            position=payload.position,
+            name=payload.name,
+            refresh_cadence=payload.refresh_cadence,
+        )
+        db.add(dashboard)
+        try:
+            db.flush()
+            for position, widget in enumerate(payload.widgets):
+                db.add(
+                    DashboardWidget(
+                        dashboard_id=dashboard.id,
+                        position=position,
+                        widget_type=widget.widget_type,
+                        config=_stored_config(widget),
+                        chart_id=widget.chart_id,
+                        size=widget.size,
+                    )
                 )
-            )
-        db.commit()
-    except IntegrityError as error:
-        db.rollback()
-        raise _invalid_dashboard() from error
-    db.refresh(dashboard)
-    response.headers["Location"] = f"/api/dashboards/{dashboard.id}"
-    return _dashboard_response(db, dashboard)
+            db.commit()
+        except IntegrityError as error:
+            db.rollback()
+            raise _invalid_dashboard() from error
+        db.refresh(dashboard)
+        response.headers["Location"] = f"/api/dashboards/{dashboard.id}"
+        return _dashboard_response(db, dashboard)
 
 
 @router.get("/{dashboard_id}", response_model=DashboardResponse)
@@ -290,37 +316,62 @@ def read_dashboard(dashboard_id: UUID, user: Reader, db: Database) -> DashboardR
 def update_dashboard(
     dashboard_id: UUID,
     payload: DashboardUpdate,
-    user: Writer,
+    identity: SourceWriter,
     db: Database,
 ) -> DashboardResponse:
-    dashboard = _dashboard(db, user, dashboard_id, lock=True, manage=True)
-    if dashboard.revision != payload.revision:
-        raise _stale_revision(dashboard.revision)
-    if dashboard.is_deleted:
-        raise _conflict("dashboard_archived", "Restore the Dashboard before editing it")
-
-    if payload.widgets is not None:
-        validate_dashboard_widgets(db, user, dashboard.department_id, payload.widgets)
-    name_changed = payload.name is not None and payload.name != dashboard.name
-    position_changed = payload.position is not None and payload.position != dashboard.position
-    cadence_changed = (
-        payload.refresh_cadence is not None
-        and payload.refresh_cadence != dashboard.refresh_cadence
-    )
-    widgets_changed = (
-        _replace_widgets(db, dashboard, payload.widgets) if payload.widgets is not None else False
-    )
-    if payload.name is not None and name_changed:
-        dashboard.name = payload.name
-    if payload.refresh_cadence is not None and cadence_changed:
-        dashboard.refresh_cadence = payload.refresh_cadence
-    if payload.position is not None and position_changed:
-        dashboard.position = payload.position
-    if name_changed or position_changed or cadence_changed or widgets_changed:
-        dashboard.revision += 1
-    _commit(db)
-    db.refresh(dashboard)
-    return _dashboard_response(db, dashboard)
+    with charts.widget_source_transaction(db):
+        user = get_current_user(identity)
+        discovered = _dashboard(db, user, dashboard_id, manage=True)
+        if discovered.revision != payload.revision:
+            raise _stale_revision(discovered.revision)
+        if discovered.is_deleted:
+            raise _conflict("dashboard_archived", "Restore the Dashboard before editing it")
+        expected_department = discovered.department_id
+        actor = user
+        if payload.widgets is not None:
+            actor = validate_dashboard_widgets(
+                db, identity, discovered.department_id, payload.widgets
+            )
+        dashboard = _dashboard(
+            db, actor, dashboard_id, lock=True, manage=True, nowait=payload.widgets is not None
+        )
+        if dashboard.revision != payload.revision:
+            raise _stale_revision(dashboard.revision)
+        if dashboard.is_deleted:
+            raise _conflict("dashboard_archived", "Restore the Dashboard before editing it")
+        if dashboard.department_id != expected_department:
+            raise _invalid_dashboard()
+        if payload.widgets is not None:
+            # Sources were locked first. NOWAIT avoids holding them behind a consumer writer.
+            db.scalars(
+                select(DashboardWidget)
+                .where(DashboardWidget.dashboard_id == dashboard.id)
+                .order_by(DashboardWidget.id)
+                .with_for_update(nowait=True)
+                .execution_options(populate_existing=True)
+            ).all()
+        name_changed = payload.name is not None and payload.name != dashboard.name
+        position_changed = payload.position is not None and payload.position != dashboard.position
+        cadence_changed = (
+            payload.refresh_cadence is not None
+            and payload.refresh_cadence != dashboard.refresh_cadence
+        )
+        widgets_changed = (
+            _replace_widgets(db, dashboard, payload.widgets)
+            if payload.widgets is not None
+            else False
+        )
+        if payload.name is not None and name_changed:
+            dashboard.name = payload.name
+        if payload.refresh_cadence is not None and cadence_changed:
+            dashboard.refresh_cadence = payload.refresh_cadence
+        if payload.position is not None and position_changed:
+            dashboard.position = payload.position
+        if name_changed or position_changed or cadence_changed or widgets_changed:
+            dashboard.revision += 1
+        _commit(db)
+        db.refresh(dashboard)
+        return _dashboard_response(db, dashboard)
 
 
 @router.delete("/{dashboard_id}", status_code=status.HTTP_204_NO_CONTENT)

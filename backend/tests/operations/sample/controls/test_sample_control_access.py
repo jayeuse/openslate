@@ -12,7 +12,7 @@ import pytest
 
 import operations.sample.controls.access as access_controls
 from operations.sample.blueprint import SampleDataset
-from operations.sample.client import SampleClient
+from operations.sample.client import SampleClient, SampleWriteOutcomeUnknown
 from operations.sample.controls.access import (
     CONTROL_ROUTES,
     execute_access_control,
@@ -23,6 +23,11 @@ from operations.sample.packs import get_pack
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.phases.plan import plan_phases
 from operations.sample.scenario import build_dataset
+from tests.operations.sample.controls.access_invitation_fixtures import (
+    INVITATION_CASES,
+    corrupt_invitation,
+    user_response,
+)
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 GUEST_ID = "e40862a7-fbb7-4e71-a590-90e11f4e893d"
@@ -96,17 +101,15 @@ def _context(tmp_path: Path, dataset: SampleDataset, handler) -> PhaseExecutionC
 
 
 def _user(*, status: str, deleted: bool = False, role: str = "guest") -> dict[str, object]:
-    return {
-        "id": GUEST_ID if role == "guest" else PENDING_ID,
-        "email": "person@example.test",
-        "username": "person_sample",
-        "display_name": "Sample Person",
-        "job_title": "External reviewer",
-        "role": role,
-        "status": status,
-        "is_deleted": deleted,
-        "invitation_sent_at": None if role == "member" else None,
-    }
+    return user_response(
+        user_id=GUEST_ID if role == "guest" else PENDING_ID,
+        email="person@example.test",
+        username="person_sample",
+        role=role,
+        status=status,
+        deleted=deleted,
+        actor_id=ADMIN_ID,
+    )
 
 
 def _route(request: httpx.Request) -> tuple[str, str]:
@@ -118,8 +121,10 @@ def _route(request: httpx.Request) -> tuple[str, str]:
         path = path.replace("/access", "/access")
     if re.fullmatch(r"/api/users/[0-9a-f-]{36}/restore", path):
         path = "/api/users/{user_id}/restore"
-    if re.fullmatch(r"/api/auth/invitations/[0-9a-f-]{36}(?:/resend)?", path):
-        path = "/api/auth/invitations/{user_id}" + ("/resend" if path.endswith("/resend") else "")
+    if re.fullmatch(r"/api/auth/invitations/[0-9a-f-]{36}(?:/(?:resend|reconcile))?", path):
+        path = "/api/auth/invitations/{user_id}" + (
+            f"/{path.rsplit('/', 1)[1]}" if path.endswith(("/resend", "/reconcile")) else ""
+        )
     return request.method, path
 
 
@@ -138,12 +143,16 @@ def test_access_control_plan_is_repeatable_and_restores_people(pack_key: str) ->
         "restore_user",
         "resend_invitation",
         "revoke_invitation",
+        "reconcile_invitation",
+        "revoke_invitation",
     ]
     people = {person.key: person for person in dataset.organization.actors.people}
     deleted_user = people[actions[3].target_key]
     assert deleted_user.role == "guest" and deleted_user.status == "active"
     assert actions[3].target_key == actions[4].target_key
     assert actions[5].target_key == actions[6].target_key
+    assert all(action.target_key == actions[5].target_key for action in actions[5:])
+    assert len({action.key for action in actions}) == len(actions)
     assert people[actions[5].target_key].status == "pending"
     assert all(action.actor_key == "admin" for action in actions)
     assert all(action.expected_end_state for action in actions)
@@ -184,18 +193,41 @@ def test_guest_cleanup_refuses_when_every_guest_is_needed_by_later_phases(
         plan_access_controls(dataset)
 
 
-def test_access_controls_call_ui_routes_and_restore_the_planned_state(tmp_path: Path) -> None:
-    dataset = _dataset()
+@pytest.mark.parametrize("pack_key", ("harbor", "school"))
+@pytest.mark.parametrize("fault,receipt_fault", INVITATION_CASES)
+def test_access_controls_call_ui_routes_and_restore_the_planned_state(
+    tmp_path: Path, pack_key: str, fault: str | None, receipt_fault: str | None
+) -> None:
+    dataset = _dataset(pack_key)
     actions = plan_access_controls(dataset)
+    pending = next(p for p in dataset.organization.actors.people if p.key == _pending_key(dataset))
     requests: list[httpx.Request] = []
     group: dict[str, Any] | None = None
     group_revision = 0
     group_deleted = False
     guest_deleted = False
     invitation_revoked = False
+    invitation_writes: list[str] = []
+    reads_since_write = 0
+    fault_hit = False
+
+    def invitation() -> dict[str, Any]:
+        return {
+            **_user(status="pending", role="member"),
+            "email": pending.email,
+            "username": pending.username,
+            "invitation_sent_at": None if invitation_revoked else "2026-10-02T11:44:20Z",
+        }
+
+    def corrupt(body: dict[str, Any]) -> dict[str, Any]:
+        nonlocal fault_hit
+        fault_hit = True
+        assert fault is not None
+        return corrupt_invitation(body, fault, GUEST_ID)
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal group, group_revision, group_deleted, guest_deleted, invitation_revoked
+        nonlocal reads_since_write, fault_hit
         login = _login_response(request)
         if login is not None:
             return login
@@ -254,15 +286,37 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(tmp_path: 
             assert guest_deleted
             guest_deleted = False
             return httpx.Response(200, headers=request_id, json=_user(status="active"))
-        if path == f"/api/auth/invitations/{PENDING_ID}/resend" and method == "POST":
+        if (
+            path
+            in {
+                f"/api/auth/invitations/{PENDING_ID}/resend",
+                f"/api/auth/invitations/{PENDING_ID}/reconcile",
+            }
+            and method == "POST"
+        ):
             assert json.loads(request.content) == {}
+            operation = path.rsplit("/", 1)[1]
+            assert operation == "resend" or invitation_revoked
+            invitation_writes.append(operation)
+            invitation_revoked, reads_since_write = False, 0
+            body = invitation()
+            if operation == "reconcile" and fault == "unknown":
+                fault_hit = True
+                raise httpx.ReadError("No response after owned fake committed", request=request)
+            if operation == "reconcile" and fault and fault.startswith("response_"):
+                body = corrupt(body)
             return httpx.Response(
                 200,
                 headers=request_id,
-                json={"user": _user(status="pending", role="member"), "delivery": "email"},
+                json={"user": body, "delivery": "email"} if operation == "resend" else body,
             )
         if path == f"/api/auth/invitations/{PENDING_ID}" and method == "DELETE":
-            invitation_revoked = True
+            assert not invitation_revoked
+            invitation_writes.append("revoke")
+            invitation_revoked, reads_since_write = True, 0
+            if fault == "cleanup_unknown" and invitation_writes.count("revoke") == 2:
+                fault_hit = True
+                return httpx.Response(503, headers=request_id, json={"detail": "Unavailable"})
             return httpx.Response(204, headers=request_id)
         if path == f"/api/users/{GUEST_ID}" and method == "GET":
             return httpx.Response(200, json=_user(status="active", deleted=guest_deleted))
@@ -272,24 +326,81 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(tmp_path: 
                 json={"user_id": GUEST_ID, "role": "guest", "unrestricted": False, "entries": []},
             )
         if path == f"/api/users/{PENDING_ID}" and method == "GET":
-            return httpx.Response(
-                200,
-                json={
-                    "id": PENDING_ID,
-                    "status": "pending",
-                    "is_deleted": False,
-                    "invitation_sent_at": None if invitation_revoked else "sent",
-                },
-            )
+            reads_since_write += 1
+            body = invitation()
+            if fault and (
+                (
+                    fault.startswith("before_")
+                    and invitation_writes == ["resend", "revoke"]
+                    and reads_since_write == 2
+                )
+                or (fault.startswith("readback_") and invitation_writes[-1:] == ["reconcile"])
+            ):
+                body = corrupt(body)
+            if fault == "cleanup_readback" and invitation_writes.count("revoke") == 2:
+                body["invitation_sent_at"], fault_hit = "2026-10-02T11:44:20Z", True
+            return httpx.Response(200, json=body)
         pytest.fail(f"Unexpected request: {method} {path}")
 
     context = _context(tmp_path, dataset, handler)
+    if fault:
+        error = (
+            SampleWriteOutcomeUnknown
+            if fault in {"unknown", "cleanup_unknown"}
+            else SamplePhaseActionError
+        )
+        with pytest.raises(error):
+            for action in actions:
+                execute_access_control(action, dataset, context)
+        assert fault_hit, "The actual failing transport boundary must be reached"
+        assert invitation_writes.count("reconcile") <= 1
+        assert invitation_writes.count("revoke") <= 2
+        context.clients["admin"].close()
+        return
     results = [execute_access_control(action, dataset, context) for action in actions]
+    revokes = [
+        result
+        for action, result in zip(actions, results, strict=True)
+        if action.values["operation"] == "revoke_invitation"
+    ]
+    if receipt_fault in {"missing_first", "missing_last"}:
+        results.remove(revokes[0 if receipt_fault == "missing_first" else -1])
+    elif receipt_fault == "duplicate":
+        results.append(revokes[0])
+    elif receipt_fault in {"actor", "target", "outcome"}:
+        key, value = {
+            "actor": ("actor_id", GUEST_ID),
+            "target": ("target_key", _guest_key(dataset)),
+            "outcome": ("outcome", "unknown"),
+        }[receipt_fault]
+        revokes[0][key] = value
+    elif receipt_fault in {"before", "after"}:
+        snapshot = invitation()
+        snapshot["invitation_sent_at"] = (
+            None if receipt_fault == "before" else "2026-10-02T11:44:20Z"
+        )
+        revokes[0][f"invitation_{receipt_fault}"] = snapshot
+    elif receipt_fault and receipt_fault != "split_target":
+        evidence = revokes[0]["request_evidence"][0]
+        key, value = {
+            "status": ("status_code", 500),
+            "path": ("path", f"/api/auth/invitations/{GUEST_ID}"),
+            "request_id": ("request_id", None),
+            "reused_request_id": ("request_id", revokes[-1]["request_evidence"][0]["request_id"]),
+        }[receipt_fault]
+        evidence[key] = value
     manifest = {
         "control_plan": [asdict(action) for action in actions],
         "control_results": results,
         "mappings": {"user": {_guest_key(dataset): GUEST_ID, _pending_key(dataset): PENDING_ID}},
     }
+    if receipt_fault == "split_target":
+        guest = next(p for p in dataset.organization.actors.people if p.key == _guest_key(dataset))
+        manifest["control_plan"][6]["target_key"] = revokes[0]["target_key"] = guest.key
+        row = revokes[0]["request_evidence"][0]
+        row["path"], row["primary_entity_id"] = f"/api/auth/invitations/{GUEST_ID}", GUEST_ID
+        for stage in ("invitation_before", "invitation_after"):
+            revokes[0][stage].update(id=GUEST_ID, email=guest.email, username=guest.username)
     # The real plan also holds the People security control under this kind; it has
     # its own verifier and must not fail the access operation check.
     from operations.sample.controls.people_security import plan_people_security_controls
@@ -300,13 +411,22 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(tmp_path: 
         context.clients["admin"], dataset, manifest, admin_id=ADMIN_ID
     )
 
+    if receipt_fault:
+        assert any("invitation" in issue.lower() and "receipt" in issue.lower() for issue in issues)
+        assert counts["access_invitations_revoked"] == 0
+        context.clients["admin"].close()
+        return
     assert not issues
     assert counts["access_groups_deleted"] == 1
     assert counts["access_users_restored"] == 1
     assert counts["access_invitations_revoked"] == 1
     assert group_deleted and not guest_deleted and invitation_revoked
+    assert invitation_writes == ["resend", "revoke", "reconcile", "revoke"]
+    assert ("POST", "/api/auth/invitations/{user_id}/reconcile") in CONTROL_ROUTES
     observed = {_route(request) for request in requests}
     assert CONTROL_ROUTES <= observed
+    assert pending.email not in (tmp_path / "requests.jsonl").read_text()
+    context.clients["admin"].close()
 
 
 def test_group_rename_fails_closed_without_a_current_etag(tmp_path: Path) -> None:

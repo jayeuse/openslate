@@ -92,6 +92,7 @@ type PreferencesContextValue = {
   mode: AppearanceMode | undefined;
   motion: MotionPreference | undefined;
   keyboardShortcuts: boolean | undefined;
+  regional: UserPreferences["appearance"] | undefined;
   loading: boolean;
   saving: boolean;
   disabled: boolean;
@@ -101,6 +102,7 @@ type PreferencesContextValue = {
   setMode: (mode: AppearanceMode) => void;
   setMotion: (motion: MotionPreference) => void;
   setKeyboardShortcuts: (enabled: boolean) => void;
+  setRegional: (next: Partial<UserPreferences["appearance"]>) => void;
   setDevice: (next: Partial<DeviceAppearancePreferences>) => void;
   retry: () => void;
 };
@@ -121,6 +123,7 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
   const live = useRef(false);
   const interactionSuspended = useRef(suspended);
   const writePending = useRef(false);
+  const [saving, setSaving] = useState(false);
   const recheckedError = useRef<unknown>(null);
   const readAfterVerification = useRef(false);
   const [verifying, setVerifying] = useState(false);
@@ -281,6 +284,7 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
     )
       return;
     writePending.current = true;
+    setSaving(true);
     void mutation
       .mutateAsync(patch)
       .then((preference) => {
@@ -296,6 +300,7 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
       })
       .finally(() => {
         writePending.current = false;
+        if (ownsAppearance()) setSaving(false);
       });
   }
   function retry() {
@@ -327,13 +332,15 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
         mode: acceptedPreferences?.theme,
         motion: acceptedPreferences?.appearance.motion,
         keyboardShortcuts: acceptedPreferences?.appearance.keyboard_shortcuts,
+        regional: acceptedPreferences?.appearance,
         loading: query.isPending || verifying,
-        saving: mutation.isPending,
+        saving,
         disabled:
           !acceptedPreferences ||
           suspended ||
           query.isPending ||
-          mutation.isPending ||
+          saving ||
+          acceptedPreferences !== query.data ||
           verifying ||
           Boolean(error),
         error,
@@ -349,6 +356,18 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
         setKeyboardShortcuts: (enabled) => {
           if (enabled !== query.data?.appearance.keyboard_shortcuts)
             save({ appearance: { keyboard_shortcuts: enabled } });
+        },
+        setRegional: (next) => {
+          if (
+            Object.entries(next).some(
+              ([key, value]) =>
+                value !==
+                query.data?.appearance[
+                  key as keyof UserPreferences["appearance"]
+                ],
+            )
+          )
+            save({ appearance: next });
         },
         setDevice,
         retry,

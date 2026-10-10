@@ -296,13 +296,13 @@ def test_notification_transport_keeps_recipient_internal_and_rejects_unsafe_enve
 
 
 def test_audience_scoped_entities_are_not_generic_invalidation_subjects() -> None:
-    for entity in ("reports", "report_runs", "report_run_rows", "report_schedules", "board_events"):
+    for entity in ("reports", "report_runs", "report_run_rows", "report_schedules"):
         assert event_for_entity(entity, uuid7()) is None
         with pytest.raises(ValueError, match="invalid invalidation payload"):
             parse_invalidation_payload({"entity": entity, "entity_id": str(uuid7())})
 
 
-def test_board_scoped_entities_are_not_generic_invalidation_subjects() -> None:
+def test_unscoped_and_raw_board_child_events_fail_closed() -> None:
     for entity in (
         "boards",
         "board_groups",
@@ -319,6 +319,117 @@ def test_board_scoped_entities_are_not_generic_invalidation_subjects() -> None:
         assert event_for_entity(entity, uuid7()) is None
         with pytest.raises(ValueError, match="invalid invalidation payload"):
             parse_invalidation_payload({"entity": entity, "entity_id": str(uuid7())})
+
+
+@pytest.mark.parametrize("entity", ["boards", "board_posts", "board_events", "board_widgets"])
+def test_board_notification_is_opaque_and_reaches_only_current_board_readers(entity: str) -> None:
+    board_id = uuid7()
+    payload = {"entity": entity, "board_id": str(board_id)}
+    event = parse_invalidation_payload(payload)
+
+    assert event.to_payload() == event.to_transport_payload() == payload
+    assert event_for_entity(entity, uuid7(), board_id=board_id, module_id=uuid7()) == event
+
+    async def exercise() -> None:
+        hub = EventHub()
+        reader = await hub.subscribe(
+            EventViewer(uuid7(), "member", frozenset(), board_ids=frozenset({board_id}))
+        )
+        guest = await hub.subscribe(
+            EventViewer(uuid7(), "guest", frozenset(), board_ids=frozenset({board_id}))
+        )
+        outsider = await hub.subscribe(_viewer(modules=(board_id,)))
+        admin = await hub.subscribe(_viewer("admin"))
+        inactive = await hub.subscribe(
+            EventViewer(uuid7(), None, None, board_ids=frozenset({board_id}))
+        )
+
+        await hub.publish_notification(event.to_transport_json())
+
+        for subscriber in (reader, guest, admin):
+            assert subscriber.queue.get_nowait() == event
+        assert outsider.queue.empty()
+        assert inactive.queue.empty()
+        for subscriber in (reader, guest, outsider, admin, inactive):
+            await hub.unsubscribe(subscriber)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("extra", ["entity_id", "module_id", "recipient_id", "snapshot", "name"])
+def test_board_transport_rejects_every_field_beyond_its_canonical_scope(extra: str) -> None:
+    with pytest.raises(ValueError, match="invalid invalidation payload"):
+        parse_invalidation_payload({"entity": "board_posts", "board_id": str(uuid7()), extra: None})
+
+
+@pytest.mark.parametrize("board_id", [None, "invalid", 1, {}, []])
+def test_board_transport_rejects_missing_or_malformed_board_scope(board_id: object) -> None:
+    with pytest.raises(ValueError, match="invalid invalidation payload"):
+        parse_invalidation_payload({"entity": "boards", "board_id": board_id})
+
+
+def test_board_scope_cannot_be_attached_to_other_invalidation_entities() -> None:
+    for entity in (
+        "records",
+        "dashboards",
+        "reports",
+        "board_post_revisions",
+        "in_app_notifications",
+    ):
+        with pytest.raises(ValueError, match="invalid invalidation payload"):
+            parse_invalidation_payload({"entity": entity, "board_id": str(uuid7())})
+    for routing in ({"entity_id": uuid7()}, {"module_id": uuid7()}, {"recipient_id": uuid7()}):
+        with pytest.raises(ValueError, match="invalid invalidation payload"):
+            InvalidationEvent("board_posts", board_id=uuid7(), **routing)
+
+
+@pytest.mark.parametrize("entity", ["dashboards", "dashboard_widgets"])
+def test_dashboard_changes_reach_every_authenticated_account_without_row_identifiers(
+    entity: str,
+) -> None:
+    event = event_for_entity(entity, uuid7(), module_id=uuid7())
+    assert event is not None
+    assert event.to_payload() == {"entity": "dashboards"}
+    assert parse_invalidation_payload(event.to_payload()) == event
+
+    async def exercise() -> None:
+        hub = EventHub()
+        subscribers = [await hub.subscribe(_viewer(role)) for role in ("admin", "member", "guest")]
+        inactive = await hub.subscribe(EventViewer(uuid7(), None, frozenset()))
+        await hub.publish_notification(event.to_transport_json())
+        for subscriber in subscribers:
+            assert subscriber.queue.get_nowait() == event
+            await hub.unsubscribe(subscriber)
+        assert inactive.queue.empty()
+        await hub.unsubscribe(inactive)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("extra", ["entity_id", "module_id", "recipient_id", "board_id"])
+def test_dashboard_transport_and_values_reject_row_or_routing_metadata(extra: str) -> None:
+    with pytest.raises(ValueError, match="invalid invalidation payload"):
+        parse_invalidation_payload({"entity": "dashboards", extra: str(uuid7())})
+    with pytest.raises(ValueError, match="invalid invalidation payload"):
+        InvalidationEvent("dashboards", **{extra: uuid7()})
+
+
+def test_module_and_board_access_with_the_same_identifier_have_distinct_signatures() -> None:
+    async def exercise() -> None:
+        hub = EventHub()
+        scope_id, user_id = uuid7(), uuid7()
+        subscription = await hub.subscribe(_viewer(modules=(scope_id,), user_id=user_id))
+        board_reader = EventViewer(user_id, "member", frozenset(), board_ids=frozenset({scope_id}))
+        assert hub.refresh_subscription(subscription, board_reader)
+        assert not hub.can_receive(subscription, InvalidationEvent("records", module_id=scope_id))
+        assert hub.can_receive(
+            subscription,
+            parse_invalidation_payload({"entity": "boards", "board_id": str(scope_id)}),
+        )
+        assert not hub.refresh_subscription(subscription, board_reader)
+        await hub.unsubscribe(subscription)
+
+    asyncio.run(exercise())
 
 
 def test_notification_fanout_targets_only_the_persisted_recipient_even_for_admins() -> None:

@@ -30,7 +30,7 @@ from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleOperation, LifecycleTargetType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from tests.boards.support import guest, member
+from tests.boards.support import admin, guest, member
 from tests.boards.test_post_routes import _actor, _board, _grant
 from tests.rbac.support import make_group_access
 
@@ -79,8 +79,7 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
         assert denied.status_code == 409
         assert denied.json()["detail"]["code"] == "record_unavailable"
     assert (
-        db.scalar(select(BoardRecordLink.id).where(BoardRecordLink.record_id == record.id))
-        is None
+        db.scalar(select(BoardRecordLink.id).where(BoardRecordLink.record_id == record.id)) is None
     )
 
     source_department = db.get(Department, module.department_id)
@@ -260,9 +259,7 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
         assert linked.status_code == 201, linked.text
         link_id = linked.json()["id"]
     locked_board = db.scalar(select(Board).where(Board.id == board.id).with_for_update())
-    locked_item = db.scalar(
-        select(BoardPost).where(BoardPost.id == item.id).with_for_update()
-    )
+    locked_item = db.scalar(select(BoardPost).where(BoardPost.id == item.id).with_for_update())
     assert locked_board is not None and locked_item is not None
     revision = publish_locked(
         db,
@@ -318,8 +315,7 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
         db, LifecycleTargetType.RECORD, record.id, LifecycleOperation.PURGE, owner.id
     )
     assert any(
-        blocker.entity_type == "board_post_revision_record_links"
-        for blocker in plan.blockers
+        blocker.entity_type == "board_post_revision_record_links" for blocker in plan.blockers
     )
     with _client(db, reader) as client:
         unavailable = client.get(path)
@@ -354,6 +350,7 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
 @pytest.mark.integration
 def test_archived_event_record_link_blocks_record_module_and_department_purge_until_delete(
     integration_owner_db: Session,
+    monkeypatch,
 ) -> None:
     db = integration_owner_db
     owner = _actor(db, "record-purge")
@@ -402,21 +399,30 @@ def test_archived_event_record_link_blocks_record_module_and_department_purge_un
     ):
         plan = plan_lifecycle(db, target, target_id, LifecycleOperation.PURGE, owner.id)
         assert any(blocker.entity_type == "board_record_links" for blocker in plan.blockers)
-    with _client(db, owner) as client:
-        deleted = client.request(
-            "DELETE",
-            path,
+    purger = admin(db)
+    db.commit()
+    monkeypatch.setattr(
+        "app.systems.boards.event_purge_router.get_settings",
+        lambda: type("Settings", (), {"lifecycle_purge_enabled": True})(),
+    )
+    monkeypatch.setattr(
+        "app.systems.sandbox.lifecycle.password.ProviderPasswordGrantClient.verify_password",
+        lambda *args: purger.id,
+    )
+    with _client(db, purger) as client:
+        preview = client.post(f"{path}/purge/preview")
+        assert preview.status_code == 200, preview.text
+        deleted = client.post(
+            f"{path}/purge",
             json={
-                "board_revision": 3,
-                "event_revision": 3,
+                "token": preview.json()["token"],
+                "confirmation_name": "Retained event",
+                "password": "synthetic-step-up",
             },
         )
-        assert deleted.status_code == 204, deleted.text
+        assert deleted.status_code == 200, deleted.text
     assert (
-        db.scalar(
-            select(BoardRecordLink.id).where(BoardRecordLink.record_id == record.id)
-        )
-        is None
+        db.scalar(select(BoardRecordLink.id).where(BoardRecordLink.record_id == record.id)) is None
     )
 
 

@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from operations.sample.blueprint import SampleDataset
 from operations.sample.board_text import dashboard_name, report_names, view_name
+from operations.sample.controls.charts import (
+    CHART_ROUTES,
+    execute_chart_control,
+    plan_chart_control,
+)
 from operations.sample.controls.openview_mutations import (
     _record_lifecycle_control,
     _relationship_delete_control,
 )
+from operations.sample.controls.openview_purge import execute_report_purge
 from operations.sample.controls.openview_queries import (
     QUERY_ROUTES,
     control_modules,
@@ -54,9 +60,13 @@ _MUTATION_ROUTES = frozenset(
         ("PATCH", "/api/reports/{report_id}"),
         ("GET", "/api/reports/{report_id}/schedule"),
         ("PATCH", "/api/reports/{report_id}/schedule"),
+        ("POST", "/api/reports"),
+        ("DELETE", "/api/reports/{report_id}"),
+        ("POST", "/api/reports/{report_id}/purge/preview"),
+        ("POST", "/api/reports/{report_id}/purge"),
     }
 )
-CONTROL_ROUTES = QUERY_ROUTES | _MUTATION_ROUTES
+CONTROL_ROUTES = QUERY_ROUTES | _MUTATION_ROUTES | CHART_ROUTES
 
 
 def _action(
@@ -175,6 +185,17 @@ def plan_openview_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     actions.extend(
         (
             _action(
+                "report_purge",
+                "admin",
+                "control:report_purge",
+                {
+                    "source_report_key": logical_report,
+                    "module_key": source.key,
+                    "temporary_name": f"{report_name[:60].rstrip()} disposal review",
+                },
+                {"report_physically_absent": True, "authored_source_preserved": True},
+            ),
+            _action(
                 "record_lifecycle",
                 lifecycle_actor,
                 "control:record_lifecycle",
@@ -212,6 +233,7 @@ def plan_openview_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
             ),
         )
     )
+    actions.append(plan_chart_control(dataset))
     return tuple(actions)
 
 
@@ -341,6 +363,8 @@ def execute_openview_control(
 ) -> dict[str, object]:
     """Execute one query, reversible edit, or disposable record control action."""
     operation = action.values.get("operation")
+    if operation == "chart_lifecycle":
+        return execute_chart_control(action, dataset, context, on_substep=on_substep)
     if operation in {
         "record_query",
         "grouped_query",
@@ -350,6 +374,7 @@ def execute_openview_control(
         "aggregate_date_series",
         "aggregate_snapshot_groups",
         "aggregate_snapshot_date_series",
+        "aggregate_snapshots",
     }:
         return execute_openview_query_control(action, context, on_substep=on_substep)
     if operation in {"view_patch", "dashboard_patch", "report_patch", "schedule_patch"}:
@@ -358,4 +383,6 @@ def execute_openview_control(
         return _record_lifecycle_control(action, dataset, context, on_substep=on_substep)
     if operation == "relationship_delete":
         return _relationship_delete_control(action, dataset, context, on_substep=on_substep)
+    if operation == "report_purge":
+        return execute_report_purge(action, context, on_substep=on_substep)
     raise SamplePhaseActionError("Unsupported OpenView control action", step=action.key)

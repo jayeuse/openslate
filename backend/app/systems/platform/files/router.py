@@ -78,6 +78,9 @@ def list_files(
         raise error("file_sort_invalid", "This file purpose does not support this sort", 422)
     parent(db, params.record_id, active=False, department_id=params.department_id)
     statement = select(File).where(File.purpose == params.purpose)
+    if params.purpose == "user_avatar":
+        response.headers["Cache-Control"] = "private, no-store"
+        statement = statement.where(File.creator_id == user.id)
     if params.record_id is not None:
         statement = statement.where(File.record_id == params.record_id)
     if library:
@@ -126,7 +129,14 @@ def list_files(
 @router.get("/{file_id}", response_model=FileResponse)
 def get_file(file_id: UUID, user: Actor, db: DB) -> FileResponse:
     file = load(db, file_id)
-    authorize(db, user, file.purpose, record_id=file.record_id, department_id=file.department_id)
+    authorize(
+        db,
+        user,
+        file.purpose,
+        record_id=file.record_id,
+        department_id=file.department_id,
+        creator_id=file.creator_id,
+    )
     return FileResponse.model_validate(file)
 
 

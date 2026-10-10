@@ -1,5 +1,10 @@
 import { ApiContractError, ApiError } from "@/lib/api";
 import {
+  formatWorkspaceDate,
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time";
+import {
   INACTIVE_DAYS_DEFAULT,
   INACTIVE_DAYS_MIN,
   INACTIVE_DAYS_MAX,
@@ -377,18 +382,26 @@ export function endOfDateInput(value: string): string | null {
   return Number.isFinite(date.valueOf()) ? date.toISOString() : null;
 }
 
-export function formatDate(value: string | null): string {
+export function formatDate(
+  value: string | null,
+  region?: WorkspaceRegion,
+): string {
   if (!value) return "None";
   const date = new Date(value);
   if (!Number.isFinite(date.valueOf())) return "Unavailable";
+  if (region) return formatWorkspaceDate(value, region);
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
     date,
   );
 }
 
-export function formatDateTime(value: string): string {
+export function formatDateTime(
+  value: string,
+  region?: WorkspaceRegion,
+): string {
   const date = new Date(value);
   if (!Number.isFinite(date.valueOf())) return "Unavailable";
+  if (region) return formatWorkspaceDateTime(value, region);
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",

@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.systems.platform.scheduling.models import WorkState
+
 Cadence = Literal["daily", "weekly", "monthly"]
 Weekday = Annotated[StrictInt, Field(ge=0, le=6)]
 MonthDay = Annotated[StrictInt, Field(ge=1, le=31)]
@@ -85,6 +87,12 @@ class SchedulePatch(BaseModel):
         return self
 
 
+class ScheduleLastRun(BaseModel):
+    state: WorkState
+    finished_at: datetime | None
+    failure_label: str | None
+
+
 class ScheduleResponse(BaseModel):
     """Private policy representation; a disabled policy exposes no due instant."""
 
@@ -100,5 +108,6 @@ class ScheduleResponse(BaseModel):
     weekday: int | None
     month_day: int | None
     next_due_at: datetime | None
+    last_run: ScheduleLastRun | None
     created_at: datetime
     updated_at: datetime

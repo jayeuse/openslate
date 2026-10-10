@@ -42,6 +42,9 @@ class FakeSession:
     def add(self, instance: object) -> None:
         self.added.append(instance)
 
+    def in_nested_transaction(self) -> bool:
+        return False
+
     def scalars(self, query) -> object:
         self.scalars_calls += 1
         return SimpleNamespace(all=lambda: self.scalar_rows)
@@ -79,6 +82,9 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         "theme_preference": None,
         "appearance": None,
         "job_title": None,
+        "phone": None,
+        "bio": None,
+        "avatar_file_id": None,
         "sponsor_user_id": None,
         "expires_at": None,
         "status": "active",

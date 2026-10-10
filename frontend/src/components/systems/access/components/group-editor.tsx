@@ -39,19 +39,16 @@ import {
   sameMembers,
   summaryLabel,
   type GroupDetails,
-  type MemberOption,
 } from "../helpers/groups";
-import { isUnansweredRequest } from "../helpers/people";
+import { isUnansweredRequest, personName } from "../helpers/people";
 import {
   deleteAccessGroup,
   getAccessGroup,
   replaceAccessGroupAccess,
   replaceAccessGroupMembers,
   updateAccessGroup,
-  type AccessDepartment,
   type AccessGroup,
   type AccessGroupAccessEntry,
-  type AccessModule,
   type AccessVersioned,
 } from "../state/api";
 import { accessDraftSubmissionNeedsReload } from "../state/draft-journal-storage";
@@ -72,6 +69,12 @@ import {
   type DraftReviewValues,
 } from "./editor-conflicts";
 import { AccessSummary, GroupAccessEditor } from "./group-access-editor";
+import { usePeopleSearch } from "../hooks/use-people-search";
+import {
+  useAccessCatalog,
+  catalogDepartments,
+  catalogModules,
+} from "../hooks/use-access-catalog";
 import { GroupMemberPicker } from "./group-member-picker";
 import { TextField } from "./people-fields";
 
@@ -102,7 +105,13 @@ function valueOf<S extends GroupSection>(
   const values: SectionValue = {
     details: detailsOf(group),
     members: group.member_ids,
-    access: group.access,
+    // Journal and command values contain IDs/levels, while reads also name
+    // departments/modules. Keep every explicit row and omit display metadata.
+    access: group.access.map(({ department_id, module_id, level }) => ({
+      department_id,
+      module_id,
+      level,
+    })),
   };
   return values[section];
 }
@@ -140,9 +149,6 @@ export type GroupEditorTab = GroupSection;
 export function GroupEditor({
   group,
   mode,
-  departments,
-  modules,
-  memberOptions,
   listFresh,
   tab,
   onTabChange,
@@ -150,9 +156,6 @@ export function GroupEditor({
 }: {
   group: AccessGroup;
   mode: "admin" | "manager";
-  departments: readonly AccessDepartment[];
-  modules: readonly AccessModule[];
-  memberOptions: readonly MemberOption[];
   /** The list holds a read that finished after any earlier save. */
   listFresh: boolean;
   tab: GroupEditorTab;
@@ -199,6 +202,33 @@ export function GroupEditor({
     latest && latest.id === group.id && latest.revision > group.revision
       ? latest
       : group;
+  const peopleSearch = usePeopleSearch({
+    source: admin ? "users" : "candidates",
+    selectedIds: [
+      ...(edits.members?.draft ?? shown.member_ids),
+      ...(uncertain?.members?.draft ?? []),
+    ],
+  });
+  const catalogEntries = [
+    ...shown.access,
+    ...(edits.access?.draft ?? []),
+    ...(edits.access?.baseline ?? []),
+  ];
+  const departmentSearch = useAccessCatalog({
+    kind: "departments",
+    selectedIds: catalogEntries.map((entry) => entry.department_id),
+    enabled: admin && (tab === "access" || edits.access !== null),
+  });
+  const moduleSearch = useAccessCatalog({
+    kind: "modules",
+    listEnabled: false,
+    selectedIds: catalogEntries.flatMap((entry) =>
+      entry.module_id ? [entry.module_id] : [],
+    ),
+    enabled: admin && (tab === "access" || edits.access !== null),
+  });
+  const departments = catalogDepartments(departmentSearch.combined);
+  const modules = catalogModules(moduleSearch.combined);
   const dirty = Boolean(edits.details || edits.members || edits.access);
   const locked = uncertain !== null || pending !== null;
 
@@ -529,7 +559,9 @@ export function GroupEditor({
   }
 
   function memberNames(memberIds: readonly string[]) {
-    const names = new Map(memberOptions.map((item) => [item.id, item.name]));
+    const names = new Map(
+      peopleSearch.selectedItems.map((item) => [item.id, personName(item)]),
+    );
     return memberIds
       .map((memberId) => ({
         id: memberId,
@@ -576,6 +608,24 @@ export function GroupEditor({
             {journalIssue}
           </Alert>
         ) : null}
+        {section === "members" && peopleSearch.selectedLoading ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            Loading member names…
+          </p>
+        ) : null}
+        {section === "members" && peopleSearch.error ? (
+          <Alert variant="destructive" className="space-y-3">
+            <p>{peopleSearch.error}</p>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() => void peopleSearch.retry()}
+            >
+              Retry member names
+            </Button>
+          </Alert>
+        ) : null}
         <UncertainDraftWarning
           subject="group"
           currentSummary="Compare your saved change with this group now. If it is not there, discard it and make the change again."
@@ -583,7 +633,10 @@ export function GroupEditor({
           currentValues={reviewValues(section, null)}
           entriesLabel={section === "access" ? "Access" : "Members"}
           canResolve={
-            listFresh && !accessDraftSubmissionNeedsReload(signedInId, "group")
+            listFresh &&
+            !accessDraftSubmissionNeedsReload(signedInId, "group") &&
+            (section !== "members" ||
+              (!peopleSearch.error && !peopleSearch.selectedLoading))
           }
           pending={pending !== null}
           onResolve={() => {
@@ -808,7 +861,8 @@ export function GroupEditor({
               Members get the access this group gives. Guests can only read.
             </p>
             <GroupMemberPicker
-              options={memberOptions}
+              source={admin ? "users" : "candidates"}
+              peopleSearch={peopleSearch}
               selected={members}
               disabled={locked}
               onChange={(memberIds) => update("members", memberIds)}
@@ -831,6 +885,7 @@ export function GroupEditor({
               </p>
               <GroupAccessEditor
                 entries={access}
+                departmentSearch={departmentSearch}
                 departments={departments}
                 modules={modules}
                 disabled={locked}

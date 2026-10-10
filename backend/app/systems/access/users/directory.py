@@ -10,7 +10,12 @@ from sqlalchemy import Select, and_, case, func, or_, select, tuple_
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.listing import ListQuerySpec, StandardListRequest, execute_standard_list
+from app.common.listing import (
+    DeletedFilter,
+    ListQuerySpec,
+    StandardListRequest,
+    execute_standard_list,
+)
 from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
@@ -55,6 +60,7 @@ class UserSummaryRequest(BaseModel):
 
 
 class UserListRequest(StandardListRequest[UserSortField]):
+    ids: list[UUID] | None = Field(default=None, max_length=100)
     role: UserRole | None = None
     group_id: UUID | Literal["none"] | None = None
     department_id: UUID | None = None
@@ -119,6 +125,8 @@ def _history_predicate(kind: str, now: datetime, inactive_days: int) -> ColumnEl
 
 def _filtered_users(params: UserListRequest, now: datetime) -> Select[tuple[User]]:
     statement = select(User)
+    if params.ids is not None:
+        statement = statement.where(User.id.in_(params.ids))
     if params.role is not None:
         statement = statement.where(User.role == params.role.value)
     if params.status is not None:
@@ -172,6 +180,9 @@ def _filtered_users(params: UserListRequest, now: datetime) -> Select[tuple[User
 
 
 def directory_list(db: Session, params: UserListRequest, now: datetime) -> UserListResponse:
+    # An explicit ID lookup resolves archived selections as well as live people.
+    if params.ids is not None and params.deleted is DeletedFilter.EXCLUDE:
+        params = params.model_copy(update={"deleted": DeletedFilter.INCLUDE})
     tie_breaker: ColumnElement[Any] = cast(ColumnElement[Any], User.id)
     if params.sort_by == UserSortField.NAME:
         tie_breaker = tuple_(User.username, User.id)

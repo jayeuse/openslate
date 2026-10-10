@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { ArrowRight, LockKeyhole } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -14,7 +14,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { ApiError } from "@/lib/api";
-import { signIn } from "@/lib/auth-api";
+import { getSessionStatus, signIn } from "@/lib/auth-api";
 
 function PasswordSetNotice() {
   const search = useSearchParams();
@@ -31,6 +31,25 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  useEffect(() => {
+    const controller = new AbortController();
+    async function checkSession() {
+      try {
+        const session = await getSessionStatus(controller.signal);
+        if (session.authenticated) {
+          const destination = await workspaceStartRoute();
+          if (!controller.signal.aborted) router.replace(destination);
+        } else if (!controller.signal.aborted) {
+          setCheckingSession(false);
+        }
+      } catch {
+        if (!controller.signal.aborted) setCheckingSession(false);
+      }
+    }
+    void checkSession();
+    return () => controller.abort();
+  }, [router]);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -43,11 +62,27 @@ export default function LoginPage() {
       }
       router.push(await workspaceStartRoute());
     } catch (error) {
-      setError(
-        error instanceof ApiError && error.status === 401
-          ? "That email or password is not right."
-          : "Unable to sign in. Check your connection and try again.",
-      );
+      if (error instanceof ApiError && error.status === 401) {
+        setError("That email or password is not right.");
+      } else if (error instanceof ApiError && error.status === 429) {
+        setError(
+          error.retryAfter !== undefined
+            ? `Too many attempts. Try again in ${Math.max(1, Math.ceil(error.retryAfter / 60))} minutes.`
+            : "Too many attempts. Try again later.",
+        );
+      } else if (error instanceof ApiError && error.status === 503) {
+        setError("Sign-in is not available now. Try again later.");
+      } else if (
+        error instanceof ApiError &&
+        error.status === 403 &&
+        error.code === "ip_not_allowed"
+      ) {
+        setError(
+          "Sign-in from this network is not allowed. Contact your administrator.",
+        );
+      } else {
+        setError("Unable to sign in. Check your connection and try again.");
+      }
     } finally {
       setPending(false);
     }
@@ -77,7 +112,7 @@ export default function LoginPage() {
         </p>
       </section>
       <section className="bg-background flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-sm">
+        <div className="w-full max-w-sm" aria-busy={checkingSession}>
           <a
             href="/"
             className="mb-12 inline-flex items-center gap-2 text-sm font-semibold lg:hidden"
@@ -96,74 +131,76 @@ export default function LoginPage() {
               Sign in to continue to your workspace.
             </p>
           </div>
-          <Suspense fallback={null}>
-            <PasswordSetNotice />
-          </Suspense>
-          {error && (
-            <Alert role="alert" variant="destructive" className="mb-5">
-              {error}
-            </Alert>
-          )}
-          <form className="space-y-5" onSubmit={submit}>
-            <FormField className="space-y-2">
-              <FieldLabel htmlFor="email">Email</FieldLabel>
-              <FieldControl
-                render={
-                  <Input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    required
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                  />
-                }
-              />
-            </FormField>
-            <FormField className="space-y-2">
-              <FieldLabel htmlFor="password">Password</FieldLabel>
-              <FieldControl
-                render={
-                  <Input
-                    id="password"
-                    type="password"
-                    autoComplete="current-password"
-                    minLength={12}
-                    required
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                }
-              />
-              <p className="text-muted-foreground text-xs">
-                Use the email and password for your OpenSlate account.
-              </p>
+          <div className={checkingSession ? "invisible" : undefined}>
+            <Suspense fallback={null}>
+              <PasswordSetNotice />
+            </Suspense>
+            {error && (
+              <Alert role="alert" variant="destructive" className="mb-5">
+                {error}
+              </Alert>
+            )}
+            <form className="space-y-5" onSubmit={submit}>
+              <FormField className="space-y-2">
+                <FieldLabel htmlFor="email">Email</FieldLabel>
+                <FieldControl
+                  render={
+                    <Input
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      required
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                    />
+                  }
+                />
+              </FormField>
+              <FormField className="space-y-2">
+                <FieldLabel htmlFor="password">Password</FieldLabel>
+                <FieldControl
+                  render={
+                    <Input
+                      id="password"
+                      type="password"
+                      autoComplete="current-password"
+                      minLength={12}
+                      required
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                    />
+                  }
+                />
+                <p className="text-muted-foreground text-xs">
+                  Use the email and password for your OpenSlate account.
+                </p>
+                <a
+                  className="text-primary inline-block text-sm font-medium hover:underline"
+                  href="/auth/recovery"
+                >
+                  Forgot password?
+                </a>
+              </FormField>
+              <Button className="w-full" size="lg" disabled={pending}>
+                {pending ? (
+                  "Signing in…"
+                ) : (
+                  <>
+                    Sign in <ArrowRight aria-hidden="true" />
+                  </>
+                )}
+              </Button>
+            </form>
+            <p className="text-muted-foreground mt-8 text-center text-sm">
+              First deployment?{" "}
               <a
-                className="text-primary inline-block text-sm font-medium hover:underline"
-                href="/auth/recovery"
+                className="text-primary font-medium hover:underline"
+                href="/setup"
               >
-                Forgot password?
+                Read the setup guide
               </a>
-            </FormField>
-            <Button className="w-full" size="lg" disabled={pending}>
-              {pending ? (
-                "Signing in…"
-              ) : (
-                <>
-                  Sign in <ArrowRight aria-hidden="true" />
-                </>
-              )}
-            </Button>
-          </form>
-          <p className="text-muted-foreground mt-8 text-center text-sm">
-            First deployment?{" "}
-            <a
-              className="text-primary font-medium hover:underline"
-              href="/setup"
-            >
-              Read the setup guide
-            </a>
-          </p>
+            </p>
+          </div>
         </div>
       </section>
     </main>

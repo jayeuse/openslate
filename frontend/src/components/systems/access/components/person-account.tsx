@@ -1,7 +1,7 @@
 "use client";
 
 import type { Route } from "next";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -17,6 +17,7 @@ import { toast } from "@/components/ui/toast";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 
 import { afterAccessUserChange } from "../adapters/access-queries";
+import type { PersonMemberships } from "../hooks/use-people-memberships";
 import {
   peopleErrorMessage,
   personName,
@@ -25,6 +26,7 @@ import {
 } from "../helpers/people";
 import {
   deleteAccessUser,
+  reconcileAccessInvitation,
   resendAccessInvitation,
   restoreAccessUser,
   revokeAccessInvitation,
@@ -34,7 +36,13 @@ import {
 import { ActionError } from "./editor-conflicts";
 
 type AccountAction =
-  "resend" | "revoke" | "disable" | "enable" | "delete" | "restore";
+  | "reconcile"
+  | "resend"
+  | "revoke"
+  | "disable"
+  | "enable"
+  | "delete"
+  | "restore";
 
 type ActionCopy = {
   button: string;
@@ -48,6 +56,15 @@ type ActionCopy = {
 function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
   const name = personName(person);
   switch (action) {
+    case "reconcile":
+      return {
+        button: "Finish sending invitation",
+        title: "Finish sending the invitation?",
+        description: `Complete the pending invitation for ${person.email}. They will receive an invitation email.`,
+        confirm: "Finish sending",
+        done: "Invitation sent",
+        destructive: false,
+      };
     case "resend":
       return {
         button: "Resend invitation",
@@ -110,6 +127,8 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
 
 function run(action: AccountAction, person: AccessUser): Promise<unknown> {
   switch (action) {
+    case "reconcile":
+      return reconcileAccessInvitation(person.id);
     case "resend":
       return resendAccessInvitation(person.id);
     case "revoke":
@@ -128,7 +147,10 @@ function run(action: AccountAction, person: AccessUser): Promise<unknown> {
 /** The account actions the backend accepts for a person in this state. */
 function availableActions(person: AccessUser, self: boolean): AccountAction[] {
   if (person.is_deleted) return person.status === "pending" ? [] : ["restore"];
-  if (person.status === "pending") return ["resend", "revoke"];
+  if (person.status === "pending")
+    return person.invitation_sent_at === null
+      ? ["reconcile"]
+      : ["resend", "revoke"];
   if (self) return [];
   return person.status === "disabled"
     ? ["enable", "delete"]
@@ -138,10 +160,12 @@ function availableActions(person: AccessUser, self: boolean): AccountAction[] {
 export function PersonAccount({
   person,
   groups,
+  membership,
   self,
 }: {
   person: AccessUser;
   groups: readonly NamedItem[];
+  membership?: PersonMemberships;
   self: boolean;
 }) {
   const client = useQueryClient();
@@ -149,26 +173,48 @@ export function PersonAccount({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [now] = useState(() => Date.now());
+  const mounted = useRef(false);
+  const pendingRef = useRef(false);
   const actions = availableActions(person, self);
   const copy = action ? actionCopy(action, person) : null;
   const state = personState(person, now);
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   async function confirm() {
-    if (!action || !copy || pending) return;
+    if (
+      !action ||
+      !copy ||
+      pending ||
+      pendingRef.current ||
+      !actions.includes(action)
+    )
+      return;
+    pendingRef.current = true;
     setPending(true);
     setError("");
     try {
       await run(action, person);
+      if (!mounted.current) return;
       toast.add({ title: copy.done, type: "success" });
       setAction(null);
     } catch (caught) {
+      if (!mounted.current) return;
       setError(
         peopleErrorMessage(caught, "The change could not be made. Try again."),
       );
     } finally {
-      setPending(false);
-      // A refused change may mean this person changed elsewhere.
-      void afterAccessUserChange(client);
+      pendingRef.current = false;
+      if (mounted.current) {
+        setPending(false);
+        // A refused change may mean this person changed elsewhere.
+        void afterAccessUserChange(client);
+      }
     }
   }
 
@@ -183,7 +229,12 @@ export function PersonAccount({
             Administrators have full access everywhere, so they are not members
             of groups.
           </p>
-        ) : groups.length ? (
+        ) : !membership || membership.loading ? (
+          <p role="status" className="text-muted-foreground text-sm">
+            Loading groups…
+          </p>
+        ) : membership.denied ||
+          (membership.error && !groups.length) ? null : groups.length ? (
           <>
             <ul aria-label="Groups" className="flex flex-wrap gap-2">
               {groups.map((group) => (
@@ -209,6 +260,45 @@ export function PersonAccount({
             group on the Groups tab.
           </p>
         )}
+        {person.role !== "admin" && membership ? (
+          <>
+            {!membership.denied &&
+            (membership.hasMore || membership.loaded < membership.total) ? (
+              <p className="text-muted-foreground text-sm">
+                {membership.loaded} of {membership.total} groups
+              </p>
+            ) : null}
+            {membership.error ? (
+              <p role="alert" className="text-muted-foreground text-sm">
+                {membership.error}
+              </p>
+            ) : null}
+            {membership.retryFirstPage ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={membership.recovering}
+                onClick={() => void membership.retry()}
+              >
+                Retry groups
+              </Button>
+            ) : null}
+            {membership.hasMore ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={membership.loadingMore}
+                onClick={() => void membership.loadMore()}
+              >
+                {membership.loadingMore
+                  ? "Loading more groups…"
+                  : "Load more groups"}
+              </Button>
+            ) : null}
+          </>
+        ) : null}
       </section>
 
       <section aria-labelledby="person-account-title" className="space-y-2">
@@ -221,7 +311,9 @@ export function PersonAccount({
               ? "This invitation was revoked. Invite this email address again to give them access."
               : "This account is deleted."
             : person.status === "pending"
-              ? "The invitation has not been accepted yet."
+              ? person.invitation_sent_at === null
+                ? "The invitation has not been sent yet. Finish sending it to give this person their invitation link."
+                : "The invitation has not been accepted yet."
               : self
                 ? "This is your account. Another administrator can disable or delete it."
                 : state.id === "expired"
@@ -239,6 +331,7 @@ export function PersonAccount({
                   key={item}
                   variant={itemCopy.destructive ? "outline" : "secondary"}
                   className="min-h-11 w-full sm:w-auto"
+                  disabled={pending}
                   onClick={() => {
                     setError("");
                     setAction(item);

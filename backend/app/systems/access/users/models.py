@@ -51,9 +51,21 @@ class User(BaseModel):
         CheckConstraint(
             "CASE WHEN jsonb_typeof(appearance) = 'object' THEN "
             "(appearance ?& ARRAY['motion','keyboard_shortcuts'] AND "
-            "appearance - ARRAY['motion','keyboard_shortcuts'] = '{}'::jsonb AND "
+            "appearance - ARRAY['motion','keyboard_shortcuts','timezone','date_format',"
+            "'time_format','week_start','start_page'] = '{}'::jsonb AND "
             "appearance ->> 'motion' IN ('system','reduce') AND "
-            "jsonb_typeof(appearance -> 'keyboard_shortcuts') = 'boolean') IS TRUE "
+            "jsonb_typeof(appearance -> 'keyboard_shortcuts') = 'boolean' AND "
+            "(NOT (appearance ? 'timezone') OR jsonb_typeof(appearance -> 'timezone') "
+            "IN ('string','null')) AND "
+            "(NOT (appearance ? 'date_format') OR appearance ->> 'date_format' "
+            "IN ('organization','dmy','mdy','ymd')) AND "
+            "(NOT (appearance ? 'time_format') OR appearance ->> 'time_format' "
+            "IN ('organization','12h','24h')) AND "
+            "(NOT (appearance ? 'week_start') OR appearance ->> 'week_start' "
+            "IN ('organization','monday','sunday')) AND "
+            "(NOT (appearance ? 'start_page') OR appearance ->> 'start_page' "
+            "IN ('automatic','sandbox','boards','comms','access','openview','manage','platform'))) "
+            "IS TRUE "
             "ELSE false END",
             name="ck_users_appearance",
         ),
@@ -80,6 +92,15 @@ class User(BaseModel):
         server_default=text('\'{"motion": "system", "keyboard_shortcuts": true}\'::jsonb'),
     )
     job_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    bio: Mapped[str | None] = mapped_column(String(280), nullable=True)
+    avatar_file_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "files.id", name="fk_users_avatar_file_id_files", ondelete="SET NULL", use_alter=True
+        ),
+        nullable=True,
+        index=True,
+    )
     sponsor_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT", use_alter=True),
         nullable=True,

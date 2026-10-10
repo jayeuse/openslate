@@ -3,6 +3,8 @@ import { ApiContractError, apiFetch } from "@/lib/api";
 import {
   assertLifecyclePreviewFor,
   assertLifecycleResultFor,
+  lifecycleCloseInputSchema,
+  lifecycleClosePreviewSchema,
   lifecyclePurgeInputSchema,
   lifecyclePurgePreviewSchema,
   lifecyclePurgeResultSchema,
@@ -28,7 +30,8 @@ const bindingsSchema = z.strictObject({
 });
 export type SandboxBinding = z.output<typeof bindingSchema>;
 export type SandboxBindings = z.output<typeof bindingsSchema>;
-export type SandboxLifecycleKind = "department" | "module" | "field";
+export type SandboxLifecycleKind =
+  "department" | "module" | "field" | "relationship";
 export type SandboxLifecycleBinding = SandboxBinding & {
   kind: SandboxLifecycleKind;
 };
@@ -48,7 +51,9 @@ export function getSandboxBindings(
 }
 
 function targetPath(binding: SandboxLifecycleBinding): string {
-  const kind = z.enum(["department", "module", "field"]).parse(binding.kind);
+  const kind = z
+    .enum(["department", "module", "field", "relationship"])
+    .parse(binding.kind);
   const liveId = z.string().uuid().parse(binding.live_id);
   return kind === "department"
     ? `/departments/${liveId}`
@@ -66,13 +71,19 @@ export async function previewSandboxLifecycle(
     request.operation === "close"
       ? `${targetPath(request.binding)}/close/preview`
       : `${targetPath(request.binding)}/purge/preview`;
-  const result = await apiFetch(path, lifecyclePurgePreviewSchema, {
-    method: "POST",
-    cache: "no-store",
-  });
+  const result = await apiFetch(
+    path,
+    request.operation === "close"
+      ? lifecycleClosePreviewSchema
+      : lifecyclePurgePreviewSchema,
+    {
+      method: "POST",
+      cache: "no-store",
+    },
+  );
   assertLifecyclePreviewFor(
     result,
-    request.binding.kind,
+    request.binding.kind === "relationship" ? "field" : request.binding.kind,
     request.binding.live_id,
     request.operation,
   );
@@ -87,7 +98,11 @@ export async function confirmSandboxLifecycle(
     request.operation === "reopen"
       ? { confirmed: true }
       : (() => {
-          const validated = lifecyclePurgeInputSchema.parse(input);
+          const validated = (
+            request.operation === "close"
+              ? lifecycleCloseInputSchema
+              : lifecyclePurgeInputSchema
+          ).parse(input);
           return {
             token: validated.token,
             confirmation_name: validated.confirmationName,
@@ -109,7 +124,7 @@ export async function confirmSandboxLifecycle(
   );
   assertLifecycleResultFor(
     result,
-    request.binding.kind,
+    request.binding.kind === "relationship" ? "field" : request.binding.kind,
     request.binding.live_id,
     request.operation,
   );

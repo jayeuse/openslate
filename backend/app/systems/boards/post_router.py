@@ -10,7 +10,7 @@ from sqlalchemy import func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user
-from app.common.listing import execute_standard_list
+from app.common.listing import SortOrder, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
@@ -30,6 +30,7 @@ from app.systems.boards.post_schemas import (
     PostResponse,
     PostRevisionWrite,
     PostSchedule,
+    PostSort,
     PostView,
 )
 from app.systems.boards.post_service import (
@@ -108,7 +109,12 @@ def list_posts(
     if params.author_id is not None:
         author_source = BoardPostRevision if params.view is PostView.PUBLISHED else BoardPost
         statement = statement.where(author_source.author_id == params.author_id)
-    result = execute_standard_list(db, statement, params, list_spec(params.view))
+    pinned_first = (
+        params.sort_by in (None, PostSort.UPDATED_AT) and params.sort_order is SortOrder.DESC
+    )
+    result = execute_standard_list(
+        db, statement, params, list_spec(params.view, pinned_first=pinned_first)
+    )
     items = [
         post_response(
             item,

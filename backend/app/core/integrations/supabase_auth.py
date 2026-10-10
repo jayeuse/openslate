@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import httpx
@@ -16,6 +16,9 @@ from jwt import InvalidTokenError
 from pydantic import SecretStr
 
 from app.core.config import get_settings
+
+if TYPE_CHECKING:
+    from app.core.integrations.supabase_email_changes import EmailChangeConfirmation
 
 
 class SupabaseAuthUnavailable(Exception):
@@ -197,6 +200,16 @@ class SupabaseAuthClient:
         response = self._request("POST", "recover", json={"email": email})
         if response.status_code != 200:
             raise SupabaseAuthUnavailable("Supabase recovery is unavailable")
+
+    def request_email_change(self, access_token: str, email: str) -> ProviderUser:
+        from app.core.integrations.supabase_email_changes import request_email_change
+
+        return request_email_change(self, access_token, email)
+
+    def verify_email_change(self, token_hash: str) -> EmailChangeConfirmation:
+        from app.core.integrations.supabase_email_changes import verify_email_change
+
+        return verify_email_change(self, token_hash)
 
     def update_password(self, access_token: str, password: str) -> ProviderUser:
         response = self._request("PUT", "user", token=access_token, json={"password": password})

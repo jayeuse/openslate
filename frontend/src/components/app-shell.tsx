@@ -30,6 +30,7 @@ import { useUserPreferences } from "@/components/theme-provider";
 import { NotificationBell } from "@/components/systems/platform/components/notification-bell";
 import { AppNavigation } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { HelpPanel } from "@/components/help/help-panel";
 import {
   GuardedWorkspaceLink,
   WorkspaceNavigationGuardProvider,
@@ -705,13 +706,13 @@ function AppSidebarFooter({
         <SidebarMenuItem>
           <SidebarMenuButton
             type="button"
-            aria-label={collapsed ? "Appearance" : undefined}
-            title={collapsed ? "Appearance" : undefined}
-            onClick={() => navigate("/settings/appearance")}
+            aria-label={collapsed ? "Your profile" : undefined}
+            title={collapsed ? "Your profile" : undefined}
+            onClick={() => navigate("/profile")}
           >
             <Settings className="size-4 shrink-0" aria-hidden="true" />
             <span className={cn("truncate", collapsed && "sr-only")}>
-              Appearance
+              Your profile
             </span>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -753,6 +754,7 @@ function AppHeaderActions({
         <span className="hidden sm:inline">Search workspace…</span>
       </GuardedWorkspaceLink>
       <NotificationBell accountId={verifiedUserId} />
+      <HelpPanel />
       <DropdownMenu open={accountOpen} onOpenChange={onAccountOpenChange}>
         <DropdownMenuTrigger
           render={
@@ -771,13 +773,13 @@ function AppHeaderActions({
             <DropdownMenuItem
               render={
                 <GuardedWorkspaceLink
-                  href={"/platform?section=account" as Route}
+                  href={"/profile" as Route}
                   onAcceptedNavigate={() => onAccountOpenChange(false)}
                 />
               }
             >
               <UserCircle aria-hidden="true" />
-              Account settings
+              Your profile
             </DropdownMenuItem>
             <DropdownMenuItem onClick={requestLogout}>
               <LogOut aria-hidden="true" />

@@ -87,11 +87,13 @@ def claim_due_reminder_work(
     for work in works:
         if work.attempt_count >= MAX_ATTEMPTS:
             work.state = WorkState.FAILED
+            work.finished_at = current
             work.failure_code = "attempts_exhausted"
             work.lease_token = None
             work.lease_expires_at = None
             continue
         work.state = WorkState.RUNNING
+        work.last_attempt_started_at = current
         work.attempt_count += 1
         work.lease_token = uuid7()
         work.lease_expires_at = current + LEASE_DURATION
@@ -114,8 +116,9 @@ def _locked_claim(db: Session, claim: WorkClaim, now: datetime) -> ScheduledWork
     )
 
 
-def _cancel(work: ScheduledWork, reason: str) -> None:
+def _cancel(work: ScheduledWork, reason: str, *, now: datetime) -> None:
     work.state = WorkState.CANCELED
+    work.finished_at = now
     work.failure_code = reason
     work.lease_token = None
     work.lease_expires_at = None
@@ -171,7 +174,7 @@ def finalize_reminder_claim(
     if work.lease_expires_at is None or work.lease_expires_at <= current:
         return []
     if work.scheduled_for < current - REMINDER_DELIVERY_GRACE:
-        _cancel(work, "reminder_expired")
+        _cancel(work, "reminder_expired", now=current)
         return []
     start = source.occurrence_start_at
     if (
@@ -190,7 +193,7 @@ def finalize_reminder_claim(
         or reminder_due_at(start, reminder.timing) != work.scheduled_for
         or work.scheduled_for > current
     ):
-        _cancel(work, "source_unavailable")
+        _cancel(work, "source_unavailable", now=current)
         return []
     delivered = set(
         db.scalars(
@@ -211,6 +214,7 @@ def finalize_reminder_claim(
     db.add_all(notices)
     db.flush()
     work.state = WorkState.SUCCEEDED
+    work.finished_at = current
     work.failure_code = None
     work.lease_token = None
     work.lease_expires_at = None
@@ -224,6 +228,7 @@ def fail_reminder_work(db: Session, claim: WorkClaim, *, now: datetime | None = 
         return False
     if work.attempt_count >= MAX_ATTEMPTS:
         work.state = WorkState.FAILED
+        work.finished_at = current
         work.failure_code = "attempts_exhausted"
     else:
         work.state = WorkState.PENDING

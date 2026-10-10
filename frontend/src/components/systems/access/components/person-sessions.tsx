@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut } from "lucide-react";
 
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingRegion } from "@/components/ui/loading-region";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 import { accessKeys, userSessionsOptions } from "../adapters/access-queries";
 import { formatDateTime, peopleErrorMessage } from "../helpers/people";
@@ -43,12 +45,25 @@ export function PersonSessions({
   self: boolean;
 }) {
   const client = useQueryClient();
-  const sessions = useQuery(userSessionsOptions(person.id));
+  const region = useWorkspaceDisplayRegion();
+  const [pageIndex, setPageIndex] = useState(0);
+  const sessions = useQuery(
+    userSessionsOptions(person.id, { limit: 10, offset: pageIndex * 10 }),
+  );
   const [revoke, setRevoke] = useState<Revoke | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const items = sessions.data ?? [];
-  const others = items.filter((session) => !session.current);
+  const items = sessions.data?.items ?? [];
+  const total = sessions.data?.pagination.total ?? 0;
+  useEffect(() => {
+    if (sessions.data)
+      setPageIndex((current) =>
+        Math.min(
+          current,
+          Math.max(0, Math.ceil(sessions.data.pagination.total / 10) - 1),
+        ),
+      );
+  }, [sessions.data]);
 
   async function confirm() {
     if (!revoke || pending) return;
@@ -88,11 +103,15 @@ export function PersonSessions({
           </h3>
           <p className="text-muted-foreground text-sm tabular-nums">
             {sessions.data
-              ? `${items.length} active ${items.length === 1 ? "session" : "sessions"}`
+              ? `${total} active ${total === 1 ? "session" : "sessions"}`
               : "Devices where this person is signed in."}
           </p>
         </div>
-        {others.length > 0 ? (
+        {(
+          self
+            ? total > (items.some((session) => session.current) ? 1 : 0)
+            : total > 0
+        ) ? (
           <Button
             variant="outline"
             className="min-h-11 w-full sm:w-auto"
@@ -150,15 +169,15 @@ export function PersonSessions({
                       Sign-in IP: {session.ip_address ?? "Unknown"}
                     </p>
                     <p className="text-muted-foreground text-sm">
-                      Last active {formatDateTime(session.refreshed_at)} ·
-                      Signed in {formatDateTime(session.created_at)}
+                      Last active {formatDateTime(session.refreshed_at, region)}{" "}
+                      · Signed in {formatDateTime(session.created_at, region)}
                     </p>
                   </div>
                   {session.current ? null : (
                     <Button
                       variant="ghost"
                       className="min-h-11 w-full shrink-0 sm:w-auto"
-                      aria-label={`Sign out ${deviceLabel(session)}, last active ${formatDateTime(session.refreshed_at)}`}
+                      aria-label={`Sign out ${deviceLabel(session)}, last active ${formatDateTime(session.refreshed_at, region)}`}
                       onClick={() => {
                         setError("");
                         setRevoke({ kind: "one", session });
@@ -171,6 +190,17 @@ export function PersonSessions({
               ))}
             </ul>
           )}
+          {total > 10 ? (
+            <TablePagination
+              ariaLabel="Session pages"
+              total={total}
+              offset={sessions.data?.pagination.offset ?? pageIndex * 10}
+              rowCount={items.length}
+              pageSize={10}
+              onPageIndexChange={setPageIndex}
+              disabled={sessions.isFetching}
+            />
+          ) : null}
         </LoadingRegion>
       )}
 

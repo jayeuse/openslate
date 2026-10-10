@@ -8,14 +8,16 @@ OpenSlate groups domain behavior under FastAPI `systems` packages:
 | --- | --- |
 | `access` | Supabase Auth identity binding, application users, roles, groups, group-access policy, invitations, and recovery |
 | `sandbox` | Shared design draft/history, safe publication, departments, modules, fields, records, relationships, lifecycle, temporary tests, and record trigger execution |
-| `openview` | Department dashboards, shared saved views, reports, frozen report runs and schedules |
+| `openview` | Department dashboards, shared saved views and charts, reports, frozen report runs and schedules |
 | `boards` | The company Board, one Board for each department, project Boards and their groups; posts with their published revisions, events with author-set reminders, widgets, attachments and record links |
-| `manage` | Workspace profile and audit history |
-| `platform` | Private files, SSE invalidations, scheduled work, and in-app notifications |
+| `manage` | Workspace profile, audit history, backups, and administrator job monitoring |
+| `platform` | Private files and department libraries, SSE invalidations, scheduled work, and in-app notifications |
 
 User profiles and their role values are application-owned in the [user model](../../backend/app/systems/access/users/models.py). Supabase Auth owns password credentials and email-action tokens; a provider subject must be explicitly bound to an eligible OpenSlate profile before it can start an application session. OpenSlate keeps revocable [`IdentitySession`](../../backend/app/systems/access/identity/models.py) rows and rate-limit buckets in its own PostgreSQL schema. Each session binds the provider user and session IDs, stores a digest of its opaque refresh handle, and retains the encrypted current provider token pair. [`effective_levels`](../../backend/app/systems/access/policy/scope.py) resolves access from current account eligibility, role, and group-access rows: module rows override that group's department row, the highest level across groups wins, and a guest is limited to `read`. See [data architecture](06-data-architecture.md#identity-and-files) and [authentication and authorization](08-authentication-authorization.md).
 
 Files have application metadata in the [file model](../../backend/app/systems/platform/files/models.py), an opaque object key, a lifecycle state, and nullable `enc_version`. Bytes stay in the private Supabase Storage `openslate-ready` bucket through the [Storage adapter](../../backend/app/systems/platform/files/supabase_storage.py). FastAPI mediates access; metadata alone never makes bytes readable. The [file service](../../backend/app/systems/platform/files/service.py) validates the file type, writes the bytes, and marks the file `ready` in the same upload request; download is denied in every other state.
+
+Department library files use `purpose = 'library_document'` and a required `department_id`, without a Record or Board parent. [`authorize_action`](../../backend/app/systems/platform/files/access.py) requires the direct department level: `read` for listing/download, `write` for upload, and `manage` for archive/reopen. Module-only access does not grant department-library access. The library is not a public Storage browser.
 
 The Sandbox publish is the only way to create or change departments, modules, and fields. A published module accepts new records while it has at least one active field; there is no separate schema acceptance step.
 
@@ -27,7 +29,7 @@ Server-backed OpenView content belongs to departments and modules. Dashboards, w
 2. A saved view and a report belong to one module, and so to its department. Every user who can read the module reads them. Only `manage` on the module creates, changes or deletes them, and sets report schedules. One active view of each module can be its default; making a view the default clears the previous default in the same transaction.
 3. Any non-guest reader of the module runs a report on demand, and the run keeps that user as its actor. A scheduled run acts as the workspace: its audit entries have no user in `performed_by` and carry `actor_label = "Scheduled report: <name>"` ([`platform/scheduling/execution.py`](../../backend/app/systems/platform/scheduling/execution.py)); it keeps running after every user who edited the Report is disabled.
 4. The module readers at run capture are stored as the run's eligible readers. Output requests check both that captured eligibility and current module read access, so a user who loses access cannot open an earlier run.
-5. Chart settings are not saved. The Charts screen keeps them for the open page only.
+5. A [saved chart](../../backend/app/systems/openview/charts/models.py) is a revisioned definition for one source module, with its department derived from that source. Reading it requires `read` on the source module. Creating, editing, archiving and restoring it require `manage` on the chart's department plus `read` on its source module; module-level `manage` alone is insufficient. It stores query and presentation settings, not materialized results. Dashboards and Boards may reference it, but each rendering rechecks source access. Unsaved chart edits remain local.
 6. A department purge removes the department's dashboards and their widgets, as it removes the saved views of its modules. A widget in another department's dashboard that reads a purged module or field blocks the purge.
 
 Boards are for communication. The Board scope decides who sees it; there is no audience on a post, an event or a widget, and there is no personal Board state:

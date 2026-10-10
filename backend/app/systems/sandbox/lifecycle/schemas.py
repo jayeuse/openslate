@@ -12,6 +12,8 @@ class LifecycleTargetType(StrEnum):
     RECORD = "record"
     FILE = "file"
     BOARD = "board"
+    REPORT = "report"
+    BOARD_EVENT = "board_event"
 
 
 class LifecycleOperation(StrEnum):
@@ -31,6 +33,7 @@ class LifecycleBlockerCode(StrEnum):
     RECORD_CLOSE_UNSUPPORTED = "record_close_unsupported"
     PURGE_BOARD_DEPENDENCY = "purge_board_dependency"
     PURGE_DASHBOARD_DEPENDENCY = "purge_dashboard_dependency"
+    PURGE_CHART_DEPENDENCY = "purge_chart_dependency"
     PURGE_REPORT_DEPENDENCY = "purge_report_dependency"
     PURGE_REPORT_RUN_DEPENDENCY = "purge_report_run_dependency"
     PURGE_EXTERNAL_SCHEMA_DEPENDENCY = "purge_external_schema_dependency"
@@ -135,7 +138,8 @@ class LifecycleClosePreviewResponse(BaseModel):
 
 
 class LifecyclePurgePreviewResponse(LifecycleClosePreviewResponse):
-    pass
+    confirmation_name: str
+    last_successful_backup_at: datetime | None
 
 
 class LifecycleCloseRequest(BaseModel):
@@ -147,7 +151,7 @@ class LifecycleCloseRequest(BaseModel):
 
 
 class LifecyclePurgeRequest(LifecycleCloseRequest):
-    pass
+    confirmation_name: str = Field(min_length=1)
 
 
 class LifecycleReopenRequest(BaseModel):

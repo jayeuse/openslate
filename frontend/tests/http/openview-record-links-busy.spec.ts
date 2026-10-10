@@ -7,7 +7,11 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
-import { installOpenViewEventSource } from "./helpers/openview-event-source";
+import {
+  installOpenViewEventSource,
+  sendOpenViewEvent,
+} from "./helpers/openview-event-source";
+import { captureOpenViewReview } from "./helpers/openview-review-capture";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -26,6 +30,7 @@ const handoverRelationshipId = "00000000-0000-4000-8000-000000000071";
 const otherDepartmentId = "00000000-0000-4000-8000-000000000012";
 const incomingFieldId = "00000000-0000-4000-8000-000000000064";
 const incomingRelationshipId = "00000000-0000-4000-8000-000000000072";
+const temporaryFieldId = "00000000-0000-4000-8000-000000000065";
 
 type Relationship = {
   id: string;
@@ -51,6 +56,16 @@ type HarnessOptions = {
   incomingLink?: boolean;
   /** Leave Service visits out of the readable data sources. */
   targetUnreadable?: boolean;
+  incomingCount?: number;
+  singleSource?: boolean;
+  occupiedTarget?: boolean;
+  targetCount?: number;
+  otherDepartmentOffPage?: boolean;
+  targetSourceOffPage?: boolean;
+  homeSourceOffPage?: boolean;
+  pagedFields?: boolean;
+  offPageSavedField?: boolean;
+  temporaryFieldOffPage?: boolean;
 };
 
 function pageResponse<T>(items: T[]) {
@@ -178,7 +193,21 @@ async function captureReviewState(page: Page, state: string, anchor: Locator) {
 async function installLinksApi(page: Page, options: HarnessOptions = {}) {
   await installOpenViewEventSource(page);
   const state = {
+    relationshipRequests: [] as string[],
+    targetRequests: [] as number[],
+    recordWrites: [] as Record<string, unknown>[],
+    recordQueries: [] as Record<string, unknown>[],
     links: [
+      ...Array.from({ length: options.incomingCount ?? 0 }, (_, index) => ({
+        ...relationship(),
+        id: `20000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        field_id: incomingFieldId,
+        source_record_id: handoverRecordId,
+        target_record_id: recordId,
+      })),
+      ...(options.occupiedTarget
+        ? [{ ...relationship(), source_record_id: handoverRecordId }]
+        : []),
       ...(options.initialLink ? [relationship()] : []),
       ...(options.handoverLink
         ? [
@@ -210,6 +239,20 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
     readStarted: deferred(),
     releaseRead: deferred(),
   };
+  let currentSourceRecord: Omit<typeof sourceRecord, "data"> & {
+    data: Record<string, unknown>;
+  } = options.pagedFields
+    ? {
+        ...sourceRecord,
+        data: {
+          ...sourceRecord.data,
+          [incomingFieldId]: "Preserve off-page value",
+          ...(options.temporaryFieldOffPage
+            ? { [temporaryFieldId]: "Temporary-only value" }
+            : {}),
+        },
+      }
+    : sourceRecord;
   const createModes = options.createModes ?? ["success"];
   const deleteModes = options.deleteModes ?? ["success"];
 
@@ -230,7 +273,9 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
         json: pageResponse(
           [
             [departmentId, "Field service"],
-            [otherDepartmentId, "Dispatch"],
+            ...(!options.otherDepartmentOffPage
+              ? [[otherDepartmentId, "Dispatch"]]
+              : []),
           ].map(([id, name]) => ({
             id,
             department_name: name,
@@ -242,16 +287,85 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
           })),
         ),
       });
+    if (url.pathname === `/api/departments/${otherDepartmentId}`)
+      return route.fulfill({
+        json: {
+          id: otherDepartmentId,
+          department_name: "Dispatch",
+          created_at: "2026-09-30T08:00:00Z",
+          updated_at: "2026-09-30T08:00:00Z",
+          deleted_at: null,
+          is_deleted: false,
+          performed_by: userId,
+        },
+      });
+    if (url.pathname === `/api/modules/${targetModuleId}`)
+      return route.fulfill(
+        options.targetUnreadable
+          ? { status: 404, json: { detail: "Not found" } }
+          : {
+              json: {
+                id: targetModuleId,
+                module_name: "Service visits",
+                department_id: options.targetInOtherDepartment
+                  ? otherDepartmentId
+                  : departmentId,
+                title_field_id: targetNameFieldId,
+                is_deleted: false,
+              },
+            },
+      );
+    if (url.pathname === `/api/modules/${sourceModuleId}`)
+      return route.fulfill({
+        json: {
+          id: sourceModuleId,
+          module_name: "Service requests",
+          department_id: departmentId,
+          title_field_id: sourceNameFieldId,
+          is_deleted: false,
+        },
+      });
+    if (
+      url.pathname === `/api/fields/${incomingFieldId}` ||
+      (options.temporaryFieldOffPage &&
+        url.pathname === `/api/fields/${temporaryFieldId}`)
+    )
+      return route.fulfill({
+        json: {
+          id: url.pathname.split("/").at(-1),
+          module_id: sourceModuleId,
+          name: url.pathname.endsWith(temporaryFieldId)
+            ? "Temporary-only detail"
+            : "Off-page detail",
+          type: "text",
+          required: false,
+          position: url.pathname.endsWith(temporaryFieldId) ? 101 : 100,
+          config: {},
+          is_deleted: false,
+        },
+      });
+    if (url.pathname === `/api/records/${recordId}` && method === "GET")
+      return route.fulfill({ json: currentSourceRecord });
+    if (url.pathname === `/api/records/${recordId}` && method === "PATCH") {
+      const body = request.postDataJSON() as { data: Record<string, unknown> };
+      state.recordWrites.push(body.data);
+      currentSourceRecord = { ...currentSourceRecord, data: body.data };
+      return route.fulfill({ json: currentSourceRecord });
+    }
     if (url.pathname === "/api/views/data-sources")
       return route.fulfill({
         json: pageResponse([
-          {
-            id: sourceModuleId,
-            name: "Service requests",
-            department_id: departmentId,
-            title_field_id: sourceNameFieldId,
-          },
-          ...(options.targetUnreadable
+          ...(!options.homeSourceOffPage
+            ? [
+                {
+                  id: sourceModuleId,
+                  name: "Service requests",
+                  department_id: departmentId,
+                  title_field_id: sourceNameFieldId,
+                },
+              ]
+            : []),
+          ...(options.targetUnreadable || options.targetSourceOffPage
             ? []
             : [
                 {
@@ -271,6 +385,49 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
     ) {
       const moduleId = url.pathname.split("/")[4];
       const isSource = moduleId === sourceModuleId;
+      if (isSource && options.pagedFields) {
+        const offset = Number(url.searchParams.get("offset") ?? 0);
+        const limit = Number(url.searchParams.get("limit") ?? 100);
+        const catalog = Array.from(
+          { length: options.temporaryFieldOffPage ? 102 : 101 },
+          (_, index) => ({
+            id:
+              index === 0
+                ? sourceNameFieldId
+                : index === 100
+                  ? incomingFieldId
+                  : index === 101
+                    ? temporaryFieldId
+                    : `40000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+            module_id: sourceModuleId,
+            name:
+              index === 0
+                ? "Request title"
+                : index === 100
+                  ? "Off-page detail"
+                  : index === 101
+                    ? "Temporary-only detail"
+                    : `Extra field ${index}`,
+            type: "text",
+            required: false,
+            position: index,
+            config: {},
+          }),
+        );
+        const items = catalog.slice(offset, offset + limit);
+        return route.fulfill({
+          json: {
+            items,
+            pagination: {
+              limit,
+              offset,
+              count: items.length,
+              total: catalog.length,
+              has_more: offset + items.length < catalog.length,
+            },
+          },
+        });
+      }
       return route.fulfill({
         json: pageResponse([
           {
@@ -285,10 +442,18 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
         ]),
       });
     }
+    const selectedView = savedView();
+    if (options.offPageSavedField) {
+      selectedView.definition.columns.push({
+        field_id: incomingFieldId,
+        expected_type: "text",
+      });
+      selectedView.presentation.column_field_ids.push(incomingFieldId);
+    }
     if (url.pathname === "/api/views" && method === "GET")
-      return route.fulfill({ json: pageResponse([savedView()]) });
+      return route.fulfill({ json: pageResponse([selectedView]) });
     if (url.pathname === `/api/views/${viewId}` && method === "GET")
-      return route.fulfill({ json: savedView() });
+      return route.fulfill({ json: selectedView });
     if (url.pathname === "/api/fields")
       return route.fulfill({
         json: pageResponse([
@@ -301,7 +466,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
             position: 1,
             relationship_target_module_id: targetModuleId,
             relationship_multiple_targets: true,
-            relationship_multiple_sources: true,
+            relationship_multiple_sources: !options.singleSource,
           },
           ...(options.handoverLink
             ? [
@@ -322,6 +487,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       });
     if (url.pathname === "/api/relationships" && method === "GET") {
       state.relationshipReads += 1;
+      state.relationshipRequests.push(request.url());
       const checkingWriteResult = state.createCount + state.deleteCount > 0;
       if (state.holdNextRead && checkingWriteResult) {
         state.holdNextRead = false;
@@ -337,14 +503,32 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       }
       const incident = url.searchParams.get("incident_record_id");
       const field = url.searchParams.get("field_id");
+      const source = url.searchParams.get("source_record_id");
+      const target = url.searchParams.get("target_record_id");
       const links = state.links.filter(
         (link) =>
           (!incident ||
             link.source_record_id === incident ||
             link.target_record_id === incident) &&
-          (!field || link.field_id === field),
+          (!field || link.field_id === field) &&
+          (!source || link.source_record_id === source) &&
+          (!target || link.target_record_id === target),
       );
-      return route.fulfill({ json: pageResponse(links) });
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 100);
+      const items = links.slice(offset, offset + limit);
+      return route.fulfill({
+        json: {
+          items,
+          pagination: {
+            limit,
+            offset,
+            count: items.length,
+            total: links.length,
+            has_more: offset + items.length < links.length,
+          },
+        },
+      });
     }
     if (url.pathname === "/api/relationships" && method === "POST") {
       state.createCount += 1;
@@ -393,10 +577,45 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       return route.fulfill({ status: 204, body: "" });
     }
     if (url.pathname === "/api/records/query" && method === "POST") {
-      const body = request.postDataJSON() as { module_id: string };
+      state.recordQueries.push(
+        request.postDataJSON() as Record<string, unknown>,
+      );
+      const body = request.postDataJSON() as {
+        module_id: string;
+        limit?: number;
+        offset?: number;
+      };
+      if (body.module_id === targetModuleId && options.targetCount) {
+        const offset = body.offset ?? 0;
+        const limit = body.limit ?? 50;
+        state.targetRequests.push(offset);
+        const items = Array.from(
+          { length: Math.min(limit, options.targetCount - offset) },
+          (_, index) =>
+            record(
+              `30000000-0000-4000-8000-${String(offset + index + 1).padStart(12, "0")}`,
+              targetModuleId,
+              `Visit ${offset + index + 1}`,
+            ),
+        );
+        return route.fulfill({
+          json: {
+            items,
+            pagination: {
+              limit,
+              offset,
+              count: items.length,
+              total: options.targetCount,
+              has_more: offset + items.length < options.targetCount,
+            },
+          },
+        });
+      }
       return route.fulfill({
         json: pageResponse([
-          body.module_id === targetModuleId ? targetRecord : sourceRecord,
+          body.module_id === targetModuleId
+            ? targetRecord
+            : currentSourceRecord,
         ]),
       });
     }
@@ -758,4 +977,426 @@ test("a link field into a data source the person cannot read offers no Add link"
     followUp.getByRole("button", { name: /^(Add|Replace) link$/ }),
   ).toHaveCount(0);
   expect(api.state.createCount).toBe(0);
+});
+
+test("S08 incident links load later pages only on request", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, { incomingCount: 101 });
+  await openLinksPanel(page);
+  const incoming = page
+    .getByRole("heading", { name: "Linked from", exact: true })
+    .locator("..");
+  await expect(incoming.getByRole("listitem")).toHaveCount(100);
+  expect(
+    api.state.relationshipRequests.filter(
+      (url) => new URL(url).searchParams.get("offset") === "100",
+    ),
+  ).toHaveLength(0);
+  await page.getByRole("button", { name: "Load more linked records" }).click();
+  await expect(incoming.getByRole("listitem")).toHaveCount(101);
+  await expect(
+    page.getByRole("button", { name: "Load more linked records" }),
+  ).toHaveCount(0);
+});
+
+test("S08 a busy write beyond the visible incident page is checked by exact relationship filters", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, {
+    incomingCount: 101,
+    createModes: ["busy-committed"],
+  });
+  await openLinksPanel(page);
+  const { link } = await chooseFollowUp(page);
+  await link.click();
+  await expect(
+    linkField(page, "Follow-up visit").getByRole("button", {
+      name: "Add link",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Load more linked records", exact: true })
+    .click();
+  await expect(
+    linkField(page, "Follow-up visit").getByRole("listitem"),
+  ).toContainText("Loading Bay follow-up visit");
+  expect(api.state.createCount).toBe(1);
+  expect(
+    api.state.relationshipRequests.some((raw) => {
+      const query = new URL(raw).searchParams;
+      return (
+        query.get("field_id") === relationshipFieldId &&
+        query.get("source_record_id") === recordId &&
+        query.get("target_record_id") === targetRecordId
+      );
+    }),
+  ).toBe(true);
+});
+
+test("S08 a single-source picker checks current candidates without crawling field links", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, {
+    singleSource: true,
+    occupiedTarget: true,
+  });
+  await openLinksPanel(page);
+  const followUp = linkField(page, "Follow-up visit");
+  await followUp.getByRole("button", { name: "Add link" }).click();
+  await followUp.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(
+    followUp.getByText(
+      "No records to link. Records already linked from another record are not listed. Try another search.",
+    ),
+  ).toBeVisible();
+  expect(
+    api.state.relationshipRequests.filter((raw) => {
+      const query = new URL(raw).searchParams;
+      return query.has("field_id") && !query.has("target_record_id");
+    }),
+  ).toHaveLength(0);
+  expect(api.state.createCount).toBe(0);
+});
+
+test("S08 link target search exposes an explicit continuation", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, { targetCount: 51 });
+  await openLinksPanel(page);
+  const followUp = linkField(page, "Follow-up visit");
+  await followUp.getByRole("button", { name: "Add link" }).click();
+  await followUp.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(followUp.getByRole("listitem")).toHaveCount(50);
+  expect(api.state.targetRequests).toEqual([0]);
+  await followUp
+    .getByRole("button", { name: "Load more records to link" })
+    .click();
+  await expect(
+    followUp.getByRole("button", { name: "Link Visit 51", exact: true }),
+  ).toBeVisible();
+  expect(api.state.targetRequests).toEqual([0, 50]);
+});
+
+test("S08 a linked source and department beyond the first pages retain their labels", async ({
+  page,
+}) => {
+  await installLinksApi(page, {
+    initialLink: true,
+    targetInOtherDepartment: true,
+    targetSourceOffPage: true,
+    otherDepartmentOffPage: true,
+  });
+  await openLinksPanel(page);
+  await expect(
+    linkField(page, "Follow-up visit").getByRole("listitem"),
+  ).toContainText("Service visits · Dispatch");
+  await page.reload();
+  await page.getByRole("tab", { name: "Linked records" }).click();
+  await expect(
+    linkField(page, "Follow-up visit").getByRole("listitem"),
+  ).toContainText("Service visits · Dispatch");
+});
+
+test("S08 a selected data source beyond the catalog page resolves after reload", async ({
+  page,
+}) => {
+  await installLinksApi(page, { homeSourceOffPage: true });
+  await openLinksPanel(page);
+  await expect(page.getByLabel("Data source", { exact: true })).toHaveValue(
+    sourceModuleId,
+  );
+  await page.reload();
+  await expect(page.getByLabel("Data source", { exact: true })).toHaveValue(
+    sourceModuleId,
+  );
+  await expect(
+    page.getByRole("dialog", { name: "Record details" }),
+  ).toBeVisible();
+});
+
+test("S08 an off-page source refusal recovers through Retry catalog", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, { homeSourceOffPage: true });
+  let denied = true;
+  let sourceReads = 0;
+  const recovery = deferred();
+  await page.route(`**/api/modules/${sourceModuleId}`, async (route) => {
+    sourceReads += 1;
+    if (denied)
+      return route.fulfill({ status: 403, json: { detail: "Forbidden" } });
+    await recovery.promise;
+    return route.fulfill({
+      json: {
+        id: sourceModuleId,
+        module_name: "Service requests",
+        department_id: departmentId,
+        title_field_id: sourceNameFieldId,
+        is_deleted: false,
+      },
+    });
+  });
+  await page.goto(
+    `/openview?section=views&module=${sourceModuleId}&view=${viewId}`,
+  );
+  const denial = page.getByText(
+    "OpenView data is unavailable. Sign in or ask for access, then retry.",
+    { exact: true },
+  );
+  const source = page.getByLabel("Data source", { exact: true });
+  const sourceLabel = page.getByRole("option", {
+    name: "Service requests",
+    exact: true,
+  });
+  await expect(denial).toBeVisible();
+  await expect(sourceLabel).toHaveCount(0);
+
+  denied = false;
+  await page
+    .getByRole("button", { name: "Retry catalog", exact: true })
+    .click();
+  try {
+    await expect.poll(() => sourceReads).toBe(2);
+    await expect(sourceLabel).toHaveCount(0);
+  } finally {
+    recovery.resolve();
+  }
+  await expect(source).toHaveValue(sourceModuleId);
+  await expect(source.locator("option:checked")).toHaveText("Service requests");
+  await expect(denial).toHaveCount(0);
+  expect(api.state.recordWrites).toEqual([]);
+});
+
+test("S08 record editing waits for complete fields and preserves an off-page value", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, { pagedFields: true });
+  await openLinksPanel(page);
+  await page.getByRole("tab", { name: "Details", exact: true }).click();
+  const inspector = page.getByRole("dialog", { name: "Record details" });
+  await expect(
+    inspector.getByRole("button", { name: "Edit record", exact: true }),
+  ).toBeDisabled();
+  if (process.env.OPENVIEW_CAPTURE_DIR) {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate((theme) => {
+        document.documentElement.classList.toggle("dark", theme === "dark");
+      }, mode);
+      await captureOpenViewReview(page, `s08-record-field-guard-${mode}`, {
+        beforeScreenshot: async () => {
+          await inspector
+            .getByRole("button", {
+              name: "Load more fields for editing",
+              exact: true,
+            })
+            .scrollIntoViewIfNeeded();
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () => document.documentElement.scrollWidth <= window.innerWidth,
+              ),
+            )
+            .toBe(true);
+        },
+      });
+    }
+  }
+  await inspector
+    .getByRole("button", { name: "Load more fields for editing", exact: true })
+    .click();
+  await expect(
+    inspector.getByRole("button", { name: "Edit record", exact: true }),
+  ).toBeEnabled();
+  await inspector
+    .getByRole("button", { name: "Edit record", exact: true })
+    .click();
+  await expect(
+    inspector.getByLabel("Off-page detail", { exact: true }),
+  ).toHaveValue("Preserve off-page value");
+  await inspector
+    .getByLabel("Request title", { exact: true })
+    .fill("Changed title");
+  await inspector
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect.poll(() => api.state.recordWrites.length).toBe(1);
+  expect(api.state.recordWrites[0]?.[incomingFieldId]).toBe(
+    "Preserve off-page value",
+  );
+});
+
+test("S08 correction record editing preserves page-two values after metadata refresh", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, { pagedFields: true });
+  await openLinksPanel(page);
+  await page.getByRole("tab", { name: "Details", exact: true }).click();
+  const inspector = page.getByRole("dialog", { name: "Record details" });
+  await inspector
+    .getByRole("button", { name: "Load more fields for editing", exact: true })
+    .click();
+  await inspector
+    .getByRole("button", { name: "Edit record", exact: true })
+    .click();
+  const title = inspector.getByLabel("Request title", { exact: true });
+  await title.fill("Keep this edited title");
+  await expect(
+    inspector.getByLabel("Off-page detail", { exact: true }),
+  ).toHaveValue("Preserve off-page value");
+
+  const [refresh] = await Promise.all([
+    page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === `/api/views/data-sources/${sourceModuleId}/fields` &&
+        url.searchParams.get("offset") === "0"
+      );
+    }),
+    sendOpenViewEvent(page, "invalidate", {
+      entity: "saved_views",
+      module_id: sourceModuleId,
+    }),
+  ]);
+  await refresh.finished();
+  const save = inspector.getByRole("button", {
+    name: "Save changes",
+    exact: true,
+  });
+  await expect(save).toBeDisabled();
+  await expect(title).toHaveValue("Keep this edited title");
+  await expect(
+    inspector.getByLabel("Off-page detail", { exact: true }),
+  ).toHaveValue("Preserve off-page value");
+  expect(api.state.recordWrites).toEqual([]);
+  await inspector
+    .getByRole("button", { name: "Load more fields for editing", exact: true })
+    .click();
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect.poll(() => api.state.recordWrites.length).toBe(1);
+  expect(api.state.recordWrites[0]).toMatchObject({
+    [sourceNameFieldId]: "Keep this edited title",
+    [incomingFieldId]: "Preserve off-page value",
+  });
+});
+
+test("S08 correction temporary off-page fields wait for detail hydration and survive reload", async ({
+  page,
+}) => {
+  const api = await installLinksApi(page, {
+    pagedFields: true,
+    offPageSavedField: true,
+    temporaryFieldOffPage: true,
+  });
+  const changes = Buffer.from(
+    JSON.stringify({
+      d: {
+        columns: [sourceNameFieldId, incomingFieldId, temporaryFieldId].map(
+          (fieldId) => ({ fieldId, expectedType: "text" }),
+        ),
+        filters: [
+          {
+            fieldId: temporaryFieldId,
+            expectedType: "text",
+            operator: "contains",
+            value: "Temporary-only",
+          },
+        ],
+      },
+      p: {
+        columnFieldIds: [sourceNameFieldId, incomingFieldId, temporaryFieldId],
+      },
+    }),
+  ).toString("base64url");
+  let detailGate = deferred();
+  const detailReads: string[] = [];
+  const viewWrites: string[] = [];
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname.startsWith("/api/views") &&
+      request.method() !== "GET"
+    )
+      viewWrites.push(request.method());
+  });
+  await page.route("**/api/fields/**", async (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    if (id !== incomingFieldId && id !== temporaryFieldId)
+      return route.fallback();
+    detailReads.push(id);
+    const gate = detailGate;
+    await gate.promise;
+    return route.fallback();
+  });
+  const assertPendingAddress = async () => {
+    try {
+      await expect.poll(() => detailReads).toContain(incomingFieldId);
+      await expect
+        .poll(() => new URL(page.url()).searchParams.get("changes"))
+        .toBe(changes);
+      await expect.poll(() => detailReads).toContain(temporaryFieldId);
+    } finally {
+      detailGate.resolve();
+    }
+  };
+  const assertRestored = async () => {
+    await expect(
+      page.getByRole("columnheader", { name: "Off-page detail", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("columnheader", {
+        name: "Temporary-only detail",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect
+      .poll(() => api.state.recordQueries.at(-1))
+      .toMatchObject({
+        definition: {
+          columns: expect.arrayContaining([
+            { field_id: temporaryFieldId, expected_type: "text" },
+          ]),
+          filters: [
+            {
+              field_id: temporaryFieldId,
+              expected_type: "text",
+              operator: "contains",
+              value: "Temporary-only",
+            },
+          ],
+        },
+      });
+    await expect(
+      page.getByText("Temporary changes", { exact: true }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/[?&]changes=[A-Za-z0-9_-]+/);
+  };
+  await page.goto(
+    `/openview?section=views&module=${sourceModuleId}&view=${viewId}&changes=${changes}`,
+  );
+  await assertPendingAddress();
+  await assertRestored();
+  detailGate = deferred();
+  detailReads.length = 0;
+  await page.reload();
+  await assertPendingAddress();
+  await assertRestored();
+  expect(viewWrites).toEqual([]);
+  expect(api.state.recordWrites).toEqual([]);
+});
+
+test("S08 selected saved-view columns retain an off-page field label", async ({
+  page,
+}) => {
+  await installLinksApi(page, { pagedFields: true, offPageSavedField: true });
+  await page.goto(
+    `/openview?section=views&module=${sourceModuleId}&view=${viewId}`,
+  );
+  await expect(
+    page.getByRole("columnheader", { name: "Off-page detail", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "Preserve off-page value", exact: true }),
+  ).toBeVisible();
 });

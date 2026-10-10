@@ -15,7 +15,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatOpenViewFieldValue, LiveRecordCards } from "./live-record-cards";
+import {
+  formatOpenViewFieldValue,
+  LiveRecordCards,
+  RecordPersonCard,
+} from "./live-record-cards";
 import { openViewRecordFieldValue } from "../domain/record-display";
 import { formatWorkspaceDate, type WorkspaceRegion } from "@/lib/date-time";
 
@@ -143,6 +147,11 @@ export function LiveRecordResults({
                       {index === 0 ? (
                         <button
                           type="button"
+                          aria-label={
+                            field.type === "user"
+                              ? `Open record: ${value}`
+                              : undefined
+                          }
                           className={`text-primary focus-visible:ring-ring inline-flex min-h-[max(44px,2.75rem)] max-w-full items-start text-left font-medium underline-offset-4 hover:underline focus-visible:ring-2 ${presentation.density === "compact" ? "pointer-fine:min-h-9" : "xl:pointer-fine:[html[data-density=compact]_&]:min-h-9"}`}
                           onClick={() => onOpenRecord(row.id)}
                         >
@@ -153,12 +162,19 @@ export function LiveRecordResults({
                                 : "min-w-0 truncate"
                             }
                           >
-                            {value}
+                            {field.type === "user" ? "Open record" : value}
                           </span>
                         </button>
                       ) : (
-                        value
+                        <RecordPersonCard row={row} field={field}>
+                          {value}
+                        </RecordPersonCard>
                       )}
+                      {index === 0 && field.type === "user" ? (
+                        <RecordPersonCard row={row} field={field}>
+                          {value}
+                        </RecordPersonCard>
+                      ) : null}
                     </TableCell>
                   );
                 })}

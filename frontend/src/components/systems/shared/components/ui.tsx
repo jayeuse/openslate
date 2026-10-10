@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-/** Shared sample-screen action button with the project's minimum touch target. */
+/** Shared action button with the project's minimum touch target. */
 export function Action(props: ComponentProps<typeof Button>) {
   const button = (
     <Button
@@ -33,7 +33,7 @@ export function Action(props: ComponentProps<typeof Button>) {
   );
 }
 
-/** Shared labeled select used by sample feature configuration screens. */
+/** Shared labeled select used by feature configuration screens. */
 export function Choice({
   label,
   children,
@@ -57,7 +57,7 @@ export function Choice({
   );
 }
 
-/** Shared labeled checkbox or switch used by sample feature settings. */
+/** Shared labeled checkbox or switch used by feature settings. */
 export function Toggle({
   label,
   id,
@@ -89,7 +89,7 @@ export function Toggle({
   );
 }
 
-/** Shared titled surface for sample feature sections. */
+/** Shared titled surface for feature sections. */
 export function Panel({
   title,
   children,

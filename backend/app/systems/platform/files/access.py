@@ -41,6 +41,7 @@ def authorize(
     record_id: UUID | None = None,
     department_id: UUID | None = None,
     manage: bool = False,
+    creator_id: UUID | None = None,
 ) -> User:
     """Authorize a file action before acquiring parent or inventory locks.
 
@@ -49,10 +50,14 @@ def authorize(
     archive/reopen. Hidden parents are reported as missing. Logos require admin.
     """
 
-    if purpose not in {"record_attachment", "library_document", "workspace_logo"}:
+    if purpose not in {"record_attachment", "library_document", "workspace_logo", "user_avatar"}:
         raise error("forbidden", "Forbidden", 403)
     if not is_active_account(user):
         raise error("forbidden", "Forbidden", 403)
+    if purpose == "user_avatar":
+        if creator_id is not None and creator_id != user.id:
+            raise error("file_not_found", "File not found", 404)
+        return user
     if purpose == "record_attachment":
         # A guest reads at most, so it never changes an attachment.
         if write and user.role == UserRole.GUEST.value:
@@ -163,6 +168,7 @@ def authorize_contextual_file(
             record_id=file.record_id,
             department_id=file.department_id,
             manage=manage,
+            creator_id=file.creator_id,
         )
 
 
@@ -238,6 +244,14 @@ def load(
     file = db.get(File, file_id)
     if file is None:
         raise error("file_not_found", "File not found", 404)
+    if lock and file.purpose == "user_avatar":
+        # Profile bindings serialize on the creator User before any File lock.
+        db.scalar(
+            select(User)
+            .where(User.id == file.creator_id)
+            .with_for_update(nowait=True, read=shared_lock)
+            .execution_options(populate_existing=True)
+        )
     parent(
         db,
         file.record_id,
@@ -250,3 +264,12 @@ def load(
     if lock:
         db.refresh(file, with_for_update={"nowait": True, "read": shared_lock})
     return file
+
+
+def require_avatar_unbound(db: Session, file: File) -> None:
+    """Caller holds the creator parent lock before its File lock."""
+    if (
+        file.purpose == "user_avatar"
+        and db.scalar(select(User.id).where(User.avatar_file_id == file.id).limit(1)) is not None
+    ):
+        raise error("file_current_avatar", "Replace or remove the current avatar first")

@@ -53,7 +53,13 @@ const finance: AccessGroup = {
   name: "Finance readers",
   member_ids: [guest.id, member.id],
   access: [
-    { department_id: secondDepartment.id, module_id: null, level: "read" },
+    {
+      department_id: secondDepartment.id,
+      module_id: null,
+      level: "read",
+      department_name: secondDepartment.department_name,
+      module_name: null,
+    },
   ],
 };
 const departments = [department as AccessDepartment, secondDepartment];

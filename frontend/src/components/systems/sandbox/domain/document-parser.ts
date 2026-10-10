@@ -1405,7 +1405,11 @@ function parseVersion(value: unknown, semantic = true): SandboxVersionSnapshot {
   };
 }
 
-function parseDocument(value: unknown, semantic = true): SandboxDocumentV4 {
+function parseDocument(
+  value: unknown,
+  semantic = true,
+  enforceImportHistoryLimit = true,
+): SandboxDocumentV4 {
   const source = record(value, "sandbox document");
   if (
     typeof source.schemaVersion === "number" &&
@@ -1434,7 +1438,10 @@ function parseDocument(value: unknown, semantic = true): SandboxDocumentV4 {
       : array(source.versions, "versions").map((item) =>
           parseVersion(item, semantic),
         );
-  if ((versions?.length ?? 0) > SANDBOX_DOCUMENT_LIMITS.versions)
+  if (
+    enforceImportHistoryLimit &&
+    (versions?.length ?? 0) > SANDBOX_DOCUMENT_LIMITS.versions
+  )
     throw new Error("Version limit exceeded");
   assertUnique(versions?.map((item) => item.id) ?? [], "version snapshot IDs");
   return {
@@ -1466,6 +1473,29 @@ export function parseSandboxDocumentForApi(
     return {
       ok: true,
       document: parseDocument(JSON.parse(text) as unknown, false),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error ? error.message : "Sandbox document is invalid",
+    };
+  }
+}
+
+/** Validates an export attachment; published history is outside import admission. */
+export function parseSandboxExportDocument(
+  text: string,
+): SandboxDocumentParseResult {
+  try {
+    if (
+      new TextEncoder().encode(text).byteLength >
+      SANDBOX_DOCUMENT_LIMITS.fileBytes
+    )
+      throw new Error("Sandbox document exceeds the 5 MiB limit");
+    return {
+      ok: true,
+      document: parseDocument(JSON.parse(text) as unknown, true, false),
     };
   } catch (error) {
     return {

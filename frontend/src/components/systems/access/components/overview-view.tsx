@@ -1,12 +1,7 @@
 "use client";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 
-import {
-  useId,
-  useMemo,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { Route } from "next";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -50,7 +45,7 @@ import {
   INACTIVE_DAYS_MIN,
   INACTIVE_DAYS_MAX,
 } from "../state/api-contracts";
-import { overviewHealth, type OverviewHealth } from "../helpers/overview";
+import { type OverviewHealth } from "../helpers/overview";
 import { InvitationSettings } from "./invitation-settings";
 import { TextField } from "./people-fields";
 
@@ -161,28 +156,61 @@ function HealthSkeleton() {
  * each linked to the filtered list, and the invitation settings.
  */
 export function OverviewView() {
+  const region = useWorkspaceDisplayRegion();
   const settingsTitleId = useId();
-  const users = useQuery(userListOptions("include"));
-  const groups = useQuery(groupListOptions("exclude"));
+  const administrators = useQuery(
+    userListOptions("exclude", {
+      role: "admin",
+      status: "active",
+      limit: 1,
+      offset: 0,
+    }),
+  );
+  const unassigned = useQuery(
+    userListOptions("exclude", { group_id: "none", limit: 1, offset: 0 }),
+  );
+  const noAccess = useQuery(
+    groupListOptions("exclude", { without_access: true, limit: 1, offset: 0 }),
+  );
+  const noMembers = useQuery(
+    groupListOptions("exclude", { without_members: true, limit: 1, offset: 0 }),
+  );
+  const ending = useQuery(
+    userListOptions("exclude", { status: "ending", limit: 1, offset: 0 }),
+  );
+  const pending = useQuery(
+    userListOptions("exclude", { status: "pending", limit: 1, offset: 0 }),
+  );
+  const counts = [
+    administrators,
+    unassigned,
+    noAccess,
+    noMembers,
+    ending,
+    pending,
+  ];
   const [inactiveDays, setInactiveDays] = useState(INACTIVE_DAYS_DEFAULT);
   const [inactiveDraft, setInactiveDraft] = useState(
     String(INACTIVE_DAYS_DEFAULT),
   );
   const [inactiveError, setInactiveError] = useState<string | null>(null);
   const summary = useQuery(userSummaryOptions(inactiveDays));
-  const [now] = useState(() => Date.now());
-  const health = useMemo(
-    () =>
-      users.data && groups.data
-        ? overviewHealth(users.data, groups.data, now)
-        : null,
-    [groups.data, now, users.data],
+  const health: OverviewHealth | null = counts.every((query) => query.data)
+    ? {
+        administrators: administrators.data!.pagination.total,
+        withoutGroup: unassigned.data!.pagination.total,
+        groupsWithoutAccess: noAccess.data!.pagination.total,
+        groupsWithoutMembers: noMembers.data!.pagination.total,
+        guestsEndingSoon: ending.data!.pagination.total,
+        pendingInvitations: pending.data!.pagination.total,
+      }
+    : null;
+  const denied = [...counts, summary].some(
+    (query) =>
+      query.error instanceof ApiError &&
+      [401, 403].includes(query.error.status),
   );
-
-  const denied = [users.error, groups.error, summary.error].some(
-    (error) => error instanceof ApiError && error.status === 403,
-  );
-  const failed = users.isError || groups.isError;
+  const failed = counts.some((query) => query.isError);
   const historyCards = [
     {
       id: "sign-in",
@@ -251,8 +279,8 @@ export function OverviewView() {
             <Button
               className="min-h-11"
               onClick={() => {
-                if (users.isError) void users.refetch();
-                if (groups.isError) void groups.refetch();
+                for (const query of counts)
+                  if (query.isError) void query.refetch();
               }}
             >
               Retry
@@ -386,7 +414,7 @@ export function OverviewView() {
                               <p className="text-muted-foreground text-xs">
                                 As of{" "}
                                 <time dateTime={summary.data.as_of}>
-                                  {formatDateTime(summary.data.as_of)}
+                                  {formatDateTime(summary.data.as_of, region)}
                                 </time>
                               </p>
                               {card.count > 0 ? (
