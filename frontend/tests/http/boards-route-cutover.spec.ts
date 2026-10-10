@@ -36,6 +36,20 @@ test("Board menu keeps administration reachable without crowding the section", a
       json: { board_id: boardId, revision: 1, groups: [] },
     }),
   );
+  await page.route("**/api/access/groups?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      },
+    }),
+  );
   await page.goto(`/boards?board=${boardId}&section=overview`);
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
   await page
@@ -1111,6 +1125,9 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
             widget_type: "records",
             module_id: moduleId,
             position: 0,
+            size: "M",
+            pinned: false,
+            chart_id: null,
             config: {
               version: 1,
               fields: [{ field_id: assigneeFieldId, expected_type: "user" }],
@@ -1118,9 +1135,7 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
               logic: "and",
               metric: null,
               visualization: "bar",
-              size: "half",
               refresh: "manual",
-              pinned: false,
             },
             created_at: "2026-09-25T00:00:00Z",
             updated_at: "2026-09-25T00:00:00Z",

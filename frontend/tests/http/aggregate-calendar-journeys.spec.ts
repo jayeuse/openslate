@@ -332,6 +332,8 @@ async function storedCalendar(page: Page, bucket: "month" | "week") {
         id: categoryId,
         widget_type: "chart",
         position: 0,
+        size: "M",
+        chart_id: null,
         created_at: timestamp,
         updated_at: timestamp,
         config: { version: 1, chart_type: "line", query },
@@ -354,13 +356,20 @@ test("saved monthly Dashboard reloads containing calendar starts and preserves n
 }) => {
   const query = await storedCalendar(page, "month");
   const requests: Record<string, unknown>[] = [];
-  await page.route("**/api/records/aggregate-snapshot", (route) => {
-    requests.push(route.request().postDataJSON() as Record<string, unknown>);
+  await page.route("**/api/records/aggregate-snapshots", (route) => {
+    const body = route.request().postDataJSON() as {
+      queries: Record<string, unknown>[];
+    };
+    requests.push(...body.queries);
     return route.fulfill({
-      json: snapshot(
-        ["2026-09-01", "2026-10-01", "2026-11-01", "2026-12-01"],
-        ["2.5", "4.25", null, "9.25"],
-      ),
+      json: {
+        items: body.queries.map(() =>
+          snapshot(
+            ["2026-09-01", "2026-10-01", "2026-11-01", "2026-12-01"],
+            ["2.5", "4.25", null, "9.25"],
+          ),
+        ),
+      },
     });
   });
   await page.goto("/openview?section=dashboards&dashboard=" + dashboardId);
@@ -411,10 +420,15 @@ test("saved weekly Dashboard uses Sunday workspace starts and hides retained dat
           },
     ),
   );
-  await page.route("**/api/records/aggregate-snapshot", (route) => {
+  await page.route("**/api/records/aggregate-snapshots", (route) => {
+    const body = route.request().postDataJSON() as { queries: unknown[] };
     requests += 1;
     return route.fulfill({
-      json: snapshot(["2026-10-04", "2026-10-11"], ["2.5", null]),
+      json: {
+        items: body.queries.map(() =>
+          snapshot(["2026-10-04", "2026-10-11"], ["2.5", null]),
+        ),
+      },
     });
   });
   await page.goto("/openview?section=dashboards&dashboard=" + dashboardId);
@@ -467,6 +481,9 @@ test("Board overview keeps null date positions as separate SVG segments with exa
               widget_type: "chart",
               module_id: moduleId,
               position: 0,
+              size: "M",
+              pinned: false,
+              chart_id: null,
               created_at: timestamp,
               updated_at: timestamp,
               config: {
@@ -476,9 +493,7 @@ test("Board overview keeps null date positions as separate SVG segments with exa
                 logic: "and",
                 metric: null,
                 visualization: "line",
-                size: "half",
                 refresh: "manual",
-                pinned: false,
               },
             },
           ],
@@ -508,8 +523,16 @@ test("Board overview keeps null date positions as separate SVG segments with exa
   await expect(
     card.getByText("2026-10-15", { exact: true }).locator(".."),
   ).toHaveText("2026-10-15—");
-  await expect(card.locator("polyline")).toHaveCount(2);
-  await expect(card.locator("circle")).toHaveCount(29);
+  // The shared renderer draws one path that restarts after the missing day.
+  await expect
+    .poll(
+      async () =>
+        (
+          (await card.locator(".recharts-line-curve").getAttribute("d")) ?? ""
+        ).split("M").length - 1,
+    )
+    .toBe(2);
+  await expect(card.locator(".recharts-line-dot")).toHaveCount(29);
   await expect(
     card.getByText("Values too large to chart. Exact values remain below.", {
       exact: true,

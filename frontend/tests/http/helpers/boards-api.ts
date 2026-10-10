@@ -163,6 +163,17 @@ export async function installBoardApi(
         },
         board_revision: 1,
       });
+    if (path === `/api/boards/${boardId}/files`)
+      return reply(200, {
+        items: [],
+        pagination: {
+          limit: 25,
+          offset: 0,
+          count: 0,
+          total: 0,
+          has_more: false,
+        },
+      });
     if (path === `/api/boards/${boardId}/widgets`)
       return reply(200, {
         items: [],

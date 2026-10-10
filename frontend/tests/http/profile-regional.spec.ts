@@ -314,7 +314,9 @@ test("S21 confirmed Profile Regional choices reach Access people and sessions wi
   const table = page.getByRole("table", { name: "People", exact: true });
   const row = table.getByRole("row").filter({ hasText: "Ben Cruz" });
   await expect(row).toContainText("2027-01-01");
-  await row.getByRole("button", { name: /^Ben Cruz/ }).click();
+  await row
+    .getByRole("button", { name: "Manage Ben Cruz", exact: true })
+    .click();
   const person = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
   await expect(person).toContainText("Ends 2027-01-01");
   // This is a machine date input under the existing Access expiry policy,

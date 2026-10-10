@@ -23,7 +23,7 @@ const routeTitles = [
   ["/openview", "OpenView | OpenSlate"],
   ["/manage", "Manage | OpenSlate"],
   ["/platform", "Platform | OpenSlate"],
-  ["/settings/appearance", "Appearance | OpenSlate"],
+  ["/profile", "Your profile | OpenSlate"],
   ["/login", "Sign in | OpenSlate"],
   ["/setup", "Setup guide | OpenSlate"],
 ] as const;
@@ -174,7 +174,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
-  await page.goto("/settings/appearance");
+  await page.goto("/profile#look");
   const textSize = page.getByRole("combobox", { name: "Text size" });
   await expect(textSize).toHaveValue("100");
   const sidebar = page.locator("#primary-sidebar");
@@ -187,7 +187,7 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
     .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
     .toBeCloseTo(baseline * 1.25, 0);
   await expect(
-    page.getByRole("heading", { name: "Appearance", exact: true }),
+    page.getByRole("heading", { name: "Your profile", exact: true }),
   ).toHaveCSS("font-size", "37.5px");
   await resize.focus();
   await resize.press("ArrowRight");

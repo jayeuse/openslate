@@ -346,6 +346,8 @@ test("stored Dashboard non-day query retains its bucket and legacy daily config 
           id: fieldId,
           position: 0,
           widget_type: "chart",
+          size: "M",
+          chart_id: null,
           created_at: "2026-10-01T00:00:00Z",
           updated_at: "2026-10-01T00:00:00Z",
           config: {
