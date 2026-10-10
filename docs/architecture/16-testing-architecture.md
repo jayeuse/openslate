@@ -94,8 +94,10 @@ outside the supported test boundary.
 
 The frontend CI workflow ([`frontend.yml`](../../.github/workflows/frontend.yml)) runs
 `npm run check`, `npm run build`, and `npm test` as parallel jobs. The isolated project
-runs as one test job. The `http` project runs as six Playwright shards
-(`--project=http --shard=N/6`), and each shard starts its own dev server. The `verify` job
+runs as one test job. The `http` project runs as twelve Playwright shards
+(`--project=http --shard=N/12`) with one worker each, because two browsers beside the dev
+server on a 2-vCPU runner stall page rendering. Each shard starts its own dev server and
+uploads its failure context and traces when it fails. The `verify` job
 keeps one required check for all of them. Browser tests and targeted API route-
 contract tests have their configured ownership and setup. FastAPI HTTP coverage remains
 the proof for static-site delivery, API/static path separation, cache policy, and

@@ -2492,6 +2492,8 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     archivedDialog.getByRole("status").filter({ hasText: "restored" }),
   ).toBeVisible();
+  // The restore selects the view and refreshes the module behind the dialog.
+  await expect(page).toHaveURL(new RegExp(`view=${viewId}`));
   await archivedDialog.getByRole("button", { name: "Close" }).click();
 
   await openViewAction(page, "Make default view");

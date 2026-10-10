@@ -77,11 +77,11 @@ export default defineConfig({
   testDir: "./tests",
   outputDir: "test-results/playwright",
   fullyParallel: true,
-  // Keep CI bounded by its CPUs. Three local workers reduce measured memory
-  // pressure on the 16 GiB development machine; CLI --workers still overrides.
-  workers: isCI
-    ? Math.min(5, availableParallelism())
-    : Math.min(3, availableParallelism()),
+  // CI parallelism comes from shards: one worker per 2-vCPU runner keeps the
+  // browser from starving beside `next dev`. Three local workers reduce
+  // measured memory pressure on the 16 GiB development machine; CLI --workers
+  // still overrides.
+  workers: isCI ? 1 : Math.min(3, availableParallelism()),
   timeout: 30_000,
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
@@ -89,7 +89,12 @@ export default defineConfig({
   reporter: "line",
   // CI runs in UTC; pin the browser zone so a local run cannot pass only
   // because this machine's zone matches a test fixture.
-  use: { baseURL, timezoneId: "UTC" },
+  use: {
+    baseURL,
+    timezoneId: "UTC",
+    // CI uploads test-results on failure; a trace shows the page state there.
+    trace: isCI ? "retain-on-failure" : "off",
+  },
   projects: [
     ...(testLayer === "all" || testLayer === "isolated"
       ? [{ name: "isolated", testDir: "./tests/isolated" }]
