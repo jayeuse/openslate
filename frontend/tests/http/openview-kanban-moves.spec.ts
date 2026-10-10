@@ -405,6 +405,8 @@ async function moveTo(page: Page, title: string, destination: string) {
       exact: true,
     }),
   });
+  // The previous card's menu may still be closing; its items share names.
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await card.getByRole("button", { name: "Move to…", exact: true }).click();
   await page.getByRole("menuitem", { name: destination, exact: true }).click();
 }

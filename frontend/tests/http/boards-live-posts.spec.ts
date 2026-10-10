@@ -1297,6 +1297,9 @@ test("local card history keeps its eligible author after a held feed refresh rep
     await page.goto(`/boards?board=${boardId}&section=posts`);
     const feed = page.getByRole("region", { name: "Published posts" });
     await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
+    // A Strict Mode remount can abort the first load after it reached the
+    // route, so count only the reads that Refresh causes.
+    const readsBeforeRefresh = feedReads;
     holdFeed = true;
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await feedEntered;
@@ -1355,7 +1358,7 @@ test("local card history keeps its eligible author after a held feed refresh rep
     await expect(versionRow(history, 2)).toContainText("Avery");
     await expect(versionRow(history, 1)).toContainText("Avery");
     await expect(history).not.toContainText("Author unavailable");
-    expect(feedReads).toBe(2);
+    expect(feedReads - readsBeforeRefresh).toBe(1);
     if (process.env.OPENVIEW_CAPTURE_DIR) {
       const previous = await page.evaluate(() => ({
         mode: document.documentElement.classList.contains("dark")
