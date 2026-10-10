@@ -1234,6 +1234,126 @@ test("S27 saved picker manual source refusal hides selected metadata until an ex
   expect(resultReads).toBe(1);
 });
 
+function chartPage(items: ReturnType<typeof pickerChart>[]) {
+  return {
+    items,
+    pagination: {
+      limit: 25,
+      offset: 0,
+      count: items.length,
+      total: items.length,
+      has_more: false,
+    },
+  };
+}
+
+test("a transient saved Chart list failure keeps the applied Chart and offers a list retry", async ({
+  page,
+}) => {
+  await editorCatalog(page);
+  let listFails = false;
+  await page.route("**/api/charts?*", (route) =>
+    listFails
+      ? route.fulfill({ status: 503, json: { detail: "Unavailable" } })
+      : route.fulfill({ json: chartPage([pickerChart()]) }),
+  );
+  await page.route(`**/api/charts/${savedChartId}`, (route) =>
+    route.fulfill({ json: pickerChart() }),
+  );
+  await page.route("**/api/records/aggregate-snapshot", (route) =>
+    route.fulfill({ json: calendarSnapshot(["Private applied result"]) }),
+  );
+  await page.goto("/openview?section=charts");
+  await page.getByLabel("Chart source", { exact: true }).selectOption("saved");
+  const picker = page.getByRole("combobox", {
+    name: "Saved Chart",
+    exact: true,
+  });
+  await picker.click();
+  await page
+    .getByRole("option", { name: "Weekly intake", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Apply chart", exact: true }).click();
+  const applied = page
+    .getByText("Private applied result", { exact: true })
+    .first();
+  await expect(applied).toBeVisible();
+  listFails = true;
+  await picker.click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  // The open picker focuses its search input.
+  const failedSearch = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/charts?") &&
+      response.url().includes("search=week") &&
+      response.status() === 503,
+  );
+  await page.keyboard.type("week");
+  await failedSearch;
+  await expect(
+    page.getByText("Saved Charts are unavailable. Retry the list.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(applied).toBeVisible();
+  await expect(picker).toContainText("Weekly intake");
+});
+
+test("a refused saved Chart keeps the other Charts available as replacements", async ({
+  page,
+}) => {
+  await editorCatalog(page);
+  const replacementId = "00000000-0000-4000-8000-000000000121";
+  let refused = false;
+  await page.route("**/api/charts?*", (route) =>
+    route.fulfill({
+      json: chartPage([
+        pickerChart(),
+        pickerChart(replacementId, "Monthly intake"),
+      ]),
+    }),
+  );
+  await page.route(`**/api/charts/${savedChartId}`, (route) =>
+    refused
+      ? route.fulfill({
+          status: 404,
+          json: { detail: "Private source refusal" },
+        })
+      : route.fulfill({ json: pickerChart() }),
+  );
+  await page.route(`**/api/charts/${replacementId}`, (route) =>
+    route.fulfill({ json: pickerChart(replacementId, "Monthly intake") }),
+  );
+  await page.route("**/api/records/aggregate-snapshot", (route) =>
+    route.fulfill({ json: calendarSnapshot(["Replacement result"]) }),
+  );
+  await page.goto("/openview?section=charts");
+  await page.getByLabel("Chart source", { exact: true }).selectOption("saved");
+  const picker = page.getByRole("combobox", {
+    name: "Saved Chart",
+    exact: true,
+  });
+  await picker.click();
+  await page
+    .getByRole("option", { name: "Weekly intake", exact: true })
+    .click();
+  refused = true;
+  await page.getByRole("button", { name: "Apply chart", exact: true }).click();
+  await expect(page.getByText("Weekly intake", { exact: true })).toHaveCount(0);
+  await picker.click();
+  await expect(
+    page.getByRole("option", { name: "Weekly intake", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("option", { name: "Monthly intake", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Apply chart", exact: true }).click();
+  await expect(
+    page.getByText("Replacement result", { exact: true }).first(),
+  ).toBeVisible();
+});
+
 for (const priorApply of [false, true]) {
   test(`S27 correction F1 picker refusal fences a held ${priorApply ? "different Chart" : "first Chart"} Apply without a transient private commit`, async ({
     page,

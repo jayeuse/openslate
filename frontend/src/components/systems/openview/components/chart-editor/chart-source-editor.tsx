@@ -12,6 +12,7 @@ import { subscribeWorkspaceInvalidations } from "../../../shared/adapters/invali
 import {
   chartListOptions,
   extendsRead,
+  isAuthorizationDenied,
   readStamp,
 } from "../../adapters/openview-queries";
 import {
@@ -132,13 +133,20 @@ function SavedChartPicker({
       : detail?.key === key
         ? detail
         : null;
-  const chart = list.error || accessDenied ? null : (selected?.chart ?? null);
+  // Only a refused list revokes the accepted chart; a transient list failure is
+  // retryable picker metadata.
+  const listDenied = isAuthorizationDenied(list.error);
+  const chart = listDenied || accessDenied ? null : (selected?.chart ?? null);
   const extension =
     extra?.search === search && extendsRead(extra.readAt, list) ? extra : null;
+  // A refused selected chart keeps the rest of the list, so a replacement can be
+  // chosen without showing the refused chart again.
   const items =
-    list.error || selected?.error || accessDenied
+    list.error || accessDenied
       ? []
-      : [...(list.data?.items ?? []), ...(extension?.items ?? [])];
+      : [...(list.data?.items ?? []), ...(extension?.items ?? [])].filter(
+          (item) => !selected?.error || item.id !== value.chartId,
+        );
   const hasMore = extension?.hasMore ?? list.data?.pagination.hasMore ?? false;
   useEffect(
     () =>
@@ -158,8 +166,8 @@ function SavedChartPicker({
     [client],
   );
   useEffect(() => {
-    if (list.error || accessDenied) onUnavailable?.();
-  }, [list.error, accessDenied, onUnavailable]);
+    if (listDenied || accessDenied) onUnavailable?.();
+  }, [listDenied, accessDenied, onUnavailable]);
   useEffect(() => {
     const controller = new AbortController();
     if (!value.chartId) return;
@@ -228,7 +236,7 @@ function SavedChartPicker({
           setPageError("");
           void list.refetch();
         }}
-        hasMore={hasMore && !selected?.error && !accessDenied}
+        hasMore={hasMore && !accessDenied}
         onLoadMore={() => void loadMore()}
         loadingMore={loadingMore}
       />
