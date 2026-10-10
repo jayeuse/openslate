@@ -1,7 +1,6 @@
 """Internal cleanup origin, preserved legacy rows and guarded downgrade on PostgreSQL."""
 
 import subprocess
-import sys
 from uuid import uuid4
 
 import pytest
@@ -71,7 +70,7 @@ def test_file_cleanup_origin_is_nullable_internal_column_with_named_fail_closed_
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
                 == ScriptDirectory.from_config(config).get_current_head()
             )
-        subprocess.run([sys.executable, "-m", "alembic", "check"], env=environment, check=True)
+        run_alembic(environment, "check")
     finally:
         engine.dispose()
 

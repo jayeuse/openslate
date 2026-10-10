@@ -1,8 +1,5 @@
 """Organization look upgrades preserve the guarded singleton and its settings."""
 
-import subprocess
-import sys
-
 import pytest
 from sqlalchemy import text
 
@@ -70,6 +67,6 @@ def test_workspace_theme_upgrade_backfills_without_rewriting_existing_settings()
                         ),
                         original,
                     )
-            subprocess.run([sys.executable, "-m", "alembic", "check"], check=True, env=environment)
+            run_alembic(environment, "check")
         finally:
             engine.dispose()

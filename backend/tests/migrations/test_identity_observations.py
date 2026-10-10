@@ -1,7 +1,6 @@
 """Guarded catalog/backfill/ACL and fail-closed observation migration proofs."""
 
 import subprocess
-import sys
 from uuid import uuid4
 
 import pytest
@@ -134,9 +133,7 @@ def test_upgrade_initializes_unknown_observations_without_inventing_legacy_facts
         finally:
             try:
                 run_alembic(environment, "upgrade", "head")
-                subprocess.run(
-                    [sys.executable, "-m", "alembic", "check"], env=environment, check=True
-                )
+                run_alembic(environment, "check")
             finally:
                 engine.dispose()
 
@@ -278,7 +275,7 @@ def test_downgrade_refuses_collected_facts_before_ddl(fact, migration_user):
     finally:
         try:
             run_alembic(environment, "upgrade", "head")
-            subprocess.run([sys.executable, "-m", "alembic", "check"], env=environment, check=True)
+            run_alembic(environment, "check")
         finally:
             engine.dispose()
 
