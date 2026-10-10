@@ -23,7 +23,7 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.views.models import SavedView
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.records import export as exporter
-from app.systems.sandbox.records import query_router
+from app.systems.sandbox.records import export_xlsx, query_router
 from app.systems.sandbox.records.models import Record
 from tests.record_queries.export_http_support import (
     ExportWorld,
@@ -297,6 +297,38 @@ def test_xlsx_byte_cap_includes_the_closed_archive(
     assert refused.status_code == 422
     assert refused.json()["detail"]["code"] == "export_limit_exceeded"
     assert len(export_world.events()) == 2
+
+
+def test_xlsx_totals_include_decimals_kept_as_text_for_precision(
+    export_world: ExportWorld,
+) -> None:
+    precise = "1234567890123456.123456789"
+    with Session(export_world.owner) as db:
+        record = db.get(Record, export_world.record_ids[2])
+        record.data = {**record.data, str(export_world.amount_id): precise}
+        db.commit()
+    payload = export_world.payload(format="xlsx", totals=True, include_details=False)
+    response = export_world.client.post("/api/records/export", json=payload)
+    assert response.status_code == 200
+    with ZipFile(io.BytesIO(response.content)) as archive:
+        worksheet = ElementTree.fromstring(archive.read("xl/worksheets/sheet1.xml"))
+    cells = {cell.attrib["r"]: "".join(cell.itertext()) for cell in worksheet.findall(".//s:c", NS)}
+    # Beta (10) and Gamma (precise) pass the amount filter; Excel cannot total the text cell.
+    assert cells["B3"] == precise
+    assert cells["A4"] == "Total"
+    assert cells["B4"] == "1234567890123466.123456789"
+
+
+def test_xlsx_raw_content_cap_refuses_before_the_archive_is_assembled(
+    export_world: ExportWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(export_xlsx, "MAX_RAW_CONTENT_BYTES", 8)
+    response = export_world.client.post(
+        "/api/records/export", json=export_world.payload(format="xlsx", include_details=False)
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "export_limit_exceeded"
+    assert export_world.events() == []
 
 
 @pytest.mark.parametrize("role", ["member", "guest"])

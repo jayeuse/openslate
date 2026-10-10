@@ -1,9 +1,10 @@
 """Typed, formula-safe Excel files with bounded rows and a complete-file byte cap."""
 
-import io
 import math
 from collections.abc import Iterable
 from datetime import date, datetime
+from decimal import Decimal
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,10 @@ from app.systems.sandbox.records.export import ExportContext
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import RecordProjection
 from app.systems.sandbox.records.query_schemas import NUMERIC_FIELD_TYPES, ExportRequest
+
+# Cell content past this raw size cannot compress into MAX_BYTES in practice, so the
+# workbook stops before XlsxWriter spends memory and temporary storage assembling it.
+MAX_RAW_CONTENT_BYTES = 16 * export_rules.MAX_BYTES
 
 THEME_ACCENTS = {
     "slate": "#2563eb",
@@ -91,13 +96,15 @@ def encode_xlsx(
     context: ExportContext,
     resolver: FieldDisplayResolver | None = None,
 ) -> tuple[bytes, int]:
-    output = io.BytesIO()
     count = 0
+    raw_bytes = 0
     try:
-        # The owned directory also cleans up interrupted or failed workbook assembly.
+        # The owned directory also cleans up interrupted or failed workbook assembly. The
+        # archive is written there and its size checked before it is read into memory.
         with TemporaryDirectory(prefix="openslate-export-") as temporary:
+            output = Path(temporary) / "export.xlsx"
             with Workbook(
-                output,
+                str(output),
                 {
                     "constant_memory": True,
                     "tmpdir": temporary,
@@ -160,11 +167,14 @@ def encode_xlsx(
                     (data_format(workbook, field), data_format(workbook, field, banded=True))
                     for field in columns
                 ]
+                # Exact sums; a column with precision-kept decimals (text cells, which
+                # Excel's SUBTOTAL skips) gets its exact total as a value.
                 totals = {
-                    col: 0.0
+                    col: Decimal(0)
                     for col, field in enumerate(columns)
                     if field is not None and field.type in NUMERIC_FIELD_TYPES
                 }
+                textual: set[int] = set()
                 for col, header in enumerate(headers):
                     write_text(sheet, header_row, col, header, header_style)
                 sheet.set_row(header_row, 24)
@@ -185,10 +195,16 @@ def encode_xlsx(
                         style = formats[col][int(payload.banded and count % 2 == 0)]
                         write_cell(sheet, row, col, value, style)
                         if value is not None:
-                            width = max((len(line) for line in str(value).splitlines()), default=0)
+                            text = str(value)
+                            raw_bytes += len(text.encode("utf-8"))
+                            if raw_bytes > MAX_RAW_CONTENT_BYTES:
+                                raise export_rules.limit_exceeded()
+                            width = max((len(line) for line in text.splitlines()), default=0)
                             widths[col] = min(48, max(widths[col], width + 2))
-                        if col in totals and isinstance(value, (int, float)):
-                            totals[col] += value
+                        if col in totals and isinstance(value, (int, float, str)):
+                            totals[col] += Decimal(str(value))
+                            if isinstance(value, str):
+                                textual.add(col)
                 sheet.freeze_panes(data_start, 0)
                 sheet.autofilter(header_row, 0, data_start + count - 1, len(columns) - 1)
                 for col, width in enumerate(widths):
@@ -201,9 +217,20 @@ def encode_xlsx(
                     )
                     if label_col is not None:
                         write_text(sheet, total_row, label_col, "Total", total_style)
-                    for col, cached in totals.items():
+                    for col, exact in totals.items():
+                        cached = float(exact)
                         if not math.isfinite(cached):
                             raise unrepresentable_cell()
+                        if col in textual:
+                            precise = Decimal(f"{cached:.16G}") == exact
+                            write_cell(
+                                sheet,
+                                total_row,
+                                col,
+                                cached if precise else format(exact, "f"),
+                                total_style,
+                            )
+                            continue
                         start = data_start if count else data_start + 1
                         end = data_start + count - 1 if count else start
                         sheet.write_formula(
@@ -213,9 +240,9 @@ def encode_xlsx(
                             total_style,
                             cached,
                         )
+            if output.stat().st_size > export_rules.MAX_BYTES:
+                raise export_rules.limit_exceeded()
+            content = output.read_bytes()
     except FileCreateError as error:
         raise HTTPException(503, detail="Unable to create export") from error
-    content = output.getvalue()
-    if len(content) > export_rules.MAX_BYTES:
-        raise export_rules.limit_exceeded()
     return content, count
