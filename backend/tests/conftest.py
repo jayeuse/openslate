@@ -15,6 +15,7 @@ from app.core.config import instance as _instance_module
 from app.core.config import provider_instance as _provider_instance_module
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession
+from app.systems.access.identity.provider_user_cache import clear_provider_users
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from tests.config_support import settings_environment
 from tests.postgres_runtime import assert_runner_database_url
@@ -85,6 +86,13 @@ def _guard_for_test(request, database_url: str) -> None:
         return
     _guard_integration_database(database_url, ownership_cache=_OWNERSHIP_CACHE)
     guarded.add(key)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_provider_user_cache():
+    clear_provider_users()
+    yield
+    clear_provider_users()
 
 
 @pytest.fixture(autouse=True)

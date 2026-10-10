@@ -35,6 +35,11 @@ from app.systems.access.identity.mfa_observations import (
     record_provider_observation,
 )
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.provider_user_cache import (
+    forget_provider_user,
+    recent_provider_user,
+    remember_provider_user,
+)
 from app.systems.access.identity.session_revocation import reconcile_session_cap, revoke_session
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.models import User, UserStatus
@@ -191,10 +196,31 @@ def resolve_provider_session(
     allow_aal1: bool = False,
     policy: WorkspaceProfile | None = None,
 ) -> tuple[User, IdentitySession] | None:
-    """Ordinary authorization resolves authority without writing observations."""
-    result = _resolved_provider_session(
-        db, claims, client, now=now, allow_aal1=allow_aal1, policy=policy
-    )
+    """Ordinary authorization resolves authority without writing observations.
+
+    A recently confirmed provider account may admit the request; a denial is
+    always recomputed from a fresh provider read.
+    """
+    reuse = recent_provider_user(claims.user_id) is not None
+    try:
+        result = _resolved_provider_session(
+            db,
+            claims,
+            client,
+            now=now,
+            allow_aal1=allow_aal1,
+            policy=policy,
+            reuse_recent_provider=reuse,
+        )
+    except MFARequired:
+        if not reuse:
+            raise
+        result = None
+    if result is None and reuse:
+        forget_provider_user(claims.user_id)
+        result = _resolved_provider_session(
+            db, claims, client, now=now, allow_aal1=allow_aal1, policy=policy
+        )
     return None if result is None else (result[0], result[1])
 
 
@@ -206,10 +232,13 @@ def _resolved_provider_session(
     now: datetime | None = None,
     allow_aal1: bool = False,
     policy: WorkspaceProfile | None = None,
+    reuse_recent_provider: bool = False,
 ) -> tuple[User, IdentitySession, ProviderUser, datetime] | None:
     """Recheck local access, provider account and provider session for every request.
 
     ``policy`` is the workspace policy the caller already read in this transaction.
+    With ``reuse_recent_provider`` a recently confirmed provider account replaces the
+    provider read; the caller must recompute any denial without it.
     """
 
     timestamp = now or utc_now()
@@ -240,17 +269,20 @@ def _resolved_provider_session(
     if not _provider_session_exists(db, claims.user_id, claims.session_id):
         return None
     started_at = observation_started_at()
-    provider_user = _live_provider_user(client, claims.user_id, timestamp)
+    provider_user = recent_provider_user(claims.user_id) if reuse_recent_provider else None
     if provider_user is None:
-        return None
-    # Provider latency must not admit an expired or replaced local authority.
-    try:
-        db.refresh(user)
-        db.refresh(session)
-    except InvalidRequestError:
-        return None
-    timestamp = now or utc_now()
-    policy = load_workspace_policy(db)
+        provider_user = _live_provider_user(client, claims.user_id, timestamp)
+        if provider_user is None:
+            return None
+        remember_provider_user(provider_user)
+        # Provider latency must not admit an expired or replaced local authority.
+        try:
+            db.refresh(user)
+            db.refresh(session)
+        except InvalidRequestError:
+            return None
+        timestamp = now or utc_now()
+        policy = load_workspace_policy(db)
     if (
         not _eligible_user(user, claims.user_id, timestamp)
         or session.user_id != user.id
