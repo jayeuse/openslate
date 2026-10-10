@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.provider_user_cache import forget_provider_user
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 
@@ -63,6 +64,8 @@ def test_role_grace_expires_but_verified_factor_always_requires_aal2(policy_worl
     assert missing["required"] is True and missing["enrollment_deadline"] is None
     world.policy(**{f"mfa_require_{role}": False})
     world.factor_status = "verified"
+    # A factor added directly in Supabase may wait out the 10 s account reuse.
+    forget_provider_user(world.provider_id)
     assert world.client.get("/api/auth/me", headers=world.headers()).status_code == 403
     assert world.client.get("/api/auth/me", headers=world.headers("aal2")).status_code == 200
 
@@ -355,6 +358,8 @@ def test_all_role_requirement_requires_savers_live_verified_factor_before_any_wr
             return None
 
         world.hook = fail_after_admission
+        # Admission reads the provider account again instead of reusing the GET's read.
+        forget_provider_user(world.provider_id)
     result = world.client.patch(
         "/api/workspace/security",
         headers=headers,

@@ -22,12 +22,22 @@ from app.core.database.session import AuditSession
 from app.core.integrations.supabase_auth import SupabaseAuthUnavailable, get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.provider_user_cache import forget_provider_user
 from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.conftest import guarded_create_engine
 
 pytestmark = pytest.mark.integration
+DEFAULT_APPEARANCE = {
+    "motion": "system",
+    "keyboard_shortcuts": True,
+    "timezone": None,
+    "date_format": "organization",
+    "time_format": "organization",
+    "week_start": "organization",
+    "start_page": "automatic",
+}
 
 
 @pytest.fixture
@@ -188,7 +198,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
         assert initial.json() == {
             "user_id": str(local_id),
             "theme": "system",
-            "appearance": {"motion": "system", "keyboard_shortcuts": True},
+            "appearance": DEFAULT_APPEARANCE,
         }
         assert "no-store" in initial.headers["Cache-Control"]
         assert client.patch(path, json={"theme": "dark"}).status_code == 401
@@ -231,7 +241,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
         assert saved.json() == {
             "user_id": str(local_id),
             "theme": "dark",
-            "appearance": {"motion": "system", "keyboard_shortcuts": True},
+            "appearance": DEFAULT_APPEARANCE,
         }
         assert "no-store" in saved.headers["Cache-Control"]
         assert client.get(path).json() == saved.json()
@@ -279,7 +289,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
         assert client.get(path).json() == {
             "user_id": str(local_id),
             "theme": "dark",
-            "appearance": {"motion": "system", "keyboard_shortcuts": True},
+            "appearance": DEFAULT_APPEARANCE,
         }
 
         raced = []
@@ -302,7 +312,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             assert accepted.json() == {
                 "user_id": str(local_id),
                 "theme": "dark",
-                "appearance": {"motion": "system", "keyboard_shortcuts": True},
+                "appearance": DEFAULT_APPEARANCE,
             }
         finally:
             event.remove(AuditSession, "loaded_as_persistent", change_after_auth_read)
@@ -467,6 +477,8 @@ def test_browser_logout_revokes_local_session_during_provider_outage(
         assert active.status_code == 200
         session_id = UUID(next(row["id"] for row in active.json() if row["current"]))
 
+        # The outage starts after the 10 s provider-account reuse window.
+        forget_provider_user(provider_id)
         offline = Mock(wraps=get_supabase_auth_client())
         offline.get_admin_user.side_effect = SupabaseAuthUnavailable("offline")
         offline.refresh.side_effect = SupabaseAuthUnavailable("offline")

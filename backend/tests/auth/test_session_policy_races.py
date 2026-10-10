@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.provider_user_cache import forget_provider_user
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 
@@ -94,6 +95,8 @@ def test_all_role_save_rechecks_actor_after_unlocked_provider_evidence(
         return None
 
     world.hook = actor_changes
+    # Admission reads the provider account again instead of reusing the GET's read.
+    forget_provider_user(world.provider_id)
     result = world.client.patch(
         "/api/workspace/security",
         headers=world.headers("aal2"),
