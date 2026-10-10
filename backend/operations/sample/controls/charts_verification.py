@@ -341,7 +341,13 @@ def verify_chart_controls(
         )
         if issues:
             return {}, issues
-        for path, _step, wanted in [
+        # Later controls (field close/reopen) may bump the source Board revision;
+        # source preservation means unchanged content, not an unchanged revision.
+        volatile = {
+            "source_board": {"revision", "updated_at"},
+            "source_widgets": {"board_revision"},
+        }
+        for path, step, wanted in [
             (f"/api/charts/{facts['ids']['chart_id']}", "chart", facts["chart"]),
             (f"/api/dashboards/{facts['ids']['dashboard_id']}", "dashboard", facts["dashboard"]),
             (
@@ -366,9 +372,10 @@ def verify_chart_controls(
         ]:
             response = client.request("GET", path)
             parsed = type(wanted).model_validate_json(response.content, strict=True)
+            ignored = volatile.get(step, set())
             if (
                 response.status_code != 200
-                or parsed != wanted
+                or parsed.model_dump(exclude=ignored) != wanted.model_dump(exclude=ignored)
                 or _uuid(response.headers.get("X-Request-ID")) is None
             ):
                 raise ValueError("Fresh Chart/source state differs")
