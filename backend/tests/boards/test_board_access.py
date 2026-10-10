@@ -4,11 +4,13 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
+from fastapi import APIRouter
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.models import UserRole
+from app.systems.access.users.models import User, UserRole
 from app.systems.boards.access import board_level, board_reader_ids
 from app.systems.boards.event_router import router as event_router
 from app.systems.boards.models import Board, BoardWidget
@@ -19,7 +21,6 @@ from app.systems.boards.widget_router import router as widget_router
 from tests.boards.support import (
     admin,
     board_group,
-    client,
     company_board,
     department_board,
     grant,
@@ -27,11 +28,19 @@ from tests.boards.support import (
     member,
     project_board,
 )
+from tests.boards.support import client as _board_client
+from tests.live_session_support import with_live_session
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
 ROUTERS = (boards_router, post_router, event_router, widget_router)
+
+
+def client(db: Session, actor: User, *routers: APIRouter) -> TestClient:
+    """Board widget writers resolve the full identity, so the actor needs a live session."""
+
+    return with_live_session(_board_client(db, actor, *routers), db, actor)
 
 
 def _post(board: Board) -> dict[str, object]:

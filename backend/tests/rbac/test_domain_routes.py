@@ -139,6 +139,7 @@ def test_all_purge_routes_remain_literal_admin_only(
         token=CONFIRMATION_TOKEN,
         expires_at=datetime.now(UTC),
         confirmation_name="Operations",
+        last_successful_backup_at=None,
     )
     mutation = LifecycleMutationResponse(impact=impact, operation_id=uuid7())
     monkeypatch.setattr(lifecycle_router, "_purge_preview", lambda *_args: preview)

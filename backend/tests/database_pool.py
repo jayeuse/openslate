@@ -6,11 +6,12 @@ shared engines keep connections open between tests instead. Each connection is r
 ``DISCARD ALL`` when it returns to the pool, so the next test starts from the same session
 state as a new connection (no settings, temporary tables, prepared statements, advisory
 locks or LISTEN channels carry over). A test that must be the database's only consumer
-calls ``dispose_pooled_engines`` first.
+calls ``dispose_process_engines`` first.
 """
 
 from __future__ import annotations
 
+import gc
 from threading import Lock
 
 from sqlalchemy import Engine, create_engine, event
@@ -52,3 +53,20 @@ def dispose_pooled_engines() -> None:
         engines = list(_ENGINES.values())
     for engine in engines:
         engine.dispose()
+
+
+def dispose_process_engines() -> None:
+    """Close every idle connection this process owns before a sole-consumer check.
+
+    That covers the shared test pools, the application's cached pool that earlier
+    ``TestClient`` tests and workers filled, and pools of engines nothing references any
+    more. ``Engine.dispose`` closes only checked-in connections, so a connection that an
+    active test, thread or another process holds stays open and still fails the check.
+    """
+    from app.core.database.session import dispose_database_resources
+
+    # Unreachable engines (a cleared ``get_engine`` cache, an undisposed test engine) close
+    # their idle connections only when collected.
+    gc.collect()
+    dispose_pooled_engines()
+    dispose_database_resources()

@@ -15,7 +15,6 @@ from httpx import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserRole
@@ -28,6 +27,7 @@ from app.systems.openview.views.router import router as views_router
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from tests.live_session_support import with_live_session
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -68,8 +68,7 @@ def _client(db: Session, actor: User, *routers: APIRouter) -> TestClient:
     for router in routers:
         app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
+    return with_live_session(TestClient(app), db, actor)
 
 
 def _view_payload(area: _Area, name: str, *, is_default: bool = False) -> dict[str, object]:

@@ -62,6 +62,10 @@ def test_realtime_failure_remains_best_effort_and_is_visible(monkeypatch, caplog
     class CommittedSession:
         info = {listeners.REALTIME_INVALIDATION_KEY: [InvalidationEvent(entity="records")]}
 
+        def in_nested_transaction(self) -> bool:
+            # A top-level commit: the only commit that publishes invalidations.
+            return False
+
     def unavailable(events):
         raise RuntimeError("private event transport response")
 

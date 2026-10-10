@@ -13,6 +13,8 @@ from tests.conftest import guarded_create_engine
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 pytestmark = pytest.mark.integration
+# The recorded-history migration under test; later migrations may follow it.
+REVISION = "482e986640e7"
 PREVIOUS = "dc22b5c205a4"
 COLUMNS = ("last_sign_in_at", "last_active_at")
 
@@ -79,7 +81,7 @@ def test_upgrade_preserves_mfa_facts_and_initializes_only_null_history(history_u
         user = connection.scalar(
             text("SELECT to_jsonb(u) FROM users u WHERE id=:id"), {"id": identity}
         )
-    run_alembic(environment, "upgrade", "head")
+    run_alembic(environment, "upgrade", REVISION)
     with engine.connect() as connection:
         # Observable upgrade outcome before referencing either potentially absent column.
         assert _column_count(connection) == 2

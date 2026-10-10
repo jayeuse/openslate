@@ -16,7 +16,7 @@ from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
 from tests.conftest import guarded_create_engine
-from tests.database_pool import dispose_pooled_engines
+from tests.database_pool import dispose_process_engines
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 # The saved-chart migration under test; later migrations may follow it.
@@ -77,23 +77,24 @@ class ChartMigrationFixture:
         (directory / f"backfill-{uuid7().hex}.log").write_text("\n".join(safe_lines) + "\n")
 
     def require_sole_consumer(self) -> None:
-        # Idle connections that earlier tests left in this process's shared pools are
-        # closed first; any other consumer still fails the check below.
-        dispose_pooled_engines()
+        # Idle connections that earlier tests left in this process's pools are closed
+        # first; any other consumer still fails the check below.
+        dispose_process_engines()
         with self.owner.connect() as connection:
             assert connection.scalar(text("SELECT current_setting('cluster_name')")) == (
                 "openslate-e2e-" + self.environment["OPENSLATE_FULLSTACK_RUN_ID"]
             )
-            assert (
-                connection.scalar(
-                    text("""
-                    SELECT count(*) FROM pg_stat_activity
+            others = connection.execute(
+                text("""
+                    SELECT pid, usename, application_name, state, backend_start
+                    FROM pg_stat_activity
                     WHERE datname = current_database() AND pid <> pg_backend_pid()
                       AND usename IN ('openslate_owner', 'openslate_runtime')
                 """)
-                )
-                == 0
-            ), "Migration rewind requires the sole guarded consumer"
+            ).all()
+            assert len(others) == 0, (
+                f"Migration rewind requires the sole guarded consumer: {others}"
+            )
 
     def rewind(self) -> None:
         self.require_sole_consumer()
