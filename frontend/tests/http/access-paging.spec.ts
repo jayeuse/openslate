@@ -95,8 +95,7 @@ test("selected sponsor reload and username server search keep labels and write n
   await expect(sponsor).toContainText("Remote display");
   await sponsor.click();
   await page
-    .getByRole("combobox", { name: "Sponsor", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search sponsor", exact: true })
     .fill("remote_login");
   await expect
     .poll(() =>

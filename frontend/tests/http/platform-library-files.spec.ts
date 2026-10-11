@@ -967,7 +967,7 @@ test("Library searches a large department catalog and reloads the selected label
   await picker.click();
   await page
     .getByRole("dialog")
-    .getByRole("combobox", { name: "Department", exact: true })
+    .getByRole("combobox", { name: "Search department", exact: true })
     .fill("Department 2000");
   await expect(
     page.getByRole("option", { name: "Department 2000", exact: true }),
@@ -2105,7 +2105,7 @@ test("department option search preserves file filters pages and a held download"
       .click();
     await page
       .getByRole("dialog")
-      .getByRole("combobox", { name: "Department", exact: true })
+      .getByRole("combobox", { name: "Search department", exact: true })
       .fill("Operations");
     await expect
       .poll(() => fixture.catalogReads.at(-1)?.get("search"))
@@ -2143,7 +2143,7 @@ test("department option search preserves an active upload producer", async ({
       .click();
     await page
       .getByRole("dialog")
-      .getByRole("combobox", { name: "Department", exact: true })
+      .getByRole("combobox", { name: "Search department", exact: true })
       .fill("Operations");
     await expect
       .poll(() => fixture.catalogReads.at(-1)?.get("search"))

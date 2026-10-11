@@ -1609,7 +1609,7 @@ test("Audit option search finds actors outside the capped first result and prese
   await person.click();
   await page
     .getByRole("dialog")
-    .getByRole("combobox", { name: "Person", exact: true })
+    .getByRole("combobox", { name: "Search person", exact: true })
     .fill("Remote actor");
   await page.getByRole("option", { name: "Remote actor", exact: true }).click();
   await expect(
@@ -1618,7 +1618,7 @@ test("Audit option search finds actors outside the capped first result and prese
   await person.click();
   await page
     .getByRole("dialog")
-    .getByRole("combobox", { name: "Person", exact: true })
+    .getByRole("combobox", { name: "Search person", exact: true })
     .fill("Tara");
   await expect(
     page.getByRole("option", { name: "Tara Reyes", exact: true }),

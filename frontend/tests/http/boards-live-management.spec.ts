@@ -457,9 +457,10 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
   await manage
     .getByRole("combobox", { name: "Add a group", exact: true })
     .click();
-  const groupSearch = page
-    .getByRole("combobox", { name: "Add a group", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }));
+  const groupSearch = page.getByRole("combobox", {
+    name: "Search add a group",
+    exact: true,
+  });
   await groupSearch.fill("Zora");
   await expect(
     page.getByRole("option", { name: "Zora group beyond one hundred" }),

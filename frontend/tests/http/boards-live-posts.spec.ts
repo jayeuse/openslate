@@ -645,8 +645,7 @@ test("author picker searches beyond the first page and retains a selected author
   await expect(selectedAuthorControl).toContainText("Zora later-page author");
   await selectedAuthorControl.click();
   await page
-    .getByRole("combobox", { name: "Post author", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search post author", exact: true })
     .fill("First author 0");
   await expect
     .poll(() =>
@@ -723,8 +722,7 @@ test("off-page post authors keep their labels through picker search, reader, and
     .getByRole("combobox", { name: "Post author", exact: true })
     .click();
   await page
-    .getByRole("combobox", { name: "Post author", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search post author", exact: true })
     .fill("First author 0");
   await expect(
     page.getByRole("option", { name: "First author 0", exact: true }),
@@ -928,8 +926,7 @@ test("an author refusal clears names and an older label response cannot restore 
       .getByRole("combobox", { name: "Post author", exact: true })
       .click();
     await page
-      .getByRole("combobox", { name: "Post author", exact: true })
-      .and(page.getByPlaceholder("Search…", { exact: true }))
+      .getByRole("combobox", { name: "Search post author", exact: true })
       .fill("Private author");
     await expect(
       page

@@ -800,8 +800,7 @@ test("an invitation searches later-page sponsor choices without changing base in
   await dialog.getByLabel("Role", { exact: true }).selectOption("guest");
   await dialog.getByRole("combobox", { name: "Sponsor", exact: true }).click();
   await page
-    .getByRole("combobox", { name: "Sponsor", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search sponsor", exact: true })
     .fill("Zzz Sponsor");
   await page.getByRole("option", { name: "Zzz Sponsor", exact: true }).click();
   await dialog

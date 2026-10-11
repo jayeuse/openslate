@@ -95,7 +95,7 @@ test("Events person picker uses server search and keeps its selected label outsi
   await picker.click();
   await page
     .getByRole("dialog")
-    .getByRole("combobox", { name: "Person", exact: true })
+    .getByRole("combobox", { name: "Search person", exact: true })
     .fill("lookup-target");
   await expect
     .poll(() => state.userQueries.at(-1)?.get("search"))
@@ -107,7 +107,7 @@ test("Events person picker uses server search and keeps its selected label outsi
   await picker.click();
   await page
     .getByRole("dialog")
-    .getByRole("combobox", { name: "Person", exact: true })
+    .getByRole("combobox", { name: "Search person", exact: true })
     .fill("mara");
   await expect(
     page.getByRole("option", { name: "Mara", exact: true }),

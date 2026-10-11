@@ -5123,8 +5123,7 @@ test("a Dashboard department picker searches beyond its first page and resolves 
   });
   await dialog.getByLabel("Department", { exact: true }).click();
   await page
-    .getByRole("combobox", { name: "Department", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search department", exact: true })
     .fill("Dispatch");
   await page.getByRole("option", { name: "Dispatch", exact: true }).click();
   await expect(dialog.getByLabel("Department", { exact: true })).toContainText(
