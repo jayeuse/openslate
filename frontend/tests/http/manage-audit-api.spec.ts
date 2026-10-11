@@ -621,7 +621,7 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
   expect(exported.has("limit")).toBe(false);
   expect(exported.has("offset")).toBe(false);
 
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
   api.failList();
   // Reopening the same export after its cache goes stale refetches while
   // retaining the successful preparation; no query internals are injected.
@@ -658,7 +658,7 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
     await expect(downloadCsv).toBeDisabled();
     expect(downloads).toBe(1);
     releaseRetry?.();
-    await expect(preparationError).not.toBeVisible();
+    await expect(preparationError).toBeHidden();
     await expect(preview.getByLabel("CSV preview")).toContainText(
       "retry succeeded",
     );
@@ -707,10 +707,10 @@ test("Audit unscoped reads and export hide cached data on refusal until explicit
     })
     .click();
   await expect(listDenied).toBeVisible();
-  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.getByRole("dialog")).toBeHidden();
   await expect(
     page.getByRole("table", { name: "Activity history table" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   api.allowDetails();
   await listDenied.getByRole("button", { name: "Retry" }).click();
   await expect(
@@ -734,17 +734,17 @@ test("Audit unscoped reads and export hide cached data on refusal until explicit
     .getByRole("button", { name: "Download CSV", exact: true })
     .click();
   await expect(listDenied).toBeVisible();
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
   await expect(
     page.getByRole("table", { name: "Activity history table" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   await page
     .getByRole("combobox", { name: "Sort activity" })
     .selectOption("oldest");
   await expect(listDenied).toBeVisible();
   await expect(
     page.getByRole("table", { name: "Activity history table" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   expect(downloads).toBe(0);
   api.allowList();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
@@ -757,7 +757,7 @@ test("Audit unscoped reads and export hide cached data on refusal until explicit
   await expect(listDenied).toBeVisible();
   await expect(
     page.getByRole("table", { name: "Activity history table" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   await page
     .getByRole("combobox", { name: "Sort activity" })
     .selectOption("oldest");
@@ -837,8 +837,8 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
           .getByRole("alert")
           .filter({ hasText: "address is not allowed" }),
       ).toBeVisible();
-    await expect(table).not.toBeVisible();
-    await expect(preview).not.toBeVisible();
+    await expect(table).toBeHidden();
+    await expect(preview).toBeHidden();
     expect(sessionChecks).toBeGreaterThan(before);
     blocked = false;
     state.actors.get(state.userId)!.assurance = "aal2";
@@ -849,13 +849,13 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
         exact: true,
       })
       .click();
-    await expect(curtain).not.toBeVisible();
+    await expect(curtain).toBeHidden();
     await expect(table).toBeVisible();
     await expect(
       page.getByText("Only administrators can view audit history.", {
         exact: true,
       }),
-    ).not.toBeVisible();
+    ).toBeHidden();
     expect(state.calls.filter((call) => call.method === "POST")).toHaveLength(
       0,
     );
@@ -961,7 +961,7 @@ test("Audit CSV failure retains its pinned preview and Retry refuses malformed o
   expect(
     requests.every((url) => url.searchParams.get("created_before") === cutoff),
   ).toBe(true);
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
 });
 
 test("Audit Close, Escape, route leave and session concealment suppress pending CSV downloads", async ({
@@ -1057,7 +1057,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
           page.getByRole("heading", { name: "Organization", exact: true }),
         ).toBeVisible();
       }
-      await expect(preview).not.toBeVisible();
+      await expect(preview).toBeHidden();
       barrier.release();
       await barrier.handled;
       if (method === "blur") {
@@ -1067,7 +1067,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
             name: "Session verification",
             exact: true,
           }),
-        ).not.toBeVisible();
+        ).toBeHidden();
         await expect(preview).toBeVisible();
         await expect(
           preview.getByRole("button", { name: "Download CSV", exact: true }),
@@ -1079,7 +1079,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
       expect(downloads).toBe(0);
       await expect(
         page.getByText(/Downloaded \d+ filtered audit/),
-      ).not.toBeVisible();
+      ).toBeHidden();
     } finally {
       barrier.release();
       hold = null;
@@ -1100,7 +1100,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
     .getByRole("button", { name: "Download CSV", exact: true })
     .click();
   await downloaded;
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
   expect(downloads).toBe(1);
 });
 
@@ -1264,123 +1264,127 @@ test("Audit search waits for typing to settle before sending its server query", 
   ).toEqual(["delete"]);
 });
 
-for (const personal of [false, true]) {
-  test(
-    personal
-      ? "S21 Audit personal display preserves workspace DST day bounds and server CSV"
-      : "Audit date filters use workspace-local day bounds across a daylight-saving change",
-    async ({ page }, testInfo) => {
-      await page.clock.setFixedTime(new Date("2026-03-10T12:00:00Z"));
-      if (personal) {
-        const userId = "00000000-0000-4000-8000-000000000101";
-        await page.route("**/api/auth/me", (route) =>
-          route.fulfill({ json: profileSelf(userId, "admin") }),
-        );
-        await page.route(`**/api/users/${userId}/preferences`, (route) =>
-          route.fulfill({
-            json: profilePreferences(userId, {
-              timezone: "America/Los_Angeles",
-              date_format: "ymd",
-              time_format: "24h",
-            }),
-          }),
-        );
-      }
-      await page.route("**/api/workspace", (route) =>
+for (const [personal, title] of [
+  [
+    false,
+    "Audit date filters use workspace-local day bounds across a daylight-saving change",
+  ],
+  [
+    true,
+    "Audit personal display preserves workspace DST day bounds and server CSV",
+  ],
+] as const) {
+  test(title, async ({ page }, testInfo) => {
+    await page.clock.setFixedTime(new Date("2026-03-10T12:00:00Z"));
+    if (personal) {
+      const userId = "00000000-0000-4000-8000-000000000101";
+      await page.route("**/api/auth/me", (route) =>
+        route.fulfill({ json: profileSelf(userId, "admin") }),
+      );
+      await page.route(`**/api/users/${userId}/preferences`, (route) =>
         route.fulfill({
-          json: {
-            id: fixtureId(77),
-            display_name: "Harbor workspace",
-            legal_name: null,
-            description: null,
-            contact_email: null,
-            contact_phone: null,
-            postal_address: null,
-            locale: "en-US",
-            timezone: "America/New_York",
-            logo_file_id: null,
-            mark: "RS",
-            currency: "PHP",
-            week_start: "monday",
-            business_hours: "09:00–18:00",
-            theme: "slate",
-            revision: 4,
-          },
+          json: profilePreferences(userId, {
+            timezone: "America/Los_Angeles",
+            date_format: "ymd",
+            time_format: "24h",
+          }),
         }),
       );
-      const logs = makeAuditLogs(5);
-      const localDayRows = [
-        ["2026-03-08T04:59:59.999Z", "Before local day"],
-        ["2026-03-08T05:00:00.000Z", "At local day start"],
-        ["2026-03-08T07:00:00.000Z", "After clock change"],
-        ["2026-03-09T03:59:59.999Z", "At local day end"],
-        ["2026-03-09T04:00:00.000Z", "After local day"],
-      ] as const;
-      logs.forEach((log, index) => {
-        log.created_at = localDayRows[index]![0];
-        log.after = { name: localDayRows[index]![1] };
-      });
-      const api = createAuditRoute(logs);
-      await page.route("**/api/audit-logs**", (route) => api.handle(route));
-      await page.goto("/manage?view=audit");
-      const table = page.getByRole("table", {
-        name: "Activity history table",
+    }
+    await page.route("**/api/workspace", (route) =>
+      route.fulfill({
+        json: {
+          id: fixtureId(77),
+          display_name: "Harbor workspace",
+          legal_name: null,
+          description: null,
+          contact_email: null,
+          contact_phone: null,
+          postal_address: null,
+          locale: "en-US",
+          timezone: "America/New_York",
+          logo_file_id: null,
+          mark: "RS",
+          currency: "PHP",
+          week_start: "monday",
+          business_hours: "09:00–18:00",
+          theme: "slate",
+          revision: 4,
+        },
+      }),
+    );
+    const logs = makeAuditLogs(5);
+    const localDayRows = [
+      ["2026-03-08T04:59:59.999Z", "Before local day"],
+      ["2026-03-08T05:00:00.000Z", "At local day start"],
+      ["2026-03-08T07:00:00.000Z", "After clock change"],
+      ["2026-03-09T03:59:59.999Z", "At local day end"],
+      ["2026-03-09T04:00:00.000Z", "After local day"],
+    ] as const;
+    logs.forEach((log, index) => {
+      log.created_at = localDayRows[index]![0];
+      log.after = { name: localDayRows[index]![1] };
+    });
+    const api = createAuditRoute(logs);
+    await page.route("**/api/audit-logs**", (route) => api.handle(route));
+    await page.goto("/manage?view=audit");
+    const table = page.getByRole("table", {
+      name: "Activity history table",
+      exact: true,
+    });
+    await expect(table).toBeVisible();
+    await page.getByRole("button", { name: "More filters" }).click();
+    await page.getByLabel("From", { exact: true }).fill("2026-03-08");
+    await page.getByLabel("To", { exact: true }).fill("2026-03-08");
+
+    await expect
+      .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
+      .toBe("2026-03-08T05:00:00.000Z");
+    await expect
+      .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
+      .toBe("2026-03-09T03:59:59.999Z");
+    await expect(
+      page.getByText("Showing 1–3 of 3", { exact: true }),
+    ).toBeVisible();
+    await expect(table).toContainText("At local day start");
+    await expect(table).toContainText("After clock change");
+    await expect(table).toContainText("At local day end");
+    await expect(table).not.toContainText("Before local day");
+    await expect(table).not.toContainText("After local day");
+    if (personal) {
+      const row = table
+        .getByRole("row")
+        .filter({ hasText: "At local day start" });
+      await expect(row).toContainText("2026-03-07");
+      await expect(row).toContainText("21:00");
+      await page
+        .getByRole("button", { name: "Export audit preview", exact: true })
+        .click();
+      const preview = page.getByRole("dialog", {
+        name: "Audit export preview",
         exact: true,
       });
-      await expect(table).toBeVisible();
-      await page.getByRole("button", { name: "More filters" }).click();
-      await page.getByLabel("From", { exact: true }).fill("2026-03-08");
-      await page.getByLabel("To", { exact: true }).fill("2026-03-08");
-
-      await expect
-        .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
-        .toBe("2026-03-08T05:00:00.000Z");
-      await expect
-        .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
-        .toBe("2026-03-09T03:59:59.999Z");
-      await expect(
-        page.getByText("Showing 1–3 of 3", { exact: true }),
-      ).toBeVisible();
-      await expect(table).toContainText("At local day start");
-      await expect(table).toContainText("After clock change");
-      await expect(table).toContainText("At local day end");
-      await expect(table).not.toContainText("Before local day");
-      await expect(table).not.toContainText("After local day");
-      if (personal) {
-        const row = table
-          .getByRole("row")
-          .filter({ hasText: "At local day start" });
-        await expect(row).toContainText("2026-03-07");
-        await expect(row).toContainText("21:00");
-        await page
-          .getByRole("button", { name: "Export audit preview", exact: true })
-          .click();
-        const preview = page.getByRole("dialog", {
-          name: "Audit export preview",
-          exact: true,
-        });
-        await expect(preview).toContainText("3 filtered entries");
-        const downloaded = page.waitForEvent("download");
-        await preview
-          .getByRole("button", { name: "Download CSV", exact: true })
-          .click();
-        const download = await downloaded;
-        const path = testInfo.outputPath("s21-audit-workspace-day.csv");
-        await download.saveAs(path);
-        const csv = await readFile(path, "utf8");
-        expect(csv).toContain('"2026-03-08T05:00:00.000Z"');
-        expect(csv).toContain('"2026-03-09T03:59:59.999Z"');
-        expect(csv).not.toContain("2026-03-07");
-        expect(api.exports).toHaveLength(1);
-        expect(api.exports[0]?.searchParams.get("created_after")).toBe(
-          "2026-03-08T05:00:00.000Z",
-        );
-        expect(api.exports[0]?.searchParams.get("created_before")).toBe(
-          "2026-03-09T03:59:59.999Z",
-        );
-      }
-    },
-  );
+      await expect(preview).toContainText("3 filtered entries");
+      const downloaded = page.waitForEvent("download");
+      await preview
+        .getByRole("button", { name: "Download CSV", exact: true })
+        .click();
+      const download = await downloaded;
+      const path = testInfo.outputPath("s21-audit-workspace-day.csv");
+      await download.saveAs(path);
+      const csv = await readFile(path, "utf8");
+      expect(csv).toContain('"2026-03-08T05:00:00.000Z"');
+      expect(csv).toContain('"2026-03-09T03:59:59.999Z"');
+      expect(csv).not.toContain("2026-03-07");
+      expect(api.exports).toHaveLength(1);
+      expect(api.exports[0]?.searchParams.get("created_after")).toBe(
+        "2026-03-08T05:00:00.000Z",
+      );
+      expect(api.exports[0]?.searchParams.get("created_before")).toBe(
+        "2026-03-09T03:59:59.999Z",
+      );
+    }
+  });
 }
 
 test("Audit export uses the last settled search while a newer search is debouncing", async ({
@@ -1558,7 +1562,7 @@ test("Audit export refuses more than 10000 rows and exports the header after fil
   expect(api.exports[0]!.searchParams.get("search")).toBe(
     "no matching activity",
   );
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
   await expect(
     page.getByText("Downloaded 0 filtered audit entries.", { exact: true }),
   ).toBeVisible();

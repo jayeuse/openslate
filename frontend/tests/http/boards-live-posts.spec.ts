@@ -739,7 +739,7 @@ test("published feed shows only returned safe text and clears when the server re
   await expect(page.getByText("Pinned", { exact: true })).toBeVisible();
   const summary = page.locator("article p").first();
   await expect(summary).toBeVisible();
-  expect(await summary.textContent()).toBe(browserPost.body);
+  await expect.poll(() => summary.textContent()).toBe(browserPost.body);
   await expect(page.locator("article script")).toHaveCount(0);
   expect(await page.locator("body").innerText()).not.toContain("sample-board");
   expect(await page.locator("body").innerText()).not.toContain(

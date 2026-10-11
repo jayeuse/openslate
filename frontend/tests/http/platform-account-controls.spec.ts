@@ -243,10 +243,14 @@ test("password changes send the API payload, show status-specific feedback, clea
       "aria-invalid",
       String(newPasswordHasError),
     );
-    expect(await currentPassword.getAttribute("aria-describedby")).toBe(
-      currentPasswordHasError ? "current-password-error" : null,
-    );
-    expect(await newPassword.getAttribute("aria-describedby")).toBe(
+    if (currentPasswordHasError)
+      await expect(currentPassword).toHaveAttribute(
+        "aria-describedby",
+        "current-password-error",
+      );
+    else await expect(currentPassword).not.toHaveAttribute("aria-describedby");
+    await expect(newPassword).toHaveAttribute(
+      "aria-describedby",
       newPasswordHasError
         ? "new-password-guidance new-password-error"
         : "new-password-guidance",

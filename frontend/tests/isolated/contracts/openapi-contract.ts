@@ -280,8 +280,6 @@ export type ContractCase = {
    * Route, method, query, headers and JSON body are still checked.
    */
   requestOnly?: string;
-  /** Set to the finding id when the adapter disagrees with the backend today. */
-  fixme?: string;
 };
 
 function capture(
@@ -401,8 +399,7 @@ export async function checkContract(
 export function describeContracts(area: string, cases: ContractCase[]): void {
   test.describe(`${area} adapters match contracts/openapi.json`, () => {
     for (const contract of cases) {
-      const register = contract.fixme ? test.fixme : test;
-      register(contract.name, async () => {
+      test(contract.name, async () => {
         const problems = await checkContract(contract, "values");
         if (contract.requestOnly === undefined)
           problems.push(...(await checkContract(contract, "nulls")));

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "./helpers/test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   initialDesign,
@@ -757,57 +757,10 @@ test("cancelling a pending lifecycle preview ignores its late response and prote
   expect(sandbox.documentWrites()).toBe(0);
 });
 
-async function prepareS06Review(page: Page) {
-  if (!process.env.S06_CAPTURE_DIR) return;
-  const theme = process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-  await page.route("**/api/users/*/preferences", (route) =>
-    route.fulfill({
-      json: {
-        user_id: "00000000-0000-4000-8000-000000000001",
-        theme,
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
-      },
-    }),
-  );
-}
-
-async function captureS06Review(page: Page, name: string) {
-  const directory = process.env.S06_CAPTURE_DIR;
-  if (!directory) return;
-  const theme = process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await mkdir(directory, { recursive: true });
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 390, height: 844 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await expect(page.locator("html")).toHaveClass(
-      theme === "dark" ? /dark/ : /^(?!.*dark)/,
-    );
-    await expect(
-      page.locator('[data-slot="loading-region"][aria-busy="true"]'),
-    ).toHaveCount(0);
-    await page.evaluate(async () => {
-      await document.fonts.ready;
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
-    });
-    await page.screenshot({
-      path: join(directory, `${name}-${viewport.width}-${theme}.png`),
-      fullPage: false,
-      animations: "disabled",
-    });
-  }
-  await page.setViewportSize({ width: 1440, height: 900 });
-}
-
 for (const orientation of ["outgoing", "incoming"] as const) {
   test(`bound ${orientation} relationship uses Field lifecycle and counts unique record links`, async ({
     page,
   }) => {
-    await prepareS06Review(page);
     const design = configuredDesignWithLegacyMapping();
     const relationship = design.relationships[0]!;
     const liveId = "00000000-0000-4000-8000-000000000561";
@@ -897,8 +850,6 @@ for (const orientation of ["outgoing", "incoming"] as const) {
         { exact: true },
       ),
     ).toBeVisible();
-    if (orientation === "incoming")
-      await captureS06Review(page, "relationship-close");
     await close
       .getByLabel("Type the relationship name")
       .fill(relationship.name);
@@ -3161,76 +3112,6 @@ test("keyboard activation on a trigger flow node focuses its editor", async ({
   await expect(condition).toBeFocused();
 });
 
-test("Trigger Studio layout screenshots can be captured for theme and viewport review", async ({
-  page,
-}) => {
-  test.skip(
-    process.env.TRIGGER_LAYOUT_SCREENSHOTS !== "1",
-    "Set TRIGGER_LAYOUT_SCREENSHOTS=1 to capture layout evidence",
-  );
-
-  const screenshotDirectory = resolve(
-    "..",
-    ".agent-runtime/triggers-layout-20260925",
-  );
-  await mkdir(screenshotDirectory, { recursive: true });
-  await openAuthenticatedSandbox(page);
-  await page.getByRole("link", { name: "Triggers", exact: true }).click();
-  await expect(
-    page.getByRole("region", { name: "Flow preview" }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "New trigger" }).click();
-  await page.getByLabel("Trigger name").fill("Service request follow-up");
-  await page.getByLabel("Event", { exact: true }).selectOption("field-changed");
-  const settings = page.getByRole("region", { name: "Trigger settings" });
-  await settings
-    .getByLabel("Event module")
-    .selectOption({ label: "Service requests" });
-  await settings.getByLabel("Event field").selectOption({ label: "Status" });
-  await page.getByRole("button", { name: "Add condition" }).click();
-  await settings
-    .getByLabel("Condition 1 field")
-    .selectOption({ label: "Status" });
-  await settings.getByLabel("Condition 1 operator").selectOption("=");
-  await settings
-    .getByLabel("Set field target")
-    .first()
-    .selectOption({ label: "Status" });
-  const values = settings.getByLabel("Value", { exact: true });
-  await values.first().fill("Open");
-  await values.last().fill("In progress");
-
-  const views = [
-    { width: 1440, height: 1080, theme: "light" },
-    { width: 1440, height: 1080, theme: "dark" },
-    { width: 1920, height: 1200, theme: "light" },
-    { width: 1920, height: 1200, theme: "dark" },
-    { width: 390, height: 844, theme: "light" },
-    { width: 390, height: 844, theme: "dark" },
-  ] as const;
-
-  for (const view of views) {
-    await page.setViewportSize({ width: view.width, height: view.height });
-    await page.evaluate((theme) => {
-      document.documentElement.classList.toggle("dark", theme === "dark");
-    }, view.theme);
-    const widths = await page.evaluate(() => ({
-      viewport: document.documentElement.clientWidth,
-      page: document.documentElement.scrollWidth,
-    }));
-    expect(widths.page).toBeLessThanOrEqual(widths.viewport);
-    await page.screenshot({
-      path: join(
-        screenshotDirectory,
-        `trigger-${view.width}-${view.theme}.png`,
-      ),
-      fullPage: true,
-      animations: "disabled",
-    });
-  }
-});
-
 test("trigger panels resize with their requested minimum widths and remain usable", async ({
   page,
 }) => {
@@ -3282,16 +3163,6 @@ test("trigger panels resize with their requested minimum widths and remain usabl
       ),
     )
     .toBeLessThanOrEqual(0);
-  if (process.env.TRIGGER_LAYOUT_SCREENSHOTS === "1") {
-    await page.screenshot({
-      path: resolve(
-        "..",
-        ".agent-runtime/triggers-layout-20260925/trigger-resized-minimum.png",
-      ),
-      fullPage: true,
-      animations: "disabled",
-    });
-  }
   const narrowWidth = await width(settings);
   await settingsHandle.focus();
   await page.keyboard.press("ArrowLeft");
@@ -3622,7 +3493,7 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   ).toEqual([]);
 });
 
-test("Test field search preserves hidden edits in the submitted temporary values", async ({
+test("Sandbox Test field search preserves hidden edits in the submitted temporary values", async ({
   page,
 }) => {
   let submitted: Record<string, unknown> | undefined;
@@ -3777,7 +3648,7 @@ test("Test field search preserves hidden edits in the submitted temporary values
   }
 });
 
-test("Test comparisons use saved inputs, preserve typed values, and distinguish missing results", async ({
+test("Sandbox Test comparisons use saved inputs, preserve typed values, and distinguish missing results", async ({
   page,
 }) => {
   const design = structuredClone(configuredSandboxDesign);
@@ -3978,7 +3849,6 @@ for (const count of [44, 45, 50]) {
   test(`capacity ${count} is global in filtered History and checkpoint dialog`, async ({
     page,
   }) => {
-    await prepareS06Review(page);
     await openAuthenticatedSandbox(page, configuredSandboxDesign, {
       versions: capacityVersions(count),
     });
@@ -3993,13 +3863,11 @@ for (const count of [44, 45, 50]) {
     if (count < 45)
       await expect(timeline.getByText(text, { exact: true })).toHaveCount(0);
     else await expect(timeline.getByText(text, { exact: true })).toBeVisible();
-    if (count === 45) await captureS06Review(page, "capacity-history");
     const checkpoint = await openCheckpointDialog(page);
     if (count < 45)
       await expect(checkpoint.getByText(text, { exact: true })).toHaveCount(0);
     else
       await expect(checkpoint.getByText(text, { exact: true })).toBeVisible();
-    if (count === 45) await captureS06Review(page, "capacity-checkpoint");
   });
 }
 
@@ -4482,7 +4350,7 @@ test("History comparison stays tied to compared versions while inspecting anothe
   await expect(
     page.getByRole("region", { name: "Selected version", exact: true }),
   ).toContainText("Before import");
-  expect(await comparison.innerText()).toBe(savedComparison);
+  await expect.poll(() => comparison.innerText()).toBe(savedComparison);
   expect(reads).toBe(2);
   if (process.env.HISTORY_LAYOUT_SCREENSHOTS) {
     const output = resolve(process.env.HISTORY_LAYOUT_SCREENSHOTS);
@@ -6131,7 +5999,6 @@ test("History older off-page metadata cannot restore a target marked missing by 
 test("export history uses complete global total and downloads both boolean variants", async ({
   page,
 }) => {
-  await prepareS06Review(page);
   const versions = Array.from({ length: 28 }, (_, index) => ({
     ...historyVersionFixture(
       index + 1,
@@ -6226,7 +6093,6 @@ test("export history uses complete global total and downloads both boolean varia
   expect(withoutHistory).toEqual(document);
   expect(withoutHistory).not.toHaveProperty("versions");
   await include.check();
-  await captureS06Review(page, "s05-export-history");
   const [withHistory] = await Promise.all([
     page.waitForEvent("download"),
     dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
@@ -6598,14 +6464,6 @@ for (const transition of ["unmount", "account"] as const) {
 test("export accepts 50 mutable snapshots plus a publication as complete downloadable history", async ({
   page,
 }) => {
-  await prepareS06Review(page);
-  const captureDirectory = process.env.S06_CAPTURE_DIR;
-  let releaseCapture!: () => void;
-  const captureDelay = captureDirectory
-    ? new Promise<void>((resolve) => {
-        releaseCapture = resolve;
-      })
-    : Promise.resolve();
   const versions = capacityVersions(50);
   const document = sandboxDocumentFromDesign(configuredSandboxDesign);
   const bundle = {
@@ -6629,7 +6487,6 @@ test("export accepts 50 mutable snapshots plus a publication as complete downloa
     expect(
       new URL(route.request().url()).searchParams.get("includeVersions"),
     ).toBe("true");
-    await captureDelay;
     return route.fulfill({
       headers: {
         "Content-Disposition": 'attachment; filename="owned-history-51.json"',
@@ -6658,42 +6515,15 @@ test("export accepts 50 mutable snapshots plus a publication as complete downloa
   await dialog
     .getByRole("checkbox", { name: "Include version history", exact: true })
     .check();
-  await captureS06Review(page, "s05-export-history-ready");
-  if (captureDirectory) {
-    await dialog
-      .getByRole("button", { name: "Export JSON", exact: true })
-      .click();
-    try {
-      await expect(
-        dialog.getByRole("button", { name: "Exporting…", exact: true }),
-      ).toBeDisabled();
-      await captureS06Review(page, "s05-export-history-pending");
-    } catch (error) {
-      releaseCapture();
-      throw error;
-    }
-  }
   const completedDownload = page.waitForEvent("download", { timeout: 5_000 });
-  if (captureDirectory) releaseCapture();
-  else
-    await dialog
-      .getByRole("button", { name: "Export JSON", exact: true })
-      .click();
+  await dialog
+    .getByRole("button", { name: "Export JSON", exact: true })
+    .click();
   const download = await completedDownload;
   expect(download.suggestedFilename()).toBe("owned-history-51.json");
   const path = await download.path();
   if (!path) throw new Error("A completed history download is required");
   const actualBytes = await readFile(path);
-  if (captureDirectory) {
-    await mkdir(captureDirectory, { recursive: true });
-    await writeFile(
-      join(
-        captureDirectory,
-        `downloaded-history-51-${process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light"}.json`,
-      ),
-      actualBytes,
-    );
-  }
   const downloaded: unknown = JSON.parse(actualBytes.toString("utf8"));
   expect(downloaded).toEqual(bundle);
   expect(downloaded).toHaveProperty("versions", bundle.versions);

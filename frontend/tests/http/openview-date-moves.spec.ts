@@ -1,11 +1,9 @@
 import { expect, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
 import { test, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -73,7 +71,6 @@ async function installDates(
     timezone?: string;
     undated?: number;
     level?: "read" | "write";
-    theme?: "light" | "dark";
   } = {},
 ) {
   await page.clock.setFixedTime(new Date(revision));
@@ -254,12 +251,6 @@ async function installDates(
         locale: "en-US",
         timezone: zone,
         week_start: "monday",
-      });
-    if (options.theme && path.endsWith("/preferences"))
-      return json({
-        user_id: id(1),
-        theme: options.theme,
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
       });
     if (path === "/api/views/data-sources")
       return json(
@@ -1091,61 +1082,3 @@ test.describe("touch", () => {
     expect(api.batches).toEqual([]);
   });
 });
-
-if (process.env.S19_CAPTURE_DIR) {
-  for (const layout of ["calendar", "timeline"] as const) {
-    test(`capture ${layout} moves`, async ({ page }) => {
-      const directory = process.env.S19_CAPTURE_DIR!;
-      await mkdir(directory, { recursive: true });
-      for (const theme of ["light", "dark"] as const) {
-        for (const size of ["desktop", "mobile"] as const) {
-          await page.setViewportSize(
-            size === "desktop"
-              ? { width: 1440, height: 900 }
-              : { width: 390, height: 844 },
-          );
-          await page.emulateMedia({
-            reducedMotion: "reduce",
-            colorScheme: theme,
-          });
-          const api = await installDates(page, { layout, undated: 1, theme });
-          await page.goto(url);
-          await stage(
-            page,
-            "2026-03-07",
-            "Task 1",
-            layout === "calendar" ? "Move date…" : "Move start date…",
-          );
-          if (layout === "calendar") {
-            await page
-              .getByRole("button", {
-                name: "Show undated move list",
-                exact: true,
-              })
-              .click();
-            await stage(page, "2026-03-09", "Task 3", "Move date…");
-          } else {
-            await stage(page, "2026-03-15", "Task 1", "Resize end date…");
-            await stage(page, "2026-03-13", "Task 2");
-            api.outcome("stale");
-            await page
-              .getByRole("button", { name: "Save changes (2)" })
-              .click();
-            await expect(card(page, "Task 2")).toContainText(
-              "Changed by someone else — review",
-            );
-          }
-          await hideDevOverlay(page);
-          await page.evaluate(async () => {
-            await document.fonts.ready;
-          });
-          await page.screenshot({
-            path: `${directory}/${layout}-${theme}-${size}.png`,
-            fullPage: true,
-            animations: "disabled",
-          });
-        }
-      }
-    });
-  }
-}

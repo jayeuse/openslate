@@ -238,11 +238,11 @@ async function exerciseOpenView(
   await expect(
     page.getByRole("searchbox", { name: "Search Suppliers", exact: true }),
   ).toBeVisible();
-  const moduleId = await dataSource.inputValue();
-  expect(moduleId).toBe(supplier.moduleId);
-  expect(moduleId).toMatch(
+  await expect(dataSource).toHaveValue(supplier.moduleId);
+  await expect(dataSource).toHaveValue(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
   );
+  const moduleId = supplier.moduleId;
   const recordResults = page.getByRole("region", { name: "Record results" });
   await expect(
     recordResults.getByText(supplier.legalName, { exact: true }),
@@ -1072,12 +1072,12 @@ async function exercisePrivateDashboard(
   const addWidget = page.getByRole("dialog", { name: "Add widget" });
   const moduleSelect = addWidget.getByLabel("Data source");
   await moduleSelect.selectOption({ label: "Suppliers" });
-  const moduleId = await moduleSelect.inputValue();
-  expect(moduleId).toBe(supplier.moduleId);
+  await expect(moduleSelect).toHaveValue(supplier.moduleId);
+  const moduleId = supplier.moduleId;
   const dimension = addWidget.getByLabel("Group records by");
   await dimension.selectOption({ label: "Payment terms" });
-  const dimensionId = await dimension.inputValue();
-  expect(dimensionId).toBe(supplier.paymentTermsFieldId);
+  await expect(dimension).toHaveValue(supplier.paymentTermsFieldId);
+  const dimensionId = supplier.paymentTermsFieldId;
   await addWidget
     .getByRole("button", { name: "Add widget", exact: true })
     .click();

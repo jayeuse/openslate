@@ -1196,7 +1196,7 @@ test("Report recipes open on demand and preserve cross-tab drafts when closed", 
   await expect(editor.getByRole("checkbox", { name: "Asset" })).toBeChecked();
   await editor.getByRole("button", { name: "Create Report" }).click();
 
-  await expect(editor).not.toBeVisible();
+  await expect(editor).toBeHidden();
   await expect(
     page.locator("#main-content").getByText("Report created."),
   ).toBeVisible();
@@ -1336,7 +1336,7 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
   expect(globalUserRequests).toEqual([]);
 
   await editor.getByRole("button", { name: "Create Report" }).click();
-  await expect(editor).not.toBeVisible();
+  await expect(editor).toBeHidden();
   expect(api.createdReports()[0]?.request).toMatchObject({
     recipe: {
       filters: [

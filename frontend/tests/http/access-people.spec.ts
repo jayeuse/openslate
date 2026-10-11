@@ -143,8 +143,17 @@ test("the whole row opens a person, and the name reads as body text, not a link"
     .evaluate((element) => getComputedStyle(element).color);
   expect(ink).toEqual({ color: email, underline: "none" });
 
-  // The open button's hit area covers the row, so click by position.
-  await row.getByText("ben@example.com").click({ force: true });
+  // The open button's hit area covers the row, so click the row where the
+  // email sits; the button receives the click.
+  await expect(row).toBeVisible();
+  const rowBox = (await row.boundingBox())!;
+  const emailBox = (await row.getByText("ben@example.com").boundingBox())!;
+  await row.click({
+    position: {
+      x: emailBox.x - rowBox.x + emailBox.width / 2,
+      y: emailBox.y - rowBox.y + emailBox.height / 2,
+    },
+  });
   await expect(panel(page, "Ben Cruz")).toBeVisible();
 });
 

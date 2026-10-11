@@ -1,5 +1,3 @@
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, test, type Page, type Locator } from "./helpers/test";
 import {
   cardTarget,
@@ -81,6 +79,7 @@ test("Person card guest DTO omits private keys and nullable member values remain
   page,
 }) => {
   const api = await installPersonCardApi(page, "platform", "guest");
+  await page.setViewportSize({ width: 390, height: 844 });
   await visit(page, api);
   await trigger(page).click();
   await expect(card(page)).toContainText("Equipment coordinator");
@@ -113,6 +112,15 @@ test("Person card guest DTO omits private keys and nullable member values remain
     card(page).getByText("Not provided", { exact: true }),
   ).toHaveCount(4);
   await expect(card(page).getByText("ana@example.test")).toHaveCount(0);
+  const bounds = await card(page).boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
   expect(api.writes).toEqual([]);
 });
 
@@ -549,61 +557,3 @@ for (const surface of [
     expect(api.writes).toEqual([]);
   });
 }
-
-test("Person card four captures on each requested surface: desktop and mobile in light and dark", async ({
-  page,
-}, info) => {
-  test.setTimeout(90_000);
-  test.skip(
-    process.env.CAPTURE_S22_PERSON_CARD !== "1",
-    "Opt-in bounded S22 capture procedure",
-  );
-  const directory = info.outputPath("captures");
-  await mkdir(directory, { recursive: true });
-  for (const surface of [
-    "access",
-    "posts",
-    "openview",
-    "calendar",
-    "platform",
-  ] as const) {
-    const api = await installPersonCardApi(page, surface, "admin");
-    for (const theme of ["light", "dark"] as const) {
-      api.theme = theme;
-      for (const viewport of [
-        { width: 1440, height: 900 },
-        { width: 390, height: 844 },
-      ]) {
-        await page.setViewportSize(viewport);
-        await visit(page, api, surface);
-        await trigger(page).first().click();
-        await expectMemberCard(page);
-        await expect
-          .poll(() =>
-            page.evaluate(() =>
-              document.documentElement.classList.contains("dark"),
-            ),
-          )
-          .toBe(theme === "dark");
-        const bounds = await card(page).boundingBox();
-        expect(bounds).not.toBeNull();
-        expect(bounds!.x).toBeGreaterThanOrEqual(0);
-        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
-        await expect
-          .poll(() =>
-            page.evaluate(
-              () => document.documentElement.scrollWidth <= innerWidth,
-            ),
-          )
-          .toBe(true);
-        await page.screenshot({
-          path: join(
-            directory,
-            `${surface}-${theme}-${viewport.width}x${viewport.height}.png`,
-          ),
-          animations: "disabled",
-        });
-      }
-    }
-  }
-});

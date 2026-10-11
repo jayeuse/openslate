@@ -1012,7 +1012,7 @@ for (const dismissal of ["Stay", "Escape", "outside"] as const) {
       await page
         .getByTestId("dialog-backdrop")
         .click({ position: { x: 2, y: 2 } });
-    await expect(dialog).not.toBeVisible();
+    await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(/section=import-export/);
     await pending.held!.fulfill({ json: importResult(pending.submitted!) });
     await expect(

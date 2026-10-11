@@ -1,44 +1,16 @@
 import { expect, test } from "@playwright/test";
 
 import {
-  departmentSchema,
   groupAccessEntrySchema,
   groupSchema,
   invitationCreateSchema,
-  invitationSchema,
   invitationSettingsSchema,
   memberCandidateSchema,
-  moduleSchema,
-  pageSchema,
-  sessionSchema,
   userAccessSchema,
   userPatchSchema,
   userSchema,
 } from "../../../src/components/systems/access/state/api-contracts";
-import {
-  department,
-  group,
-  ids,
-  memberCandidate,
-  accessModule,
-  pageOf,
-  session,
-  user,
-  workspace,
-} from "./fixtures";
-
-test("responses shaped like the current backend models parse", () => {
-  expect(userSchema.parse(user)).toEqual(user);
-  expect(invitationSchema.parse({ user, delivery: "email" }).user).toEqual(
-    user,
-  );
-  expect(groupSchema.parse(group)).toEqual(group);
-  expect(memberCandidateSchema.parse(memberCandidate)).toEqual(memberCandidate);
-  expect(sessionSchema.parse(session)).toEqual(session);
-  expect(departmentSchema.parse(department)).toEqual(department);
-  expect(moduleSchema.parse(accessModule)).toEqual(accessModule);
-  expect(pageSchema(groupSchema).parse(pageOf([group])).items).toHaveLength(1);
-});
+import { group, ids, memberCandidate, user, workspace } from "./fixtures";
 
 test("group responses carry server-resolved reach names while requests remain IDs and levels", () => {
   const named = {

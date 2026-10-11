@@ -72,8 +72,19 @@ test("the list shows members and the departments each group reaches, and searche
 
   // A click anywhere on the row opens the group.
   await page.getByRole("searchbox", { name: "Search groups" }).fill("");
-  // The open button's hit area covers the row, so click by position.
-  await clerks.getByText("Inventory · Write").click({ force: true });
+  // The open button's hit area covers the row, so click the row where the
+  // access text sits; the button receives the click.
+  await expect(clerks).toBeVisible();
+  const clerkRow = (await clerks.boundingBox())!;
+  const clerkAccess = (await clerks
+    .getByText("Inventory · Write")
+    .boundingBox())!;
+  await clerks.click({
+    position: {
+      x: clerkAccess.x - clerkRow.x + clerkAccess.width / 2,
+      y: clerkAccess.y - clerkRow.y + clerkAccess.height / 2,
+    },
+  });
   await expect(panel(page, "Inventory clerks")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`group=${ids.clerks}`));
 });

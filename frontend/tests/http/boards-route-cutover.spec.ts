@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -12,19 +12,6 @@ import {
   readerAccess,
   userId,
 } from "./helpers/boards-api";
-
-async function captureAuthorArchiveEvidence(
-  page: Page,
-  name: string,
-  fullPage = true,
-) {
-  const directory = process.env.BOARD_ARCHIVE_CAPTURE_DIR;
-  if (!directory) return;
-  await page.screenshot({
-    path: `${directory}/${name}.png`,
-    fullPage,
-  });
-}
 
 test("Board menu keeps administration reachable without crowding the section", async ({
   page,
@@ -930,7 +917,6 @@ test("an event author can archive their event, while another author's event stay
       name: "Archive Team planning session",
     }),
   ).toHaveCount(0);
-  await captureAuthorArchiveEvidence(page, "event-archive-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Agenda", exact: true }).click();
   const agendaEvents = page.getByRole("region", {
@@ -946,7 +932,6 @@ test("an event author can archive their event, while another author's event stay
       name: "Archive Team planning session",
     }),
   ).toHaveCount(0);
-  await captureAuthorArchiveEvidence(page, "event-archive-mobile");
   await agendaEvents
     .getByRole("button", { name: "Archive My planning session" })
     .click();
@@ -1362,11 +1347,9 @@ test("an author can archive their own editable post with current revisions", asy
     exact: true,
   });
   await expect(archiveButton).toBeVisible();
-  await captureAuthorArchiveEvidence(page, "post-archive-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(archiveButton).toBeVisible();
   await archiveButton.scrollIntoViewIfNeeded();
-  await captureAuthorArchiveEvidence(page, "post-archive-mobile", false);
   const confirmation = page.getByRole("alertdialog", {
     name: "Archive post?",
   });

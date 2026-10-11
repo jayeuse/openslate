@@ -16,7 +16,6 @@ import {
   newEmailProof,
   observeEmailSecretExposure,
 } from "./helpers/email-change";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 // Prepared browser specifications, not an executed red/green claim.
 // Cryptography, provider consumption and transaction guarantees are native tests.
@@ -445,11 +444,17 @@ test("a scrubbed link survives in memory only, not a page reload", async ({
   page,
 }) => {
   const api = await installEmailChangeApi(page, { signedOut: true });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(
     `${emailChangeLanding}#token_hash=${currentEmailProof}&type=email_change`,
   );
   await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
   await expect(confirm(page)).toBeEnabled();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
   expect(api.completions).toEqual([]);
   await expectNoEmailSecrets(page);
   await page.reload();
@@ -519,75 +524,4 @@ test("a source replaced during confirmation discards the delayed result and wait
   } finally {
     hold.release();
   }
-});
-
-test("email surfaces eight-image acceptance round", async ({
-  page,
-}, testInfo) => {
-  test.skip(
-    process.env.CAPTURE_S24_EMAIL !== "1",
-    "Opt-in rendered email acceptance record",
-  );
-  const profile = await installProfileApi(page);
-  const api = await installEmailChangeApi(page, { signedOut: true });
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 390, height: 844 },
-  ]) {
-    for (const theme of ["light", "dark"] as const) {
-      profile.theme = theme;
-      await page.setViewportSize(viewport);
-      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-      api.authenticated = true;
-      const dialog = await openEmailRequest(page);
-      await expect(page.locator("html")).toHaveClass(
-        theme === "dark" ? /dark/ : /^(?!.*\bdark\b).*$/,
-      );
-      await expect(
-        dialog.getByRole("button", {
-          name: "Send confirmation emails",
-          exact: true,
-        }),
-      ).toBeEnabled();
-      await hideDevOverlay(page);
-      const profileImage = `s24-email-form-${viewport.width}-${theme}.png`;
-      await page.screenshot({
-        path: testInfo.outputPath(profileImage),
-        mask: [dialog.getByLabel("Current password", { exact: true })],
-      });
-      await testInfo.attach(profileImage, {
-        path: testInfo.outputPath(profileImage),
-        contentType: "image/png",
-      });
-      api.authenticated = false;
-      await page.goto(
-        `${emailChangeLanding}#token_hash=${currentEmailProof}&type=email_change`,
-      );
-      await expect(confirm(page)).toBeEnabled();
-      await expectNoEmailSecrets(page);
-      // Public auth pages have no account theme provider. Set the fixture's
-      // root theme directly to inspect the same established semantic tokens.
-      await page.evaluate(
-        (dark) => document.documentElement.classList.toggle("dark", dark),
-        theme === "dark",
-      );
-      await hideDevOverlay(page);
-      const landingImage = `s24-email-confirmation-${viewport.width}-${theme}.png`;
-      await page.screenshot({
-        path: testInfo.outputPath(landingImage),
-        fullPage: true,
-      });
-      await testInfo.attach(landingImage, {
-        path: testInfo.outputPath(landingImage),
-        contentType: "image/png",
-      });
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth,
-        ),
-      ).toBe(true);
-    }
-  }
-  expect(api.requests).toEqual([]);
-  expect(api.completions).toEqual([]);
 });

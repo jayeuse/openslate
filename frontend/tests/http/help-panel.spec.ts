@@ -4,7 +4,6 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -223,10 +222,16 @@ test("Help keyboard opening traps focus and Escape returns to the header without
   expect(api.writes).toEqual([]);
 });
 
-test("Help lists the existing Sandbox Build keys, not a new global or Comms dispatcher", async ({
+test("Help fits a phone and lists the existing Sandbox Build keys, not a new global or Comms dispatcher", async ({
   page,
 }) => {
-  await installHelpApi(page);
+  const api = await installHelpApi(page);
+  api.workspace = {
+    ...fullWorkspace,
+    contact_email:
+      "organization-administrator-with-a-long-contact-name@example.test",
+  };
+  await page.setViewportSize({ width: 390, height: 844 });
   await visitPlatform(page);
   await openHelp(page);
   for (const text of [
@@ -243,6 +248,34 @@ test("Help lists the existing Sandbox Build keys, not a new global or Comms disp
   await expect(shortcuts(page)).not.toContainText(
     /new message|search messages/i,
   );
+  await expect(contact(page)).toContainText(
+    "organization-administrator-with-a-long-contact-name@example.test",
+  );
+  const metrics = await sheet(page).evaluate((el) => {
+    const bounds = el.getBoundingClientRect();
+    return {
+      left: bounds.left,
+      right: bounds.right,
+      width: el.clientWidth,
+      contentWidth: el.scrollWidth,
+      viewportWidth: innerWidth,
+      pageWidth: document.documentElement.scrollWidth,
+    };
+  });
+  expect(metrics.left).toBeGreaterThanOrEqual(0);
+  expect(metrics.right).toBeLessThanOrEqual(metrics.viewportWidth);
+  expect(metrics.contentWidth).toBeLessThanOrEqual(metrics.width);
+  expect(metrics.pageWidth).toBeLessThanOrEqual(metrics.viewportWidth);
+  await contact(page).scrollIntoViewIfNeeded();
+  await expect(contact(page)).toBeInViewport();
+  const profile = shortcuts(page).getByRole("link", { name: /profile/i });
+  await profile.scrollIntoViewIfNeeded();
+  await expect(profile).toBeInViewport();
+  expect((await profile.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  const close = sheet(page).getByRole("button", { name: /close/i });
+  await close.scrollIntoViewIfNeeded();
+  await expect(close).toBeInViewport();
+  expect((await close.boundingBox())?.height).toBeGreaterThanOrEqual(44);
 });
 
 test("Help off text links to Profile and updates its guide after client navigation", async ({
@@ -660,85 +693,3 @@ for (const boundary of ["close", "account", "curtain"] as const) {
     }
   });
 }
-
-test("Help four captures: desktop and phone in light and dark", async ({
-  page,
-}, testInfo) => {
-  test.skip(
-    process.env.CAPTURE_S23_HELP !== "1",
-    "One opt-in Help Sheet inspection round",
-  );
-  const api = await installHelpApi(page);
-  api.workspace = {
-    ...fullWorkspace,
-    contact_email:
-      "organization-administrator-with-a-long-contact-name@example.test",
-  };
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 390, height: 844 },
-  ]) {
-    for (const theme of ["light", "dark"] as const) {
-      api.theme = theme;
-      await page.setViewportSize(viewport);
-      await visitPlatform(page);
-      await expect(page.locator("html")).toHaveClass(
-        theme === "dark" ? /dark/ : /^(?!.*\bdark\b).*$/,
-      );
-      await openHelp(page);
-      await expect(contact(page)).toContainText(
-        "organization-administrator-with-a-long-contact-name@example.test",
-      );
-      await expect(shortcuts(page)).toContainText("F2");
-      const metrics = await sheet(page).evaluate((el) => {
-        const bounds = el.getBoundingClientRect();
-        return {
-          left: bounds.left,
-          right: bounds.right,
-          width: el.clientWidth,
-          contentWidth: el.scrollWidth,
-          viewportWidth: innerWidth,
-          pageWidth: document.documentElement.scrollWidth,
-          sectionSpacing: getComputedStyle(el.children[1]).rowGap,
-          bodyColor: getComputedStyle(el.querySelector("li")!).color,
-          surfaceColor: getComputedStyle(el).backgroundColor,
-        };
-      });
-      expect(metrics.left).toBeGreaterThanOrEqual(0);
-      expect(metrics.right).toBeLessThanOrEqual(metrics.viewportWidth);
-      expect(metrics.contentWidth).toBeLessThanOrEqual(metrics.width);
-      expect(metrics.pageWidth).toBeLessThanOrEqual(metrics.viewportWidth);
-      await contact(page).scrollIntoViewIfNeeded();
-      await expect(contact(page)).toBeInViewport();
-      const profile = shortcuts(page).getByRole("link", { name: /profile/i });
-      await profile.scrollIntoViewIfNeeded();
-      await expect(profile).toBeInViewport();
-      expect((await profile.boundingBox())?.height).toBeGreaterThanOrEqual(44);
-      await sheet(page)
-        .getByRole("button", { name: /close/i })
-        .scrollIntoViewIfNeeded();
-      await expect(
-        sheet(page).getByRole("button", { name: /close/i }),
-      ).toBeInViewport();
-      expect(
-        (
-          await sheet(page)
-            .getByRole("button", { name: /close/i })
-            .boundingBox()
-        )?.height,
-      ).toBeGreaterThanOrEqual(44);
-      await sheet(page).evaluate((el) => {
-        el.scrollTop = 0;
-      });
-      await hideDevOverlay(page);
-      const filename = `help-${theme}-${viewport.width}x${viewport.height}.png`;
-      await page.screenshot({
-        path: testInfo.outputPath(filename),
-        fullPage: true,
-      });
-      console.log(
-        JSON.stringify({ capture: filename, viewport, theme, metrics }),
-      );
-    }
-  }
-});

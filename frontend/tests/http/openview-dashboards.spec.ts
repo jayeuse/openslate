@@ -3357,7 +3357,7 @@ test("department Dashboard supports mobile keyboard-only controls and survives r
   ).toBeVisible();
   await expect(
     page.getByRole("dialog", { name: "Session verification" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   await expectDashboardMainToFit(page);
 
   const dashboardPicker = page.getByLabel("Dashboard", { exact: true });

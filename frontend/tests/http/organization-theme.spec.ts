@@ -291,10 +291,15 @@ for (const role of ["member", "guest"] as const) {
     await page.goto("/manage?view=organization");
     await expect(radio(page, "Stockroom")).toBeChecked();
     await expect(radio(page, "Whiteboard")).toBeDisabled();
-    await look(page)
+    // A pointer click on the disabled option's label, as a reader would try.
+    const whiteboard = (await look(page)
       .locator("label")
       .filter({ hasText: "Whiteboard" })
-      .click({ force: true });
+      .boundingBox())!;
+    await page.mouse.click(
+      whiteboard.x + whiteboard.width / 2,
+      whiteboard.y + whiteboard.height / 2,
+    );
     await expect(radio(page, "Stockroom")).toBeChecked();
     await expect(page.locator("html")).toHaveAttribute(
       "data-theme",
@@ -487,7 +492,7 @@ for (const result of ["success", "failure"] as const) {
         "triplicate",
       );
       expect(await cached(page)).toBe("slate");
-      await expect(savedNotice(page)).not.toBeVisible();
+      await expect(savedNotice(page)).toBeHidden();
       await expect(save(page)).toBeEnabled();
     } finally {
       gate.release();
