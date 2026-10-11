@@ -823,9 +823,7 @@ for (const failure of [
         { timeout: 5_000 },
       );
       await Promise.all([
-        page.waitForURL((url) => url.pathname === contentPath(operation.id), {
-          timeout: 10_000,
-        }),
+        page.waitForURL((url) => url.pathname === contentPath(operation.id)),
         nativeLink(page).click(),
       ]);
       const response = await nativeResponse;

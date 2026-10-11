@@ -83,7 +83,6 @@ function forgedRequest(port: number): Promise<{
 }
 
 test("actual development ingress replaces spoofed headers and preserves HMR and shutdown", async () => {
-  test.setTimeout(120_000);
   const fixtureRoot = mkdtempSync(resolve(frontendRoot, ".proxy-transport-"));
   const fixtureFrontend = resolve(fixtureRoot, "frontend");
   const fixtureLauncher = resolve(fixtureFrontend, "tooling/run-next.mjs");
@@ -168,7 +167,9 @@ test("actual development ingress replaces spoofed headers and preserves HMR and 
             return 0;
           }
         },
-        { timeout: 60_000 },
+        // A cold `next dev` start must fit inside the 30 s test timeout with
+        // its "Launcher exited" diagnostic intact.
+        { timeout: 20_000 }, // measured: ready in 0.9-1.9 s (alone and in the isolated lane, load 3-8); the whole test takes 1.8-5.9 s
       )
       .toBe(200);
 
@@ -228,7 +229,7 @@ test("actual development ingress replaces spoofed headers and preserves HMR and 
     const page = await browser.newPage();
     const hmr = page.waitForEvent("websocket", {
       predicate: (webSocket) => webSocket.url().includes("/_next/hmr"),
-      timeout: 10_000,
+      timeout: 5_000,
     });
     await page.goto(origin);
     await expect(
@@ -239,7 +240,7 @@ test("actual development ingress replaces spoofed headers and preserves HMR and 
     writeFileSync(pageFile, pageSource("Owned transport fixture after"));
     await expect(
       page.getByRole("heading", { name: "Owned transport fixture after" }),
-    ).toBeVisible({ timeout: 30_000 });
+    ).toBeVisible();
     expect(hmrSocket.isClosed()).toBe(false);
     await browser.close();
     browser = undefined;

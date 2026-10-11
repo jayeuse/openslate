@@ -748,7 +748,9 @@ test("Kanban keyboard drag cancels with Escape and saves the chosen lane", async
 test("Kanban retains 100 pending records across pages and refuses a 101st before saving", async ({
   page,
 }) => {
-  test.setTimeout(120_000);
+  // 100 staged moves is the product limit, so no smaller input proves it; each
+  // menu move is two clicks (~58 ms each, flat across all 100 moves).
+  test.setTimeout(120_000); // measured: 12.3-12.5 s at 1 worker (5 runs, load 4-5); 19-49 s at 3 workers (6 runs, load 16); default 30 s fails
   const api = await installKanbanApi(page, { rowCount: 101 });
   await page.goto(url);
   await page

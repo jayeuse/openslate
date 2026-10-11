@@ -2241,8 +2241,12 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     conflictDialog.getByText(/local search “compressor”/),
   ).toBeVisible();
+  // A conflict hides the ordinary save; only the conflict choices remain.
   await expect(
-    conflictDialog.getByRole("button", { name: "Update view" }),
+    conflictDialog.getByRole("button", { name: "Save view", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    conflictDialog.getByRole("button", { name: "Rename view", exact: true }),
   ).toHaveCount(0);
   expect(api.saved().definition.search).toBe("external edit");
 
@@ -4997,9 +5001,7 @@ test("a saved view beyond the first page loads through its UUID deep link", asyn
   ).toBeVisible();
   expect(api.saved().is_deleted).toBe(true);
 
-  await expect(page).toHaveURL((url) => !url.searchParams.has("view"), {
-    timeout: 15_000,
-  });
+  await expect(page).toHaveURL((url) => !url.searchParams.has("view"));
   await page.getByRole("button", { name: "Archived views" }).click();
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
@@ -5019,7 +5021,6 @@ test("a saved view beyond the first page loads through its UUID deep link", asyn
   expect(api.saved().is_deleted).toBe(false);
   await expect(page).toHaveURL(
     (url) => url.searchParams.get("view") === viewId,
-    { timeout: 15_000 },
   );
   await archivedDialog.getByRole("button", { name: "Close" }).click();
   await expect(page.getByLabel("Saved view")).toHaveValue(viewId);
