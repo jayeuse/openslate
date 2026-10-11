@@ -37,6 +37,7 @@ from tests.record_queries.export_http_support import (
 from tests.record_queries.export_http_support import (
     fake_provider_account as fake_provider_account,
 )
+from tests.repository import REPOSITORY_ROOT
 
 pytestmark = pytest.mark.integration
 NS = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -385,7 +386,7 @@ def test_export_view_metadata_is_scoped_and_current(export_world: ExportWorld, s
 
 @pytest.mark.parametrize("theme", ["slate", "whiteboard", "triplicate", "stockroom"])
 def test_xlsx_theme_header_matches_the_light_css(export_world: ExportWorld, theme: str) -> None:
-    css_root = Path(__file__).resolve().parents[3] / "frontend/src/app"
+    css_root = REPOSITORY_ROOT / "frontend/src/app"
     css = css_root / ("globals.css" if theme == "slate" else f"themes/{theme}.css")
     action = re.search(r"--action:\s*(#[a-fA-F0-9]{6})", css.read_text())
     assert action is not None

@@ -14,11 +14,12 @@ import operations.sample.verification.route_coverage as coverage
 from app.main import app
 from operations.sample.client import SampleClient
 from operations.sample.journal import append_event
+from tests.repository import REPOSITORY_ROOT
 
 # Fixed, so parametrized test IDs are the same in every process.
 _PATH_ID = "0190a000-0000-7000-8000-000000000001"
 
-MANIFEST = Path(__file__).resolve().parents[5] / "frontend" / "api-route-manifest.json"
+MANIFEST = REPOSITORY_ROOT / "frontend" / "api-route-manifest.json"
 
 
 def _shape(path: str) -> str:

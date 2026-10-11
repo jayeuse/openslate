@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 
 from operations.backup_runner import ArchiveRunner, Clock, run_once
+from tests.repository import REPOSITORY_ROOT
 
 NOW = datetime(2026, 10, 3, 12, tzinfo=UTC)
 
@@ -79,7 +80,7 @@ def runner_config(tmp_path: Path, *, deployment: str = "production") -> tuple[Pa
         "installation_id": "client-a",
         "project_name": "client-a",
         "deployment": deployment,
-        "compose_root": str(Path(__file__).resolve().parents[4] / "infra" / "supabase"),
+        "compose_root": str(REPOSITORY_ROOT / "infra" / "supabase"),
         "provider_env_file": str(provider),
         "app_env_file": str(app) if deployment == "production" else None,
         "caddy_config_file": str(caddy) if deployment == "production" else None,

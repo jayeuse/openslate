@@ -1,6 +1,5 @@
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 from secrets import token_urlsafe
 from typing import Any
 from unittest.mock import Mock
@@ -26,13 +25,14 @@ from app.systems.sandbox.records.router import update_record
 from app.systems.sandbox.records.schemas import RecordUpdate
 from tests.catalog.field_record_support import make_field, make_module
 from tests.rbac.support import make_user
+from tests.repository import REPOSITORY_ROOT
 
 REJECTED_VALUE_CANARY = token_urlsafe(32)
 
 
 def _load_record_field_validation_cases() -> list[dict[str, Any]]:
     fixture_path = (
-        Path(__file__).resolve().parents[3] / "contracts" / ("record-field-validation-cases.json")
+        REPOSITORY_ROOT / "contracts" / ("record-field-validation-cases.json")
     )
     with fixture_path.open(encoding="utf-8") as fixture:
         return json.load(fixture)["cases"]

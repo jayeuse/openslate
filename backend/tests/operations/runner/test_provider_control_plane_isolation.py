@@ -1,10 +1,11 @@
 """The application network cannot reach Supabase administrative services."""
 
-from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[4]
+from tests.repository import REPOSITORY_ROOT
+
+ROOT = REPOSITORY_ROOT
 SUPABASE = ROOT / "infra/supabase"
 
 
