@@ -35,21 +35,26 @@ export type SignedInIdentity = {
 };
 
 /**
- * Answers `/api/auth/session` with a signed-in session for `userId`. Use it
- * alone when the spec owns `/api/auth/me` separately or keeps the default
- * identity; otherwise use `signedInAs`. Stateful, held, counted, or failing
- * session reads stay inline in the spec.
- */
-/**
  * Answers the session read as signed out, for pages a signed-out person uses
- * (sign in, invitation setup, recovery). The base fixture's default is signed in.
+ * (sign in, invitation setup, recovery). The base fixture's default is signed
+ * in. A browser without session cookies has its refresh rejected, so the
+ * refresh answers 401 as well.
  */
 export async function signedOut(target: Page | BrowserContext): Promise<void> {
   await target.route("**/api/auth/session", (route) =>
     route.fulfill({ json: { authenticated: false } }),
   );
+  await target.route("**/api/auth/refresh", (route) =>
+    route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
+  );
 }
 
+/**
+ * Answers `/api/auth/session` with a signed-in session for `userId`. Use it
+ * alone when the spec owns `/api/auth/me` separately or keeps the default
+ * identity; otherwise use `signedInAs`. Stateful, held, counted, or failing
+ * session reads stay inline in the spec.
+ */
 export async function signedInSession(
   target: Page | BrowserContext,
   userId: string,
@@ -289,6 +294,19 @@ export async function expectNoHorizontalScroll(page: Page): Promise<void> {
         document.documentElement.clientWidth,
     ),
   ).toBe(true);
+}
+
+/**
+ * Replaces the browser `EventSource` with one that never connects or emits,
+ * for journeys that drive the session gate and must not see a stream resync.
+ */
+export async function quietEventSource(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    class QuietEventSource extends EventTarget {
+      close() {}
+    }
+    Object.defineProperty(window, "EventSource", { value: QuietEventSource });
+  });
 }
 
 /** Asks the auth gate to verify the current session again, as a focus or retry does. */

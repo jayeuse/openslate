@@ -17,8 +17,7 @@ import {
   observeEmailSecretExposure,
 } from "./helpers/email-change";
 
-// Prepared browser specifications, not an executed red/green claim.
-// Cryptography, provider consumption and transaction guarantees are native tests.
+// Cryptography, provider consumption and transaction guarantees are backend tests.
 test.use({ trace: "off", screenshot: "off", video: "off" });
 test.beforeEach(async ({ page }) => {
   await observeEmailSecretExposure(page);
@@ -64,6 +63,7 @@ test("email request refuses a wrong password without refresh, replay or changed 
     changedEmail,
   );
   expect(api.requests).toHaveLength(1);
+  expect(api.requests.map(({ method }) => method)).toEqual(["POST"]);
   expect(api.refreshes).toBe(0);
   await expect(
     page.getByText("person@example.test", { exact: true }).first(),
@@ -417,28 +417,22 @@ test("replay of an acknowledged first link cannot count as the other address", a
   await expectNoEmailSecrets(page);
 });
 
-for (const [kind, suffix] of [
-  ["missing", ""],
-  ["wrong-purpose", `#token_hash=${currentEmailProof}&type=recovery`],
-  [
-    "duplicate",
-    `#token_hash=${currentEmailProof}&token_hash=${newEmailProof}&type=email_change`,
-  ],
-  ["malformed", "#token_hash=not-a-provider-hash&type=email_change"],
-] as const) {
-  test(`${kind} email link is scrubbed and cannot issue a confirmation request`, async ({
-    page,
-  }) => {
-    const api = await installEmailChangeApi(page, { signedOut: true });
-    await page.goto(`${emailChangeLanding}${suffix}`);
-    await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
-    await expect(landingAlert(page)).toBeVisible();
-    await expect(confirm(page)).toBeDisabled();
-    expect(api.completions).toEqual([]);
-    expect(api.refreshes).toBe(0);
-    await expectNoEmailSecrets(page);
-  });
-}
+// Missing, wrong-purpose and duplicate links are rows of the action-link table
+// in tests/isolated/auth/action-token.spec.ts; this journey keeps one.
+test("malformed email link is scrubbed and cannot issue a confirmation request", async ({
+  page,
+}) => {
+  const api = await installEmailChangeApi(page, { signedOut: true });
+  await page.goto(
+    `${emailChangeLanding}#token_hash=not-a-provider-hash&type=email_change`,
+  );
+  await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
+  await expect(landingAlert(page)).toBeVisible();
+  await expect(confirm(page)).toBeDisabled();
+  expect(api.completions).toEqual([]);
+  expect(api.refreshes).toBe(0);
+  await expectNoEmailSecrets(page);
+});
 
 test("a scrubbed link survives in memory only, not a page reload", async ({
   page,
@@ -464,36 +458,27 @@ test("a scrubbed link survives in memory only, not a page reload", async ({
   await expectNoEmailSecrets(page);
 });
 
-for (const [kind, body] of [
-  [
-    "non-Boolean",
-    {
-      authenticated: "false",
-      confirmation_required: false,
-      setup_required: false,
-    },
-  ],
-  [
-    "contradictory",
-    { authenticated: true, confirmation_required: true, setup_required: false },
-  ],
-] as const) {
-  test(`a ${kind} partial/full response cannot publish confirmation success`, async ({
-    page,
-  }) => {
-    const api = await installEmailChangeApi(page, { signedOut: true });
-    api.completeBody = body;
-    await page.goto(
-      `${emailChangeLanding}#token_hash=${newEmailProof}&type=email_change`,
-    );
-    await confirm(page).click();
-    await expect(landingAlert(page)).toBeVisible();
-    await expect(partial(page)).toHaveCount(0);
-    await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
-    expect(api.completions).toHaveLength(1);
-    await expectNoEmailSecrets(page);
-  });
-}
+// The other refused confirmation bodies are rows of
+// tests/isolated/auth/email-confirmation.spec.ts; this journey keeps one.
+test("a contradictory partial/full response cannot publish confirmation success", async ({
+  page,
+}) => {
+  const api = await installEmailChangeApi(page, { signedOut: true });
+  api.completeBody = {
+    authenticated: true,
+    confirmation_required: true,
+    setup_required: false,
+  };
+  await page.goto(
+    `${emailChangeLanding}#token_hash=${newEmailProof}&type=email_change`,
+  );
+  await confirm(page).click();
+  await expect(landingAlert(page)).toBeVisible();
+  await expect(partial(page)).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
+  expect(api.completions).toHaveLength(1);
+  await expectNoEmailSecrets(page);
+});
 
 test("a source replaced during confirmation discards the delayed result and waits for the new explicit action", async ({
   page,

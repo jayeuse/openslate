@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { Page } from "./test";
+import { quietEventSource, type Page } from "./test";
 import { addTestStylesheet } from "./test-styles";
 
 export const mfaUserA = "00000000-0000-4000-8000-000000000001";
@@ -90,12 +90,7 @@ export async function mockMfa(
       factors: value.factors.map((factor) => ({ ...factor })),
     };
   };
-  await page.addInitScript(() => {
-    class FakeEventSource extends EventTarget {
-      close() {}
-    }
-    Object.defineProperty(window, "EventSource", { value: FakeEventSource });
-  });
+  await quietEventSource(page);
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
       json: {

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, recheckSession, test, type Page } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
 import { concealMfaTestCredentials, mockMfa, mfaUserA } from "./helpers/mfa";
 
@@ -64,9 +64,7 @@ test("authoritative MFA grace shows its start and deadline while a fresh enforce
   ).toHaveCount(0);
   body.required = true;
   identity.actors.get(mfaUserA)!.policyRequired = true;
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  await recheckSession(page);
   const gate = page.getByRole("region", {
     name: "Two-step verification",
     exact: true,
@@ -124,37 +122,34 @@ test("a required account with no recorded episode has immediate enrollment and n
   ).toBeEnabled();
 });
 
-for (const invalid of ["missing policy fact", "naive deadline"] as const) {
-  test(`${invalid} leaves MFA unavailable until a valid fresh Retry`, async ({
-    page,
-  }) => {
-    await mockManageSecurity(page);
-    await mockMfa(page);
-    let invalidResponse = true;
-    await page.route("**/api/auth/mfa", (route) => {
-      const body: Record<string, unknown> = requirementStatus();
-      if (invalidResponse) {
-        if (invalid === "missing policy fact") delete body.policy_required;
-        else body.enrollment_deadline = "2026-10-08T08:30:00";
-      }
-      return route.fulfill({ json: body });
-    });
-    const dialog = await openMfa(page);
-    await expect(dialog.getByRole("alert")).toContainText(
-      "could not load your two-step verification settings",
-    );
-    await expect(
-      dialog.getByRole("button", { name: "Set up authenticator", exact: true }),
-    ).toHaveCount(0);
-    invalidResponse = false;
-    await dialog.getByRole("button", { name: "Retry", exact: true }).click();
-    await expect(dialog.getByRole("alert")).toHaveCount(0);
-    await expect(dialog.getByRole("note")).toContainText(
-      "Set up an authenticator app before the date above.",
-    );
-    await expect(dialog).toContainText("Oct 8, 2026");
-    await expect(
-      dialog.getByRole("button", { name: "Set up authenticator", exact: true }),
-    ).toBeEnabled();
+// The other refused status bodies (a deadline or start without an offset, an
+// unknown field or level) are rows of tests/isolated/auth/mfa-status.spec.ts.
+test("missing policy fact leaves MFA unavailable until a valid fresh Retry", async ({
+  page,
+}) => {
+  await mockManageSecurity(page);
+  await mockMfa(page);
+  let invalidResponse = true;
+  await page.route("**/api/auth/mfa", (route) => {
+    const body: Record<string, unknown> = requirementStatus();
+    if (invalidResponse) delete body.policy_required;
+    return route.fulfill({ json: body });
   });
-}
+  const dialog = await openMfa(page);
+  await expect(dialog.getByRole("alert")).toContainText(
+    "could not load your two-step verification settings",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Set up authenticator", exact: true }),
+  ).toHaveCount(0);
+  invalidResponse = false;
+  await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(dialog.getByRole("note")).toContainText(
+    "Set up an authenticator app before the date above.",
+  );
+  await expect(dialog).toContainText("Oct 8, 2026");
+  await expect(
+    dialog.getByRole("button", { name: "Set up authenticator", exact: true }),
+  ).toBeEnabled();
+});

@@ -1,4 +1,10 @@
-import { expect, test, type Page } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  quietEventSource,
+  test,
+  type Page,
+} from "./helpers/test";
 
 const userA = "00000000-0000-4000-8000-000000000001";
 const userB = "00000000-0000-4000-8000-000000000002";
@@ -31,12 +37,7 @@ async function workspaceSession(page: Page, baseURL: string | undefined) {
       url: baseURL,
     },
   ]);
-  await page.addInitScript(() => {
-    class TestEventSource extends EventTarget {
-      close() {}
-    }
-    Object.defineProperty(window, "EventSource", { value: TestEventSource });
-  });
+  await quietEventSource(page);
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
       status: state.sessionFailure || 200,
@@ -260,20 +261,13 @@ test("an API request sharing a pending activity probe still refreshes a live ses
   const { state, search, advance } = await workspaceSession(page, baseURL);
   await advance(6);
   state.accessExpiresAt = state.now;
-  let releaseProbe = () => {};
-  let signalProbe = () => {};
-  const probeReleased = new Promise<void>((resolve) => {
-    releaseProbe = resolve;
-  });
-  const probeStarted = new Promise<void>((resolve) => {
-    signalProbe = resolve;
-  });
+  const probe = heldResponse();
   let holdNext = true;
   await page.route("**/api/auth/session", async (route) => {
     if (holdNext) {
       holdNext = false;
-      signalProbe();
-      await probeReleased;
+      probe.enter();
+      await probe.released;
     }
     await route.fulfill({
       json:
@@ -283,7 +277,7 @@ test("an API request sharing a pending activity probe still refreshes a live ses
     });
   });
   await search.press("ArrowRight");
-  await probeStarted;
+  await probe.entered;
   const retriedSearch = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
@@ -303,7 +297,7 @@ test("an API request sharing a pending activity probe still refreshes a live ses
     await response;
     await page.clock.runFor(1);
   } finally {
-    releaseProbe();
+    probe.release();
   }
   await retriedSearch;
   await page.clock.runFor(1);

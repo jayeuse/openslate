@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, quietEventSource, test } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
 import { mockManageBackups } from "./helpers/manage-backups";
 import {
@@ -301,17 +301,10 @@ const userB = "00000000-0000-4000-8000-000000000201";
 test("blurring during the first session check does not strand an unverified workspace", async ({
   page,
 }) => {
-  let signalSession = () => {};
-  let releaseSession = () => {};
-  const sessionStarted = new Promise<void>((resolve) => {
-    signalSession = resolve;
-  });
-  const sessionReleased = new Promise<void>((resolve) => {
-    releaseSession = resolve;
-  });
+  const session = heldResponse();
   await page.route("**/api/auth/session", async (route) => {
-    signalSession();
-    await sessionReleased;
+    session.enter();
+    await session.released;
     try {
       await route.fulfill({
         contentType: "application/json",
@@ -328,13 +321,13 @@ test("blurring during the first session check does not strand an unverified work
 
   try {
     await page.goto("/platform?section=search");
-    await sessionStarted;
+    await session.entered;
     await expect(page.getByText("Checking your session…")).toBeVisible();
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
-    releaseSession();
+    session.release();
     await expect(page.getByRole("heading", { name: "Platform" })).toBeVisible();
   } finally {
-    releaseSession();
+    session.release();
   }
 });
 
@@ -342,50 +335,24 @@ test("a returning tab conceals the old account before revalidation and ignores d
   context,
   page,
 }) => {
-  await page.addInitScript(() => {
-    class FakeEventSource extends EventTarget {
-      close() {}
-    }
-    Object.defineProperty(window, "EventSource", { value: FakeEventSource });
-  });
+  await quietEventSource(page);
   let activeUser = userA;
   let holdNextSession = false;
-  let releaseOldSession = () => {};
-  let signalOldSession = () => {};
-  const oldSessionReleased = new Promise<void>((resolve) => {
-    releaseOldSession = resolve;
-  });
-  const oldSessionStarted = new Promise<void>((resolve) => {
-    signalOldSession = resolve;
-  });
-  let releaseNewSession = () => {};
-  let signalNewSession = () => {};
-  const newSessionReleased = new Promise<void>((resolve) => {
-    releaseNewSession = resolve;
-  });
-  const newSessionStarted = new Promise<void>((resolve) => {
-    signalNewSession = resolve;
-  });
+  const oldSession = heldResponse();
+  const newSession = heldResponse();
   let holdNextNotice = false;
-  let releaseOldNotice = () => {};
-  let signalOldNotice = () => {};
-  const oldNoticeReleased = new Promise<void>((resolve) => {
-    releaseOldNotice = resolve;
-  });
-  const oldNoticeStarted = new Promise<void>((resolve) => {
-    signalOldNotice = resolve;
-  });
+  const oldNotice = heldResponse();
 
   await context.route("**/api/auth/session", async (route) => {
     const requestedUser = activeUser;
     if (holdNextSession) {
       holdNextSession = false;
-      signalOldSession();
-      await oldSessionReleased;
+      oldSession.enter();
+      await oldSession.released;
     }
     if (requestedUser === userB) {
-      signalNewSession();
-      await newSessionReleased;
+      newSession.enter();
+      await newSession.released;
     }
     await route.fulfill({
       contentType: "application/json",
@@ -409,8 +376,8 @@ test("a returning tab conceals the old account before revalidation and ignores d
     const requestedUser = activeUser;
     if (holdNextNotice) {
       holdNextNotice = false;
-      signalOldNotice();
-      await oldNoticeReleased;
+      oldNotice.enter();
+      await oldNotice.released;
     }
     const items =
       requestedUser === userA
@@ -450,7 +417,7 @@ test("a returning tab conceals the old account before revalidation and ignores d
 
   holdNextNotice = true;
   await notices.getByRole("button", { name: "Refresh" }).click();
-  await oldNoticeStarted;
+  await oldNotice.entered;
   holdNextSession = true;
   const concealedImmediately = await page.evaluate(() => {
     window.dispatchEvent(new FocusEvent("focus"));
@@ -468,7 +435,7 @@ test("a returning tab conceals the old account before revalidation and ignores d
     );
   });
   expect(concealedImmediately).toBe(true);
-  await oldSessionStarted;
+  await oldSession.entered;
   await expect(notices).toHaveCount(0);
 
   const otherTab = await context.newPage();
@@ -476,7 +443,7 @@ test("a returning tab conceals the old account before revalidation and ignores d
   activeUser = userB;
   await page.bringToFront();
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await newSessionStarted;
+  await newSession.entered;
   try {
     await expect(
       page
@@ -484,9 +451,9 @@ test("a returning tab conceals the old account before revalidation and ignores d
         .getByText("Checking your session…"),
     ).toBeVisible();
   } finally {
-    releaseOldSession();
-    releaseOldNotice();
-    releaseNewSession();
+    oldSession.release();
+    oldNotice.release();
+    newSession.release();
   }
 
   const currentNotices = page.getByRole("region", {
@@ -536,19 +503,12 @@ test("a same-account recheck preserves an in-progress workspace input behind the
   page,
 }) => {
   let holdNextSession = false;
-  let releaseRecheck = () => {};
-  let signalRecheck = () => {};
-  const recheckReleased = new Promise<void>((resolve) => {
-    releaseRecheck = resolve;
-  });
-  const recheckStarted = new Promise<void>((resolve) => {
-    signalRecheck = resolve;
-  });
+  const recheck = heldResponse();
   await page.route("**/api/auth/session", async (route) => {
     if (holdNextSession) {
       holdNextSession = false;
-      signalRecheck();
-      await recheckReleased;
+      recheck.enter();
+      await recheck.released;
     }
     await route.fulfill({
       contentType: "application/json",
@@ -565,12 +525,12 @@ test("a same-account recheck preserves an in-progress workspace input behind the
   await search.fill("unsaved search draft");
   holdNextSession = true;
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await recheckStarted;
+  await recheck.entered;
   await expect(
     page.getByRole("dialog", { name: "Session verification" }),
   ).toBeVisible();
 
-  releaseRecheck();
+  recheck.release();
   await expect(
     page.getByRole("dialog", { name: "Session verification" }),
   ).toBeHidden();
@@ -620,14 +580,7 @@ test("a returning tab starts a new identity check while an old refresh remains p
 }) => {
   let activeUser = userA;
   let oldSessionExpired = false;
-  let signalOldRefresh = () => {};
-  let releaseOldRefresh = () => {};
-  const oldRefreshStarted = new Promise<void>((resolve) => {
-    signalOldRefresh = resolve;
-  });
-  const oldRefreshReleased = new Promise<void>((resolve) => {
-    releaseOldRefresh = resolve;
-  });
+  const oldRefresh = heldResponse();
   await page.route("**/api/auth/session", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -643,8 +596,8 @@ test("a returning tab starts a new identity check while an old refresh remains p
     });
   });
   await page.route("**/api/auth/refresh", async (route) => {
-    signalOldRefresh();
-    await oldRefreshReleased;
+    oldRefresh.enter();
+    await oldRefresh.released;
     await route.fulfill({ status: 401 });
   });
 
@@ -655,7 +608,7 @@ test("a returning tab starts a new identity check while an old refresh remains p
   oldSessionExpired = true;
   try {
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await oldRefreshStarted;
+    await oldRefresh.entered;
     const curtain = page.getByRole("dialog", {
       name: "Session verification",
     });
@@ -667,7 +620,7 @@ test("a returning tab starts a new identity check while an old refresh remains p
     await expect(curtain).toBeHidden();
     await expect(search).toHaveValue("");
   } finally {
-    releaseOldRefresh();
+    oldRefresh.release();
   }
   await expect(page).toHaveURL(/\/platform\?section=search$/);
   await expect(search).toHaveValue("");
@@ -677,19 +630,12 @@ test("Retry starts a fresh check when the current session request never settles"
   page,
 }) => {
   let holdNextSession = false;
-  let signalHeldSession = () => {};
-  let releaseHeldSession = () => {};
-  const heldSessionStarted = new Promise<void>((resolve) => {
-    signalHeldSession = resolve;
-  });
-  const heldSessionReleased = new Promise<void>((resolve) => {
-    releaseHeldSession = resolve;
-  });
+  const heldSession = heldResponse();
   await page.route("**/api/auth/session", async (route) => {
     if (holdNextSession) {
       holdNextSession = false;
-      signalHeldSession();
-      await heldSessionReleased;
+      heldSession.enter();
+      await heldSession.released;
     }
     try {
       await route.fulfill({
@@ -711,7 +657,7 @@ test("Retry starts a fresh check when the current session request never settles"
   holdNextSession = true;
   try {
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await heldSessionStarted;
+    await heldSession.entered;
     const curtain = page.getByRole("dialog", {
       name: "Session verification",
     });
@@ -719,7 +665,7 @@ test("Retry starts a fresh check when the current session request never settles"
     await expect(curtain).toBeHidden();
     await expect(search).toHaveValue("still editing");
   } finally {
-    releaseHeldSession();
+    heldSession.release();
   }
 });
 
