@@ -87,7 +87,8 @@ class PrepushTests(unittest.TestCase):
         self.assertLess(names.index("frontend-check"), names.index("frontend-tests"))
         self.assertLess(names.index("frontend-check"), names.index("frontend-browser-install"))
         self.assertLess(names.index("frontend-browser-install"), names.index("frontend-tests"))
-        self.assertLess(names.index("frontend-tests"), names.index("frontend-build"))
+        # The browser tests run against the static export that the build writes.
+        self.assertLess(names.index("frontend-build"), names.index("frontend-tests"))
         self.assertLess(names.index("backend-ruff"), names.index("backend-coverage"))
         self.assertLess(names.index("backend-mypy"), names.index("backend-coverage"))
         self.assertIn("../scripts", plan.steps[names.index("backend-ruff")].command)

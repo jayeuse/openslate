@@ -1,6 +1,6 @@
 # Tier 2.5: test suite refactor plan
 
-Status: setup complete on 2026-10-11. Items 1 to 23 are open. Execution has not started.
+Status: phase 0 and phase 1 complete on 2026-10-11 (items 14, 15, 18). Phase 2 is in progress.
 
 This plan refactors every test suite in the repository and the CI that runs them: backend pytest, frontend Playwright (`isolated`, `http`, `fullstack`, smoke), the pre-push gate, and the GitHub workflows. The plan has three goals: less bloat, less duplicated setup, and shorter run times. Protection must stay the same or improve.
 
@@ -42,6 +42,20 @@ Two earlier assumptions were wrong:
 - The `[large]` and `[standard]` sample sizes cost only 66 s. The cost is setup that each case repeats.
 - Public repositories get 4 vCPU runners, not 2. The worker and shard counts stay the same until item 2 measures them.
 
+### Clean baseline (item 15, measured 2026-10-11)
+
+Each lane ran alone on commit `d0f241f9` (the same tests as `main` at `37c404be`). The owned development stack was running (about 850 MiB).
+
+| Lane | Result | Wall time |
+|---|---|---|
+| Frontend, `next dev`, 3 workers | 2,197 passed, 5 skipped, 0 failed | 20.8 min (3,649 worker-seconds in `http`, 8 s in `isolated`) |
+| Backend, 3 stack shards | 5,107 passed, 0 skipped, 0 failed; 93.56% coverage | 13.2 min |
+| CI on `37c404be` | Backend run 8.7 min, Frontend run 7.1 min | 116 runner-minutes |
+
+The earlier 47.8 min frontend time and its 7 failures came from a run that overlapped the backend lane. Per-test durations are in `frontend/test-results/baseline/frontend-durations.json` and `backend/test-results/baseline-backend-durations.json` (local evidence, not committed).
+
+The slowest frontend files are `sandbox-relationship-mappings` (432 worker-seconds), `openview-views-api` (408), `openview-dashboards` (249), `boards-live-widgets` (157), and `openview-reports` (142). The slowest test is a Kanban test at 35 s.
+
 ## 3. Setup that is already in place
 
 | Area | Change |
@@ -68,6 +82,7 @@ Two earlier assumptions were wrong:
 - **3. A backend lane with no stack.** First confirm, from fixture use, which tests need no database (the `_guard_direct_database_tests` hook in `backend/tests/conftest.py` is the selector). Run those tests in a lane with `pytest-xdist` (`-n 4 --dist worksteal`). Run the lane once in random order (`pytest-randomly`) before you trust it. Then reduce the stack shards. Metric: backend wall time and memory.
 - **6. Cheaper fault matrices.** Profile one case of `test_sandbox_controls_use_ui_shapes_and_recreate_exact_test_vectors` (minimum 2.3 s per case). Build sample datasets once per module and copy them per case. Share the happy-path prefix and inject each fault at its step. Keep every case and every assertion. Metric: `operations/sample/controls` time, from 806 s.
 - **7. One token-expiry wait.** Merge the two 45 s provider token-expiry waits into one window, or find the minimum `JWT_EXPIRY` that the provider accepts. Keep a real expiry; do not mock the clock in these acceptance tests. Metric: about 45 s less.
+   - Result (2026-10-11): closed without a change. The test stacks set `JWT_EXPIRY=45` on purpose (`backend/tests/supabase_runtime.py`); a shorter lifetime can expire tokens inside other long integration tests and start refresh flows that are not under test. Merging the two waits couples two independent acceptance scenarios. The two waits cost 91 s of 2,667 s and already run on different shards.
 - **11. Subprocess coverage.** Do one measuring run with `patch = ["subprocess"]`. The file-validation worker runs in a child process and is possibly not measured. Keep the setting if the numbers are correct. Metric: `validation_worker.py` coverage is real.
 - **12. Balanced shards.** After item 2, balance Playwright shards by duration (blob reports and `--test-list`, or `@flakiness/playwright`). Commit backend durations from the CI combine step. Metric: slowest shard minus fastest shard.
 - **22. Disposable stack startup.** Start only the Supabase services that the tests use (check whether Studio, Meta, and imgproxy are needed). Turn off PostgreSQL durability (`fsync`, `synchronous_commit`, `full_page_writes`) on disposable `openslate-e2e-*` stacks only, never on the development or production stack. Metric: stack boot time (84 s in CI), memory per stack.

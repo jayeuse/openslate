@@ -15,7 +15,7 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run check:contrast",
     "check:contrast": "node tooling/check-theme-contrast.mjs",
     "test": "TEST_LAYER=all BASE_URL=http://127.0.0.1:3104 PLAYWRIGHT_CONFIGURATION=synthetic node tooling/run-playwright.mjs",
-    "verify": "npm run check && npm test && npm run build",
+    "verify": "npm run check && npm run build && npm test",
     "test:section": "python3 ../scripts/run_tests.py frontend section",
     "test:affected": "python3 ../scripts/run_tests.py frontend affected",
     "test:full": "python3 ../scripts/run_tests.py frontend full"

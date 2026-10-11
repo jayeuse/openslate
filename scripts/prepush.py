@@ -102,20 +102,22 @@ def _add_frontend_steps(steps: list[Step]) -> None:
                 cwd="frontend",
                 command=("npm", "exec", "--no", "--", "playwright", "install", "chromium"),
             ),
-            Step(
-                name="frontend-tests",
-                gate="frontend",
-                phase="resource",
-                cwd="frontend",
-                command=("npm", "test"),
-                lane="frontend",
-            ),
+            # Browser tests run against this build (the static export), so it
+            # comes first.
             Step(
                 name="frontend-build",
                 gate="frontend",
                 phase="resource",
                 cwd="frontend",
                 command=("npm", "run", "build"),
+                lane="frontend",
+            ),
+            Step(
+                name="frontend-tests",
+                gate="frontend",
+                phase="resource",
+                cwd="frontend",
+                command=("npm", "test"),
                 lane="frontend",
             ),
         )

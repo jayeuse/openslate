@@ -72,49 +72,19 @@ jobs:
         run: npm ci --prefer-offline --no-audit --no-fund
       - name: Build the production frontend
         run: npm run build
+      - name: Keep the static export for the browser tests
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-export
+          path: frontend/out/
+          if-no-files-found: error
+          retention-days: 1
 
-  test:
-    name: test (${{ matrix.suite }})
+  isolated:
     needs: changes
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
-    # The browser install pulls apt packages and can be slow on a busy mirror;
-    # the test step keeps its own 15-minute hang limit.
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        # Isolated tests finish in seconds; only the slow dev-server http project is sharded.
-        # Each http shard runs one Playwright worker: on the old 2-vCPU runners, two browsers
-        # beside `next dev` starved page rendering. Public repositories now get 4 vCPU;
-        # re-measure (docs/plans/test-suite-tier-2-5.md) before changing workers or shards.
-        include:
-          - suite: isolated
-            args: --project=isolated
-          - suite: http 1/12
-            args: --project=http --shard=1/12
-          - suite: http 2/12
-            args: --project=http --shard=2/12
-          - suite: http 3/12
-            args: --project=http --shard=3/12
-          - suite: http 4/12
-            args: --project=http --shard=4/12
-          - suite: http 5/12
-            args: --project=http --shard=5/12
-          - suite: http 6/12
-            args: --project=http --shard=6/12
-          - suite: http 7/12
-            args: --project=http --shard=7/12
-          - suite: http 8/12
-            args: --project=http --shard=8/12
-          - suite: http 9/12
-            args: --project=http --shard=9/12
-          - suite: http 10/12
-            args: --project=http --shard=10/12
-          - suite: http 11/12
-            args: --project=http --shard=11/12
-          - suite: http 12/12
-            args: --project=http --shard=12/12
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
@@ -127,6 +97,65 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install locked frontend dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Run isolated frontend tests
+        run: npm test -- --project=isolated
+
+  test:
+    name: test (${{ matrix.suite }})
+    needs: [changes, build]
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    # The browser install pulls apt packages and can be slow on a busy mirror;
+    # the test step keeps its own 15-minute hang limit.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The http project runs against the static export through the production
+        # static-site code (frontend/playwright.config.ts). Shards and workers per
+        # shard come from measurements (docs/plans/test-suite-tier-2-5.md, item 2).
+        include:
+          - suite: http 1/6
+            args: --project=http --shard=1/6 --workers=2
+          - suite: http 2/6
+            args: --project=http --shard=2/6 --workers=2
+          - suite: http 3/6
+            args: --project=http --shard=3/6 --workers=2
+          - suite: http 4/6
+            args: --project=http --shard=4/6 --workers=2
+          - suite: http 5/6
+            args: --project=http --shard=5/6 --workers=2
+          - suite: http 6/6
+            args: --project=http --shard=6/6 --workers=2
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          # Match the development machine (uv 0.12); bump both together.
+          version: "0.12.x"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Install the locked backend that serves the static export
+        working-directory: backend
+        run: uv sync --locked
+      - name: Restore the static export
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-export
+          path: frontend/out/
       - name: Restore the pinned Playwright browser
         uses: actions/cache@v6
         with:
@@ -134,7 +163,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
       - name: Install pinned Playwright Chromium
         run: npm exec --no -- playwright install --with-deps chromium
-      - name: Run retained frontend tests
+      - name: Run browser tests against the static export
         timeout-minutes: 15
         run: npm test -- ${{ matrix.args }}
       - name: Keep failure context and traces
@@ -147,7 +176,7 @@ jobs:
           if-no-files-found: ignore
 
   verify:
-    needs: [changes, check, build, test]
+    needs: [changes, check, build, isolated, test]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -157,6 +186,7 @@ jobs:
           RUN_FRONTEND: ${{ needs.changes.outputs.run_frontend }}
           CHECK: ${{ needs.check.result }}
           BUILD: ${{ needs.build.result }}
+          ISOLATED: ${{ needs.isolated.result }}
           TEST: ${{ needs.test.result }}
           REASON: ${{ needs.changes.outputs.reason_frontend }}
         run: |
@@ -164,10 +194,12 @@ jobs:
           if [ "$RUN_FRONTEND" = "true" ]; then
             test "$CHECK" = "success"
             test "$BUILD" = "success"
+            test "$ISOLATED" = "success"
             test "$TEST" = "success"
           else
             test "$CHECK" = "skipped"
             test "$BUILD" = "skipped"
+            test "$ISOLATED" = "skipped"
             test "$TEST" = "skipped"
             printf 'Frontend check satisfied without execution: %s\n' "$REASON"
           fi

@@ -1,4 +1,6 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
+import { join } from "node:path";
 
 import { defineConfig } from "@playwright/test";
 
@@ -60,11 +62,37 @@ const frontendEnvironment: Record<string, string> =
       );
 Object.assign(process.env, frontendEnvironment);
 
-// Plan item 1: `export` serves the `next build` output through the production
-// static-site code (backend/tests/static_export_server.py); `dev` uses `next dev`.
-const httpServer = process.env.PLAYWRIGHT_HTTP_SERVER ?? "dev";
+// Browser tests run against the production build: the `next build` output
+// (`out/`) served through the production static-site code, with its routing
+// and CSP (backend/tests/static_export_server.py). `next dev` differs in ways
+// that hid real bugs (no CSP, Strict Mode double effects), so it is opt-in
+// for quick local loops only: PLAYWRIGHT_HTTP_SERVER=dev.
+const httpServer = process.env.PLAYWRIGHT_HTTP_SERVER ?? "export";
 if (!["dev", "export"].includes(httpServer))
   throw new Error("PLAYWRIGHT_HTTP_SERVER must be dev or export");
+
+function newestModification(path: string): number {
+  const stats = statSync(path);
+  if (!stats.isDirectory()) return stats.mtimeMs;
+  return readdirSync(path).reduce(
+    (newest, entry) => Math.max(newest, newestModification(join(path, entry))),
+    stats.mtimeMs,
+  );
+}
+
+// A stale export would test old code; refuse it instead of passing quietly.
+if (testLayer !== "isolated" && httpServer === "export") {
+  const exportIndex = join(__dirname, "out", "index.html");
+  if (!existsSync(exportIndex))
+    throw new Error("No static export in out/; run `npm run build` first");
+  const sources = ["src", "public", "next.config.ts", "package-lock.json"].map(
+    (name) => newestModification(join(__dirname, name)),
+  );
+  if (Math.max(...sources) > statSync(exportIndex).mtimeMs)
+    throw new Error(
+      "out/ is older than the frontend sources; run `npm run build` first",
+    );
+}
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;

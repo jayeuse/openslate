@@ -19,25 +19,44 @@ class CiWorkflowContractTests(unittest.TestCase):
     def test_frontend_runs_check_build_and_sharded_tests_in_parallel(self):
         source = self.source("frontend.yml")
 
-        self.assertEqual(self.jobs(source), ["changes", "check", "build", "test", "verify"])
-        self.assertEqual(source.count("npm ci --prefer-offline --no-audit --no-fund"), 3)
+        self.assertEqual(
+            self.jobs(source), ["changes", "check", "build", "isolated", "test", "verify"]
+        )
+        self.assertEqual(source.count("npm ci --prefer-offline --no-audit --no-fund"), 4)
         self.assertIn("npm run check", source)
         self.assertIn("npm run build", source)
         self.assertIn("npm test -- ${{ matrix.args }}", source)
-        self.assertIn("args: --project=isolated", source)
-        for shard in range(1, 13):
+        isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
+        self.assertIn("run: npm test -- --project=isolated", isolated)
+        self.assertNotIn("download-artifact", isolated)
+        for shard in range(1, 7):
             with self.subTest(shard=shard):
-                self.assertIn(f"args: --project=http --shard={shard}/12", source)
+                self.assertIn(f"args: --project=http --shard={shard}/6 --workers=2", source)
         self.assertIn("fail-fast: false", source)
+
+    def test_frontend_browser_tests_use_the_built_static_export(self):
+        source = self.source("frontend.yml")
+        build = source.split("\n  build:\n", 1)[1].split("\n  isolated:\n", 1)[0]
+        test = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
+
+        self.assertIn("name: frontend-export", build)
+        self.assertIn("path: frontend/out/", build)
+        self.assertIn("if-no-files-found: error", build)
+        self.assertIn("needs: [changes, build]", test)
+        self.assertIn("uses: actions/download-artifact@", test)
+        self.assertIn("name: frontend-export", test)
+        # The export server is the production StaticSite code from the backend.
+        self.assertIn("run: uv sync --locked", test)
+        self.assertIn('version: "0.12.x"', test)
 
     def test_frontend_verify_preserves_the_required_check(self):
         source = self.source("frontend.yml")
         verify = source.split("\n  verify:\n", 1)[1]
 
-        self.assertIn("needs: [changes, check, build, test]", verify)
+        self.assertIn("needs: [changes, check, build, isolated, test]", verify)
         self.assertIn("if: ${{ always() }}", verify)
         self.assertIn('test "$CHANGES" = "success"', verify)
-        for result in ("CHECK", "BUILD", "TEST"):
+        for result in ("CHECK", "BUILD", "ISOLATED", "TEST"):
             with self.subTest(result=result):
                 self.assertIn(f'test "${result}" = "success"', verify)
                 self.assertIn(f'test "${result}" = "skipped"', verify)
@@ -53,17 +72,19 @@ class CiWorkflowContractTests(unittest.TestCase):
             "firefox",
             "webkit",
             "mobile",
-            "download-artifact",
             "timing-profile",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source.lower())
 
-    def test_frontend_uploads_only_failed_test_context(self):
+    def test_frontend_uploads_the_export_and_only_failed_test_context(self):
         source = self.source("frontend.yml")
-        upload = source.split("uses: actions/upload-artifact@", 1)
+        test = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
+        upload = test.split("uses: actions/upload-artifact@", 1)
 
-        self.assertEqual(source.count("upload-artifact"), 1)
+        # One upload hands the build to the browser shards; the other keeps failures.
+        self.assertEqual(source.count("upload-artifact"), 2)
+        self.assertEqual(test.count("upload-artifact"), 1)
         self.assertIn("if: failure()", upload[0].rsplit("- name:", 1)[1])
         self.assertIn("path: frontend/test-results/playwright/", upload[1])
 
