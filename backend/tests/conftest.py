@@ -138,7 +138,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 @cache
-def _alembic_heads() -> frozenset[str]:
+def alembic_heads() -> frozenset[str]:
     """Read the migration heads once per process; the scripts do not change during a run."""
     migrations = Path(__file__).parents[1] / "migrations"
     config = Config()
@@ -147,7 +147,7 @@ def _alembic_heads() -> frozenset[str]:
 
 
 def _assert_alembic_head(connection) -> None:
-    heads = _alembic_heads()
+    heads = alembic_heads()
     applied = set(
         connection.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
     )

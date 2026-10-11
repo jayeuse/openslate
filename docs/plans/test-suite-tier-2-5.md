@@ -192,7 +192,7 @@ Counts come from the inventory of 2026-10-11. "Routes" counts `.route(` calls. "
 | B8 | Sandbox (`sandbox_*`, `relationships_integration`) | 63 | 12,095 | 233 | 129 s | Lock-wait sleep (item 17). Publication concurrency duplicates (35% repeated windows). |
 | B9 | Lifecycle (`lifecycle_integration`, `lifecycle`) | 24 | 5,472 | 171 | 128 s | Shared graph builders. |
 | B10 | Backups (`backups`, `operations/backups`) | 19 | 5,098 | 223 | 119 s | Merge export admission cases. |
-| B11 | Migrations | 18 | 4,296 | 159 | 104 s | Rule D4 protects most of these. Remove only tests for migrations that no supported upgrade path still runs. |
+| B11 | 4,298 (`tests/migrations`) | 4,298 plus the shared head reader | 159 | 159 (no test removed; D1 found none) | 22.8 s stack batch (load 5.0) | unchanged | not measured (database-only owners) | not measured; a shared rewind for the 10 refused-upgrade cases saved about 1 s (3.95 to 2.91 s) for 23 more lines and subtests, so it was not kept |
 | B12 | Access, users, RBAC, OpenView access | 38 | 8,354 | 381 | 99 s | Policy matrix into one table per rule. |
 | B13 | Runner, runtime, reset, contracts, operations root, test support | 72 | 13,928 | 469 | 53 s | Runner guards stay (D4). Bounded polling loops may stay. |
 
@@ -245,6 +245,8 @@ Area results (fill in during phase 6):
 | F5 | 6,529 http | 6,116 http | 96 sites, 123 http runs | 89 sites, 106 http runs + 184 isolated rows + 11 contract cases | 1.2 min http (load 3.5-12) | 22 s http (load 2.7-6.8) | platform.md, one owner each | Library catalog test failed 2 of 5 before the SearchSelect label fix, 5 of 5 after |
 | F6 | 5,075 http + 904 helper | 4,714 http + 907 helper | 98 http runs + 18 contract cases | 84 http runs + 152 isolated rows + 26 contract cases | 24.3 s http (load 3-6) | 22.3 s http (load 3-7) | manage.md, one owner each; organization overlap (G9) left for F8 | 0 failures |
 | F8 | 7,932 http (15 specs incl. G9 journeys) | 7,554 http | 246 http runs | 177 http runs + 153 isolated rows | 54 s (load 2-6) | 1.2 min (load 3.5-9, not comparable) | shell.md, one owner each; 8 style change-detectors replaced by contract checks | switch hit-area test 20 of 20 after the animation wait |
+| B11 | 4,298 (`tests/migrations`) | 4,321 | 159 | 150 + 10 subtests (no test removed; D1 found none) | 22.8 s stack batch (load 5.0); the 10 refused-upgrade cases 3.95 s | 20.2 s (load 3.6); the 10 cases share one rewind: 2.91 s (load 3.7) | not measured (database-only owners); shared-rewind isolation checked by two negative controls | not measured |
+| B13 | 10,545 (`runtime`, `reset_application_data`, `contracts`, `operations/runner`, `operations/*.py`) | 10,456 | 478 | 504 (6 reset-order tests became 23 + 9 table rows) | 32.1 s stack batch (load 5.2) | 19.6 s (load 3.3, not comparable) | `app.core.readiness` 183 killed, 90 survived of 273, before and after, same survivors; instance-guard owners sit in `tests/operations`, which `[tool.mutmut]` excludes | not measured |
 
 ## 10. Exit criteria
 

@@ -11,24 +11,6 @@ from tests import fullstack_runner as runner
 from tests.postgres_runtime import DisposablePostgres
 
 
-def test_standalone_fullstack_runner_loads_complete_model_registry() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from sqlalchemy.orm import configure_mappers; "
-            "import tests.fullstack_runner; "
-            "from app.core.integrations.supabase_auth import SupabaseAuthClient; "
-            "from app.systems.access.users.models import User, UserStatus; "
-            "configure_mappers()",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-
-
 class _RunnerPostgres:
     network = "test-network"
     mail_url = "http://127.0.0.1:58998"

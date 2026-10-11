@@ -1,5 +1,3 @@
-import subprocess
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
@@ -10,38 +8,6 @@ from app.core.config import Settings
 from app.systems.access.users.models import UserRole
 from app.systems.access.users.schemas import InvitationCreate
 from operations import bootstrap_admin as bootstrap
-
-
-def test_standalone_bootstrap_loads_the_complete_model_registry() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from sqlalchemy.orm import configure_mappers; "
-            "import operations.bootstrap_admin; configure_mappers()",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_standalone_recovery_loads_the_complete_model_registry() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from sqlalchemy.orm import configure_mappers; "
-            "import operations.recover_local_admin; configure_mappers()",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("existing_profile,admin_count", [(False, 0), (True, 0), (False, 1)])

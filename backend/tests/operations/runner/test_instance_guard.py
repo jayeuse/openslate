@@ -20,6 +20,7 @@ from app.core.config.instance import (
     migration_advisory_lock,
 )
 from tests.conftest import guarded_create_engine
+from tests.operations.runner.instance_attestation import write_attestation
 
 
 def _environment() -> dict[str, str]:
@@ -31,48 +32,11 @@ def _environment() -> dict[str, str]:
     }
 
 
-def _write_attestation(path: Path, *, cluster_name: str = "openslate-boards-a1b2c3d4") -> None:
-    path.parent.mkdir(parents=True)
-    path.write_text(
-        json.dumps(
-            {
-                "version": 2,
-                "instance_id": "openslate-boards-a1b2c3d4",
-                "compose_project": "openslate-boards-a1b2c3d4",
-                "postgres": {
-                    "host": "127.0.0.1",
-                    "port": 55432,
-                    "database": "postgres",
-                    "cluster_name": cluster_name,
-                },
-                "compose": {
-                    "volume": "openslate-boards-a1b2c3d4_supabase-db-data",
-                    "network": "openslate-boards-a1b2c3d4_provider",
-                },
-                "ownership": {
-                    "compose_project": "openslate-boards-a1b2c3d4",
-                    "container_port": 5432,
-                    "container_id": "a" * 64,
-                    "host_port": 55432,
-                    "image": instance.SUPABASE_DB_IMAGE,
-                    "network_id": "b" * 64,
-                    "working_dir": str(instance.REPOSITORY_ROOT / "infra" / "supabase"),
-                    "network": "openslate-boards-a1b2c3d4_provider",
-                    "volume": "openslate-boards-a1b2c3d4_supabase-db-data",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    path.chmod(0o600)
-
-
 def test_load_instance_target_requires_owned_attestation_and_matching_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    attestation = tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
-    _write_attestation(attestation)
+    attestation = write_attestation(tmp_path, "openslate-boards-a1b2c3d4")
 
     target = load_instance_target(_environment())
 
@@ -98,8 +62,7 @@ def test_load_instance_target_rejects_wrong_static_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    attestation = tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
-    _write_attestation(attestation)
+    write_attestation(tmp_path, "openslate-boards-a1b2c3d4")
     environment = _environment()
     environment[name] = value
 
@@ -111,8 +74,7 @@ def test_load_instance_target_rejects_unknown_or_shared_ownership(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    attestation = tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
-    _write_attestation(attestation)
+    attestation = write_attestation(tmp_path, "openslate-boards-a1b2c3d4")
     payload = json.loads(attestation.read_text(encoding="utf-8"))
     payload["compose"]["volume"] = "supabase-db-data"
     attestation.write_text(json.dumps(payload), encoding="utf-8")
@@ -133,8 +95,7 @@ def test_assert_instance_target_rejects_live_database_user_or_cluster(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, database: str, user: str, cluster_name: str
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    attestation = tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
-    _write_attestation(attestation)
+    write_attestation(tmp_path, "openslate-boards-a1b2c3d4")
     target = load_instance_target(_environment())
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (database, user, cluster_name)
@@ -147,8 +108,7 @@ def test_assert_instance_target_accepts_the_attested_live_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    attestation = tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
-    _write_attestation(attestation)
+    write_attestation(tmp_path, "openslate-boards-a1b2c3d4")
     target = load_instance_target(_environment())
     connection = MagicMock()
     connection.exec_driver_sql.return_value.one.return_value = (
@@ -173,8 +133,7 @@ def test_assert_database_url_rejects_wrong_port_database_or_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    attestation = tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json"
-    _write_attestation(attestation)
+    write_attestation(tmp_path, "openslate-boards-a1b2c3d4")
     target = load_instance_target(_environment())
 
     with pytest.raises(InstanceTargetError):
@@ -287,7 +246,7 @@ def test_process_target_rechecks_live_container_network_and_volume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    _write_attestation(tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json")
+    write_attestation(tmp_path, "openslate-boards-a1b2c3d4")
     container, network, volume = _docker_ownership_facts()
     inspected = iter(([container], [network], [volume]))
     calls: list[list[str]] = []
@@ -320,7 +279,7 @@ def test_process_target_rejects_live_volume_not_mounted_by_attested_container(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(instance, "REPOSITORY_ROOT", tmp_path)
-    _write_attestation(tmp_path / ".agent-runtime" / "instances" / "openslate-boards-a1b2c3d4.json")
+    write_attestation(tmp_path, "openslate-boards-a1b2c3d4")
     container, network, volume = _docker_ownership_facts()
     inspected = iter(([container], [network], [volume]))
     container["Mounts"] = [

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -12,24 +10,22 @@ from psycopg import connect
 from app.systems.boards.post_models import publication_content_fingerprint
 from operations import reset_application_data as reset
 from operations.reset import execution
-from tests.conftest import _guard_integration_database
+from tests.reset_application_data.reset_integration_support import (
+    delete_sessions_and_rate_limits,
+    guarded_reset_database,
+    insert_department,
+    insert_logo_file,
+    insert_sessions_and_rate_limits,
+    provider_doubles,
+)
 
 
 @pytest.mark.integration
 def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administrator(
     request, monkeypatch
 ) -> None:
-    monkeypatch.setenv("OPENSLATE_ENV_SOURCE", "process")
-    runtime_url = os.environ.get("TEST_DATABASE_URL")
-    owner_url = os.environ.get("MIGRATION_DATABASE_URL")
-    if runtime_url is None or owner_url is None:
-        raise RuntimeError("Reset integration requires the disposable PostgreSQL runner")
-    _guard_integration_database(runtime_url)
-    _guard_integration_database(owner_url)
-    database_url = owner_url.replace("postgresql+psycopg://", "postgresql://", 1)
-    storage = Mock()
-    storage.list_object_keys.return_value = ()
-    auth = Mock()
+    reset_database = guarded_reset_database(monkeypatch)
+    storage, auth = provider_doubles()
     admin_id, member_id, session_id = uuid4(), uuid4(), uuid4()
     admin_provider_id, member_provider_id = uuid4(), uuid4()
     department_id, group_id = uuid4(), uuid4()
@@ -42,72 +38,53 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     auth.list_account_ids.return_value = (member_provider_id,)
     workspace_settings_before_test = None
 
-    def cleanup() -> None:
-        _guard_integration_database(runtime_url)
-        _guard_integration_database(owner_url)
-        with connect(database_url) as database:
-            with database.cursor() as cursor:
-                if workspace_settings_before_test is not None:
-                    cursor.execute(
-                        "UPDATE public.workspace_profiles SET currency = %s, week_start = %s, "
-                        "business_hours = %s, mark = %s, theme = %s",
-                        workspace_settings_before_test,
-                    )
-                cursor.execute(
-                    "UPDATE public.workspace_profiles SET logo_file_id = NULL "
-                    "WHERE logo_file_id = %s",
-                    (file_id,),
-                )
-                for table, column, owned_id in (
-                    ("in_app_notifications", "work_id", work_id),
-                    ("scheduled_work", "id", work_id),
-                    ("report_run_eligible_users", "run_id", run_id),
-                    ("report_run_rows", "run_id", run_id),
-                    ("report_runs", "id", run_id),
-                    ("report_schedules", "report_id", report_id),
-                    ("reports", "id", report_id),
-                    ("board_event_reminders", "event_id", event_id),
-                    ("board_post_revisions", "post_id", post_id),
-                    ("board_posts", "id", post_id),
-                    ("board_events", "id", event_id),
-                    ("dashboard_widgets", "dashboard_id", dashboard_id),
-                    ("dashboards", "id", dashboard_id),
-                    ("records", "id", record_id),
-                ):
-                    cursor.execute(f"DELETE FROM public.{table} WHERE {column} = %s", (owned_id,))
-                for table in ("board_groups", "group_access", "group_members"):
-                    cursor.execute(f"DELETE FROM public.{table} WHERE group_id = %s", (group_id,))
-                cursor.execute(
-                    "DELETE FROM public.boards WHERE id IN (%s, %s)",
-                    (board_id, project_board_id),
-                )
-                cursor.execute(
-                    "UPDATE public.modules SET title_field_id = NULL WHERE id = %s", (module_id,)
-                )
-                cursor.execute("DELETE FROM public.fields WHERE id = %s", (title_field_id,))
-                cursor.execute("DELETE FROM public.modules WHERE id = %s", (module_id,))
-                cursor.execute("DELETE FROM public.departments WHERE id = %s", (department_id,))
-                cursor.execute("DELETE FROM public.files WHERE id = %s", (file_id,))
-                cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
-                cursor.execute(
-                    "DELETE FROM public.identity_sessions WHERE user_id IN (%s, %s)",
-                    (admin_id, member_id),
-                )
-                cursor.execute(
-                    "DELETE FROM public.lifecycle_rate_limit_buckets WHERE actor_id IN (%s, %s)",
-                    (admin_id, member_id),
-                )
-                cursor.execute(
-                    "DELETE FROM public.identity_rate_limit_buckets WHERE fingerprint IN (%s, %s)",
-                    ("1" * 64, "2" * 64),
-                )
-                cursor.execute(
-                    "DELETE FROM public.users WHERE id IN (%s, %s)", (admin_id, member_id)
-                )
-            database.commit()
+    def cleanup(cursor) -> None:
+        if workspace_settings_before_test is not None:
+            cursor.execute(
+                "UPDATE public.workspace_profiles SET currency = %s, week_start = %s, "
+                "business_hours = %s, mark = %s, theme = %s",
+                workspace_settings_before_test,
+            )
+        cursor.execute(
+            "UPDATE public.workspace_profiles SET logo_file_id = NULL WHERE logo_file_id = %s",
+            (file_id,),
+        )
+        for table, column, owned_id in (
+            ("in_app_notifications", "work_id", work_id),
+            ("scheduled_work", "id", work_id),
+            ("report_run_eligible_users", "run_id", run_id),
+            ("report_run_rows", "run_id", run_id),
+            ("report_runs", "id", run_id),
+            ("report_schedules", "report_id", report_id),
+            ("reports", "id", report_id),
+            ("board_event_reminders", "event_id", event_id),
+            ("board_post_revisions", "post_id", post_id),
+            ("board_posts", "id", post_id),
+            ("board_events", "id", event_id),
+            ("dashboard_widgets", "dashboard_id", dashboard_id),
+            ("dashboards", "id", dashboard_id),
+            ("records", "id", record_id),
+        ):
+            cursor.execute(f"DELETE FROM public.{table} WHERE {column} = %s", (owned_id,))
+        for table in ("board_groups", "group_access", "group_members"):
+            cursor.execute(f"DELETE FROM public.{table} WHERE group_id = %s", (group_id,))
+        cursor.execute(
+            "DELETE FROM public.boards WHERE id IN (%s, %s)",
+            (board_id, project_board_id),
+        )
+        cursor.execute(
+            "UPDATE public.modules SET title_field_id = NULL WHERE id = %s", (module_id,)
+        )
+        cursor.execute("DELETE FROM public.fields WHERE id = %s", (title_field_id,))
+        cursor.execute("DELETE FROM public.modules WHERE id = %s", (module_id,))
+        cursor.execute("DELETE FROM public.departments WHERE id = %s", (department_id,))
+        cursor.execute("DELETE FROM public.files WHERE id = %s", (file_id,))
+        cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
+        delete_sessions_and_rate_limits(cursor, (admin_id, member_id))
+        cursor.execute("DELETE FROM public.users WHERE id IN (%s, %s)", (admin_id, member_id))
 
-    request.addfinalizer(cleanup)
-    with connect(database_url) as database:
+    reset_database.clean_up_after(request, cleanup)
+    with connect(reset_database.url) as database:
         with database.cursor() as cursor:
             cursor.execute(
                 "SELECT currency, week_start, business_hours, mark, theme "
@@ -129,39 +106,10 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                     f"reset_member_{member_id.hex[:12]}",
                 ),
             )
-            cursor.execute(
-                "INSERT INTO public.identity_sessions "
-                "(id, user_id, refresh_token_digest, csrf_token_digest, created_at, refreshed_at, "
-                "expires_at) VALUES (%s, %s, %s, %s, now(), now(), now() + interval '1 day'), "
-                "(%s, %s, %s, %s, now(), now(), now() + interval '1 day')",
-                (
-                    session_id,
-                    admin_id,
-                    "a" * 64,
-                    "b" * 64,
-                    uuid4(),
-                    member_id,
-                    "c" * 64,
-                    "d" * 64,
-                ),
+            insert_sessions_and_rate_limits(
+                cursor, admin_id=admin_id, member_id=member_id, session_id=session_id
             )
-            cursor.execute(
-                "INSERT INTO public.identity_rate_limit_buckets "
-                "(fingerprint, attempt_count, window_started_at) "
-                "VALUES (%s, 1, now()), (%s, 1, now())",
-                ("1" * 64, "2" * 64),
-            )
-            cursor.execute(
-                "INSERT INTO public.lifecycle_rate_limit_buckets "
-                "(id, actor_id, attempt_count, window_started_at, window_expires_at) "
-                "VALUES (%s, %s, 1, now(), now() + interval '1 minute'), "
-                "(%s, %s, 1, now(), now() + interval '1 minute')",
-                (uuid4(), admin_id, uuid4(), member_id),
-            )
-            cursor.execute(
-                "INSERT INTO public.departments (id, department_name) VALUES (%s, %s)",
-                (department_id, f"reset-{admin_id}"),
-            )
+            insert_department(cursor, department_id, admin_id)
             cursor.execute(
                 "INSERT INTO public.groups (id, name, performed_by) VALUES (%s, %s, %s)",
                 (group_id, f"reset-group-{group_id.hex[:12]}", admin_id),
@@ -188,12 +136,7 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 "UPDATE public.modules SET title_field_id = %s WHERE id = %s",
                 (title_field_id, module_id),
             )
-            cursor.execute(
-                "INSERT INTO public.files "
-                "(id, purpose, creator_id, filename, expected_size, object_key, state) "
-                "VALUES (%s, 'workspace_logo', %s, 'reset.png', 1, %s, 'awaiting_upload')",
-                (file_id, admin_id, uuid4().hex),
-            )
+            insert_logo_file(cursor, file_id, admin_id)
             cursor.execute(
                 "UPDATE public.workspace_profiles SET logo_file_id = %s, currency = 'USD', "
                 "week_start = 'sunday', business_hours = '10:00–16:00', mark = 'ACME', "
