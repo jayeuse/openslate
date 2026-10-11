@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 
-import { expect, test, type Route, type Page } from "./helpers/test";
+import {
+  expect,
+  signedInSession,
+  test,
+  type Route,
+  type Page,
+} from "./helpers/test";
 import { mockMfa } from "./helpers/mfa";
 import { profilePreferences, profileSelf } from "./helpers/profile-api";
 
@@ -356,15 +362,7 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000101",
-        setup_required: false,
-      },
-    }),
-  );
+  await signedInSession(page, "00000000-0000-4000-8000-000000000101");
 });
 
 test("Audit uses server filters, sort and page requests, with server-named actor options", async ({

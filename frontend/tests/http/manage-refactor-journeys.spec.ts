@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { expect, signedInAs, test } from "./helpers/test";
 import type { Page } from "./helpers/test";
 import { mockManageBackups } from "./helpers/manage-backups";
 import { mockManageSecurity } from "./helpers/manage-security";
@@ -129,24 +129,10 @@ function installWorkspaceRoute(
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      json: {
-        id: "00000000-0000-4000-8000-000000000101",
-        role: "admin",
-        access: [],
-      },
-    }),
-  );
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000101",
-        setup_required: false,
-      },
-    }),
-  );
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000101",
+    role: "admin",
+  });
   installWorkspaceRoute(page);
 });
 

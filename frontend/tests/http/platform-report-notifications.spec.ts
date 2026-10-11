@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Route } from "./helpers/test";
+import {
+  expect,
+  signedInSession,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 
 import {
   installOpenViewEventSource,
@@ -33,16 +39,7 @@ async function notificationRoute(
 
 async function mockSession(page: Page) {
   await installTitleSources(page);
-  await page.route("**/api/auth/session", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    });
-  });
+  await signedInSession(page, userId);
 }
 
 async function fakeEventSource(page: Page) {

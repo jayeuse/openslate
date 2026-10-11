@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInAs, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -68,26 +68,17 @@ async function setup(
   access: "department" | "module" | "read" = "department",
 ) {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    }),
-  );
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      json: {
-        id: userId,
-        role: "member",
-        access: [
-          {
-            department_id: departmentId,
-            module_id: access === "module" ? moduleId : null,
-            level: access === "read" ? "read" : "manage",
-          },
-        ],
+  await signedInAs(page, {
+    id: userId,
+    role: "member",
+    access: [
+      {
+        department_id: departmentId,
+        module_id: access === "module" ? moduleId : null,
+        level: access === "read" ? "read" : "manage",
       },
-    }),
-  );
+    ],
+  });
   const fields = [
     { id: categoryId, name: "Category", type: "text", config: {} },
     { id: amountId, name: "Amount", type: "decimal", config: {} },

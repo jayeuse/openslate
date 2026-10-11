@@ -70,15 +70,6 @@ async function openAccount(
   workspaceHandler: (route: Route) => Promise<void> = (route) =>
     route.fulfill({ json: workspaceSettings }),
 ) {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      },
-    }),
-  );
   await page.route("**/api/workspace", workspaceHandler);
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({ json: profileSelf(accountUser, "admin") }),

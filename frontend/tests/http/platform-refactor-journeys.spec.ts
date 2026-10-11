@@ -1,5 +1,6 @@
 import {
   expect,
+  signedInAs,
   test,
   type Locator,
   type Page,
@@ -43,19 +44,7 @@ const definition = {
   search_fields: [],
   deleted: "exclude",
 };
-async function signedIn(page: Page) {
-  await page.route("**/api/auth/session", (r) =>
-    r.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      },
-    }),
-  );
-}
 async function catalog(page: Page) {
-  await signedIn(page);
   await page.route("**/api/views/data-sources?*", (r) =>
     r.fulfill({
       json: list([
@@ -192,16 +181,11 @@ async function selectCsv(page: Page, csv: string) {
 test("Search queries four kinds, pages within cards and uses typed destinations", async ({
   page,
 }) => {
-  await signedIn(page);
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      json: {
-        id: "00000000-0000-4000-8000-000000000001",
-        role: "member",
-        access: [{ department_id: BOARD, module_id: MODULE, level: "read" }],
-      },
-    }),
-  );
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000001",
+    role: "member",
+    access: [{ department_id: BOARD, module_id: MODULE, level: "read" }],
+  });
   const requests: URLSearchParams[] = [];
   await page.route("**/api/search?*", (r) => {
     const p = new URL(r.request().url()).searchParams;
@@ -700,7 +684,6 @@ for (const failure of ["lost response", "unconfirmed 503"] as const) {
 test("Search ignores old replies, hides denial and recovers with explicit retry", async ({
   page,
 }) => {
-  await signedIn(page);
   const releaseOld: (() => void)[] = [];
   let denied = true;
   await page.route("**/api/search?*", async (route) => {
@@ -865,7 +848,6 @@ test("Import and export role refusals retain drafts and never report creation or
 test("Administrator people results open the existing People destination and empty groups stay truthful", async ({
   page,
 }) => {
-  await signedIn(page);
   await page.route("**/api/search?*", (route) => {
     const kind = new URL(route.request().url()).searchParams.get("kind");
     return route.fulfill({

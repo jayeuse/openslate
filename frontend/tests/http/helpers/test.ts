@@ -1,9 +1,15 @@
-import { test as base, type Route } from "@playwright/test";
+import {
+  test as base,
+  type BrowserContext,
+  type Page,
+  type Route,
+} from "@playwright/test";
 
-// The shared `test` for HTTP specs. The app navigation reads `/api/auth/me`
-// on every signed-in page, and the synthetic dev server has no backend, so
-// each browser context answers it with a signed-in administrator by default.
-// A spec overrides it with its own `page.route("**/api/auth/me", ...)` or
+// The shared `test` for HTTP specs. The auth gate reads `/api/auth/session`
+// and the app navigation reads `/api/auth/me` on every signed-in page, and the
+// synthetic dev server has no backend, so each browser context answers both
+// with a signed-in administrator by default. A spec overrides them with
+// `signedInAs(...)`, `signedInSession(...)`, or its own `page.route(...)` /
 // `context.route(...)`: page routes win over context routes, and a later
 // context route wins over this one. Contexts a spec opens itself with
 // `browser.newContext()` get no default.
@@ -14,8 +20,80 @@ export const defaultSignedInIdentity = {
   access: [],
 } as const;
 
+type AccessLevel = "read" | "write" | "manage";
+
+/** The `/api/auth/me` body: one account and its group access rows. */
+export type SignedInIdentity = {
+  id: string;
+  role: "admin" | "member" | "guest";
+  access?: readonly {
+    department_id: string;
+    module_id: string | null;
+    level: AccessLevel;
+  }[];
+};
+
+/**
+ * Answers `/api/auth/session` with a signed-in session for `userId`. Use it
+ * alone when the spec owns `/api/auth/me` separately or keeps the default
+ * identity; otherwise use `signedInAs`. Stateful, held, counted, or failing
+ * session reads stay inline in the spec.
+ */
+/**
+ * Answers the session read as signed out, for pages a signed-out person uses
+ * (sign in, invitation setup, recovery). The base fixture's default is signed in.
+ */
+export async function signedOut(target: Page | BrowserContext): Promise<void> {
+  await target.route("**/api/auth/session", (route) =>
+    route.fulfill({ json: { authenticated: false } }),
+  );
+}
+
+export async function signedInSession(
+  target: Page | BrowserContext,
+  userId: string,
+  options: { setupRequired?: boolean } = {},
+): Promise<void> {
+  await target.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user_id: userId,
+        setup_required: options.setupRequired ?? false,
+      },
+    }),
+  );
+}
+
+/** Signs `identity` in: its session and its `/api/auth/me` identity. */
+export async function signedInAs(
+  target: Page | BrowserContext,
+  identity: SignedInIdentity,
+  options: { setupRequired?: boolean } = {},
+): Promise<void> {
+  await signedInSession(target, identity.id, options);
+  await target.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: identity.id,
+        role: identity.role,
+        access: identity.access ?? [],
+      },
+    }),
+  );
+}
+
 export const test = base.extend({
   context: async ({ context }, provide) => {
+    await context.route("**/api/auth/session", (route) =>
+      route.fulfill({
+        json: {
+          authenticated: true,
+          user_id: defaultSignedInIdentity.id,
+          setup_required: false,
+        },
+      }),
+    );
     await context.route("**/api/auth/me", (route) =>
       route.fulfill({ json: defaultSignedInIdentity }),
     );

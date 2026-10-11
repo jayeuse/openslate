@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import Papa from "papaparse";
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import { boardId, installBoardApi } from "./helpers/boards-api";
 
@@ -48,15 +48,7 @@ function snapshot(keys: string[], values: (string | number | null)[]) {
 
 async function catalog(page: Page) {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: departmentId,
-        setup_required: false,
-      },
-    }),
-  );
+  await signedInSession(page, departmentId);
   await page.route("**/api/views/data-sources**", (route) => {
     const fields = [
       { id: categoryId, name: "Category", type: "text" },

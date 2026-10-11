@@ -3,19 +3,6 @@ import { mockManageSecurity } from "./helpers/manage-security";
 import { backupRun, mockManageBackups } from "./helpers/manage-backups";
 import { sendOpenViewEvent } from "./helpers/openview-event-source";
 
-// Retain the verified-session fixture shared by these cases before the move.
-test.beforeEach(async ({ page }) => {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      },
-    }),
-  );
-});
-
 test("Back up now queues real history, cancels without writes, and preserves policy drafts", async ({
   page,
 }) => {

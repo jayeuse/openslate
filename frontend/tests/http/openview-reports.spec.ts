@@ -1,5 +1,6 @@
 import {
   expect,
+  signedInAs,
   test,
   type Locator,
   type Page,
@@ -130,41 +131,26 @@ async function installReportsApi(
     report_name: "Shared operations review",
     status: "succeeded",
   }));
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: userId,
-        role: options.role ?? "member",
-        access: [
-          {
-            department_id: ownerId,
-            module_id: null,
-            level: options.level ?? "manage",
-          },
-          ...(options.readOnlySource
-            ? [
-                {
-                  department_id: readOnlyDepartmentId,
-                  module_id: readOnlyModuleId,
-                  level: "read",
-                },
-              ]
-            : []),
-        ],
-      }),
-    }),
-  );
+  await signedInAs(page, {
+    id: userId,
+    role: options.role ?? "member",
+    access: [
+      {
+        department_id: ownerId,
+        module_id: null,
+        level: options.level ?? "manage",
+      },
+      ...(options.readOnlySource
+        ? [
+            {
+              department_id: readOnlyDepartmentId,
+              module_id: readOnlyModuleId,
+              level: "read" as const,
+            },
+          ]
+        : []),
+    ],
+  });
   await page.route("**/api/departments**", (route) =>
     route.fulfill({
       json: pageOf(

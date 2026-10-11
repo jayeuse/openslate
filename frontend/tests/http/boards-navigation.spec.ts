@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInSession, test, type Page } from "./helpers/test";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";
@@ -31,16 +31,7 @@ async function installServerBoards(page: Page) {
       }),
     }),
   );
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
+  await signedInSession(page, userId);
   await page.route("**/api/boards**", (route) => {
     const path = new URL(route.request().url()).pathname;
     const reply = (status: number, body: unknown) =>

@@ -1,4 +1,10 @@
-import { expect, test, type Page, isEventStream } from "./helpers/test";
+import {
+  expect,
+  test,
+  type Page,
+  isEventStream,
+  signedInAs,
+} from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
 import {
   installOpenViewEventSource,
@@ -121,14 +127,7 @@ async function installSelectedEventApi(
           json: { detail: "Unavailable in calendar test" },
         }),
   );
-  await browser.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: authorId, role: "member", access: [] } }),
-  );
-  await browser.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: authorId, setup_required: false },
-    }),
-  );
+  await signedInAs(browser, { id: authorId, role: "member" });
   await browser.route("**/api/workspace", (route) =>
     route.fulfill({
       json: {

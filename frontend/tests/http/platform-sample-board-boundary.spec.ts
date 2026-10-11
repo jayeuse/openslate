@@ -1,20 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { signedInSession } from "./helpers/test";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 
 test("Platform no longer exposes the retired Record actions section", async ({
   page,
 }) => {
-  await page.route("**/api/auth/session", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    });
-  });
+  await signedInSession(page, userId);
 
   await page.goto("/platform?section=records");
 

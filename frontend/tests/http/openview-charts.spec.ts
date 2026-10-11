@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import Papa from "papaparse";
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInSession, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -45,16 +45,7 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       assignableUserRequests += 1;
   });
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
+  await signedInSession(page, userId);
   await page.route("**/api/views/data-sources**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === "/api/views/data-sources") {
@@ -238,11 +229,7 @@ test("Chart source failures keep retry visible with destructive safe feedback", 
   page,
 }) => {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    }),
-  );
+  await signedInSession(page, userId);
   await page.route("**/api/views/data-sources?*", (route) =>
     route.fulfill({
       status: 503,
@@ -292,11 +279,7 @@ const editorFields = [
 
 async function editorCatalog(page: Page) {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    }),
-  );
+  await signedInSession(page, userId);
   await page.route("**/api/views/data-sources**", (route) => {
     const path = new URL(route.request().url()).pathname;
     return route.fulfill({

@@ -1218,16 +1218,6 @@ async function installViewsApi(
       },
     };
   });
-  await page.route("**/api/auth/session", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
   await page.route("**/api/workspace", (route) =>
     route.fulfill(
       workspaceFailure
@@ -5266,16 +5256,6 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
 }) => {
   let savedViewRequests = 0;
   let dashboardListRequests = 0;
-  await page.route("**/api/auth/session", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
   await page.route("**/api/views**", async (route) => {
     if (new URL(route.request().url()).pathname === "/api/views/data-sources") {
       return route.fulfill({
@@ -5299,12 +5279,6 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
       body: "{}",
     });
   });
-  await page.route("**/api/auth/me", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ id: userId, role: "admin", access: [] }),
-    }),
-  );
   // A new Dashboard needs a department to belong to.
   await page.route("**/api/departments**", async (route) =>
     route.fulfill({

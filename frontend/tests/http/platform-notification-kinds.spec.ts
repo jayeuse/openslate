@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInAs, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -67,14 +67,7 @@ function notifications() {
 
 async function setup(page: Page) {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    }),
-  );
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: userId, role: "admin", access: [] } }),
-  );
+  await signedInAs(page, { id: userId, role: "admin" });
   const state = {
     items: notifications(),
     reportStatus: 200,

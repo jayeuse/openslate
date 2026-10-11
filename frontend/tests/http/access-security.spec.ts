@@ -351,15 +351,6 @@ test("accepted MFA verification remains truthful when the following settings rea
 });
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      },
-    }),
-  );
   await mockManageSecurity(page);
 });
 

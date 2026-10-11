@@ -1,18 +1,10 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 
 async function signIn(page: Page) {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000101",
-        setup_required: false,
-      },
-    }),
-  );
+  await signedInSession(page, "00000000-0000-4000-8000-000000000101");
 }
 
 const routeTitles = [
@@ -82,15 +74,7 @@ test("a phone breadcrumb shows only the current page", async ({ page }) => {
 test("Comms snapshot recovery stays within Comms while live routes and returning drafts remain usable", async ({
   page,
 }) => {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000101",
-        setup_required: false,
-      },
-    }),
-  );
+  await signIn(page);
   const document = sandboxDocumentFromDesign(initialDesign);
   await page.route("**/api/sandbox/document", (route) =>
     route.request().method() === "GET"

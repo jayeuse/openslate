@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInAs, test, type Page } from "./helpers/test";
 import { mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
@@ -106,16 +106,6 @@ async function openAuthenticatedSandbox(
   let bindings = options.bindings ?? [];
   let bindingFailure = options.bindingFailure;
   let bindingRevision = options.bindingRevision;
-  await page.route("**/api/auth/session", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      }),
-    });
-  });
   await page.route("**/api/sandbox/document", async (route) => {
     if (route.request().method() === "GET") {
       documentReads += 1;
@@ -6420,18 +6410,7 @@ for (const transition of ["unmount", "account"] as const) {
         await expect(page).toHaveURL(/\/platform/);
       } else {
         const userB = "00000000-0000-4000-8000-000000000002";
-        await page.route("**/api/auth/session", (route) =>
-          route.fulfill({
-            json: {
-              authenticated: true,
-              user_id: userB,
-              setup_required: false,
-            },
-          }),
-        );
-        await page.route("**/api/auth/me", (route) =>
-          route.fulfill({ json: { id: userB, role: "admin", access: [] } }),
-        );
+        await signedInAs(page, { id: userB, role: "admin" });
         await page.evaluate(() =>
           window.dispatchEvent(new FocusEvent("focus")),
         );

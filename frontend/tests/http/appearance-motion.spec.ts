@@ -1,18 +1,10 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { profileSelf, regionalDefaults } from "./helpers/profile-api";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 
 async function signIn(page: Page) {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      },
-    }),
-  );
+  await signedInSession(page, userId);
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({ json: profileSelf(userId) }),
   );
