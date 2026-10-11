@@ -116,6 +116,24 @@ class AnalyzeTests(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
+    def test_ledger_row_for_the_old_path_covers_a_renamed_file(self):
+        renamed = guard.FileChange(
+            path="frontend/tests/isolated/a.spec.ts",
+            status="M",
+            removed=["  expect(a).toBe(1);", "  expect(b).toBe(2);"],
+            old_path="frontend/tests/http/a.spec.ts",
+        )
+        ledger = [
+            guard.LedgerRow(
+                "frontend/tests/http/a.spec.ts",
+                2,
+                "backend/tests/a/test_owner.py::test_owner",
+                "D3",
+            )
+        ]
+        self.assertEqual(self.analyze([renamed], ledger), [])
+        self.assertEqual(len(self.analyze([renamed])), 1)
+
     def test_ledger_row_with_missing_owner_file_fails(self):
         violations = self.analyze(
             [change("backend/tests/a/test_x.py", removed=["    assert a == 1"])],
@@ -285,6 +303,34 @@ class GitCollectionTests(unittest.TestCase):
             self.assertEqual(
                 changes["frontend/tests/new.spec.ts"].added, ["test.skip('x', () => {});"]
             )
+
+    def test_a_committed_rename_keeps_its_old_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git = lambda *args: subprocess.run(  # noqa: E731
+                ["git", *args], cwd=root, check=True, capture_output=True, text=True
+            )
+            git("init", "-q")
+            git("config", "user.email", "ci@example.invalid")
+            git("config", "user.name", "CI Test")
+            old = root / "frontend/tests/http/a.spec.ts"
+            old.parent.mkdir(parents=True)
+            body = "".join(f"test('t{n}', () => {{ expect({n}).toBe({n}); }});\n" for n in range(9))
+            old.write_text(body)
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD").stdout.strip()
+
+            new = root / "frontend/tests/isolated/a.spec.ts"
+            new.parent.mkdir(parents=True)
+            git("mv", str(old), str(new))
+            new.write_text(body.replace("test('t8', () => { expect(8).toBe(8); });\n", ""))
+            git("commit", "-qam", "move")
+
+            changes = {item.path: item for item in guard.collect_changes(root, base)}
+            moved = changes["frontend/tests/isolated/a.spec.ts"]
+            self.assertEqual(moved.old_path, "frontend/tests/http/a.spec.ts")
+            self.assertEqual(moved.removed, ["test('t8', () => { expect(8).toBe(8); });"])
 
 
 if __name__ == "__main__":

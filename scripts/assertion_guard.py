@@ -74,6 +74,8 @@ class FileChange:
     status: str
     removed: list[str] = field(default_factory=list)
     added: list[str] = field(default_factory=list)
+    # The path before a rename; ledger rows may name either path.
+    old_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -157,9 +159,10 @@ def analyze(changes: list[FileChange], ledger: list[LedgerRow], root: Path) -> l
         deficit = count_assertions(item.path, item.removed) - count_assertions(
             item.path, item.added
         )
-        if deficit > covered[item.path]:
+        recorded = covered[item.path] + (covered[item.old_path] if item.old_path else 0)
+        if deficit > recorded:
             violations.append(
-                f"{item.path}: {deficit} assertion(s) removed, {covered[item.path]} recorded in "
+                f"{item.path}: {deficit} assertion(s) removed, {recorded} recorded in "
                 f"{LEDGER_PATH} with an owner test"
             )
         new_hits = _pattern_hits(item.path, item.added) - _pattern_hits(item.path, item.removed)
@@ -189,7 +192,12 @@ def _parse_diff(text: str) -> list[FileChange]:
             if new_path == "/dev/null":
                 current = FileChange(path=old_path, status="D")
             else:
-                current = FileChange(path=new_path[2:], status="M" if old_path else "A")
+                path = new_path[2:]
+                current = FileChange(
+                    path=path,
+                    status="M" if old_path else "A",
+                    old_path=old_path if old_path and old_path != path else "",
+                )
             changes.append(current)
         elif line.startswith("@@"):
             in_header = False
