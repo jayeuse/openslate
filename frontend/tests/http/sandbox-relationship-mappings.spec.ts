@@ -6,7 +6,6 @@ import {
   type Design,
 } from "../../src/components/systems/sandbox/domain/model";
 import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -15,7 +14,6 @@ import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 type SandboxOptions = {
   importFailure?: string;
@@ -806,7 +804,7 @@ async function captureS06Review(page: Page, name: string) {
 }
 
 for (const orientation of ["outgoing", "incoming"] as const) {
-  test(`S06 bound ${orientation} relationship uses Field lifecycle and counts unique record links`, async ({
+  test(`bound ${orientation} relationship uses Field lifecycle and counts unique record links`, async ({
     page,
   }) => {
     await prepareS06Review(page);
@@ -991,7 +989,7 @@ for (const orientation of ["outgoing", "incoming"] as const) {
   });
 }
 
-test("S06 relationship mismatched Field preview refuses confirmation", async ({
+test("relationship mismatched Field preview refuses confirmation", async ({
   page,
 }) => {
   const design = configuredDesignWithLegacyMapping();
@@ -1047,7 +1045,7 @@ test("S06 relationship mismatched Field preview refuses confirmation", async ({
   expect(commands).toBe(0);
 });
 
-test("S06 bound draft deletion explains retained live data while unbound copy remains", async ({
+test("bound draft deletion explains retained live data while unbound copy remains", async ({
   page,
 }) => {
   const design = configuredDesignWithLegacyMapping();
@@ -1474,7 +1472,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
   });
 }
 
-test("S26 a retained saved Chart query blocks bound field purge until repaired", async ({
+test("a retained saved Chart query blocks bound field purge until repaired", async ({
   page,
 }) => {
   const design = structuredClone(configuredSandboxDesign);
@@ -1567,19 +1565,6 @@ test("S26 a retained saved Chart query blocks bound field purge until repaired",
       },
     });
   });
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    const theme = process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light";
-    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-    await page.route("**/api/users/*/preferences", (route) =>
-      route.fulfill({
-        json: {
-          user_id: new URL(route.request().url()).pathname.split("/")[3],
-          theme,
-          appearance: { motion: "reduce", keyboard_shortcuts: true },
-        },
-      }),
-    );
-  }
   const sandbox = await openAuthenticatedSandbox(page, design, {
     bindings: [binding],
   });
@@ -1601,24 +1586,6 @@ test("S26 a retained saved Chart query blocks bound field purge until repaired",
   await expect(
     dialog.getByRole("button", { name: "Permanently delete", exact: true }),
   ).toBeDisabled();
-  await captureOpenViewReview(
-    page,
-    `s26-chart-purge-blocked-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
-    {
-      beforeScreenshot: async (capture) => {
-        await hideDevOverlay(capture);
-        await expect(capture.locator("html")).toHaveClass(
-          process.env.S26_CAPTURE_THEME === "dark" ? /dark/ : /^(?!.*dark)/,
-        );
-        await capture.evaluate(async () => {
-          await document.fonts.ready;
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-          );
-        });
-      },
-    },
-  );
   expect(requests).toEqual([]);
   expect(sandbox.documentWrites()).toBe(0);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -3488,22 +3455,6 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   expect(
     savedNewChoice.options.find((option) => option.label === "Complete")?.id,
   ).toBe(originalIds.Complete);
-  await captureOpenViewReview(page, "sandbox-stable-select-choice", {
-    beforeScreenshot: async (capturePage, viewport) => {
-      if (viewport.width < 640) {
-        const propertiesTab = capturePage.getByRole("tab", {
-          name: "Properties",
-        });
-        await expect(propertiesTab).toHaveCount(1);
-        if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
-          await propertiesTab.click();
-        const showSettings = capturePage
-          .getByLabel("Status field settings")
-          .getByRole("button", { name: "Show Status settings", exact: true });
-        if (await showSettings.isVisible()) await showSettings.click();
-      }
-    },
-  });
 });
 
 test("removing an unsaved selected choice requires an explicit new default", async ({
@@ -3576,22 +3527,6 @@ test("the Designer saves a module record title field in the current v4 draft", a
     titleSettings.getByText(/selected as the record title/i),
   ).toBeVisible();
   await expect(closeField).toBeDisabled();
-  await captureOpenViewReview(page, "sandbox-selected-record-title", {
-    beforeScreenshot: async (capturePage, viewport) => {
-      if (viewport.width < 640) {
-        const propertiesTab = capturePage.getByRole("tab", {
-          name: "Properties",
-        });
-        await expect(propertiesTab).toHaveCount(1);
-        if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
-          await propertiesTab.click();
-        const showSettings = capturePage
-          .getByLabel("Title field settings")
-          .getByRole("button", { name: "Show Title settings", exact: true });
-        if (await showSettings.isVisible()) await showSettings.click();
-      }
-    },
-  });
 
   await titleSelector.selectOption("");
   await expect.poll(sandbox.documentWrites).toBe(2);
@@ -3674,7 +3609,6 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   await setup
     .getByLabel("Assigned user", { exact: true })
     .fill(simulatedUserId);
-  await captureOpenViewReview(page, "sandbox-simulated-user-input");
   await setup.getByRole("button", { name: "Run test", exact: true }).click();
   await expect
     .poll(() => submitted?.["sandbox-assignee"])
@@ -4041,7 +3975,7 @@ async function openCheckpointDialog(page: Page) {
 }
 
 for (const count of [44, 45, 50]) {
-  test(`S06 capacity ${count} is global in filtered History and checkpoint dialog`, async ({
+  test(`capacity ${count} is global in filtered History and checkpoint dialog`, async ({
     page,
   }) => {
     await prepareS06Review(page);
@@ -4070,7 +4004,7 @@ for (const count of [44, 45, 50]) {
 }
 
 for (const fault of ["missing", "malformed", "refused"] as const) {
-  test(`S06 ${fault} capacity is unavailable rather than guessed or usable`, async ({
+  test(`${fault} capacity is unavailable rather than guessed or usable`, async ({
     page,
   }) => {
     const sandbox = await openAuthenticatedSandbox(
@@ -4108,7 +4042,7 @@ for (const fault of ["missing", "malformed", "refused"] as const) {
   });
 }
 
-test("S06 prune cancel and pending readback preserve checkpoint input and use refreshed revision", async ({
+test("prune cancel and pending readback preserve checkpoint input and use refreshed revision", async ({
   page,
 }) => {
   let releasePrune!: () => void;
@@ -4203,7 +4137,7 @@ test("S06 prune cancel and pending readback preserve checkpoint input and use re
   ).toContainText("42 saved versions");
 });
 
-test("S06 filtered History readback completes before prune unlocks commands", async ({
+test("filtered History readback completes before prune unlocks commands", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(
@@ -4268,7 +4202,7 @@ for (const failure of [
   "malformed",
   "readback",
 ] as const) {
-  test(`S06 ${failure} prune preserves input and refuses another write until authoritative Retry`, async ({
+  test(`${failure} prune preserves input and refuses another write until authoritative Retry`, async ({
     page,
   }) => {
     const sandbox = await openAuthenticatedSandbox(
@@ -4361,7 +4295,7 @@ for (const failure of [
   });
 }
 
-test("S06 full history checkpoint reports authored version_limit copy and preserves inputs", async ({
+test("full history checkpoint reports authored version_limit copy and preserves inputs", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(
@@ -5062,7 +4996,7 @@ test("disabled convenience shortcuts preserve canvas buttons and essential arrow
 });
 
 for (const preference of ["off", "pending"] as const) {
-  test(`S23 registered shortcuts ${preference} block Delete and F2 without disabling essential controls`, async ({
+  test(`registered shortcuts ${preference} block Delete and F2 without disabling essential controls`, async ({
     page,
   }) => {
     let release = () => {};
@@ -5128,7 +5062,7 @@ for (const preference of ["off", "pending"] as const) {
   });
 }
 
-test("S23 registered shortcuts enabled retain real help fit rename and removal review", async ({
+test("registered shortcuts enabled retain real help fit rename and removal review", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
@@ -5172,7 +5106,7 @@ test("S23 registered shortcuts enabled retain real help fit rename and removal r
   expect(sandbox.document().design.modules).toHaveLength(3);
 });
 
-test("S23 registered shortcuts preserve native text editing modal guards and standard undo redo while off", async ({
+test("registered shortcuts preserve native text editing modal guards and standard undo redo while off", async ({
   page,
 }) => {
   await page.route("**/api/users/*/preferences", (route) =>
@@ -5409,36 +5343,6 @@ test("History pages and server-searches later versions while retaining inspectio
   await expect(page.getByLabel("Compare first version")).toHaveValue(
     versions[26].id,
   );
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-sandbox-history-${mode}`, {
-        beforeScreenshot: async () => {
-          await page.evaluate(async () => {
-            await document.fonts.ready;
-          });
-          for (const label of [
-            "All versions",
-            "Checkpoints",
-            "Published versions",
-            "Imported versions",
-          ]) {
-            await expect
-              .poll(() =>
-                timeline
-                  .getByRole("button", { name: label, exact: true })
-                  .evaluate(
-                    (element) => element.scrollWidth <= element.clientWidth,
-                  ),
-              )
-              .toBe(true);
-          }
-        },
-      });
-    }
-  }
 });
 
 test("History clears a missing compared version after a transient lookup and never redisplays its old snapshot", async ({
@@ -6224,7 +6128,7 @@ test("History older off-page metadata cannot restore a target marked missing by 
   await expect(page.getByText("Private missing-version canary")).toHaveCount(0);
 });
 
-test("S05 export history uses complete global total and downloads both boolean variants", async ({
+test("export history uses complete global total and downloads both boolean variants", async ({
   page,
 }) => {
   await prepareS06Review(page);
@@ -6339,7 +6243,7 @@ test("S05 export history uses complete global total and downloads both boolean v
   expect(sandbox.document()).toEqual(document);
 });
 
-test("S05 export count loads without guessing or enabling a premature export", async ({
+test("export count loads without guessing or enabling a premature export", async ({
   page,
 }) => {
   let release!: () => void;
@@ -6381,7 +6285,7 @@ test("S05 export count loads without guessing or enabling a premature export", a
   ).toBeEnabled();
 });
 
-test("S05 export count failure stays unavailable until an authoritative Retry", async ({
+test("export count failure stays unavailable until an authoritative Retry", async ({
   page,
 }) => {
   const options = {
@@ -6421,7 +6325,7 @@ test("S05 export count failure stays unavailable until an authoritative Retry", 
 });
 
 for (const failure of ["unavailable", "malformed"] as const) {
-  test(`S05 ${failure} export keeps history selection and produces no download`, async ({
+  test(`${failure} export keeps history selection and produces no download`, async ({
     page,
   }) => {
     let downloads = 0;
@@ -6480,7 +6384,7 @@ for (const failure of ["unavailable", "malformed"] as const) {
   });
 }
 
-test("S05 pending export is single and cancellation refuses its late download", async ({
+test("pending export is single and cancellation refuses its late download", async ({
   page,
 }) => {
   let release!: () => void;
@@ -6568,7 +6472,7 @@ test("S05 pending export is single and cancellation refuses its late download", 
 });
 
 for (const transition of ["unmount", "account"] as const) {
-  test(`S05 export ignores a late result after ${transition} transition`, async ({
+  test(`export ignores a late result after ${transition} transition`, async ({
     page,
   }) => {
     let release!: () => void;
@@ -6691,7 +6595,7 @@ for (const transition of ["unmount", "account"] as const) {
   });
 }
 
-test("S05 export accepts 50 mutable snapshots plus a publication as complete downloadable history", async ({
+test("export accepts 50 mutable snapshots plus a publication as complete downloadable history", async ({
   page,
 }) => {
   await prepareS06Review(page);
@@ -6798,7 +6702,7 @@ test("S05 export accepts 50 mutable snapshots plus a publication as complete dow
   expect(sandbox.documentWrites()).toBe(0);
 });
 
-test("S05 import admission still refuses more than 50 snapshots before any write", async ({
+test("import admission still refuses more than 50 snapshots before any write", async ({
   page,
 }) => {
   const versions = capacityVersions(50);

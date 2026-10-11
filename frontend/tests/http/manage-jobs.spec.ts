@@ -1,7 +1,5 @@
 import { expect, test, type Page } from "./helpers/test";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 const ADMIN = "00000000-0000-4000-8000-000000000101";
 const OTHER = "00000000-0000-4000-8000-000000000102";
@@ -292,44 +290,6 @@ async function installJobs(
     },
   };
 }
-async function prepareS14Capture(page: Page) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  const theme = process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-  await page.route("**/api/users/*/preferences", (route) =>
-    route.fulfill({
-      json: {
-        user_id: new URL(route.request().url()).pathname.split("/")[3],
-        theme,
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
-      },
-    }),
-  );
-}
-async function captureS14Jobs(page: Page, name: string) {
-  const theme = process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await captureOpenViewReview(page, `${name}-${theme}`, {
-    beforeScreenshot: async (capture) => {
-      // Exclude Next's development overlay from opt-in product captures.
-      await hideDevOverlay(capture);
-      await expect(capture.locator("html")).toHaveClass(
-        theme === "dark" ? /dark/ : /^(?!.*dark)/,
-      );
-      await capture.evaluate(async () => {
-        await document.fonts.ready;
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        );
-      });
-      expect(
-        await capture.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-    },
-  });
-}
 
 async function openJobs(page: Page) {
   await page.goto("/manage?view=jobs");
@@ -340,10 +300,9 @@ async function openJobs(page: Page) {
 const retry = (page: Page, label: string) =>
   page.getByRole("button", { name: `Retry ${label}`, exact: true });
 
-test("S14 exact administrator sees server-priority composite Jobs and future registry rows", async ({
+test("exact administrator sees server-priority composite Jobs and future registry rows", async ({
   page,
 }) => {
-  await prepareS14Capture(page);
   const api = await installJobs(page);
   await openJobs(page);
   const breadcrumb = page.getByRole("navigation", {
@@ -375,11 +334,10 @@ test("S14 exact administrator sees server-priority composite Jobs and future reg
   ).toBeVisible();
   expect(api.gets[0].searchParams.get("sort_by")).toBe("priority");
   expect(api.gets[0].searchParams.get("sort_order")).toBe("asc");
-  await captureS14Jobs(page, "s14-jobs-registry");
 });
 
 for (const role of ["member", "guest"] as const)
-  test(`S14 ${role} direct URL has no Jobs navigation or private requests`, async ({
+  test(`${role} direct URL has no Jobs navigation or private requests`, async ({
     page,
   }) => {
     const api = await installJobs(page, { role });
@@ -400,7 +358,7 @@ for (const role of ["member", "guest"] as const)
     expect(api.posts).toHaveLength(0);
   });
 
-test("S14 unavailable identity never admits Jobs reads or intent prefetch", async ({
+test("unavailable identity never admits Jobs reads or intent prefetch", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -418,7 +376,7 @@ test("S14 unavailable identity never admits Jobs reads or intent prefetch", asyn
   expect(api.gets).toHaveLength(0);
 });
 
-test("S14 Jobs paging and kind/state/size filters retain exact server page identities", async ({
+test("Jobs paging and kind/state/size filters retain exact server page identities", async ({
   page,
 }) => {
   const rows = Array.from({ length: 15 }, (_, number) =>
@@ -452,7 +410,7 @@ test("S14 Jobs paging and kind/state/size filters retain exact server page ident
 });
 
 for (const kind of ["report-run", "post-publish", "event-reminder"] as const)
-  test(`S14 ${kind} retry requires a matching 200 receipt and refreshes authoritative state`, async ({
+  test(`${kind} retry requires a matching 200 receipt and refreshes authoritative state`, async ({
     page,
   }) => {
     const row = seedJobs().find((item) => item.kind === kind)!;
@@ -476,7 +434,7 @@ for (const response of [
   "404",
   "422",
 ] as const)
-  test(`S14 scheduled ${response} response never reports retry success or automatically resends`, async ({
+  test(`scheduled ${response} response never reports retry success or automatically resends`, async ({
     page,
   }) => {
     const api = await installJobs(page, {
@@ -498,7 +456,7 @@ for (const response of [
   });
 
 for (const response of ["wrong-location", "old-id", "wrong-status"] as const)
-  test(`S14 backup ${response} receipt stays unresolved and blocks new retry keys`, async ({
+  test(`backup ${response} receipt stays unresolved and blocks new retry keys`, async ({
     page,
   }) => {
     const api = await installJobs(page, { reply: response });
@@ -515,10 +473,9 @@ for (const response of ["wrong-location", "old-id", "wrong-status"] as const)
     await expect(retry(page, "Weekly Report")).toBeDisabled();
   });
 
-test("S14 uncertain backup first reads Jobs then explicitly recovers one accepted run with the same key", async ({
+test("uncertain backup first reads Jobs then explicitly recovers one accepted run with the same key", async ({
   page,
 }) => {
-  await prepareS14Capture(page);
   const api = await installJobs(page, { reply: "lost" });
   await openJobs(page);
   await retry(page, "Nightly backup").click();
@@ -531,7 +488,6 @@ test("S14 uncertain backup first reads Jobs then explicitly recovers one accepte
   await expect(
     page.getByRole("button", { name: "Check retry result", exact: true }),
   ).toBeEnabled();
-  await captureS14Jobs(page, "s14-jobs-unconfirmed");
   const key = api.posts[0].key;
   Array.from(api.accepted.values())[0].state = "succeeded";
   await page
@@ -553,7 +509,7 @@ test("S14 uncertain backup first reads Jobs then explicitly recovers one accepte
   ).toHaveCount(2);
 });
 
-test("S14 Jobs refusal conceals cached subjects and persists across section remount until explicit fresh Retry", async ({
+test("Jobs refusal conceals cached subjects and persists across section remount until explicit fresh Retry", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -580,7 +536,7 @@ test("S14 Jobs refusal conceals cached subjects and persists across section remo
   await expect(page.getByText("Private Jobs canary")).toHaveCount(0);
 });
 
-test("S14 same-account role recheck cannot reuse an old administrator Jobs admission", async ({
+test("same-account role recheck cannot reuse an old administrator Jobs admission", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -598,7 +554,7 @@ test("S14 same-account role recheck cannot reuse an old administrator Jobs admis
   expect(api.gets).toHaveLength(before);
 });
 
-test("S14 backup uncertainty survives same-account section remount without an automatic POST", async ({
+test("backup uncertainty survives same-account section remount without an automatic POST", async ({
   page,
 }) => {
   const api = await installJobs(page, { reply: "lost" });
@@ -624,7 +580,7 @@ test("S14 backup uncertainty survives same-account section remount without an au
   expect(api.posts[1].key).toBe(api.posts[0].key);
 });
 
-test("S14 account replacement cancels a held retry and never transfers its key or late notice", async ({
+test("account replacement cancels a held retry and never transfers its key or late notice", async ({
   page,
 }) => {
   let release!: () => void;
@@ -656,7 +612,7 @@ test("S14 account replacement cancels a held retry and never transfers its key o
   ).toHaveCount(0);
 });
 
-test("S14 loading role cannot reveal or prefetch Jobs before fresh admission", async ({
+test("loading role cannot reveal or prefetch Jobs before fresh admission", async ({
   page,
 }) => {
   let release!: () => void;
@@ -679,7 +635,7 @@ test("S14 loading role cannot reveal or prefetch Jobs before fresh admission", a
   await expect(page.getByText("Nightly backup", { exact: true })).toBeVisible();
 });
 
-test("S14 cold Jobs load and retained503 refresh remain truthful and require explicit read Retry", async ({
+test("cold Jobs load and retained503 refresh remain truthful and require explicit read Retry", async ({
   page,
 }) => {
   let release!: () => void;
@@ -713,7 +669,7 @@ test("S14 cold Jobs load and retained503 refresh remain truthful and require exp
   await expect(retry(page, "Nightly backup")).toBeEnabled();
 });
 
-test("S14 failed new filter never relabels prior Jobs rows as its response", async ({
+test("failed new filter never relabels prior Jobs rows as its response", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -732,7 +688,7 @@ test("S14 failed new filter never relabels prior Jobs rows as its response", asy
   );
 });
 
-test("S14 pending scheduled retry locks composite peers and never double-submits", async ({
+test("pending scheduled retry locks composite peers and never double-submits", async ({
   page,
 }) => {
   let release!: () => void;
@@ -756,7 +712,7 @@ test("S14 pending scheduled retry locks composite peers and never double-submits
   expect(api.posts).toEqual([{ kind: "report-run", id: id(1), key: null }]);
 });
 
-test("S14 unsafe subject link rejects the Jobs response without creating navigation", async ({
+test("unsafe subject link rejects the Jobs response without creating navigation", async ({
   page,
 }) => {
   await installJobs(page, {
@@ -778,7 +734,7 @@ test("S14 unsafe subject link rejects the Jobs response without creating navigat
   await expect(page.locator('a[href*="outside.example"]')).toHaveCount(0);
 });
 
-test("S14 backup readback failure cannot offer recovery POST until a fresh GET succeeds", async ({
+test("backup readback failure cannot offer recovery POST until a fresh GET succeeds", async ({
   page,
 }) => {
   const api = await installJobs(page, {
@@ -810,7 +766,7 @@ test("S14 backup readback failure cannot offer recovery POST until a fresh GET s
   expect(api.posts[1].key).toBe(api.posts[0].key);
 });
 
-test("S14 explicit Jobs401 loses the session and never retains protected subjects", async ({
+test("explicit Jobs401 loses the session and never retains protected subjects", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -824,7 +780,7 @@ test("S14 explicit Jobs401 loses the session and never retains protected subject
   );
 });
 
-test("S14 Jobs intent and SPA revisits share the exact same account query cache", async ({
+test("Jobs intent and SPA revisits share the exact same account query cache", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -842,7 +798,7 @@ test("S14 Jobs intent and SPA revisits share the exact same account query cache"
   expect(api.gets).toHaveLength(1);
 });
 
-test("S14 empty refreshed later page displays the authoritative zero range", async ({
+test("empty refreshed later page displays the authoritative zero range", async ({
   page,
 }) => {
   const api = await installJobs(page, {

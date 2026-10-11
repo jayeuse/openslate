@@ -1,7 +1,5 @@
-import { expect, test, type Locator, type Page } from "./helpers/test";
+import { expect, test, type Page } from "./helpers/test";
 
-import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 
 import {
@@ -12,7 +10,6 @@ import {
   mockAccessApi,
   person,
 } from "./helpers/access-api";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 // The People tab against the mocked Access API (see helpers/access-api.ts).
 
@@ -581,7 +578,7 @@ for (const width of [1440, 390])
 
 // These HTTP journeys exercise the adopted list boundary and rendered controls.
 // Eligibility, provider completeness, and persisted observations are backend proofs.
-test("13b: the closed directory requests server pages and searches before paging", async ({
+test("the closed directory requests server pages and searches before paging", async ({
   page,
 }) => {
   const api = await mockPeopleApi(page);
@@ -633,7 +630,7 @@ test("13b: the closed directory requests server pages and searches before paging
   await expect.poll(() => api.listReads.at(-1)?.get("limit")).toBe("5");
 });
 
-test("13b: combined directory filters and sort aliases reach the server with the matching total", async ({
+test("combined directory filters and sort aliases reach the server with the matching total", async ({
   page,
 }) => {
   const api = await mockPeopleApi(page);
@@ -669,7 +666,7 @@ test("13b: combined directory filters and sort aliases reach the server with the
 // From 2xl the table shows the count and both history columns; narrower
 // layouts merge history into "Last seen" and leave the count to the panel.
 for (const width of [1600, 1440, 390])
-  test(`13b: recorded history, two-step verification and active counts remain truthful at ${width}px`, async ({
+  test(`recorded history, two-step verification and active counts remain truthful at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -766,7 +763,7 @@ for (const width of [1600, 1440, 390])
     ).toBe(true);
   });
 
-test("13b: offpage deleted deep link survives bounded ID loading and Restore", async ({
+test("offpage deleted deep link survives bounded ID loading and Restore", async ({
   page,
 }) => {
   const api = await mockPeopleApi(page);
@@ -821,7 +818,7 @@ test("13b: offpage deleted deep link survives bounded ID loading and Restore", a
   ).toBeVisible();
 });
 
-test("13b: an invitation searches later-page sponsor choices without changing base invitation responses", async ({
+test("an invitation searches later-page sponsor choices without changing base invitation responses", async ({
   page,
 }) => {
   const api = await mockPeopleApi(page);
@@ -877,7 +874,7 @@ for (const [contract, fields] of [
     { active_session_count: 2, last_sign_in_at: "not-an-instant" },
   ],
 ] as const)
-  test(`13b: malformed ${contract} stays unavailable and a fresh Retry returns supported facts`, async ({
+  test(`malformed ${contract} stays unavailable and a fresh Retry returns supported facts`, async ({
     page,
   }) => {
     const api = await mockPeopleApi(page);
@@ -916,7 +913,7 @@ for (const [contract, fields] of [
     ).toContainText("Not verified");
   });
 
-test("13b: person sessions show sign-in addresses and accepted revocation refreshes the directory count", async ({
+test("person sessions show sign-in addresses and accepted revocation refreshes the directory count", async ({
   page,
 }) => {
   // The directory count column shows from the 2xl breakpoint.
@@ -999,7 +996,7 @@ test("13b: person sessions show sign-in addresses and accepted revocation refres
   );
 });
 
-test("13b: an accepted person edit returns an out-of-range last page to current rows", async ({
+test("an accepted person edit returns an out-of-range last page to current rows", async ({
   page,
 }) => {
   const api = await mockPeopleApi(page);
@@ -1112,30 +1109,8 @@ async function prepareS05PeopleAppearance(page: Page) {
   );
 }
 
-async function captureS05People(page: Page, name: string, anchor: Locator) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  await hideDevOverlay(page);
-  await page.evaluate(() => document.fonts.ready);
-  for (const mode of ["light", "dark"] as const) {
-    await page.evaluate(applyAppearancePreferences, {
-      mode,
-      reduceMotion: true,
-    });
-    await captureOpenViewReview(page, `s05-invitation-${name}-${mode}`, {
-      beforeScreenshot: async () => {
-        await anchor.scrollIntoViewIfNeeded();
-        await expect(anchor).toBeInViewport();
-        await expect(page.locator("html")).toHaveAttribute(
-          "data-motion",
-          "reduced",
-        );
-      },
-    });
-  }
-}
-
 for (const failure of [0, 503]) {
-  test(`S05 unsent invitation finishes through direct user response with ${failure ? "recoverable failure" : "pending protection"}`, async ({
+  test(`unsent invitation finishes through direct user response with ${failure ? "recoverable failure" : "pending protection"}`, async ({
     page,
   }) => {
     const api = await mockPeopleApi(page);
@@ -1167,15 +1142,6 @@ for (const failure of [0, 503]) {
         exact: true,
       }),
     ).toBeVisible();
-    if (!failure)
-      await captureS05People(
-        page,
-        "unsent",
-        sheet.getByRole("button", {
-          name: "Finish sending invitation",
-          exact: true,
-        }),
-      );
     await sheet
       .getByRole("button", { name: "Finish sending invitation", exact: true })
       .click();
@@ -1198,7 +1164,6 @@ for (const failure of [0, 503]) {
     if (failure) {
       await expect(confirmation.getByRole("alert")).toBeVisible();
       await expect(confirmation).toBeVisible();
-      await captureS05People(page, "failure", confirmation.getByRole("alert"));
       expect(api.users.get(ids.cy)?.invitation_sent_at).toBeNull();
       await confirmation
         .getByRole("button", { name: "Cancel", exact: true })
@@ -1217,11 +1182,6 @@ for (const failure of [0, 503]) {
       await expect(
         sheet.getByRole("button", { name: "Revoke invitation", exact: true }),
       ).toBeVisible();
-      await captureS05People(
-        page,
-        "sent",
-        sheet.getByRole("button", { name: "Resend invitation", exact: true }),
-      );
       await expect(
         sheet.getByRole("button", {
           name: "Finish sending invitation",
@@ -1233,7 +1193,7 @@ for (const failure of [0, 503]) {
   });
 }
 
-test("S05 reconcile is offered only for nondeleted pending unsent people", async ({
+test("reconcile is offered only for nondeleted pending unsent people", async ({
   page,
 }) => {
   const api = await mockPeopleApi(page);

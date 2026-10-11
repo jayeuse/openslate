@@ -494,7 +494,7 @@ async function drag(page: Page, from: Locator, to: { x: number; y: number }) {
   await page.clock.runFor(60);
 }
 
-test("S19 Timeline stages one atomic interval through repeated moves, end resize, and a layout remount", async ({
+test("Timeline stages one atomic interval through repeated moves, end resize, and a layout remount", async ({
   page,
 }) => {
   const api = await installDates(page);
@@ -538,7 +538,7 @@ test("S19 Timeline stages one atomic interval through repeated moves, end resize
   });
 });
 
-test("S19 Calendar preserves workspace wall time and fractional seconds across DST and reads undated pages only on intent", async ({
+test("Calendar preserves workspace wall time and fractional seconds across DST and reads undated pages only on intent", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -610,7 +610,7 @@ test("S19 Calendar preserves workspace wall time and fractional seconds across D
   });
 });
 
-test("S19 nonexistent workspace times refuse staging and overlaps require an explicit offset", async ({
+test("nonexistent workspace times refuse staging and overlaps require an explicit offset", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -654,7 +654,7 @@ test("S19 nonexistent workspace times refuse staging and overlaps require an exp
   });
 });
 
-test("S19 Timeline pointer shift uses unclipped dates and its end handle changes only end", async ({
+test("Timeline pointer shift uses unclipped dates and its end handle changes only end", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1600 });
@@ -715,7 +715,7 @@ test("S19 Timeline pointer shift uses unclipped dates and its end handle changes
   });
 });
 
-test("S19 Calendar drops an undated card on a visible day without an eager read or write", async ({
+test("Calendar drops an undated card on a visible day without an eager read or write", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1600 });
@@ -758,7 +758,7 @@ test("S19 Calendar drops an undated card on a visible day without an eager read 
   });
 });
 
-test("S19 phone keyboard Move to can cancel, reject a reversed end, compose, and return to the original interval", async ({
+test("phone keyboard Move to can cancel, reject a reversed end, compose, and return to the original interval", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -786,7 +786,7 @@ test("S19 phone keyboard Move to can cancel, reject a reversed end, compose, and
 });
 
 for (const outcome of ["stale", "invalid", "forbidden"] as const) {
-  test(`S19 partial ${outcome} keeps the failed card and announces the successful move once`, async ({
+  test(`partial ${outcome} keeps the failed card and announces the successful move once`, async ({
     page,
   }) => {
     const api = await installDates(page);
@@ -844,7 +844,7 @@ for (const fault of [
   "deleted",
   "503",
 ]) {
-  test(`S19 ${fault} compound receipt refreshes reads but retains the original pending revision without retry`, async ({
+  test(`${fault} compound receipt refreshes reads but retains the original pending revision without retry`, async ({
     page,
   }) => {
     const api = await installDates(page);
@@ -870,7 +870,7 @@ for (const fault of [
   });
 }
 
-test("S19 held Save blocks duplicate staging and read refusal withdraws date controls and pending metadata", async ({
+test("held Save blocks duplicate staging and read refusal withdraws date controls and pending metadata", async ({
   page,
 }) => {
   const api = await installDates(page);
@@ -908,7 +908,7 @@ test("S19 held Save blocks duplicate staging and read refusal withdraws date con
   expect(api.batches).toHaveLength(1);
 });
 
-test("S19 incomplete intervals and read-only access never expose functioning move controls", async ({
+test("incomplete intervals and read-only access never expose functioning move controls", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -933,7 +933,7 @@ test("S19 incomplete intervals and read-only access never expose functioning mov
   expect(api.writes()).toBe(0);
 });
 
-test("S19 a late held receipt cannot republish results after records-read refusal", async ({
+test("a late held receipt cannot republish results after records-read refusal", async ({
   page,
 }) => {
   const api = await installDates(page);
@@ -960,7 +960,7 @@ test("S19 a late held receipt cannot republish results after records-read refusa
   await expect(page.getByRole("main")).not.toContainText("Task 1");
 });
 
-test("S19 Timeline shifts mixed date and datetime fields together across DST without losing wall precision", async ({
+test("Timeline shifts mixed date and datetime fields together across DST without losing wall precision", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -984,7 +984,7 @@ test("S19 Timeline shifts mixed date and datetime fields together across DST wit
   });
 });
 
-test("S19 Calendar interprets timezone-free datetime as UTC and shifts its cross-midnight workspace day", async ({
+test("Calendar interprets timezone-free datetime as UTC and shifts its cross-midnight workspace day", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -1006,7 +1006,7 @@ test("S19 Calendar interprets timezone-free datetime as UTC and shifts its cross
   });
 });
 
-test("S19 returning a legacy timezone-free datetime to its original workspace day clears the move without a write", async ({
+test("returning a legacy timezone-free datetime to its original workspace day clears the move without a write", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -1029,13 +1029,13 @@ test("S19 returning a legacy timezone-free datetime to its original workspace da
   );
 });
 
-test.describe("S19 touch", () => {
+test.describe("touch", () => {
   test.use({
     viewport: { width: 390, height: 844 },
     hasTouch: true,
     isMobile: true,
   });
-  test("S19 Timeline phone handles are distinct 44px targets and touch shift stages both dates", async ({
+  test("Timeline phone handles are distinct 44px targets and touch shift stages both dates", async ({
     page,
   }) => {
     const api = await installDates(page);
@@ -1094,7 +1094,7 @@ test.describe("S19 touch", () => {
 
 if (process.env.S19_CAPTURE_DIR) {
   for (const layout of ["calendar", "timeline"] as const) {
-    test(`S19 capture ${layout} moves`, async ({ page }) => {
+    test(`capture ${layout} moves`, async ({ page }) => {
       const directory = process.env.S19_CAPTURE_DIR!;
       await mkdir(directory, { recursive: true });
       for (const theme of ["light", "dark"] as const) {

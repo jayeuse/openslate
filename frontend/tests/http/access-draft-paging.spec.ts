@@ -4,7 +4,7 @@ import { group, ids, mockAccessApi, person } from "./helpers/access-api";
 const fixtureId = (index: number) =>
   `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 
-test("S08 enriched access names do not prevent an unsaved access draft surviving reload", async ({
+test("enriched access names do not prevent an unsaved access draft surviving reload", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -26,7 +26,7 @@ test("S08 enriched access names do not prevent an unsaved access draft surviving
   expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
 });
 
-test("S08 an uncertain replacement resolves all current and draft member labels in bounded ID batches", async ({
+test("an uncertain replacement resolves all current and draft member labels in bounded ID batches", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);

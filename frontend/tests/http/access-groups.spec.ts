@@ -477,7 +477,7 @@ for (const width of [1440, 390])
     expect(await fits()).toBe(true);
   });
 
-test("13b: group members retain the complete later-page catalog and refresh paged membership after Save", async ({
+test("group members retain the complete later-page catalog and refresh paged membership after Save", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);

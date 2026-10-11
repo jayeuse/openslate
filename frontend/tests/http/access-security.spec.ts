@@ -734,7 +734,7 @@ test("Policy conflicts and rejected IP restrictions retain drafts and organizati
   expect(state.workspaceReads).toBeGreaterThan(1);
 });
 
-test("12b: independent roles and numeric limits save only changed keys, including false zero and Off", async ({
+test("independent roles and numeric limits save only changed keys, including false zero and Off", async ({
   page,
 }) => {
   const state = await mockManageSecurity(page);
@@ -839,7 +839,7 @@ test("12b: independent roles and numeric limits save only changed keys, includin
   await expect(save).toBeDisabled();
 });
 
-test("12b: numeric bounds and whole numbers retain invalid drafts without a request or page error", async ({
+test("numeric bounds and whole numbers retain invalid drafts without a request or page error", async ({
   page,
 }) => {
   const state = await mockManageSecurity(page);
@@ -932,7 +932,7 @@ test("12b: numeric bounds and whole numbers retain invalid drafts without a requ
 });
 
 for (const width of [1440, 390])
-  test(`13c: separate retention days use Save and Discard without changing Backup at ${width}px`, async ({
+  test(`separate retention days use Save and Discard without changing Backup at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -1100,7 +1100,7 @@ for (const field of [
   "security_event_retention_days",
 ] as const) {
   for (const invalid of [undefined, null, false, "365", 365.5, 0, 3651]) {
-    test(`13c: malformed ${field} ${JSON.stringify(invalid) ?? "missing"} cannot manufacture defaults`, async ({
+    test(`malformed ${field} ${JSON.stringify(invalid) ?? "missing"} cannot manufacture defaults`, async ({
       page,
     }) => {
       await openMalformedRetentionPolicy(page, field, invalid);
@@ -1108,7 +1108,7 @@ for (const field of [
   }
 }
 
-test("13c: explicit Retry recovers a malformed retention policy", async ({
+test("explicit Retry recovers a malformed retention policy", async ({
   page,
 }) => {
   const { state, policy, malformed } = await openMalformedRetentionPolicy(
@@ -1132,7 +1132,7 @@ test("13c: explicit Retry recovers a malformed retention policy", async ({
   expect(state.writes).toEqual([]);
 });
 
-test("12b: a refused all-role MFA save retains the future draft and offers current Manage MFA before retry", async ({
+test("a refused all-role MFA save retains the future draft and offers current Manage MFA before retry", async ({
   page,
 }) => {
   const state = await mockManageSecurity(page);
@@ -2206,7 +2206,7 @@ for (const transition of ["same-account curtain", "new account"] as const) {
 }
 
 for (const width of [1440, 390])
-  test(`13b: organization sessions show sign-in IP metadata at ${width}px without changing caller-IP controls`, async ({
+  test(`organization sessions show sign-in IP metadata at ${width}px without changing caller-IP controls`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -2235,7 +2235,7 @@ for (const width of [1440, 390])
   });
 
 for (const observation of ["status", "enrollment", "verification"] as const)
-  test(`13b: cached People and Overview refresh immediately after accepted self MFA ${observation}`, async ({
+  test(`cached People and Overview refresh immediately after accepted self MFA ${observation}`, async ({
     page,
   }) => {
     const enrollmentRecordedAt = "2026-10-06T12:30:00Z";

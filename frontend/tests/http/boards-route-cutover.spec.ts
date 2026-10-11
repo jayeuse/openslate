@@ -3,7 +3,6 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   authorAccess,
   board,
@@ -1146,7 +1145,6 @@ test("Board Record link labels refresh after linked module invalidations", async
   await expect(
     page.getByRole("link", { name: "Cooling manifold updated", exact: true }),
   ).toHaveCount(0);
-  await captureOpenViewReview(page, "boards-record-link-title");
 });
 
 test("Board record widgets refresh user labels after eligibility invalidation", async ({
@@ -1261,7 +1259,6 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
   ).toBeVisible();
   await expect(page.getByText("Alex Reader", { exact: true })).toHaveCount(0);
   await expect(page.getByText(assigneeId, { exact: true })).toHaveCount(0);
-  await captureOpenViewReview(page, "boards-user-record-widget");
 });
 
 test("an author can archive their own editable post with current revisions", async ({
@@ -1771,14 +1768,6 @@ test("an author links a Record using its off-page title field without crawling t
   await links.getByRole("button", { name: "Link Record" }).click();
   await expect(links.getByRole("link", { name: "Request 27" })).toBeVisible();
   await expect(links.getByRole("status")).toHaveText("Record linked.");
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-board-record-link-${mode}`);
-    }
-  }
   expect(submitted).toEqual({
     record_id: recordId,
     board_revision: 1,

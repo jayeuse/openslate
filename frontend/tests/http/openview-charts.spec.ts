@@ -5,8 +5,6 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 const moduleId = "00000000-0000-4000-8000-000000000110";
 const departmentId = "00000000-0000-4000-8000-000000000111";
@@ -234,7 +232,6 @@ test("Charts filter on stable choice and eligible person IDs", async ({
     resultTable.getByRole("cell", { name: "Alex Reader", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Filters (2)" }).click();
-  await captureOpenViewReview(page, "charts-select-person-labels");
 });
 
 test("Chart source failures keep retry visible with destructive safe feedback", async ({
@@ -363,7 +360,7 @@ function calendarSnapshot(keys: string[]) {
   };
 }
 
-test("Unit A Top choices change only the preview and retain the complete wire query, table, CSV and print", async ({
+test("Top choices change only the preview and retain the complete wire query, table, CSV and print", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -456,7 +453,7 @@ test("Unit A Top choices change only the preview and retain the complete wire qu
   expect(bodies).toHaveLength(1);
 });
 
-test("Unit A six metrics retain typed user and boolean dimensions and count omits measure", async ({
+test("six metrics retain typed user and boolean dimensions and count omits measure", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -506,7 +503,7 @@ test("Unit A six metrics retain typed user and boolean dimensions and count omit
   expect(bodies).toHaveLength(6);
 });
 
-test("Unit A five calendar buckets and period wording follow the last applied query while the draft is dirty", async ({
+test("five calendar buckets and period wording follow the last applied query while the draft is dirty", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -620,37 +617,6 @@ test("Unit A five calendar buckets and period wording follow the last applied qu
       to_date: "2026-10-13",
       bucket: current.bucket,
     });
-    if (current.bucket === "week" && process.env.OPENVIEW_CAPTURE_DIR) {
-      // One opt-in four-image review round through the existing capture helper.
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await hideDevOverlay(page);
-      const options = {
-        beforeScreenshot: async (
-          page: Page,
-          viewport: { width: number; height: number },
-        ) => {
-          await expect
-            .poll(() =>
-              page.evaluate(() => document.documentElement.scrollWidth),
-            )
-            .toBeLessThanOrEqual(viewport.width);
-          await expect(
-            page.getByLabel("Calendar bucket", { exact: true }),
-          ).toHaveValue("week");
-          await expect(
-            page
-              .getByRole("img", {
-                name: "Aggregate chart preview",
-                exact: true,
-              })
-              .locator(".recharts-label-list text"),
-          ).toHaveCount(2);
-        },
-      };
-      await captureOpenViewReview(page, "s27-charts-light", options);
-      await page.evaluate(() => document.documentElement.classList.add("dark"));
-      await captureOpenViewReview(page, "s27-charts-dark", options);
-    }
     previous = current;
   }
   expect(bodies).toHaveLength(5);
@@ -694,7 +660,7 @@ for (const current of [
     ],
   },
 ]) {
-  test(`Unit A ${current.bucket} series accepts a calendar window longer than 366 days`, async ({
+  test(`${current.bucket} series accepts a calendar window longer than 366 days`, async ({
     page,
   }) => {
     await editorCatalog(page);
@@ -737,7 +703,7 @@ for (const current of [
   });
 }
 
-test("Unit A incomplete, reversed and over-limit windows send nothing; grouped windows keep the 366-day boundary", async ({
+test("incomplete, reversed and over-limit windows send nothing; grouped windows keep the 366-day boundary", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -796,7 +762,7 @@ test("Unit A incomplete, reversed and over-limit windows send nothing; grouped w
   expect(bodies).toHaveLength(1);
 });
 
-test("Unit A incomplete numeric inputs and surviving filter rows stay controlled through metadata refresh", async ({
+test("incomplete numeric inputs and surviving filter rows stay controlled through metadata refresh", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -881,7 +847,7 @@ test("Unit A incomplete numeric inputs and surviving filter rows stay controlled
   ]);
 });
 
-test("Unit A changed field metadata cannot silently substitute a different dimension", async ({
+test("changed field metadata cannot silently substitute a different dimension", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -964,7 +930,7 @@ function pickerChart(id = savedChartId, name = "Weekly intake") {
   };
 }
 
-test("S27 saved picker searches and loads later pages without replacing an off-page selection or inline draft", async ({
+test("saved picker searches and loads later pages without replacing an off-page selection or inline draft", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1056,7 +1022,7 @@ test("S27 saved picker searches and loads later pages without replacing an off-p
   );
 });
 
-test("S27 saved picker refuses current source without using cached metadata or downstream data", async ({
+test("saved picker refuses current source without using cached metadata or downstream data", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1116,7 +1082,7 @@ test("S27 saved picker refuses current source without using cached metadata or d
   expect(bodies).toHaveLength(1);
 });
 
-test("S27 saved picker list refusal withdraws cached names and applied data", async ({
+test("saved picker list refusal withdraws cached names and applied data", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1169,7 +1135,7 @@ test("S27 saved picker list refusal withdraws cached names and applied data", as
   ).toHaveCount(0);
 });
 
-test("S27 saved picker manual source refusal hides selected metadata until an explicit retry", async ({
+test("saved picker manual source refusal hides selected metadata until an explicit retry", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1354,7 +1320,7 @@ test("a refused saved Chart keeps the other Charts available as replacements", a
 });
 
 for (const priorApply of [false, true]) {
-  test(`S27 correction F1 picker refusal fences a held ${priorApply ? "different Chart" : "first Chart"} Apply without a transient private commit`, async ({
+  test(`picker refusal fences a held ${priorApply ? "different Chart" : "first Chart"} Apply without a transient private commit`, async ({
     page,
   }) => {
     await editorCatalog(page);
@@ -1535,7 +1501,7 @@ for (const priorApply of [false, true]) {
   });
 }
 
-test("S27 correction F3 saved Chart result metadata belongs to its resolved module without replacing the inline draft", async ({
+test("saved Chart result metadata belongs to its resolved module without replacing the inline draft", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1667,34 +1633,6 @@ test("S27 correction F3 saved Chart result metadata belongs to its resolved modu
   expect(metadataReads.sort()).toEqual(
     ["source", resolvedDimension, resolvedMeasure].sort(),
   );
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await hideDevOverlay(page);
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await capture
-          .getByRole("heading", { name: "Chart preview", exact: true })
-          .scrollIntoViewIfNeeded();
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        await expect(
-          capture.getByText(
-            "Resolved revenue source · Sum net revenue by Revenue segment",
-            { exact: true },
-          ),
-        ).toBeVisible();
-      },
-    };
-    await captureOpenViewReview(page, "s27-correction-charts-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s27-correction-charts-dark", options);
-  }
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page

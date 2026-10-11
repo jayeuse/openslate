@@ -168,7 +168,7 @@ async function metadataStarts(page: Page): Promise<MetadataStart[]> {
   );
 }
 
-test("14 export validates the passphrase before a request and cancels with empty secrets and restored phone focus", async ({
+test("export validates the passphrase before a request and cancels with empty secrets and restored phone focus", async ({
   page,
   baseURL,
 }) => {
@@ -205,7 +205,7 @@ test("14 export validates the passphrase before a request and cancels with empty
   expect(exports.createSubmissions).toBe(0);
 });
 
-test("14 export accepts the 128-character Unicode boundary and leaves the existing Backup policy draft untouched", async ({
+test("export accepts the 128-character Unicode boundary and leaves the existing Backup policy draft untouched", async ({
   page,
   baseURL,
 }) => {
@@ -237,7 +237,7 @@ test("14 export accepts the 128-character Unicode boundary and leaves the existi
   ).toHaveValue("weekly");
 });
 
-test("14 export validates non-ASCII separators locally and keeps printable Unicode with internal ASCII spaces", async ({
+test("export validates non-ASCII separators locally and keeps printable Unicode with internal ASCII spaces", async ({
   page,
   baseURL,
 }) => {
@@ -295,7 +295,7 @@ for (const source of [
   );
 }
 
-test("14 export permits a verified reconciled retention-failed recovery point and queues only the selected source", async ({
+test("export permits a verified reconciled retention-failed recovery point and queues only the selected source", async ({
   page,
   baseURL,
 }) => {
@@ -335,7 +335,7 @@ test("14 export permits a verified reconciled retention-failed recovery point an
   );
 });
 
-test("14 export keeps pending submission exclusive and blocks route leave until acceptance", async ({
+test("export keeps pending submission exclusive and blocks route leave until acceptance", async ({
   page,
   baseURL,
 }) => {
@@ -372,7 +372,7 @@ test("14 export keeps pending submission exclusive and blocks route leave until 
   }
 });
 
-test("14 export retries an uncertain create with the same payload and key instead of duplicating the accepted operation", async ({
+test("export retries an uncertain create with the same payload and key instead of duplicating the accepted operation", async ({
   page,
   baseURL,
 }) => {
@@ -398,7 +398,7 @@ test("14 export retries an uncertain create with the same payload and key instea
   await expect(exportPanel(page)).toContainText(/queued/i);
 });
 
-test("14 export polls queued and preparing state only in visible Backup and stops when ready", async ({
+test("export polls queued and preparing state only in visible Backup and stops when ready", async ({
   page,
   baseURL,
 }, testInfo) => {
@@ -461,7 +461,7 @@ test("14 export polls queued and preparing state only in visible Backup and stop
   expect(exports.contentRequests).toEqual([]);
 });
 
-test("14 export keeps a later history Inspect selection independent from the routed export source", async ({
+test("export keeps a later history Inspect selection independent from the routed export source", async ({
   page,
   baseURL,
 }) => {
@@ -530,7 +530,7 @@ for (const failure of [
   );
 }
 
-test("14 export reloads the UUID for an off-page source and preserves it through unrelated history filters", async ({
+test("export reloads the UUID for an off-page source and preserves it through unrelated history filters", async ({
   page,
   baseURL,
 }, testInfo) => {
@@ -587,7 +587,7 @@ test("14 export reloads the UUID for an off-page source and preserves it through
   expect(exports.contentRequests).toEqual([]);
 });
 
-test("14 export reports an invalid route UUID without requesting another operation", async ({
+test("export reports an invalid route UUID without requesting another operation", async ({
   page,
   baseURL,
 }) => {
@@ -604,7 +604,7 @@ test("14 export reports an invalid route UUID without requesting another operati
   expect(exports.contentRequests).toEqual([]);
 });
 
-test("14 export honors an expired API state and never offers password admission or delivery", async ({
+test("export honors an expired API state and never offers password admission or delivery", async ({
   page,
   baseURL,
 }) => {
@@ -628,7 +628,7 @@ test("14 export honors an expired API state and never offers password admission 
   expect(exports.contentRequests).toEqual([]);
 });
 
-test("14 export never accepts stale privileged metadata after refusal and requires fresh Retry after malformed or unavailable reads", async ({
+test("export never accepts stale privileged metadata after refusal and requires fresh Retry after malformed or unavailable reads", async ({
   page,
   baseURL,
 }) => {
@@ -833,7 +833,7 @@ for (const failure of [
   );
 }
 
-test("14 native export: the explicit anchor hands an attachment to the browser without app buffering or a saved-file claim", async ({
+test("native export: the explicit anchor hands an attachment to the browser without app buffering or a saved-file claim", async ({
   page,
   baseURL,
 }, testInfo) => {
@@ -1062,7 +1062,7 @@ for (const failure of [
   );
 }
 
-test("14 export keeps local input through a same-account privacy curtain and preserves the incumbent policy draft", async ({
+test("export keeps local input through a same-account privacy curtain and preserves the incumbent policy draft", async ({
   page,
   baseURL,
 }) => {
@@ -1112,7 +1112,7 @@ test("14 export keeps local input through a same-account privacy curtain and pre
   }
 });
 
-test("14 export ignores a delayed prior-account admission without clearing the new account's pending confirmation", async ({
+test("export ignores a delayed prior-account admission without clearing the new account's pending confirmation", async ({
   page,
   baseURL,
 }) => {

@@ -82,7 +82,7 @@ test("settings edits keep unrelated config exactly", () => {
   expect(input.widgetType).toBe("records");
 });
 
-test("S26 reference settings preserve the Chart identity with null config and current size pin version", () => {
+test("reference settings preserve the Chart identity with null config and current size pin version", () => {
   const source: BoardWidget = {
     ...widget(),
     chartId: otherId,

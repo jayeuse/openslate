@@ -1,6 +1,4 @@
 import { expect, test, type Locator, type Page } from "./helpers/test";
-import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   created,
   DAY,
@@ -75,31 +73,6 @@ function readGate() {
   };
 }
 
-async function captureMembershipReview(
-  page: Page,
-  name: string,
-  options: Parameters<typeof captureOpenViewReview>[2] = {},
-) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  const previous = await page.evaluate(() => ({
-    mode: document.documentElement.classList.contains("dark")
-      ? ("dark" as const)
-      : ("light" as const),
-    reduceMotion: document.documentElement.dataset.motion === "reduced",
-  }));
-  try {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate(applyAppearancePreferences, {
-        mode,
-        reduceMotion: true,
-      });
-      await captureOpenViewReview(page, `${name}-${mode}`, options);
-    }
-  } finally {
-    await page.evaluate(applyAppearancePreferences, previous);
-  }
-}
-
 async function disableBen(page: Page) {
   const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
   await sheet.getByRole("button", { name: "Disable", exact: true }).click();
@@ -125,7 +98,7 @@ async function column(row: Locator, name: string) {
   return row.getByRole("cell").nth(index);
 }
 
-test("S08 People memberships include no-access groups beyond the global first hundred without crawling", async ({
+test("People memberships include no-access groups beyond the global first hundred without crawling", async ({
   page,
 }) => {
   const { reads } = await membershipsFixture(page, 2);
@@ -145,7 +118,7 @@ test("S08 People memberships include no-access groups beyond the global first hu
   ).toBe(true);
 });
 
-test("S08 People memberships disclose a partial page and continue only after the person requests more", async ({
+test("People memberships disclose a partial page and continue only after the person requests more", async ({
   page,
 }) => {
   const { reads } = await membershipsFixture(page, 27);
@@ -175,7 +148,7 @@ test("S08 People memberships disclose a partial page and continue only after the
   ).toEqual(["0", "25"]);
 });
 
-test("S08 People membership continuation failure retains the partial disclosure and retries the requested page", async ({
+test("People membership continuation failure retains the partial disclosure and retries the requested page", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
@@ -207,7 +180,7 @@ test("S08 People membership continuation failure retains the partial disclosure 
   await expect(groups.getByRole("alert")).toHaveCount(0);
 });
 
-test("S08 People membership refusal survives a cached directory remount until a fresh Retry", async ({
+test("People membership refusal survives a cached directory remount until a fresh Retry", async ({
   page,
 }) => {
   const { api, reads } = await membershipsFixture(page, 27);
@@ -247,7 +220,7 @@ test("S08 People membership refusal survives a cached directory remount until a 
   await expect(groups).toContainText("25 of 27 groups");
 });
 
-test("S08 People membership cache is replaced when the verified account changes", async ({
+test("People membership cache is replaced when the verified account changes", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 2);
@@ -277,7 +250,7 @@ test("S08 People membership cache is replaced when the verified account changes"
   await expect(groups).not.toContainText("Z membership");
 });
 
-test("S08 People department reach is explicitly partial until the shared membership continuation completes", async ({
+test("People department reach is explicitly partial until the shared membership continuation completes", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
@@ -304,30 +277,6 @@ test("S08 People department reach is explicitly partial until the shared members
   await expect(groups).toContainText("25 of 27 groups");
   await expect(departments).toContainText("Departments not fully loaded");
   await expect(departments).not.toContainText("None");
-  await captureMembershipReview(page, "s08-memberships-partial", {
-    beforeScreenshot: async (_, viewport) => {
-      const people = page.getByRole(viewport.width === 390 ? "list" : "table", {
-        name: "People",
-        exact: true,
-      });
-      const row = people
-        .getByRole(viewport.width === 390 ? "listitem" : "row")
-        .filter({ hasText: "Ben Cruz" });
-      const more = row.getByRole("button", {
-        name: "Load more groups",
-        exact: true,
-      });
-      await more.scrollIntoViewIfNeeded();
-      await expect(more).toBeVisible();
-      await expect(row).toContainText("25 of 27 groups");
-      await expect(row).toContainText("Departments not fully loaded");
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-    },
-  });
   await groups
     .getByRole("button", { name: "Load more groups", exact: true })
     .click();
@@ -337,7 +286,7 @@ test("S08 People department reach is explicitly partial until the shared members
 });
 
 for (const state of ["pending", "disabled", "expired", "deleted"] as const)
-  test(`S08 People preserve assigned department reach for ${state} people`, async ({
+  test(`People preserve assigned department reach for ${state} people`, async ({
     page,
   }) => {
     const { api } = await membershipsFixture(page, 1);
@@ -375,7 +324,7 @@ for (const state of ["pending", "disabled", "expired", "deleted"] as const)
     expect(api.sent("GET", `/api/users/${ids.ben}/access`)).toHaveLength(0);
   });
 
-test("S08 the offpage selected person shares membership continuation with their directory row", async ({
+test("the offpage selected person shares membership continuation with their directory row", async ({
   page,
 }) => {
   const { api, reads } = await membershipsFixture(page, 27);
@@ -401,29 +350,6 @@ test("S08 the offpage selected person shares membership continuation with their 
   await expect(
     sheet.getByRole("link", { name: "Z membership 26", exact: true }),
   ).toBeVisible();
-  await captureMembershipReview(page, "s08-memberships-offpage-full", {
-    beforeScreenshot: async () => {
-      const lastGroup = sheet.getByRole("link", {
-        name: "Z membership 26",
-        exact: true,
-      });
-      await lastGroup.scrollIntoViewIfNeeded();
-      await expect(lastGroup).toBeInViewport();
-      await expect(
-        sheet.getByRole("button", { name: "Load more groups", exact: true }),
-      ).toHaveCount(0);
-      expect(
-        await sheet.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
-        ),
-      ).toBe(true);
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-    },
-  });
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await page
     .getByRole("searchbox", { name: "Search people", exact: true })
@@ -438,7 +364,7 @@ test("S08 the offpage selected person shares membership continuation with their 
 });
 
 for (const target of ["complete panel", "partial directory"] as const)
-  test(`S08 membership correction retained ${target} memberships recover a failed first-page refresh`, async ({
+  test(`retained ${target} memberships recover a failed first-page refresh`, async ({
     page,
   }) => {
     const count = target === "complete panel" ? 2 : 27;
@@ -506,7 +432,7 @@ for (const target of ["complete panel", "partial directory"] as const)
     else await expect(region).toContainText("25 of 27 groups");
   });
 
-test("S08 membership correction cancels a held continuation when its person leaves the directory", async ({
+test("membership loading cancels a held continuation when its person leaves the directory", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
@@ -571,7 +497,7 @@ test("S08 membership correction cancels a held continuation when its person leav
   ).toBeEnabled();
 });
 
-test("S08 membership correction discards a held extension after an accepted action replaces the first read", async ({
+test("membership loading discards a held extension after an accepted action replaces the first read", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
@@ -645,7 +571,7 @@ test("S08 membership correction discards a held extension after an accepted acti
   ).toBeVisible();
 });
 
-test("S08 membership correction older Retry cannot clear a newer continuation refusal", async ({
+test("an older membership Retry cannot clear a newer continuation refusal", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);

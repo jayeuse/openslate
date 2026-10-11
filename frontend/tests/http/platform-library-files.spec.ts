@@ -926,7 +926,7 @@ test("Library files: invalid and module-only department links never fall back to
   ).toBeVisible();
 });
 
-test("S08 Library default department resolves permitted IDs without crawling the catalog", async ({
+test("Library default department resolves permitted IDs without crawling the catalog", async ({
   page,
 }) => {
   const sourceDepartments = Array.from({ length: 100 }, (_, index) =>
@@ -962,7 +962,7 @@ test("S08 Library default department resolves permitted IDs without crawling the
   ).toBe(true);
 });
 
-test("S08 Library searches a large department catalog and reloads the selected label", async ({
+test("Library searches a large department catalog and reloads the selected label", async ({
   page,
 }) => {
   const fixture = await installLibrary(page);
@@ -2034,7 +2034,7 @@ async function chooseLibraryDepartment(page: Page, name: string) {
   await page.getByRole("option", { name, exact: true }).click();
 }
 
-test("S08 correction a selected department refusal survives cached browser navigation", async ({
+test("a selected department refusal survives cached browser navigation", async ({
   page,
 }) => {
   const fixture = await installLibrary(page);
@@ -2083,7 +2083,7 @@ test("S08 correction a selected department refusal survives cached browser navig
   expect(fixture.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
 });
 
-test("S08 correction department option search preserves file filters pages and a held download", async ({
+test("department option search preserves file filters pages and a held download", async ({
   page,
 }) => {
   const fixture = await installLibrary(page);
@@ -2148,7 +2148,7 @@ test("S08 correction department option search preserves file filters pages and a
   }
 });
 
-test("S08 correction department option search preserves an active upload producer", async ({
+test("department option search preserves an active upload producer", async ({
   page,
 }) => {
   const fixture = await installLibrary(page);

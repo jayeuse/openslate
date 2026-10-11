@@ -5,10 +5,8 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { readFile } from "node:fs/promises";
 import { profilePreferences } from "./helpers/profile-api";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -515,7 +513,6 @@ test.describe("Reports in a non-UTC browser timezone", () => {
     );
     await page.getByRole("button", { name: "Create schedule" }).click();
     await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
-    await captureOpenViewReview(page, "report-manager-schedule");
     await page.getByRole("tab", { name: "Saved outputs" }).click();
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: /Download CSV/ }).click();
@@ -528,7 +525,7 @@ test.describe("Reports in a non-UTC browser timezone", () => {
   });
 });
 
-test("S21 Report metadata follows personal display while schedule inputs and frozen CSV remain unchanged", async ({
+test("Report metadata follows personal display while schedule inputs and frozen CSV remain unchanged", async ({
   page,
 }, testInfo) => {
   await installReportsApi(page, false, report, {
@@ -938,7 +935,6 @@ test("a module reader runs a Report but cannot change, copy or schedule it", asy
   await expect(
     page.getByText("Only a manager of this module changes the schedule."),
   ).toBeVisible();
-  await captureOpenViewReview(page, "report-reader-schedule");
   expect(api.counts().manualRuns).toBe(0);
 });
 
@@ -1338,7 +1334,6 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
     0,
   );
   expect(globalUserRequests).toEqual([]);
-  await captureOpenViewReview(page, "reports-select-person-filters");
 
   await editor.getByRole("button", { name: "Create Report" }).click();
   await expect(editor).not.toBeVisible();
@@ -2120,7 +2115,7 @@ async function installArchivedReportPurge(
 }
 
 for (const failure of [false, true]) {
-  test(`S04 archived Report purge ${failure ? "keeps its target and offers a fresh review for an unavailable challenge" : "confirms exact name and clears only its deleted selection"}`, async ({
+  test(`archived Report purge ${failure ? "keeps its target and offers a fresh review for an unavailable challenge" : "confirms exact name and clears only its deleted selection"}`, async ({
     page,
   }) => {
     const api = await installArchivedReportPurge(page, "admin", failure);
@@ -2176,7 +2171,7 @@ for (const failure of [false, true]) {
   });
 }
 
-test("S04 member may restore an archived Report but cannot permanently delete it", async ({
+test("member may restore an archived Report but cannot permanently delete it", async ({
   page,
 }) => {
   const api = await installArchivedReportPurge(page, "member");
@@ -2194,30 +2189,12 @@ test("S04 member may restore an archived Report but cannot permanently delete it
   expect(api.purges).toBe(0);
 });
 
-test.describe("S14 Report last-run summary", () => {
+test.describe("Report last-run summary", () => {
   test.use({ timezoneId: "America/Los_Angeles" });
   for (const state of ["none", "failed", "running"] as const) {
-    test(`S14 ${state} last run is server-authored, regional and preserves schedule policy`, async ({
+    test(`${state} last run is server-authored, regional and preserves schedule policy`, async ({
       page,
     }) => {
-      if (process.env.OPENVIEW_CAPTURE_DIR) {
-        const theme =
-          process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
-        await page.setViewportSize({ width: 1440, height: 900 });
-        await page.emulateMedia({
-          colorScheme: theme,
-          reducedMotion: "reduce",
-        });
-        await page.route("**/api/users/*/preferences", (route) =>
-          route.fulfill({
-            json: {
-              user_id: userId,
-              theme,
-              appearance: { motion: "reduce", keyboard_shortcuts: true },
-            },
-          }),
-        );
-      }
       const reader = state === "failed";
       const api = await installReportsApi(page, false, report, {
         savedSchedule: true,
@@ -2267,32 +2244,6 @@ test.describe("S14 Report last-run summary", () => {
         await expect(page.getByLabel("Local time")).toHaveValue("16:25");
       }
       expect(api.counts().scheduleWrites).toBe(0);
-      if (state === "failed") {
-        const theme =
-          process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
-        await captureOpenViewReview(page, `s14-report-last-run-${theme}`, {
-          beforeScreenshot: async (capture) => {
-            // Exclude Next's development overlay from opt-in product captures.
-            await hideDevOverlay(capture);
-            await expect(capture.locator("html")).toHaveClass(
-              theme === "dark" ? /dark/ : /^(?!.*dark)/,
-            );
-            await capture.evaluate(async () => {
-              await document.fonts.ready;
-              await new Promise<void>((resolve) =>
-                requestAnimationFrame(() =>
-                  requestAnimationFrame(() => resolve()),
-                ),
-              );
-            });
-            expect(
-              await capture.evaluate(
-                () => document.documentElement.scrollWidth <= window.innerWidth,
-              ),
-            ).toBe(true);
-          },
-        });
-      }
     });
   }
 });

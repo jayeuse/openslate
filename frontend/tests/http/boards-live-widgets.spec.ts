@@ -6,7 +6,6 @@ import {
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { ApiError } from "../../src/lib/api";
 import type {
   BoardWidget,
@@ -28,7 +27,6 @@ import {
   type LiveWidgetItem,
   type LiveWidgetsState,
 } from "../../src/components/systems/boards/hooks/use-live-widgets";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -141,7 +139,7 @@ async function installS26WidgetApi(page: Page, widgets: unknown[]) {
     if (url.pathname === `/api/users/${actor}/preferences`)
       return reply({
         user_id: actor,
-        theme: process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light",
+        theme: "light",
         appearance: { motion: "reduce", keyboard_shortcuts: true },
       });
     if (url.pathname === "/api/workspace")
@@ -191,15 +189,9 @@ async function installS26WidgetApi(page: Page, widgets: unknown[]) {
 
 for (const sourceKind of ["inline", "reference"] as const) {
   for (const visualization of ["pie", "bar", "line"] as const) {
-    test(`S26 Board ${sourceKind} ${visualization} keeps all average groups exact with no additive Other`, async ({
+    test(`Board ${sourceKind} ${visualization} keeps all average groups exact with no additive Other`, async ({
       page,
     }) => {
-      if (process.env.OPENVIEW_CAPTURE_DIR)
-        await page.emulateMedia({
-          colorScheme:
-            process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light",
-          reducedMotion: "reduce",
-        });
       const chartId = "00000000-0000-4000-8000-000000000662";
       const measureId = "00000000-0000-4000-8000-000000000663";
       const query = {
@@ -327,29 +319,6 @@ for (const sourceKind of ["inline", "reference"] as const) {
           ),
         ).toBeVisible();
       }
-      if (sourceKind === "reference" && visualization === "pie")
-        await captureOpenViewReview(
-          page,
-          `s26-board-native-reference-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
-          {
-            beforeScreenshot: async (capture) => {
-              await hideDevOverlay(capture);
-              await expect(capture.locator("html")).toHaveClass(
-                process.env.S26_CAPTURE_THEME === "dark"
-                  ? /dark/
-                  : /^(?!.*dark)/,
-              );
-              await capture.evaluate(async () => {
-                await document.fonts.ready;
-                await new Promise<void>((resolve) =>
-                  requestAnimationFrame(() =>
-                    requestAnimationFrame(() => resolve()),
-                  ),
-                );
-              });
-            },
-          },
-        );
       // Workspace-date readiness can start a second batch; each reference still requires a current read.
       if (sourceKind === "reference") expect(chartReads).toBeGreaterThan(0);
       else expect(chartReads).toBe(0);
@@ -744,7 +713,7 @@ async function installS30WidgetData(page: Page) {
 }
 
 for (const kind of ["summary", "workload", "records", "chart"] as const) {
-  test(`S30 ${kind} create edit and reload round trips the shared query and presentation`, async ({
+  test(`${kind} create edit and reload round trips the shared query and presentation`, async ({
     page,
   }) => {
     const api = await installEvidenceBoardApi(page, null);
@@ -1005,7 +974,7 @@ for (const kind of ["summary", "workload", "records", "chart"] as const) {
 }
 
 for (const kind of ["workload", "records", "chart"] as const) {
-  test(`S30 legacy ${kind} opens complete instructions and saves an explicitly chosen query`, async ({
+  test(`legacy ${kind} opens complete instructions and saves an explicitly chosen query`, async ({
     page,
   }) => {
     const initial: EvidenceWidgetWire = {
@@ -1116,7 +1085,7 @@ for (const kind of ["workload", "records", "chart"] as const) {
   });
 }
 
-test("S30 legacy count-all summary filters remain one bounded records read after shared editing", async ({
+test("legacy count-all summary filters remain one bounded records read after shared editing", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, {
@@ -1188,7 +1157,7 @@ test("S30 legacy count-all summary filters remain one bounded records read after
   expect(data.aggregates).toEqual([]);
 });
 
-test("S30 explicit legacy aggregation survives presentation save instead of metric inference", async ({
+test("explicit legacy aggregation survives presentation save instead of metric inference", async ({
   page,
 }) => {
   const initial: EvidenceWidgetWire = {
@@ -1223,7 +1192,7 @@ test("S30 explicit legacy aggregation survives presentation save instead of metr
   });
 });
 
-test("S30 legacy line opens its workspace window and a late date read cannot restore removed settings", async ({
+test("legacy line opens its workspace window and a late date read cannot restore removed settings", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, {
@@ -1306,7 +1275,7 @@ test("S30 legacy line opens its workspace window and a late date read cannot res
   expect(api.writes).toEqual([]);
 });
 
-test("S30 saved Chart creation rechecks current authority and stores only its reference", async ({
+test("saved Chart creation rechecks current authority and stores only its reference", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, null);
@@ -1401,7 +1370,7 @@ test("S30 saved Chart creation rechecks current authority and stores only its re
   });
 });
 
-test("S27 Board query editing preserves full definition and outer name module size and pin", async ({
+test("Board query editing preserves full definition and outer name module size and pin", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
@@ -1410,37 +1379,6 @@ test("S27 Board query editing preserves full definition and outer name module si
   await page.goto(`/boards?board=${boardId}`);
   const settings = await openEvidenceSettings(page, "Retained Board query");
   await settings.getByLabel("Measure", { exact: true }).selectOption("min");
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await hideDevOverlay(page);
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        if (viewport.width === 390) {
-          await settings
-            .getByText("Chart source", { exact: true })
-            .evaluate((element) => element.scrollIntoView({ block: "start" }));
-        } else {
-          await settings
-            .getByRole("heading", { name: "Widget settings", exact: true })
-            .scrollIntoViewIfNeeded();
-        }
-        await expect(
-          settings.getByLabel("Measure", { exact: true }),
-        ).toHaveValue("min");
-      },
-    };
-    await captureOpenViewReview(page, "s27-board-dialog-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s27-board-dialog-dark", options);
-  }
   await settings
     .getByLabel("Widget name", { exact: true })
     .fill("Minimum retained query");
@@ -1482,7 +1420,7 @@ test("S27 Board query editing preserves full definition and outer name module si
   ]);
 });
 
-test("S27 correction F2 later field-page denial hides all catalog names but retains the typed Board query until fresh recovery", async ({
+test("later field-page denial hides all catalog names but retains the typed Board query until fresh recovery", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
@@ -1592,46 +1530,6 @@ test("S27 correction F2 later field-page denial hides all catalog names but reta
     settings.getByRole("button", { name: "Save settings", exact: true }),
   ).toBeDisabled();
   expect(api.writes).toEqual([]);
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await hideDevOverlay(page);
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await capture
-          .getByRole("dialog", { name: "Manage Board widgets", exact: true })
-          .getByLabel("Chart source", { exact: true })
-          .scrollIntoViewIfNeeded();
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        await expect(
-          settings.getByRole("button", { name: "Save settings", exact: true }),
-        ).toBeDisabled();
-        for (const name of [
-          "Private catalog source",
-          "Private dimension label",
-          "Private measure label",
-        ])
-          await expect(manager).not.toContainText(name);
-      },
-    };
-    await captureOpenViewReview(
-      page,
-      "s27-correction-board-refusal-light",
-      options,
-    );
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(
-      page,
-      "s27-correction-board-refusal-dark",
-      options,
-    );
-  }
   refused = false;
   await settings
     .getByRole("button", { name: "Retry fields", exact: true })
@@ -1661,7 +1559,7 @@ test("S27 correction F2 later field-page denial hides all catalog names but reta
   expect(api.writes).toEqual([]);
 });
 
-test("S27 Board saved picker later-page denial withdraws cached names until the list is retried", async ({
+test("Board saved picker later-page denial withdraws cached names until the list is retried", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
@@ -1746,7 +1644,7 @@ test("S27 Board saved picker later-page denial withdraws cached names until the 
   expect(api.writes).toEqual([]);
 });
 
-test("S27 Board inline to saved source stores only the reference and reauthorizes before writing", async ({
+test("Board inline to saved source stores only the reference and reauthorizes before writing", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
@@ -1830,7 +1728,7 @@ test("S27 Board inline to saved source stores only the reference and reauthorize
 });
 
 for (const source of ["inline", "reference"] as const) {
-  test(`E evidence Board ${source} settings save reload duplicate and reorder preserve the complete source`, async ({
+  test(`Board ${source} settings save reload duplicate and reorder preserve the complete source`, async ({
     page,
   }, testInfo) => {
     const api = await installEvidenceBoardApi(page, evidenceWidget(source));
@@ -1998,7 +1896,7 @@ for (const fault of [
   "wrong-family",
   "malformed",
 ] as const) {
-  test(`E evidence Board current Chart ${fault} hides private results with zero downstream reads`, async ({
+  test(`Board current Chart ${fault} hides private results with zero downstream reads`, async ({
     page,
   }, testInfo) => {
     const api = await installEvidenceBoardApi(
@@ -2099,7 +1997,7 @@ for (const fault of [
   });
 }
 
-test("E evidence Board records Chart refusal stops both field metadata and record rows", async ({
+test("Board records Chart refusal stops both field metadata and record rows", async ({
   page,
 }, testInfo) => {
   const api = await installEvidenceBoardApi(page, {
@@ -2193,7 +2091,7 @@ test("E evidence Board records Chart refusal stops both field metadata and recor
   });
 });
 
-test("E evidence Board Chart hints and readable department move preserve dirty and pending settings", async ({
+test("Board Chart hints and readable department move preserve dirty and pending settings", async ({
   page,
 }, testInfo) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("reference"));
@@ -2351,7 +2249,7 @@ test("E evidence Board Chart hints and readable department move preserve dirty a
 
 for (const replacement of ["board", "source", "account"] as const) {
   for (const heldOutcome of ["success", "refusal"] as const) {
-    test(`E evidence Board held Chart ${heldOutcome} after ${replacement} replacement cannot disclose overwrite or poison`, async ({
+    test(`Board held Chart ${heldOutcome} after ${replacement} replacement cannot disclose overwrite or poison`, async ({
       page,
     }, testInfo) => {
       const api = await installEvidenceBoardApi(
@@ -3220,7 +3118,7 @@ for (const scenario of [
     nullGap: false,
   },
 ] as const) {
-  test(`S30 Board line points preserve ${scenario.name}`, async ({
+  test(`Board line points preserve ${scenario.name}`, async ({
     page,
   }, testInfo) => {
     await installS26WidgetApi(page, [
@@ -3695,39 +3593,6 @@ test("live Board Overview renders supported group and date charts with exact val
     });
     await expectGeometryReady(phase);
   }
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await hideDevOverlay(page);
-    await page.evaluate(() => document.fonts.ready);
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate(applyAppearancePreferences, {
-        mode,
-        reduceMotion: true,
-      });
-      await captureOpenViewReview(page, `s30-board-${mode}`, {
-        beforeScreenshot: async (capture, viewport) => {
-          // Native ResizeObserver delivery must settle every SVG and fixture mark,
-          // including after the capture helper changes the responsive viewport.
-          await expectGeometryReady(
-            `capture ${mode} ${viewport.width}x${viewport.height}`,
-          );
-          expect(
-            await capture.evaluate(
-              () => document.documentElement.scrollWidth <= innerWidth,
-            ),
-          ).toBe(true);
-          const fullPageHeight = await capture.evaluate(() =>
-            Math.max(
-              document.documentElement.scrollHeight,
-              document.body.scrollHeight,
-            ),
-          );
-          console.log(
-            `S30 Board ${mode} ${viewport.width}x${viewport.height}: full-page height ${fullPageHeight}px`,
-          );
-        },
-      });
-    }
-  }
 });
 
 test("live Board Overview makes empty, unavailable, loading, error, and retained refresh states clear", () => {
@@ -3876,7 +3741,7 @@ test("negative group values keep exact text without misleading positive bar leng
   expect(html).not.toContain("bg-chart-1 h-full");
 });
 
-test("S05 widget create and edit omit refresh even when the server returns a legacy interval", async ({
+test("widget create and edit omit refresh even when the server returns a legacy interval", async ({
   page,
 }) => {
   await installOpenViewEventSource(page);
@@ -4035,7 +3900,7 @@ test("S05 widget create and edit omit refresh even when the server returns a leg
   ).toBeVisible();
 });
 
-test("S11 widget metadata and scoped record bursts refresh once on the shared stream", async ({
+test("widget metadata and scoped record bursts refresh once on the shared stream", async ({
   page,
 }) => {
   await installOpenViewEventSource(page);
@@ -4193,26 +4058,4 @@ test("S11 widget metadata and scoped record bursts refresh once on the shared st
       return state().active;
     }),
   ).toBe(1);
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await hideDevOverlay(page);
-    await page.evaluate(() => document.fonts.ready);
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate(applyAppearancePreferences, {
-        mode,
-        reduceMotion: true,
-      });
-      await captureOpenViewReview(page, `s11-live-widget-${mode}`, {
-        beforeScreenshot: async () => {
-          await expect(
-            page.getByRole("heading", { name, exact: true }),
-          ).toBeInViewport();
-          expect(
-            await page.evaluate(
-              () => document.documentElement.scrollWidth <= innerWidth,
-            ),
-          ).toBe(true);
-        },
-      });
-    }
-  }
 });

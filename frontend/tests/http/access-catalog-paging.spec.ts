@@ -11,7 +11,7 @@ const metadata = {
   performed_by: ids.rosa,
 };
 
-test("S08 access department and module search keeps unseen saved entries in the replacement", async ({
+test("access department and module search keeps unseen saved entries in the replacement", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -164,7 +164,7 @@ test("S08 access department and module search keeps unseen saved entries in the 
   ).toBe(true);
 });
 
-test("S08 correction catalog search refusal survives cached keys until explicit Retry", async ({
+test("catalog search refusal survives cached keys until explicit Retry", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -210,7 +210,7 @@ test("S08 correction catalog search refusal survives cached keys until explicit 
   expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
 });
 
-test("S08 correction Access summary describes overrides without claiming module totals", async ({
+test("Access summary describes overrides without claiming module totals", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);

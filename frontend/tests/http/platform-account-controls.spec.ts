@@ -977,7 +977,7 @@ test("retries failed organization date settings without disabling session contro
   await expect(current).toContainText("Last active 1 Oct 2026, 10:00");
 });
 
-test("13b: Account sign-in IP handles IPv4 IPv6 and unknown at mobile reflow while ending a session", async ({
+test("Account sign-in IP handles IPv4 IPv6 and unknown at mobile reflow while ending a session", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1023,8 +1023,8 @@ test("13b: Account sign-in IP handles IPv4 IPv6 and unknown at mobile reflow whi
   ).toBe(true);
 });
 
-test.describe("U4 evidence-only Account directory cache", () => {
-  test("13b U4 probe: accepted Account remote-session end refreshes the cached People count", async ({
+test.describe("Account directory cache", () => {
+  test("accepted Account remote-session end refreshes the cached People count", async ({
     page,
   }, testInfo) => {
     // The People count column shows from the 2xl breakpoint.

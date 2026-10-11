@@ -6,7 +6,6 @@ import {
 } from "./helpers/openview-event-source";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import type {
   BoardEventOccurrencePage,
   BoardEventPage,
@@ -33,7 +32,6 @@ import {
   transitionCalendarState,
   type CalendarState,
 } from "../../src/components/systems/boards/hooks/use-server-board-events";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
@@ -281,7 +279,7 @@ async function installS11EventApi(browser: Page) {
 }
 
 for (const dirty of [false, true]) {
-  test(`S11 event invalidation ${dirty ? "retains the dirty event and offers review latest" : "updates the clean event editor"}`, async ({
+  test(`event invalidation ${dirty ? "retains the dirty event and offers review latest" : "updates the clean event editor"}`, async ({
     page: browser,
   }) => {
     const api = await installS11EventApi(browser);
@@ -333,53 +331,6 @@ for (const dirty of [false, true]) {
           .getByRole("definition")
           .filter({ hasText: "Remote planning details" }),
       ).toBeVisible();
-      if (process.env.OPENVIEW_CAPTURE_DIR) {
-        await hideDevOverlay(browser);
-        await browser.evaluate(() => document.fonts.ready);
-        const notice = browser.getByText(
-          "Changed by someone else — review latest",
-          { exact: true },
-        );
-        const originalViewport = browser.viewportSize();
-        for (const mode of ["light", "dark"] as const) {
-          await browser.evaluate(applyAppearancePreferences, {
-            mode,
-            reduceMotion: true,
-          });
-          for (const viewport of [
-            { width: 1440, height: 900 },
-            { width: 390, height: 844 },
-          ]) {
-            await browser.setViewportSize(viewport);
-            await notice.evaluate((element) =>
-              element.scrollIntoView({
-                block: "center",
-                behavior: "instant",
-              }),
-            );
-            await expect(notice).toBeInViewport();
-            expect(
-              await browser.evaluate(
-                () => document.documentElement.scrollWidth <= innerWidth,
-              ),
-            ).toBe(true);
-            await browser.screenshot({
-              path: `${process.env.OPENVIEW_CAPTURE_DIR}/s11-dirty-event-${mode}-${viewport.width}x${viewport.height}.png`,
-              animations: "disabled",
-              fullPage: false,
-            });
-          }
-        }
-        if (originalViewport) await browser.setViewportSize(originalViewport);
-        const latest = browser.getByRole("button", {
-          name: "Load latest event and discard my draft",
-          exact: true,
-        });
-        await latest.focus();
-        await expect(latest).toBeFocused();
-        await latest.press("Enter");
-        await expect(title).toHaveValue("Remote event title");
-      }
     } else {
       await expect(title).toHaveValue("Remote event title");
       await expect(browser.getByLabel("Details", { exact: true })).toHaveValue(
@@ -401,7 +352,7 @@ for (const dirty of [false, true]) {
   });
 }
 
-test("S11 an old live event refusal cannot close a newly created local draft", async ({
+test("an old live event refusal cannot close a newly created local draft", async ({
   page: browser,
 }) => {
   const api = await installS11EventApi(browser);
@@ -1779,7 +1730,7 @@ async function installArchivedEventPurge(
 }
 
 for (const failChallenge of [false, true]) {
-  test(`S04 archived event purge ${failChallenge ? "retains its row after an unavailable challenge" : "removes only its confirmed archived row"}`, async ({
+  test(`archived event purge ${failChallenge ? "retains its row after an unavailable challenge" : "removes only its confirmed archived row"}`, async ({
     page: browser,
   }) => {
     const api = await installArchivedEventPurge(
@@ -1860,7 +1811,7 @@ for (const failChallenge of [false, true]) {
   });
 }
 
-test("S04 archived event remains restorable by a member without permanent-delete authority", async ({
+test("archived event remains restorable by a member without permanent-delete authority", async ({
   page: browser,
 }) => {
   const api = await installArchivedEventPurge(browser, "member");
@@ -1890,7 +1841,7 @@ test("S04 archived event remains restorable by a member without permanent-delete
   expect(api.purges).toBe(0);
 });
 
-test("S04 pending event review can recover after purge setting changes without accepting its late preview", async ({
+test("pending event review can recover after purge setting changes without accepting its late preview", async ({
   page: browser,
 }) => {
   const api = await installArchivedEventPurge(browser, "admin", false, true);
@@ -1935,7 +1886,7 @@ test("S04 pending event review can recover after purge setting changes without a
   await expect(begin).toBeEnabled();
   expect(api.purges).toBe(0);
 });
-test("S04 correction: admin purges archived-parent event while ordinary lifecycle editing stays unavailable", async ({
+test("admin purges archived-parent event while ordinary lifecycle editing stays unavailable", async ({
   page: browser,
 }) => {
   const api = await installArchivedEventPurge(browser);
@@ -2025,7 +1976,7 @@ test("S04 correction: admin purges archived-parent event while ordinary lifecycl
   expect(api.purges).toBe(1);
 });
 
-test("S04 correction: archived-parent admin retains current-access retry after an event-list failure", async ({
+test("archived-parent admin retains current-access retry after an event-list failure", async ({
   page: browser,
 }) => {
   await installArchivedEventPurge(browser);

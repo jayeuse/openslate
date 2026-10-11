@@ -5,48 +5,11 @@ import {
   type Page,
   type Route,
 } from "@playwright/test";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { hideDevOverlay } from "./helpers/test-styles";
 import { isEventStream } from "./helpers/test";
-
-async function captureS26Dashboard(page: Page, name: string) {
-  await captureOpenViewReview(
-    page,
-    `${name}-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
-    {
-      beforeScreenshot: async (capture) => {
-        await hideDevOverlay(capture);
-        await expect(capture.locator("html")).toHaveClass(
-          process.env.S26_CAPTURE_THEME === "dark" ? /dark/ : /^(?!.*dark)/,
-        );
-        await capture.evaluate(async () => {
-          await document.fonts.ready;
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-          );
-        });
-      },
-    },
-  );
-}
-async function prepareS26DashboardCapture(page: Page) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  const theme = process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-  await page.route("**/api/users/*/preferences", (route) =>
-    route.fulfill({
-      json: {
-        user_id: new URL(route.request().url()).pathname.split("/")[3],
-        theme,
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
-      },
-    }),
-  );
-}
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -1262,7 +1225,7 @@ async function editGridWidget(page: Page, title: string) {
   return dialog;
 }
 
-test("S29 renders every widget in one correlated aggregate batch and independent records read", async ({
+test("renders every widget in one correlated aggregate batch and independent records read", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -1403,7 +1366,7 @@ test("S29 renders every widget in one correlated aggregate batch and independent
   expect(api.writes).toEqual([]);
 });
 
-test("S29 size and stored-order changes retain tile paging and save only with the Dashboard revision", async ({
+test("size and stored-order changes retain tile paging and save only with the Dashboard revision", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -1468,7 +1431,7 @@ test("S29 size and stored-order changes retain tile paging and save only with th
 });
 
 for (const kind of ["chart", "summary", "workload", "records"] as const) {
-  test(`S29 editing ${kind} initializes the complete current definition and retains it through a conflict`, async ({
+  test(`editing ${kind} initializes the complete current definition and retains it through a conflict`, async ({
     page,
   }) => {
     const definition: QueryDefinition = {
@@ -1610,7 +1573,7 @@ for (const kind of ["chart", "summary", "workload", "records"] as const) {
   });
 }
 
-test("S29 malformed batch clears the protected cohort and retries without single-RPC fallback", async ({
+test("malformed batch clears the protected cohort and retries without single-RPC fallback", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -1641,7 +1604,7 @@ test("S29 malformed batch clears the protected cohort and retries without single
   expect(api.writes).toEqual([]);
 });
 
-test("S29 edited source fences a held cohort result while other saved tiles remain refreshable", async ({
+test("edited source fences a held cohort result while other saved tiles remain refreshable", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -1676,7 +1639,7 @@ test("S29 edited source fences a held cohort result while other saved tiles rema
   expect(api.writes).toEqual([]);
 });
 
-test("S29 grid uses thirds halves full rows and full-width phone tiles with keyboard edit", async ({
+test("grid uses thirds halves full rows and full-width phone tiles with keyboard edit", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -1688,35 +1651,6 @@ test("S29 grid uses thirds halves full rows and full-width phone tiles with keyb
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   await expect(page.getByRole("article")).toHaveCount(4);
   await expect(page.getByRole("table", { name: "Live records" })).toBeVisible();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await hideDevOverlay(page);
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await expect(capture.getByRole("article")).toHaveCount(4);
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        await capture.evaluate(async () => {
-          await document.fonts.ready;
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-          );
-        });
-      },
-    };
-    await captureOpenViewReview(page, "s29-dashboard-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s29-dashboard-dark", options);
-    await page.evaluate(() =>
-      document.documentElement.classList.remove("dark"),
-    );
-  }
   const widths = async () =>
     page
       .getByRole("article")
@@ -1751,7 +1685,7 @@ test("S29 grid uses thirds halves full rows and full-width phone tiles with keyb
   await expect(dialog).toBeHidden();
 });
 
-test("S29 edit resolves the current source and referenced fields beyond their first catalog pages", async ({
+test("edit resolves the current source and referenced fields beyond their first catalog pages", async ({
   page,
 }) => {
   const widget = savedWidget(dashboardWidgetId, 0, delayedFieldId);
@@ -1838,7 +1772,7 @@ test("S29 edit resolves the current source and referenced fields beyond their fi
   expect(api.writes).toEqual([]);
 });
 
-test("S29 Add from saved chart and reference edit keep XOR while current definitions drive all tiles", async ({
+test("Add from saved chart and reference edit keep XOR while current definitions drive all tiles", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000681";
@@ -1945,7 +1879,7 @@ test("S29 Add from saved chart and reference edit keep XOR while current definit
   expect(writes).toEqual([]);
 });
 
-test("S29 one refused saved Chart clears its entire aggregate cohort until explicit current-authority retry", async ({
+test("one refused saved Chart clears its entire aggregate cohort until explicit current-authority retry", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000682";
@@ -2018,7 +1952,7 @@ test("S29 one refused saved Chart clears its entire aggregate cohort until expli
   expect(api.writes).toEqual([]);
 });
 
-test("S29 a held editor source blocks changes and cancellation fences it from the next tile", async ({
+test("a held editor source blocks changes and cancellation fences it from the next tile", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000683";
@@ -2095,7 +2029,7 @@ test("S29 a held editor source blocks changes and cancellation fences it from th
   );
 });
 
-test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline instructions only on request", async ({
+test("Dashboard previews an unsaved monthly draft and saves the exact inline instructions only on request", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2162,37 +2096,6 @@ test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline
   await expect(
     dialog.getByRole("table", { name: "Draft preview values", exact: true }),
   ).toContainText("12.5");
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await hideDevOverlay(page);
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        if (viewport.width === 390) {
-          await dialog
-            .getByText("Measure", { exact: true })
-            .evaluate((element) => element.scrollIntoView({ block: "start" }));
-        } else {
-          await dialog
-            .getByRole("heading", { name: "Add widget", exact: true })
-            .scrollIntoViewIfNeeded();
-        }
-        await expect(
-          dialog.getByLabel("Calendar bucket", { exact: true }),
-        ).toHaveValue("month");
-      },
-    };
-    await captureOpenViewReview(page, "s27-dashboard-dialog-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s27-dashboard-dialog-dark", options);
-  }
   expect(api.writes).toEqual([]);
   const expected = {
     mode: "date_series",
@@ -2224,7 +2127,7 @@ test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline
   ]);
 });
 
-test("S27 Dashboard records editor preserves ordered columns filters search sort and lifecycle grammar", async ({
+test("Dashboard records editor preserves ordered columns filters search sort and lifecycle grammar", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2325,7 +2228,7 @@ test("S27 Dashboard records editor preserves ordered columns filters search sort
   ]);
 });
 
-test("S27 Dashboard cancel fences a late preview without saving or adding a widget", async ({
+test("Dashboard cancel fences a late preview without saving or adding a widget", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2355,7 +2258,7 @@ test("S27 Dashboard cancel fences a late preview without saving or adding a widg
   expect(api.writes).toEqual([]);
 });
 
-test("S27 Dashboard saved picker preview refuses a changed source and saves reference-only after recovery", async ({
+test("Dashboard saved picker preview refuses a changed source and saves reference-only after recovery", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2493,7 +2396,7 @@ test("S27 Dashboard saved picker preview refuses a changed source and saves refe
   ]);
 });
 
-test("S26 Dashboard preserves a saved Chart reference and L size through settings save and reload", async ({
+test("Dashboard preserves a saved Chart reference and L size through settings save and reload", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000651";
@@ -2530,7 +2433,6 @@ test("S26 Dashboard preserves a saved Chart reference and L size through setting
       },
     });
   });
-  await prepareS26DashboardCapture(page);
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   await expect(
     page.getByRole("heading", { name: "Operations", exact: true }),
@@ -2538,7 +2440,6 @@ test("S26 Dashboard preserves a saved Chart reference and L size through setting
   await expect(
     page.getByRole("table", { name: /Complete data/ }),
   ).toBeVisible();
-  await captureS26Dashboard(page, "s26-dashboard-reference");
   expect(reads).toBeGreaterThan(0);
   expect(api.snapshots.at(-1)).toEqual({
     mode: "groups",
@@ -2577,7 +2478,7 @@ for (const sourceKind of ["inline", "referenced"] as const) {
     ["max", 200.5],
     ["distinct", 4],
   ] as const) {
-    test(`S26 ${sourceKind} summary shows exact ${aggregation} values and null without record-count substitution`, async ({
+    test(`${sourceKind} summary shows exact ${aggregation} values and null without record-count substitution`, async ({
       page,
     }) => {
       const chartId = "00000000-0000-4000-8000-000000000652";
@@ -2670,7 +2571,7 @@ for (const fault of [
   "wrong-family",
   "malformed",
 ] as const) {
-  test(`S26 current Chart ${fault} refuses stale private results and downstream reads`, async ({
+  test(`current Chart ${fault} refuses stale private results and downstream reads`, async ({
     page,
   }, testInfo) => {
     const chartId = "00000000-0000-4000-8000-000000000653";
@@ -2739,7 +2640,6 @@ for (const fault of [
       }
       return route.fulfill({ json: source });
     });
-    await prepareS26DashboardCapture(page);
     await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
     await expect(
       page.getByRole("table", { name: /Complete data/ }),
@@ -2788,15 +2688,13 @@ for (const fault of [
           .getByRole("alert")
           .filter({ hasText: "You do not have access to this data." }),
       ).toContainText("You do not have access to this data.");
-    if (fault === "403")
-      await captureS26Dashboard(page, "s26-dashboard-source-denied");
     expect(api.snapshots).toHaveLength(downstream);
     expect(api.fieldReads).toHaveLength(fields);
     expect(api.writes).toEqual([]);
   });
 }
 
-test("S26 Chart invalidation refreshes its current query while preserving a dirty Dashboard draft", async ({
+test("Chart invalidation refreshes its current query while preserving a dirty Dashboard draft", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000654";
@@ -2905,7 +2803,7 @@ test("S26 Chart invalidation refreshes its current query while preserving a dirt
   });
 });
 
-test("E evidence paired Board and Dashboard follow one Chart revision without source writes or draft replacement", async ({
+test("paired Board and Dashboard follow one Chart revision without source writes or draft replacement", async ({
   page,
   browser,
   baseURL,
@@ -3242,7 +3140,7 @@ test("E evidence paired Board and Dashboard follow one Chart revision without so
 });
 
 for (const bucket of ["month", "year"] as const) {
-  test(`S26 referenced date series preserves its ${bucket} bucket over more than 366 days`, async ({
+  test(`referenced date series preserves its ${bucket} bucket over more than 366 days`, async ({
     page,
   }) => {
     const chartId = "00000000-0000-4000-8000-000000000655";
@@ -3833,7 +3731,7 @@ test("department Dashboard saves ordered charts and reloads every complete snaps
   ).toBeVisible();
 });
 
-test("S29 switching Dashboards fences an old cohort's pending refresh", async ({
+test("switching Dashboards fences an old cohort's pending refresh", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -4860,7 +4758,6 @@ test("department Dashboard saves and reloads all four live widget types", async 
   await expect(
     page.getByRole("table", { name: "Complete data for Count by Category" }),
   ).toBeVisible();
-  await captureOpenViewReview(page, "dashboard-manager");
 });
 
 test("saved Record widget shows values for a field beyond the first catalog page after reload", async ({
@@ -5379,7 +5276,6 @@ test("a department reader sees its Dashboards without change controls", async ({
 
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   await expect(page.getByText("Field service", { exact: true })).toBeVisible();
-  await captureOpenViewReview(page, "dashboard-reader");
   await expect(page.getByText(/private|only you/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New Dashboard" })).toHaveCount(
     0,
@@ -5462,7 +5358,7 @@ test("Cancel discards a new Dashboard draft and returns to the selected Dashboar
   expect(api.writes).toHaveLength(0);
 });
 
-test("S08 a Dashboard department picker searches beyond its first page and resolves the saved label", async ({
+test("a Dashboard department picker searches beyond its first page and resolves the saved label", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -5525,34 +5421,6 @@ test("S08 a Dashboard department picker searches beyond its first page and resol
   await dialog
     .getByLabel("Dashboard name", { exact: true })
     .fill("Dispatch dashboard");
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    const departmentTrigger = dialog.getByLabel("Department", { exact: true });
-    await departmentTrigger.focus();
-    await departmentTrigger.press("Enter");
-    const searchInput = page
-      .getByRole("combobox", { name: "Department", exact: true })
-      .and(page.getByPlaceholder("Search…", { exact: true }));
-    await expect(searchInput).toBeFocused();
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((theme) => {
-        document.documentElement.classList.toggle("dark", theme === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-dashboard-department-${mode}`, {
-        beforeScreenshot: async () => {
-          await expect(searchInput).toBeVisible();
-          await expect
-            .poll(() =>
-              page.evaluate(
-                () => document.documentElement.scrollWidth <= window.innerWidth,
-              ),
-            )
-            .toBe(true);
-        },
-      });
-    }
-    await searchInput.press("Escape");
-    await expect(departmentTrigger).toBeFocused();
-  }
   await dialog.getByRole("button", { name: "Continue", exact: true }).click();
   await page
     .getByRole("button", { name: "Save Dashboard", exact: true })

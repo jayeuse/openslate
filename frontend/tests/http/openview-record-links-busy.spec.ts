@@ -12,7 +12,6 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -981,9 +980,7 @@ test("a link field into a data source the person cannot read offers no Add link"
   expect(api.state.createCount).toBe(0);
 });
 
-test("S08 incident links load later pages only on request", async ({
-  page,
-}) => {
+test("incident links load later pages only on request", async ({ page }) => {
   const api = await installLinksApi(page, { incomingCount: 101 });
   await openLinksPanel(page);
   const incoming = page
@@ -1002,7 +999,7 @@ test("S08 incident links load later pages only on request", async ({
   ).toHaveCount(0);
 });
 
-test("S08 a busy write beyond the visible incident page is checked by exact relationship filters", async ({
+test("a busy write beyond the visible incident page is checked by exact relationship filters", async ({
   page,
 }) => {
   const api = await installLinksApi(page, {
@@ -1037,7 +1034,7 @@ test("S08 a busy write beyond the visible incident page is checked by exact rela
   ).toBe(true);
 });
 
-test("S08 a single-source picker checks current candidates without crawling field links", async ({
+test("a single-source picker checks current candidates without crawling field links", async ({
   page,
 }) => {
   const api = await installLinksApi(page, {
@@ -1062,7 +1059,7 @@ test("S08 a single-source picker checks current candidates without crawling fiel
   expect(api.state.createCount).toBe(0);
 });
 
-test("S08 link target search exposes an explicit continuation", async ({
+test("link target search exposes an explicit continuation", async ({
   page,
 }) => {
   const api = await installLinksApi(page, { targetCount: 51 });
@@ -1081,7 +1078,7 @@ test("S08 link target search exposes an explicit continuation", async ({
   expect(api.state.targetRequests).toEqual([0, 50]);
 });
 
-test("S08 a linked source and department beyond the first pages retain their labels", async ({
+test("a linked source and department beyond the first pages retain their labels", async ({
   page,
 }) => {
   await installLinksApi(page, {
@@ -1101,7 +1098,7 @@ test("S08 a linked source and department beyond the first pages retain their lab
   ).toContainText("Service visits · Dispatch");
 });
 
-test("S08 a selected data source beyond the catalog page resolves after reload", async ({
+test("a selected data source beyond the catalog page resolves after reload", async ({
   page,
 }) => {
   await installLinksApi(page, { homeSourceOffPage: true });
@@ -1118,7 +1115,7 @@ test("S08 a selected data source beyond the catalog page resolves after reload",
   ).toBeVisible();
 });
 
-test("S08 an off-page source refusal recovers through Retry catalog", async ({
+test("an off-page source refusal recovers through Retry catalog", async ({
   page,
 }) => {
   const api = await installLinksApi(page, { homeSourceOffPage: true });
@@ -1171,7 +1168,7 @@ test("S08 an off-page source refusal recovers through Retry catalog", async ({
   expect(api.state.recordWrites).toEqual([]);
 });
 
-test("S08 record editing waits for complete fields and preserves an off-page value", async ({
+test("record editing waits for complete fields and preserves an off-page value", async ({
   page,
 }) => {
   const api = await installLinksApi(page, { pagedFields: true });
@@ -1181,30 +1178,6 @@ test("S08 record editing waits for complete fields and preserves an off-page val
   await expect(
     inspector.getByRole("button", { name: "Edit record", exact: true }),
   ).toBeDisabled();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((theme) => {
-        document.documentElement.classList.toggle("dark", theme === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-record-field-guard-${mode}`, {
-        beforeScreenshot: async () => {
-          await inspector
-            .getByRole("button", {
-              name: "Load more fields for editing",
-              exact: true,
-            })
-            .scrollIntoViewIfNeeded();
-          await expect
-            .poll(() =>
-              page.evaluate(
-                () => document.documentElement.scrollWidth <= window.innerWidth,
-              ),
-            )
-            .toBe(true);
-        },
-      });
-    }
-  }
   await inspector
     .getByRole("button", { name: "Load more fields for editing", exact: true })
     .click();
@@ -1229,7 +1202,7 @@ test("S08 record editing waits for complete fields and preserves an off-page val
   );
 });
 
-test("S08 correction record editing preserves page-two values after metadata refresh", async ({
+test("record editing preserves page-two values after metadata refresh", async ({
   page,
 }) => {
   const api = await installLinksApi(page, { pagedFields: true });
@@ -1284,7 +1257,7 @@ test("S08 correction record editing preserves page-two values after metadata ref
   });
 });
 
-test("S08 correction temporary off-page fields wait for detail hydration and survive reload", async ({
+test("temporary off-page fields wait for detail hydration and survive reload", async ({
   page,
 }) => {
   const api = await installLinksApi(page, {
@@ -1388,7 +1361,7 @@ test("S08 correction temporary off-page fields wait for detail hydration and sur
   expect(api.state.recordWrites).toEqual([]);
 });
 
-test("S08 selected saved-view columns retain an off-page field label", async ({
+test("selected saved-view columns retain an off-page field label", async ({
   page,
 }) => {
   await installLinksApi(page, { pagedFields: true, offPageSavedField: true });

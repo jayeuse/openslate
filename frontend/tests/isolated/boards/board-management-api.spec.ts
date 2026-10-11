@@ -403,7 +403,7 @@ for (const [aggregation, metric] of [
   ["average", { name: "Amount", expected_type: "decimal" }],
   ["distinct", { name: "Label", expected_type: "text" }],
 ] as const) {
-  test(`S30 portable legacy ${aggregation} imports and downloads exact named bytes`, async () => {
+  test(`portable legacy ${aggregation} imports and downloads exact named bytes`, async () => {
     const explicit = structuredClone(bundle);
     const config = {
       ...explicit.configuration.widgets[0]!.config,

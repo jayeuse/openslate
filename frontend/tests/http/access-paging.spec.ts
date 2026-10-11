@@ -11,7 +11,7 @@ import {
 const fixtureId = (index: number) =>
   `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 
-test("S08 Groups pages and server search preserve enriched reach without catalog crawling", async ({
+test("Groups pages and server search preserve enriched reach without catalog crawling", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -75,7 +75,7 @@ test("S08 Groups pages and server search preserve enriched reach without catalog
   expect(api.sent("GET", "/api/modules")).toHaveLength(0);
 });
 
-test("S08 Overview counts use bounded filtered totals beyond the first page", async ({
+test("Overview counts use bounded filtered totals beyond the first page", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -115,7 +115,7 @@ test("S08 Overview counts use bounded filtered totals beyond the first page", as
   ).toBe(true);
 });
 
-test("S08 selected sponsor reload and username server search keep labels and write no changes", async ({
+test("selected sponsor reload and username server search keep labels and write no changes", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -158,7 +158,7 @@ test("S08 selected sponsor reload and username server search keep labels and wri
   expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
 });
 
-test("S08 session pages expose later devices and retain global revocation", async ({
+test("session pages expose later devices and retain global revocation", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -203,7 +203,7 @@ test("S08 session pages expose later devices and retain global revocation", asyn
   expect(api.sent("DELETE", `/api/users/${ids.ben}/sessions`)).toHaveLength(1);
 });
 
-test("S08 member search preserves off-page members and marks ended manager candidates", async ({
+test("member search preserves off-page members and marks ended manager candidates", async ({
   page,
 }) => {
   const api = await mockAccessApi(page, {
@@ -281,7 +281,7 @@ test("S08 member search preserves off-page members and marks ended manager candi
   expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
 });
 
-test("S08 a refused people continuation conceals selected names until an explicit fresh retry", async ({
+test("a refused people continuation conceals selected names until an explicit fresh retry", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -321,7 +321,7 @@ test("S08 a refused people continuation conceals selected names until an explici
   expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
 });
 
-test("S08 correction a people search refusal survives cached search and an older Retry", async ({
+test("a people search refusal survives cached search and an older Retry", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -385,7 +385,7 @@ test("S08 correction a people search refusal survives cached search and an older
   }
 });
 
-test("S08 correction a selected-person refusal survives reopening a cached group", async ({
+test("a selected-person refusal survives reopening a cached group", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);

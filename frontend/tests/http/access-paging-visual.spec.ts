@@ -3,7 +3,7 @@ import { ids, mockAccessApi } from "./helpers/access-api";
 
 for (const width of [1440, 390])
   for (const theme of ["light", "dark"] as const) {
-    test(`S08 Access catalog search fits ${width}px ${theme}`, async ({
+    test(`Access catalog search fits ${width}px ${theme}`, async ({
       page,
     }, testInfo) => {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });

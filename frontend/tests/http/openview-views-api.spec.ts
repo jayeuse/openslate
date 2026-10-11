@@ -5,7 +5,6 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { profilePreferences } from "./helpers/profile-api";
 import {
   installOpenViewEventSource,
@@ -2316,7 +2315,6 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     viewId,
   );
   await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
-  await captureOpenViewReview(page, "views-manager");
   await expect(
     page.getByText("Field service · 12 active fields"),
   ).toBeVisible();
@@ -2759,7 +2757,6 @@ test("a reader keeps temporary View filters in the address without save controls
   await expect(
     page.getByText(/These changes live in the page address/),
   ).toBeVisible();
-  await captureOpenViewReview(page, "views-reader-filter");
   await page.reload();
   await expect(search).toHaveValue("valve");
   await expect(page.getByText("Temporary changes")).toBeVisible();
@@ -4559,7 +4556,7 @@ test.describe("OpenView workspace regional dates", () => {
     });
   });
 
-  test("S21 Calendar personal dates and week start change presentation only, retaining workspace grouping and requests", async ({
+  test("Calendar personal dates and week start change presentation only, retaining workspace grouping and requests", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -4726,7 +4723,7 @@ test.describe("OpenView workspace regional dates", () => {
     ).toContainText("2026-09-01");
   });
 
-  test("S21 Timeline personal formatting preserves date-only days and the workspace window", async ({
+  test("Timeline personal formatting preserves date-only days and the workspace window", async ({
     page,
   }) => {
     const api = await installViewsApi(page, {
@@ -5124,7 +5121,7 @@ test("stale conflict can reload the authoritative saved version without losing i
   expect(api.saved().definition.search).toBe("external edit");
 });
 
-test("S08 a saved view beyond the first page loads through its UUID deep link", async ({
+test("a saved view beyond the first page loads through its UUID deep link", async ({
   page,
 }) => {
   const api = await installViewsApi(page, { deepViewBeyondBound: true });
@@ -5657,7 +5654,6 @@ test("Views show authorized labels while filters keep stable choice and eligible
       name: "Selected person is not in the current results",
     }),
   ).toBeAttached();
-  await captureOpenViewReview(page, "views-select-person-labels");
 });
 
 async function installRecordCommands(page: Page) {
@@ -6413,7 +6409,7 @@ async function s16DownloadedBytes(page: Page, action: () => Promise<void>) {
   };
 }
 
-test.describe("S16 export journeys", () => {
+test.describe("export journeys", () => {
   test.beforeEach(async ({ context }) => {
     await context.tracing.start({ screenshots: true, snapshots: true });
   });
@@ -6422,7 +6418,7 @@ test.describe("S16 export journeys", () => {
   });
 
   for (const role of ["member", "guest"] as const) {
-    test(`S16 export: ${role} exports current query and chosen pinned columns without saving`, async ({
+    test(`${role} exports current query and chosen pinned columns without saving`, async ({
       page,
     }) => {
       const api = await installS16Export(page, role);
@@ -6518,7 +6514,7 @@ test.describe("S16 export journeys", () => {
     });
   }
 
-  test("S16 export: Excel choices stay local across format changes and preserve workbook bytes", async ({
+  test("Excel choices stay local across format changes and preserve workbook bytes", async ({
     page,
   }) => {
     const api = await installS16Export(page);
@@ -6589,7 +6585,7 @@ test.describe("S16 export journeys", () => {
     });
   });
 
-  test("S16 export: empty columns require an explicit Record ID and never restore removed fields", async ({
+  test("empty columns require an explicit Record ID and never restore removed fields", async ({
     page,
   }) => {
     const api = await installS16Export(page);
@@ -6664,7 +6660,7 @@ test.describe("S16 export journeys", () => {
       reply: { body: Buffer.alloc(8 * 1024 * 1024 + 1, 65) },
     },
   ] satisfies { name: string; reply: S16Reply }[]) {
-    test(`S16 export: ${invalid.name} is never an attachment and Retry keeps options`, async ({
+    test(`${invalid.name} is never an attachment and Retry keeps options`, async ({
       page,
     }) => {
       const api = await installS16Export(page);
@@ -6707,7 +6703,7 @@ test.describe("S16 export journeys", () => {
       expected: "Choose at least one column",
     },
   ]) {
-    test(`S16 export: safe ${failure.code} failure retains query and allows recovery`, async ({
+    test(`safe ${failure.code} failure retains query and allows recovery`, async ({
       page,
     }) => {
       const api = await installS16Export(page);
@@ -6737,7 +6733,7 @@ test.describe("S16 export journeys", () => {
     });
   }
 
-  test("S16 export: a denied export hides all retained read data and never exposes private details", async ({
+  test("a denied export hides all retained read data and never exposes private details", async ({
     page,
   }) => {
     const api = await installS16Export(page);
@@ -6781,7 +6777,7 @@ test.describe("S16 export journeys", () => {
   });
 
   for (const end of ["cancel", "account", "refusal", "navigation"] as const) {
-    test(`S16 export: one submit and late ${end} completion cannot download or announce success`, async ({
+    test(`one submit and late ${end} completion cannot download or announce success`, async ({
       page,
     }) => {
       const api = await installS16Export(page);
@@ -6829,7 +6825,7 @@ test.describe("S16 export journeys", () => {
   }
 
   for (const theme of ["light", "dark"] as const) {
-    test(`S16 export: ${theme} keyboard, mobile and pending/error controls remain usable`, async ({
+    test(`${theme} keyboard, mobile and pending/error controls remain usable`, async ({
       page,
     }) => {
       const longLabel =
@@ -6861,54 +6857,16 @@ test.describe("S16 export journeys", () => {
         .focus();
       await page.keyboard.press("Enter");
       await dialog.getByLabel("Format", { exact: true }).selectOption("xlsx");
-      const bounds = async () => {
-        const box = await dialog.boundingBox();
-        expect(box).not.toBeNull();
-        expect(box!.x).toBeGreaterThanOrEqual(0);
-        expect(box!.x + box!.width).toBeLessThanOrEqual(
-          page.viewportSize()!.width,
-        );
-        const cancel = dialog.getByRole("button", {
-          name: "Cancel",
-          exact: true,
-        });
-        await cancel.scrollIntoViewIfNeeded();
-        const control = await cancel.boundingBox();
-        expect(control!.height).toBeGreaterThanOrEqual(44);
-        expect(control!.y + control!.height).toBeLessThanOrEqual(
-          page.viewportSize()!.height,
-        );
-      };
-      await captureOpenViewReview(page, `s16-excel-${theme}`, {
-        beforeScreenshot: async () => {
-          await bounds();
-          await dialog.evaluate((node) => {
-            node.scrollTop = 0;
-          });
-          await expect(
-            dialog.getByRole("checkbox", { name: longLabel, exact: true }),
-          ).toBeVisible();
-        },
-      });
-      await captureOpenViewReview(page, `s16-excel-options-${theme}`, {
-        beforeScreenshot: bounds,
-      });
       api.reply({ status: 503, json: { detail: "PRIVATE_EXPORT_SENTINEL" } });
       await dialog
         .getByRole("button", { name: "Download", exact: true })
         .click();
       await expect(dialog.getByRole("alert")).toBeVisible();
-      await captureOpenViewReview(page, `s16-error-${theme}`, {
-        beforeScreenshot: bounds,
-      });
       const held = api.hold();
       await dialog
         .getByRole("button", { name: "Download", exact: true })
         .click();
       await held.began;
-      await captureOpenViewReview(page, `s16-pending-${theme}`, {
-        beforeScreenshot: bounds,
-      });
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
       held.release();
       await held.done;
@@ -6917,9 +6875,7 @@ test.describe("S16 export journeys", () => {
     });
   }
 
-  test("S16 export: CSV after Excel omits every Excel-only option", async ({
-    page,
-  }) => {
+  test("CSV after Excel omits every Excel-only option", async ({ page }) => {
     const api = await installS16Export(page);
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
@@ -6946,7 +6902,7 @@ test.describe("S16 export journeys", () => {
       expect(request).not.toHaveProperty(key);
   });
 
-  test("S16 export: an incomplete filter disables export without a request", async ({
+  test("an incomplete filter disables export without a request", async ({
     page,
   }) => {
     const api = await installS16Export(page);

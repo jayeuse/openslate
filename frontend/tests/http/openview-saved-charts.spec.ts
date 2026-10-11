@@ -3,8 +3,6 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 const moduleId = "00000000-0000-4000-8000-000000000210";
 const otherModule = "00000000-0000-4000-8000-000000000211";
@@ -174,7 +172,7 @@ async function saveName(
   await dialog.getByLabel("Chart name", { exact: true }).press("Enter");
 }
 
-test("S28 named Save, edited query, rename and Save as use revisioned literal definitions and URL reload", async ({
+test("named Save, edited query, rename and Save as use revisioned literal definitions and URL reload", async ({
   page,
 }) => {
   await setup(page);
@@ -252,7 +250,7 @@ test("S28 named Save, edited query, rename and Save as use revisioned literal de
   ]);
 });
 
-test("S28 saved URL opens off-page source and full grammar without substituting paged metadata", async ({
+test("saved URL opens off-page source and full grammar without substituting paged metadata", async ({
   page,
 }) => {
   await setup(page);
@@ -311,7 +309,7 @@ test("S28 saved URL opens off-page source and full grammar without substituting 
   });
 });
 
-test("S28 revision conflict preserves edited draft and refreshes current read only on intent", async ({
+test("revision conflict preserves edited draft and refreshes current read only on intent", async ({
   page,
 }) => {
   await setup(page);
@@ -400,7 +398,7 @@ test("S28 revision conflict preserves edited draft and refreshes current read on
 });
 
 for (const access of ["module", "read"] as const) {
-  test(`S28 ${access} permission may read but cannot save or archive Charts`, async ({
+  test(`${access} permission may read but cannot save or archive Charts`, async ({
     page,
   }) => {
     await setup(page, access);
@@ -441,7 +439,7 @@ for (const access of ["module", "read"] as const) {
   });
 }
 
-test("S28 save denial and unknown receipt retain name and never automatically retry POST", async ({
+test("save denial and unknown receipt retain name and never automatically retry POST", async ({
   page,
 }) => {
   await setup(page);
@@ -487,7 +485,7 @@ test("S28 save denial and unknown receipt retain name and never automatically re
   );
 });
 
-test("S28 saved list search paging archive and restore use accepted revision and refresh authoritative rows", async ({
+test("saved list search paging archive and restore use accepted revision and refresh authoritative rows", async ({
   page,
 }) => {
   await setup(page);
@@ -577,7 +575,7 @@ test("S28 saved list search paging archive and restore use accepted revision and
   ).toBe(true);
 });
 
-test("S28 usage 409 renders readable consumers and generic restricted flag, never hidden counts or identities", async ({
+test("usage 409 renders readable consumers and generic restricted flag, never hidden counts or identities", async ({
   page,
 }) => {
   await setup(page);
@@ -639,7 +637,7 @@ test("S28 usage 409 renders readable consumers and generic restricted flag, neve
   expect(deletes).toBe(1);
 });
 
-test("S28 changing the editor module detaches saved identity and list refusal withdraws names", async ({
+test("changing the editor module detaches saved identity and list refusal withdraws names", async ({
   page,
 }) => {
   await setup(page);
@@ -668,9 +666,7 @@ test("S28 changing the editor module detaches saved identity and list refusal wi
   ).toHaveCount(0);
 });
 
-test("S28 archived URL cannot apply or save until restored", async ({
-  page,
-}) => {
+test("archived URL cannot apply or save until restored", async ({ page }) => {
   await setup(page);
   let archived = true;
   await page.route(`**/api/charts/${chartId}`, (route) =>
@@ -708,7 +704,7 @@ test("S28 archived URL cannot apply or save until restored", async ({
   ).toBeEnabled();
 });
 
-test("S28 an opened chart resolves fresh bounded labels before Apply and withdraws on metadata refusal", async ({
+test("an opened chart resolves fresh bounded labels before Apply and withdraws on metadata refusal", async ({
   page,
 }) => {
   await setup(page);
@@ -777,7 +773,7 @@ test("S28 an opened chart resolves fresh bounded labels before Apply and withdra
   expect(metadata.length).toBeGreaterThanOrEqual(3);
 });
 
-test("S28 date-series Save persists bucket, window and measure without preview settings", async ({
+test("date-series Save persists bucket, window and measure without preview settings", async ({
   page,
 }) => {
   await setup(page);
@@ -820,7 +816,7 @@ test("S28 date-series Save persists bucket, window and measure without preview s
   ]);
 });
 
-test("S28 admin usage pages show every returned consumer without a restricted flag", async ({
+test("admin usage pages show every returned consumer without a restricted flag", async ({
   page,
 }) => {
   await setup(page);
@@ -877,7 +873,7 @@ test("S28 admin usage pages show every returned consumer without a restricted fl
   expect(offsets).toEqual(["0", "1"]);
 });
 
-test("S28 navigating away from a held open fences the late definition", async ({
+test("navigating away from a held open fences the late definition", async ({
   page,
 }) => {
   await setup(page);
@@ -931,7 +927,7 @@ test("S28 navigating away from a held open fences the late definition", async ({
 });
 
 for (const recover of [false, true]) {
-  test(`S28 held save receipt after read refusal ${recover ? "and later read recovery " : ""}cannot select the saved object or expose a server name`, async ({
+  test(`held save receipt after read refusal ${recover ? "and later read recovery " : ""}cannot select the saved object or expose a server name`, async ({
     page,
   }) => {
     await setup(page);
@@ -1015,7 +1011,7 @@ for (const recover of [false, true]) {
   });
 }
 
-test("S28 mobile keyboard Save form rejects empty name and captures saved Charts in both themes", async ({
+test("mobile keyboard Save form rejects a blank name, then saves and applies the Chart", async ({
   page,
 }) => {
   await setup(page);
@@ -1046,23 +1042,4 @@ test("S28 mobile keyboard Save form rejects empty name and captures saved Charts
     page.getByRole("table", { name: "Complete aggregate data", exact: true }),
   ).toContainText("Support");
   await page.getByRole("button", { name: "Saved charts", exact: true }).click();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await hideDevOverlay(page);
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-      },
-    };
-    await captureOpenViewReview(page, "s28-charts-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s28-charts-dark", options);
-  }
 });

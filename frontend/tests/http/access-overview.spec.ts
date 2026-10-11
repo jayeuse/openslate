@@ -159,7 +159,7 @@ for (const width of [1440, 390])
     ).toBe(true);
   });
 
-test("13b: organization MFA summary keeps known absence separate from unknown and links to the same population", async ({
+test("organization MFA summary keeps known absence separate from unknown and links to the same population", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -201,7 +201,7 @@ test("13b: organization MFA summary keeps known absence separate from unknown an
   await expect.poll(() => api.listReads.at(-1)?.get("mfa")).toBe("unknown");
 });
 
-test("13b: unavailable monitoring summary never manufactures zero and explicit Retry recovers", async ({
+test("unavailable monitoring summary never manufactures zero and explicit Retry recovers", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -286,7 +286,7 @@ test("13b: unavailable monitoring summary never manufactures zero and explicit R
   ).toBeVisible();
 });
 
-test("13b: history summary counts the full eligible population and drilldowns filter before page totals", async ({
+test("history summary counts the full eligible population and drilldowns filter before page totals", async ({
   page,
 }) => {
   const now = Date.parse("2026-10-07T12:00:00Z");
@@ -421,7 +421,7 @@ test("13b: history summary counts the full eligible population and drilldowns fi
     .toMatchObject({ history: "inactive", inactive_days: "30", offset: "0" });
 });
 
-test("13b: inactivity days validate drafts, reach the API and isolate cached summaries by applied N", async ({
+test("inactivity days validate drafts, reach the API and isolate cached summaries by applied N", async ({
   page,
 }) => {
   const now = Date.parse("2026-10-07T12:00:00Z");

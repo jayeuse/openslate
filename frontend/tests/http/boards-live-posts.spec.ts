@@ -9,8 +9,6 @@ import { writeFile } from "node:fs/promises";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../../src/lib/api";
-import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -29,7 +27,6 @@ import {
   visiblePostAuthorId,
   type PostFeedState,
 } from "../../src/components/systems/boards/hooks/use-server-board-posts";
-import { hideDevOverlay } from "./helpers/test-styles";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -1107,14 +1104,6 @@ test("author picker searches beyond the first page and retains a selected author
       .getByRole("region", { name: "Published posts" })
       .getByText("Zora later-page author", { exact: true }),
   ).toBeVisible();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-post-author-${mode}`);
-    }
-  }
   await page.reload();
   await page.getByRole("button", { name: "More filters" }).click();
   await expect(
@@ -1127,30 +1116,6 @@ test("off-page post authors keep their labels through picker search, reader, and
 }) => {
   const api = await installPostBrowserApi(page);
   const label = "Zora published author";
-  const captureLabels = async (name: string, visibleLabel: Locator) => {
-    if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-    const previous = await page.evaluate(() => ({
-      mode: document.documentElement.classList.contains("dark")
-        ? ("dark" as const)
-        : ("light" as const),
-      reduceMotion: document.documentElement.dataset.motion === "reduced",
-    }));
-    try {
-      for (const mode of ["light", "dark"] as const) {
-        await page.evaluate(applyAppearancePreferences, {
-          mode,
-          reduceMotion: true,
-        });
-        await captureOpenViewReview(page, `${name}-${mode}`, {
-          beforeScreenshot: async () => {
-            await expect(visibleLabel).toBeVisible();
-          },
-        });
-      }
-    } finally {
-      await page.evaluate(applyAppearancePreferences, previous);
-    }
-  };
   api.setAuthorChoices([
     ...Array.from({ length: 26 }, (_, index) => ({
       id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
@@ -1204,10 +1169,6 @@ test("off-page post authors keep their labels through picker search, reader, and
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(feed.getByText(label, { exact: true })).toBeVisible();
-  await captureLabels(
-    "s08-post-author-label-feed",
-    feed.getByText(label, { exact: true }),
-  );
   await feed
     .getByRole("article")
     .filter({
@@ -1220,10 +1181,6 @@ test("off-page post authors keep their labels through picker search, reader, and
     exact: true,
   });
   await expect(reader.getByText(label, { exact: true })).toBeVisible();
-  await captureLabels(
-    "s08-post-author-label-reader",
-    reader.getByText(label, { exact: true }),
-  );
   await reader.getByRole("button", { name: "Edited", exact: true }).click();
   const history = page.getByRole("dialog", {
     name: "Edit history",
@@ -1368,37 +1325,6 @@ test("local card history keeps its eligible author after a held feed refresh rep
     await expect(versionRow(history, 1)).toContainText("Avery");
     await expect(history).not.toContainText("Author unavailable");
     expect(feedReads - readsBeforeRefresh).toBe(1);
-    if (process.env.OPENVIEW_CAPTURE_DIR) {
-      const previous = await page.evaluate(() => ({
-        mode: document.documentElement.classList.contains("dark")
-          ? ("dark" as const)
-          : ("light" as const),
-        reduceMotion: document.documentElement.dataset.motion === "reduced",
-      }));
-      try {
-        for (const mode of ["light", "dark"] as const) {
-          await page.evaluate(applyAppearancePreferences, {
-            mode,
-            reduceMotion: true,
-          });
-          await captureOpenViewReview(
-            page,
-            `s08-post-author-local-history-${mode}`,
-            {
-              beforeScreenshot: async () => {
-                const version = versionRow(history, 2);
-                await version.scrollIntoViewIfNeeded();
-                await expect(version).toContainText("Avery");
-                await expect(version.getByText("Avery")).toBeInViewport();
-                await expect(history).not.toContainText("Author unavailable");
-              },
-            },
-          );
-        }
-      } finally {
-        await page.evaluate(applyAppearancePreferences, previous);
-      }
-    }
   } finally {
     releaseFeed();
     phases.push({
@@ -1966,7 +1892,7 @@ async function installS05PostApi(page: Page, manage = true) {
   };
 }
 
-test("S11 matching post burst refreshes the bounded feed without wrong-scope reads or reload", async ({
+test("matching post burst refreshes the bounded feed without wrong-scope reads or reload", async ({
   page,
 }) => {
   await page.clock.install();
@@ -2033,32 +1959,6 @@ test("S11 matching post burst refreshes the bounded feed without wrong-scope rea
   expect(api.writes).toHaveLength(0);
 });
 
-async function s05Capture(page: Page, name: string, anchor?: Locator) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  await hideDevOverlay(page);
-  await page.evaluate(() => document.fonts.ready);
-  for (const mode of ["light", "dark"] as const) {
-    await page.evaluate(applyAppearancePreferences, {
-      mode,
-      reduceMotion: true,
-    });
-    await captureOpenViewReview(page, `s05-${name}-${mode}`, {
-      beforeScreenshot: async () => {
-        if (anchor) {
-          await anchor.evaluate((element) =>
-            element.scrollIntoView({ block: "center", behavior: "instant" }),
-          );
-          await expect(anchor).toBeInViewport();
-        }
-        await expect(page.locator("html")).toHaveAttribute(
-          "data-motion",
-          "reduced",
-        );
-      },
-    });
-  }
-}
-
 async function openS05Drafts(page: Page) {
   await page.getByRole("button", { name: "More post actions" }).click();
   await page.getByRole("menuitem", { name: "Edit drafts" }).click();
@@ -2080,7 +1980,7 @@ const s05Draft = {
 };
 
 for (const dirty of [false, true]) {
-  test(`S11 newer selected post ${dirty ? "retains the complete dirty draft with a review notice" : "updates a clean draft"}`, async ({
+  test(`newer selected post ${dirty ? "retains the complete dirty draft with a review notice" : "updates a clean draft"}`, async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2149,7 +2049,6 @@ for (const dirty of [false, true]) {
       await expect(
         editor.getByRole("button", { name: "Save draft", exact: true }),
       ).toBeDisabled();
-      await s05Capture(page, "s11-dirty-post", notice);
     } else {
       await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
         "Remote working draft",
@@ -2170,7 +2069,7 @@ for (const dirty of [false, true]) {
   });
 }
 
-test("S11 post invalidation preserves the held Save owner while its feed updates", async ({
+test("post invalidation preserves the held Save owner while its feed updates", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
@@ -2231,7 +2130,7 @@ test("S11 post invalidation preserves the held Save owner while its feed updates
   }
 });
 
-test("S11 lifecycle updates its current list without losing a held Unpublish owner", async ({
+test("lifecycle updates its current list without losing a held Unpublish owner", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
@@ -2314,7 +2213,7 @@ test("S11 lifecycle updates its current list without losing a held Unpublish own
 });
 
 for (const phase of ["timer", "read"] as const) {
-  test(`S11 Board switch cancels the old ${phase} without refreshing or restoring its feed`, async ({
+  test(`Board switch cancels the old ${phase} without refreshing or restoring its feed`, async ({
     page,
   }, testInfo) => {
     const startedAt = Date.now();
@@ -2562,9 +2461,9 @@ for (const phase of ["timer", "read"] as const) {
   });
 }
 
-test.describe("S05 local post expiry", () => {
+test.describe("local post expiry", () => {
   test.use({ timezoneId: "Asia/Manila" });
-  test("S05 manager creates, reloads, edits and clears pin and local expiry", async ({
+  test("manager creates, reloads, edits and clears pin and local expiry", async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2605,11 +2504,6 @@ test.describe("S05 local post expiry", () => {
     await expect(
       reopened.getByLabel("Expires on", { exact: true }),
     ).toHaveValue("2035-06-02T12:30");
-    await s05Capture(
-      page,
-      "post-editor",
-      reopened.getByLabel("Expires on", { exact: true }),
-    );
     await reopened.getByRole("checkbox", { name: "Pin to top" }).uncheck();
     await reopened.getByLabel("Expires on", { exact: true }).fill("");
     await reopened
@@ -2626,7 +2520,7 @@ test.describe("S05 local post expiry", () => {
       reopened.getByLabel("Expires on", { exact: true }),
     ).toHaveValue("");
   });
-  test("S05 nonmanager preserves an existing pin while editing their own post", async ({
+  test("nonmanager preserves an existing pin while editing their own post", async ({
     page,
   }) => {
     const api = await installS05PostApi(page, false);
@@ -2650,7 +2544,7 @@ test.describe("S05 local post expiry", () => {
     expect(api.writes[0]?.body).not.toHaveProperty("expires_at");
   });
   for (const failure of [409, 503]) {
-    test(`S05 pin and expiry survive save refusal ${failure} and draft refresh`, async ({
+    test(`pin and expiry survive save refusal ${failure} and draft refresh`, async ({
       page,
     }) => {
       const api = await installS05PostApi(page);
@@ -2686,7 +2580,7 @@ test.describe("S05 local post expiry", () => {
       ).toHaveCount(0);
     });
   }
-  test("S05 schedule at expiry is refused and expired publication failure retains the draft", async ({
+  test("schedule at expiry is refused and expired publication failure retains the draft", async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2722,9 +2616,9 @@ test.describe("S05 local post expiry", () => {
   });
 });
 
-test.describe("S05 unavailable local expiry", () => {
+test.describe("unavailable local expiry", () => {
   test.use({ timezoneId: "America/New_York" });
-  test("S05 skipped local clock time has a linked error and sends no save", async ({
+  test("skipped local clock time has a linked error and sends no save", async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2754,7 +2648,7 @@ test.describe("S05 unavailable local expiry", () => {
   });
 });
 
-test("S05 source-returned expired publication shows expiry in the feed and reader", async ({
+test("source-returned expired publication shows expiry in the feed and reader", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
@@ -2767,7 +2661,6 @@ test("S05 source-returned expired publication shows expiry in the feed and reade
   });
   await expect(feed.getByText("Expired", { exact: true })).toBeVisible();
   await expect(feed.getByText(/Expired on.*Jun 2, 2035/)).toBeVisible();
-  await s05Capture(page, "expired-feed");
   await feed.getByRole("button", { name: "Open post", exact: true }).click();
   await expect(
     page.getByRole("dialog", { name: browserPost.title }),
@@ -2775,7 +2668,7 @@ test("S05 source-returned expired publication shows expiry in the feed and reade
 });
 
 for (const replacement of ["draft", "scheduled"] as const) {
-  test(`S05 manager unpublishes the displayed version with a ${replacement} replacement`, async ({
+  test(`manager unpublishes the displayed version with a ${replacement} replacement`, async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2800,7 +2693,6 @@ for (const replacement of ["draft", "scheduled"] as const) {
       exact: true,
     });
     await expect(confirmation).toContainText("scheduled replacement");
-    await s05Capture(page, "unpublish-confirmation");
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -2840,7 +2732,7 @@ for (const replacement of ["draft", "scheduled"] as const) {
   });
 }
 for (const failure of [409, 403, 503]) {
-  test(`S05 unpublish refusal ${failure} never claims success`, async ({
+  test(`unpublish refusal ${failure} never claims success`, async ({
     page,
   }) => {
     const api = await installS05PostApi(page);

@@ -135,7 +135,7 @@ const s26NamedBundle = {
   },
 };
 
-test("S26 real configuration download and import preserve the complete named normalized v3 bundle", async ({
+test("real configuration download and import preserve the complete named normalized v3 bundle", async ({
   page,
 }) => {
   await installOpenViewEventSource(page);

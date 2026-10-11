@@ -233,7 +233,7 @@ test("Profile personal regional time changes session display but not date-only o
   expect(api.people.get(profileUserA)?.expires_at).toBeNull();
 });
 
-test("S21 confirmed Profile Regional choices reach Access people and sessions without changing expiry inputs", async ({
+test("confirmed Profile Regional choices reach Access people and sessions without changing expiry inputs", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

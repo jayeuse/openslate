@@ -33,7 +33,7 @@ async function openMfa(page: Page) {
   });
 }
 
-test("12b: authoritative MFA grace shows its start and deadline while a fresh enforced status uses the existing gate", async ({
+test("authoritative MFA grace shows its start and deadline while a fresh enforced status uses the existing gate", async ({
   page,
 }) => {
   await page.clock.install({ time: new Date("2026-10-06T12:00:00Z") });
@@ -87,7 +87,7 @@ test("12b: authoritative MFA grace shows its start and deadline while a fresh en
   ).toHaveCount(0);
 });
 
-test("12b: a required account with no recorded episode has immediate enrollment and no invented dates", async ({
+test("a required account with no recorded episode has immediate enrollment and no invented dates", async ({
   page,
 }) => {
   await mockMfa(page, { required: true });
@@ -125,7 +125,7 @@ test("12b: a required account with no recorded episode has immediate enrollment 
 });
 
 for (const invalid of ["missing policy fact", "naive deadline"] as const) {
-  test(`12b: ${invalid} leaves MFA unavailable until a valid fresh Retry`, async ({
+  test(`${invalid} leaves MFA unavailable until a valid fresh Retry`, async ({
     page,
   }) => {
     await mockManageSecurity(page);

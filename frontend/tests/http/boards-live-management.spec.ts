@@ -1,9 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import { ApiError } from "../../src/lib/api";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -23,7 +21,6 @@ import {
 } from "../../src/components/systems/boards/components/server-backed-board-management";
 
 import { group as accessGroupFixture } from "../isolated/access/fixtures";
-import { hideDevOverlay } from "./helpers/test-styles";
 import { isEventStream } from "./helpers/test";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
@@ -817,14 +814,6 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
   await expect(
     manage.getByRole("button", { name: "Save groups", exact: true }),
   ).toBeEnabled();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-board-groups-${mode}`);
-    }
-  }
 });
 
 const controlFileId = "00000000-0000-4000-8000-000000000041";
@@ -995,7 +984,7 @@ async function installFileManagement(page: Page, startArchived = false) {
   };
 }
 
-test("S11 another Board invalidation refreshes the current bounded selector search in place", async ({
+test("another Board invalidation refreshes the current bounded selector search in place", async ({
   page,
 }) => {
   await installFileManagement(page);
@@ -1062,7 +1051,7 @@ test("S11 another Board invalidation refreshes the current bounded selector sear
   await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
 });
 
-test("S11 live unattached-file list and Board metadata retain the management draft", async ({
+test("live unattached-file list and Board metadata retain the management draft", async ({
   page,
 }) => {
   const api = await installFileManagement(page);
@@ -1106,21 +1095,11 @@ test("S11 live unattached-file list and Board metadata retain the management dra
 });
 
 for (const changed of [false, true]) {
-  test(`S11 fresh file read ${changed ? "invalidates a held preview after remote purge" : "preserves an unchanged review and gates confirmation while loading"}`, async ({
+  test(`fresh file read ${changed ? "invalidates a held preview after remote purge" : "preserves an unchanged review and gates confirmation while loading"}`, async ({
     page,
   }) => {
     const api = await installFileManagement(page);
     api.archiveRemote();
-    if (process.env.OPENVIEW_CAPTURE_DIR)
-      await page.route("**/api/users/*/preferences", (route) =>
-        route.fulfill({
-          json: {
-            user_id: new URL(route.request().url()).pathname.split("/")[3],
-            theme: "light",
-            appearance: { motion: "reduce", keyboard_shortcuts: true },
-          },
-        }),
-      );
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -1172,26 +1151,6 @@ for (const changed of [false, true]) {
         await review
           .getByLabel("Type the file name")
           .fill(controlFile.filename);
-        if (process.env.OPENVIEW_CAPTURE_DIR) {
-          await hideDevOverlay(page);
-          await page.evaluate(() => document.fonts.ready);
-          for (const mode of ["light", "dark"] as const) {
-            await page.evaluate(applyAppearancePreferences, {
-              mode,
-              reduceMotion: true,
-            });
-            await captureOpenViewReview(page, `s11-file-review-${mode}`, {
-              beforeScreenshot: async () => {
-                await expect(review).toBeInViewport();
-                expect(
-                  await page.evaluate(
-                    () => document.documentElement.scrollWidth <= innerWidth,
-                  ),
-                ).toBe(true);
-              },
-            });
-          }
-        }
         await review
           .getByLabel("Administrator password")
           .fill("synthetic-file-password");
@@ -1228,7 +1187,7 @@ for (const changed of [false, true]) {
 }
 
 for (const startArchived of [false, true]) {
-  test(`S04 owned unattached file can be archived and purged before its ${startArchived ? "restored" : "active"} Board`, async ({
+  test(`owned unattached file can be archived and purged before its ${startArchived ? "restored" : "active"} Board`, async ({
     page,
   }) => {
     const api = await installFileManagement(page, startArchived);
@@ -1326,7 +1285,7 @@ for (const startArchived of [false, true]) {
     expect(api.fileReadsWhileArchived).toBe(0);
   });
 }
-test("S04 correction: obsolete file preview cannot unlock a fresh Board review after real refresh", async ({
+test("obsolete file preview cannot unlock a fresh Board review after real refresh", async ({
   page,
 }) => {
   await installFileManagement(page);

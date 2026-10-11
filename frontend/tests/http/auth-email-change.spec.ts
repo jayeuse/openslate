@@ -46,7 +46,7 @@ const partial = (page: Page) =>
   page.getByRole("status").filter({ hasText: /other.*email|both.*address/i });
 const landingAlert = (page: Page) => page.getByRole("main").getByRole("alert");
 
-test("S24 email request refuses a wrong password without refresh, replay or changed identity", async ({
+test("email request refuses a wrong password without refresh, replay or changed identity", async ({
   page,
 }) => {
   await installProfileApi(page);
@@ -71,7 +71,7 @@ test("S24 email request refuses a wrong password without refresh, replay or chan
   ).toBeVisible();
 });
 
-test("S24 unknown email request outcome stays truthful and never automatically resends", async ({
+test("unknown email request outcome stays truthful and never automatically resends", async ({
   page,
 }) => {
   await installProfileApi(page);
@@ -99,7 +99,7 @@ test("S24 unknown email request outcome stays truthful and never automatically r
   await expectNoEmailSecrets(page);
 });
 
-test("S24 an old account's delayed request cannot publish success into another Profile", async ({
+test("an old account's delayed request cannot publish success into another Profile", async ({
   page,
 }) => {
   const profile = await installProfileApi(page);
@@ -136,7 +136,7 @@ test("S24 an old account's delayed request cannot publish success into another P
   }
 });
 
-test("S24 same-account reverification discards a delayed request without leaving the form stuck", async ({
+test("same-account reverification discards a delayed request without leaving the form stuck", async ({
   page,
 }) => {
   const profile = await installProfileApi(page);
@@ -175,7 +175,7 @@ test("S24 same-account reverification discards a delayed request without leaving
 });
 
 for (const first of ["current", "new"] as const) {
-  test(`S24 ${first}-address first acknowledgment has no identity/cookie claim; the other link enters protected admission`, async ({
+  test(`${first}-address first acknowledgment has no identity/cookie claim; the other link enters protected admission`, async ({
     page,
     context,
   }) => {
@@ -232,7 +232,7 @@ for (const first of ["current", "new"] as const) {
 }
 
 for (const credential of ["access", "refresh"] as const) {
-  test(`S24 ${credential} cookie cannot silently replace accounts; confirmation resumes only after explicit logout`, async ({
+  test(`${credential} cookie cannot silently replace accounts; confirmation resumes only after explicit logout`, async ({
     page,
     context,
     baseURL,
@@ -287,7 +287,7 @@ for (const credential of ["access", "refresh"] as const) {
   });
 }
 
-test("S24 final confirmation enters the incumbent MFA continuation before private Profile", async ({
+test("final confirmation enters the incumbent MFA continuation before private Profile", async ({
   page,
 }) => {
   const profile = await installProfileApi(page, { session: false, mfa: false });
@@ -335,7 +335,7 @@ test("S24 final confirmation enters the incumbent MFA continuation before privat
   }
 });
 
-test("S24 provider-confirmed local conflict is application-incomplete, not rollback or authentication", async ({
+test("provider-confirmed local conflict is application-incomplete, not rollback or authentication", async ({
   page,
   context,
 }) => {
@@ -380,7 +380,7 @@ for (const [outcome, status] of [
   ["unauthorized", 401],
   ["unavailable", 503],
 ] as const) {
-  test(`S24 ${outcome} confirmation is not refreshed or automatically replayed and never renders private proof`, async ({
+  test(`${outcome} confirmation is not refreshed or automatically replayed and never renders private proof`, async ({
     page,
   }) => {
     const api = await installEmailChangeApi(page, { signedOut: true });
@@ -399,7 +399,7 @@ for (const [outcome, status] of [
   });
 }
 
-test("S24 replay of an acknowledged first link cannot count as the other address", async ({
+test("replay of an acknowledged first link cannot count as the other address", async ({
   page,
 }) => {
   const api = await installEmailChangeApi(page, { signedOut: true });
@@ -427,7 +427,7 @@ for (const [kind, suffix] of [
   ],
   ["malformed", "#token_hash=not-a-provider-hash&type=email_change"],
 ] as const) {
-  test(`S24 ${kind} email link is scrubbed and cannot issue a confirmation request`, async ({
+  test(`${kind} email link is scrubbed and cannot issue a confirmation request`, async ({
     page,
   }) => {
     const api = await installEmailChangeApi(page, { signedOut: true });
@@ -441,7 +441,7 @@ for (const [kind, suffix] of [
   });
 }
 
-test("S24 a scrubbed link survives in memory only, not a page reload", async ({
+test("a scrubbed link survives in memory only, not a page reload", async ({
   page,
 }) => {
   const api = await installEmailChangeApi(page, { signedOut: true });
@@ -473,7 +473,7 @@ for (const [kind, body] of [
     { authenticated: true, confirmation_required: true, setup_required: false },
   ],
 ] as const) {
-  test(`S24 a ${kind} partial/full response cannot publish confirmation success`, async ({
+  test(`a ${kind} partial/full response cannot publish confirmation success`, async ({
     page,
   }) => {
     const api = await installEmailChangeApi(page, { signedOut: true });
@@ -490,7 +490,7 @@ for (const [kind, body] of [
   });
 }
 
-test("S24 a source replaced during confirmation discards the delayed result and waits for the new explicit action", async ({
+test("a source replaced during confirmation discards the delayed result and waits for the new explicit action", async ({
   page,
 }) => {
   const api = await installEmailChangeApi(page, { signedOut: true });
@@ -521,7 +521,7 @@ test("S24 a source replaced during confirmation discards the delayed result and 
   }
 });
 
-test("S24 email surfaces eight-image acceptance round", async ({
+test("email surfaces eight-image acceptance round", async ({
   page,
 }, testInfo) => {
   test.skip(

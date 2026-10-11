@@ -44,7 +44,7 @@ async function details(page: Page, event: string) {
   });
 }
 
-test("S24 email request and confirmed admission events describe their distinct effects", async ({
+test("email request and confirmed admission events describe their distinct effects", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -167,7 +167,7 @@ test("Events mixed nullable feed and details explain representative and partial 
   expect(consoleErrors).toEqual([]);
 });
 
-test("S21 security event personal display preserves UTC diagnostics and workspace filter bounds", async ({
+test("security event personal display preserves UTC diagnostics and workspace filter bounds", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -661,7 +661,7 @@ for (const role of ["member", "guest", "manager"] as const) {
   });
 }
 
-test("S09: Access security links to Audit through the existing draft guard", async ({
+test("Access security links to Audit through the existing draft guard", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1065,7 +1065,7 @@ for (const mode of ["light", "dark"] as const) {
   });
 }
 
-test("13b: Events names offpage actors with bounded ID lookup without eager pages", async ({
+test("Events names offpage actors with bounded ID lookup without eager pages", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1123,7 +1123,7 @@ async function mockAuditHistory(page: Page) {
   );
 }
 
-test("S09: Audit exposes Security events only to verified administrators", async ({
+test("Audit exposes Security events only to verified administrators", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1153,7 +1153,7 @@ test("S09: Audit exposes Security events only to verified administrators", async
   expect(state.security.writes).toEqual([]);
 });
 
-test("S09: Audit awaits a current-account role and refuses failed or mismatched identity", async ({
+test("Audit awaits a current-account role and refuses failed or mismatched identity", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1432,7 +1432,7 @@ const emittedSentenceCases: {
   },
 ];
 
-test("S09: emitted event sentences use recorded facts without claiming unfinished work", async ({
+test("emitted event sentences use recorded facts without claiming unfinished work", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1469,7 +1469,7 @@ test("S09: emitted event sentences use recorded facts without claiming unfinishe
   expect(state.security.writes).toEqual([]);
 });
 
-test("S09: missing and malformed sentence facts keep non-success outcomes truthful", async ({
+test("missing and malformed sentence facts keep non-success outcomes truthful", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1549,7 +1549,7 @@ test("S09: missing and malformed sentence facts keep non-success outcomes truthf
   expect(state.commands).toEqual([]);
 });
 
-test("S09: role loss closes a held detail and never re-admits cached events", async ({
+test("role loss closes a held detail and never re-admits cached events", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1585,7 +1585,7 @@ test("S09: role loss closes a held detail and never re-admits cached events", as
   }
 });
 
-test("S09: the feed's own Retry starts a new session-recheck cycle without clearing other privileged refusals", async ({
+test("the feed's own Retry starts a new session-recheck cycle without clearing other privileged refusals", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
@@ -1638,7 +1638,7 @@ for (const [width, height] of [
   [390, 844],
 ] as const) {
   for (const mode of ["light", "dark"] as const) {
-    test(`S09: capture Access and Audit at ${width}x${height} ${mode}`, async ({
+    test(`Access security and Audit events render at ${width}x${height} in ${mode} theme without writes or page errors`, async ({
       page,
     }, testInfo) => {
       await page.setViewportSize({ width, height });

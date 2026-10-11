@@ -1564,7 +1564,7 @@ test("Audit export refuses more than 10000 rows and exports the header after fil
   ).toBeVisible();
 });
 
-test("S08 Audit option search finds actors outside the capped first result and preserves selection", async ({
+test("Audit option search finds actors outside the capped first result and preserves selection", async ({
   page,
 }) => {
   const api = createAuditRoute(makeAuditLogs());
