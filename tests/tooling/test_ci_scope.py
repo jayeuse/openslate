@@ -105,6 +105,13 @@ class CiScopeTests(unittest.TestCase):
                 self.assertTrue(scope.decisions["server_image"].run)
                 self.assertFalse(scope.decisions["frontend"].run)
 
+    def test_node_version_pin_selects_frontend_and_server_image_only(self):
+        scope = ci_scope.classify_paths([".node-version"], base_ref="base")
+        self.assertTrue(scope.decisions["frontend"].run)
+        self.assertTrue(scope.decisions["server_image"].run)
+        self.assertFalse(scope.decisions["backend"].run)
+        self.assertIn(".node-version", scope.decisions["frontend"].reason)
+
     def test_shared_docker_context_rebuilds_the_unified_server_image(self):
         scope = ci_scope.classify_paths([".dockerignore"], base_ref="base")
         self.assertTrue(scope.decisions["server_image"].run)

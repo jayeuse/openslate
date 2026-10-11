@@ -23,6 +23,8 @@ GATE_NAMES: Final[tuple[str, ...]] = (
 )
 
 _FRONTEND_PREFIX = "frontend/"
+# Root files that only the frontend build reads (CI and the server image use the pin).
+_FRONTEND_ROOT_FILES: Final[frozenset[str]] = frozenset({".node-version"})
 _BACKEND_PREFIX = "backend/"
 _BACKEND_RUNTIME_PREFIX = "infra/supabase/"
 _CONTRACTS_PREFIX = "contracts/"
@@ -185,6 +187,7 @@ def _is_known_path(path: str) -> bool:
             )
         )
         or path in _SERVER_IMAGE_PATHS
+        or path in _FRONTEND_ROOT_FILES
         or path in _KNOWN_ROOT_FILES
     )
 
@@ -237,7 +240,11 @@ def classify_paths(paths: list[str] | tuple[str, ...], base_ref: str) -> ChangeS
             },
         )
 
-    frontend_paths = tuple(path for path in functional if path.startswith(_FRONTEND_PREFIX))
+    frontend_paths = tuple(
+        path
+        for path in functional
+        if path.startswith(_FRONTEND_PREFIX) or path in _FRONTEND_ROOT_FILES
+    )
     # Shared contract data (for example the OpenAPI snapshot) is read by frontend tests.
     contract_paths = tuple(path for path in functional if path.startswith(_CONTRACTS_PREFIX))
     frontend_route_paths = tuple(

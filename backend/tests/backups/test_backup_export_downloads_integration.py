@@ -89,7 +89,7 @@ def ready_export(export_world, tmp_path, monkeypatch):
         )
 
     world.admit = admit
-    yield world
+    return world
 
 
 def _stored(world):

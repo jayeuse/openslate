@@ -93,7 +93,8 @@ def world(integration_owner_db, request):
                 db.delete(row)
             db.commit()
 
-    request.addfinalizer(cleanup)
+    # Registered before add_users() so a failed setup still cleans up.
+    request.addfinalizer(cleanup)  # noqa: PT021
     add_users()
     return SimpleNamespace(
         owner=owner,

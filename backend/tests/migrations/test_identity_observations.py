@@ -322,7 +322,8 @@ def test_downgrade_cannot_drop_a_fact_committed_after_its_initial_read(
                 module.downgrade()
                 return "ddl_completed"
             except RuntimeError as error:
-                assert "Cannot discard captured" in str(error)
+                # Either race outcome is valid; the test classifies which one happened.
+                assert "Cannot discard captured" in str(error)  # noqa: PT017
                 return "refused_captured_fact"
             finally:
                 # Roll back this actual DDL so only the owned test data need cleanup.
@@ -364,7 +365,7 @@ def test_downgrade_cannot_drop_a_fact_committed_after_its_initial_read(
                         )
                 outcome = "fact_committed"
             except OperationalError as error:
-                assert error.orig.sqlstate == "55P03"
+                assert error.orig.sqlstate == "55P03"  # noqa: PT017
                 outcome = "writer_refused_by_table_lock"
             finally:
                 writer_finished.set()

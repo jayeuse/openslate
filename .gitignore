@@ -67,3 +67,5 @@ next-env.d.ts
 
 # Supabase CLI working state (can hold local secrets); this project runs its own stack in infra/supabase.
 supabase/
+# mutmut working copy
+backend/mutants/

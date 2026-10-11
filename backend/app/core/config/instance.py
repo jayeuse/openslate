@@ -126,7 +126,9 @@ def load_instance_target(process: Mapping[str, str] | None = None) -> InstanceTa
 
 
 def test_manifest_authorizes_process(
-    database_url: str, expected_user: str, process: Mapping[str, str] | None = None
+    database_url: str,
+    expected_user: str,
+    process: Mapping[str, str] | None = None,  # noqa: PT028 - runtime guard, not a test
 ) -> bool:
     """Require a live runner-owned disposable database for this exact process."""
     values = os.environ if process is None else process

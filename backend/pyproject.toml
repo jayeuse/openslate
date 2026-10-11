@@ -26,6 +26,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "mutmut>=3.8.0",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
@@ -47,12 +48,30 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["integration: requires a PostgreSQL test database"]
 
+[tool.mutmut]
+# Mutation testing is the safety net for test consolidation (tdd-workflow
+# references/consolidation.md). It is never part of the push gate. Scope each
+# run to the modules under review with `only_mutate`, never the whole app.
+source_paths = ["app/"]
+also_copy = ["operations/", "migrations/", "alembic.ini"]
+pytest_add_cli_args = ["--no-cov", "-q"]
+# Fork children would inherit pooled database connections.
+process_isolation = "forkserver"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "PT"]
+# PT006/PT007/PT018 are layout preferences. PT011/PT012 are real test-quality
+# findings deferred to item 10 of the Tier 2.5 plan (docs/plans/test-suite-tier-2-5.md);
+# remove them from this list once their existing sites are fixed.
+ignore = ["PT006", "PT007", "PT011", "PT012", "PT018"]
+
+[tool.ruff.lint.per-file-ignores]
+# Repository tooling tests use unittest on purpose (stdlib-only runner).
+"../tests/tooling/**" = ["PT009", "PT027"]
 
 [tool.mypy]
 python_version = "3.12"

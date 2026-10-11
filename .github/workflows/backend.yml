@@ -45,7 +45,8 @@ jobs:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@v10.1.0
         with:
-          version: latest
+          # Match the development machine (uv 0.12); bump both together.
+          version: "0.12.x"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
@@ -85,7 +86,8 @@ jobs:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@v10.1.0
         with:
-          version: latest
+          # Match the development machine (uv 0.12); bump both together.
+          version: "0.12.x"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
@@ -147,7 +149,8 @@ jobs:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@v10.1.0
         with:
-          version: latest
+          # Match the development machine (uv 0.12); bump both together.
+          version: "0.12.x"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
@@ -191,7 +194,8 @@ jobs:
           python-version: "3.14"
       - uses: astral-sh/setup-uv@v10.1.0
         with:
-          version: latest
+          # Match the development machine (uv 0.12); bump both together.
+          version: "0.12.x"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked

@@ -77,23 +77,26 @@ export default defineConfig({
   testDir: "./tests",
   outputDir: "test-results/playwright",
   fullyParallel: true,
-  // CI parallelism comes from shards: one worker per 2-vCPU runner keeps the
-  // browser from starving beside `next dev`. Three local workers reduce
-  // measured memory pressure on the 16 GiB development machine; CLI --workers
-  // still overrides.
+  // CI parallelism comes from shards: one worker per shard keeps the browser
+  // from starving beside `next dev` (measured on the old 2-vCPU runners; public
+  // repositories now get 4 vCPU, so re-measure before changing it). Three local
+  // workers reduce measured memory pressure on the 16 GiB development machine;
+  // CLI --workers still overrides.
   workers: isCI ? 1 : Math.min(3, availableParallelism()),
   timeout: 30_000,
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
   retries: 0,
   reporter: "line",
-  // CI runs in UTC; pin the browser zone so a local run cannot pass only
-  // because this machine's zone matches a test fixture.
+  // CI runs in UTC and en-US; pin both so a local run cannot pass only
+  // because this machine's zone or language matches a test fixture.
   use: {
     baseURL,
     timezoneId: "UTC",
-    // CI uploads test-results on failure; a trace shows the page state there.
-    trace: isCI ? "retain-on-failure" : "off",
+    locale: "en-US",
+    // Keep a trace for every failure, locally and in CI, so a failure that
+    // happens on one side can be read on the other.
+    trace: "retain-on-failure",
   },
   projects: [
     ...(testLayer === "all" || testLayer === "isolated"

@@ -1,4 +1,3 @@
-from collections.abc import Generator
 from datetime import UTC, datetime
 
 import pytest
@@ -13,7 +12,7 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 
 
 @pytest.fixture
-def lifecycle_graph(integration_db: Session) -> Generator[dict[str, object], None, None]:
+def lifecycle_graph(integration_db: Session) -> dict[str, object]:
     token = str(uuid7())
     department_x = Department(department_name=f"Lifecycle X {token}")
     department_y = Department(department_name=f"Lifecycle Y {token}")
@@ -108,7 +107,7 @@ def lifecycle_graph(integration_db: Session) -> Generator[dict[str, object], Non
         "unrelated_edge": unrelated_edge,
         "external_unrelated_edge": external_unrelated_edge,
     }
-    yield graph
+    return graph
 
 
 def _item(graph: dict[str, object], key: str) -> object:
@@ -116,7 +115,7 @@ def _item(graph: dict[str, object], key: str) -> object:
 
 
 @pytest.fixture
-def primitive_field_graph(integration_db: Session) -> Generator[dict[str, object], None, None]:
+def primitive_field_graph(integration_db: Session) -> dict[str, object]:
     token = str(uuid7())
     department = Department(department_name=f"Primitive purge {token}")
     module = Module(department=department, module_name=f"Primitive module {token}")
@@ -142,7 +141,7 @@ def primitive_field_graph(integration_db: Session) -> Generator[dict[str, object
         "active": active,
         "archived": archived,
     }
-    yield graph
+    return graph
 
 
 def _close_rows(*rows: object) -> None:
