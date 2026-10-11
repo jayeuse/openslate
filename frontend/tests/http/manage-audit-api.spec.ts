@@ -1404,6 +1404,9 @@ test("Audit export uses the last settled search while a newer search is debounci
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("search"))
     .toBe("delete");
+  // Hold time still: the newer search must stay inside its 300 ms debounce
+  // until the export opens, however slowly the browser runs.
+  await page.clock.pauseAt(new Date("2026-10-01T09:01:00Z"));
   await search.fill("assigned");
   await page.getByRole("button", { name: "Export audit preview" }).click();
   const preview = page.getByRole("dialog", {

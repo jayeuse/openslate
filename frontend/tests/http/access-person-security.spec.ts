@@ -583,8 +583,13 @@ test("known self revocation signs out after a partial email outcome", async ({
   page,
 }) => {
   const api = await setup(page);
-  api.on("POST", `/api/users/${ids.rosa}/recovery`, (route) =>
-    route.fulfill({
+  api.on("POST", `/api/users/${ids.rosa}/recovery`, (route) => {
+    // A committed local revocation ended this session, so the server reports
+    // it signed out; /login would otherwise return a live session to work.
+    api.on("GET", "/api/auth/session", (session) =>
+      session.fulfill({ json: { authenticated: false } }),
+    );
+    return route.fulfill({
       status: 503,
       json: {
         detail: {
@@ -596,8 +601,8 @@ test("known self revocation signs out after a partial email outcome", async ({
           message: "Private diagnostic",
         },
       },
-    }),
-  );
+    });
+  });
   await open(page, ids.rosa, "Rosa Reyes");
   await confirmRecovery(page, true);
   await expect(page).toHaveURL(/\/login$/);

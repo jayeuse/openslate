@@ -403,6 +403,11 @@ for (const terminal of ["purged", "deleting", "archived"] as const) {
       files.getByRole("button", { name: "Check status" }),
     ).toBeVisible();
     await expect(files.getByLabel("Upload file")).toBeDisabled();
+    // The upload reads the file back once itself; change the server state only
+    // after that readback has settled and Check status can be clicked.
+    await expect(
+      files.getByRole("button", { name: "Check status" }),
+    ).toBeEnabled();
     const pending = api.files.find((file) => file.id === pendingAttachmentId)!;
     if (terminal === "archived") pending.is_deleted = true;
     else pending.state = terminal;
@@ -6165,7 +6170,11 @@ test("a Comms example record link shows a notice and returns to live Views", asy
   await expect(views).toHaveAttribute("href", "/openview?section=views");
   await views.click();
 
-  await expect(page).toHaveURL(/\/openview\?section=views$/);
+  // Live Views then selects its module; assert the settled URL, not the moment
+  // before that selection is written.
+  await expect(page).toHaveURL(
+    new RegExp(`/openview\\?section=views&module=${moduleId}$`),
+  );
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
