@@ -12,6 +12,7 @@ from operations.sample.client import SampleClient, SampleWriteOutcomeUnknown
 from operations.sample.population import activity as sample_activity
 from operations.sample.population.activity import _link, _RuleWaits
 from operations.sample.population.run import SamplePopulationError
+from tests.operations.sample.sample_datasets import sample_dataset
 
 ORIGIN = "https://workspace.example.test"
 FIELD = {"id": "00000000-0000-4000-8000-00000000f001", "relationship_multiple_targets": True}
@@ -129,13 +130,10 @@ def test_repeated_automation_timeouts_stop_the_run(
 
 
 def test_records_created_early_in_their_life_cycle_wait_for_create_automations() -> None:
-    from datetime import date
 
     from operations.sample.history import plan_history, status_label
     from operations.sample.population.activity import create_data, rule_candidates
-    from operations.sample.scenario import build_dataset
-
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30))
+    dataset = sample_dataset()
     histories = plan_history(dataset)
     records = {record.logical_id: record for record in dataset.records}
     total_id = dataset.field_ids["sales_orders"]["total"]

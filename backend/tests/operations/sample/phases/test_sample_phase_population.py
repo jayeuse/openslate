@@ -1,22 +1,20 @@
 """Offline phase orchestration must persist progress and stop at a failed write."""
 
 import copy
-from datetime import date
 
 import pytest
 
 from operations.sample.packs.phase_types import PhaseAction
-from operations.sample.packs.registry import get_pack
 from operations.sample.phases import population as workflow
 from operations.sample.phases.actions import SamplePhaseActionError
 from operations.sample.phases.plan import phase_action_to_manifest, plan_phases
-from operations.sample.scenario import build_dataset
 from operations.sample.verification.core import failure_report
 from operations.seed_sample_data import build_plan_summary
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
 def test_control_journeys_run_before_admin_phases_and_save_separate_evidence(monkeypatch):
-    dataset = build_dataset("small", 42, date(2026, 9, 30))
+    dataset = sample_dataset()
     control = PhaseAction(
         key="control:records_query",
         phase="reorganization",
@@ -67,7 +65,7 @@ def test_control_journeys_run_before_admin_phases_and_save_separate_evidence(mon
 def test_phase_progress_is_saved_before_each_substep_and_never_continues_after_failure(
     monkeypatch, fail_second
 ):
-    dataset = build_dataset("small", 42, date(2026, 9, 30))
+    dataset = sample_dataset()
     actions = plan_phases(dataset)[:2]
     manifest = {
         "phase_plan": [phase_action_to_manifest(action) for action in actions],
@@ -119,7 +117,7 @@ def test_phase_progress_is_saved_before_each_substep_and_never_continues_after_f
 
 @pytest.mark.parametrize("pack_key", ("harbor", "school"))
 def test_offline_summary_includes_recorded_phase_actors_targets_and_refusals(pack_key):
-    dataset = build_dataset("small", 42, date(2026, 9, 30), organization=get_pack(pack_key))
+    dataset = sample_dataset(pack=pack_key)
     summary = build_plan_summary(dataset)
     assert summary["phase_plan"] == [
         phase_action_to_manifest(action) for action in plan_phases(dataset)

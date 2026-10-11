@@ -8,11 +8,11 @@ from functools import cache
 from operations.sample.blueprint import edge_child_ids
 from operations.sample.episodes import SampleSession, plan_sessions, record_parents
 from operations.sample.scenario import SampleDataset, build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
-@cache
 def _dataset(profile: str) -> SampleDataset:
-    return build_dataset(profile, seed=42, anchor_date=date(2026, 9, 30))  # type: ignore[arg-type]
+    return sample_dataset(profile)
 
 
 @cache

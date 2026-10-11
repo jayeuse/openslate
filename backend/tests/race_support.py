@@ -3,15 +3,16 @@
 Race tests run two real HTTP requests on their own connections. ``StatementPause`` holds
 the first statement that starts with a prefix until the test releases it; the test then
 starts the competing request and ``wait_until_blocked_by`` waits for PostgreSQL to show
-it waiting on a lock that the held connection owns. ``WAIT`` is a hang guard, far above
-loaded-machine latency; no test asserts on elapsed time.
+it waiting on a lock that the held connection owns; ``wait_until_waiting`` watches one
+known waiter instead. ``WAIT`` is a hang guard, far above loaded-machine latency; no test
+asserts on elapsed time.
 """
 
 from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from sqlalchemy import event, text
@@ -88,3 +89,30 @@ def wait_until_blocked_by(observer: Engine, holder_pid: int) -> int:
             return int(waiting)
         threading.Event().wait(0.01)
     raise AssertionError("the competing real request never blocked on the holder")
+
+
+def wait_until_waiting(
+    observer: Engine,
+    waiter_pids: Sequence[int],
+    *,
+    wait: float = WAIT,
+    while_running: threading.Thread | None = None,
+) -> bool:
+    """Return whether the backend ``waiter_pids[0]`` waits for a lock within ``wait``.
+
+    The waiting thread appends its backend pid to ``waiter_pids`` once it has a connection.
+    The poll also stops when ``while_running`` finishes, for a waiter whose own lock
+    timeout may end its wait first. The caller asserts the result with its own message.
+    """
+
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and (while_running is None or while_running.is_alive()):
+        if waiter_pids:
+            with observer.connect() as connection:
+                if connection.scalar(
+                    text("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = :pid AND NOT granted)"),
+                    {"pid": waiter_pids[0]},
+                ):
+                    return True
+        threading.Event().wait(0.01)
+    return False

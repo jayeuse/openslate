@@ -19,13 +19,13 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.core.middleware.request_context import get_request_context
-from app.main import create_app
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.designs.models import SandboxDocument, SandboxVersion
 from app.systems.sandbox.designs.service import _append_version, create_version, read_document
 from tests.conftest import guarded_create_engine
 from tests.rbac.support import make_user
+from tests.route_app_support import route_app
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +59,7 @@ def prune_world():
             )
             yield db
 
-    app = create_app()
+    app = route_app()
     app.dependency_overrides[get_db] = database
     app.dependency_overrides[get_current_user] = lambda: actor
     try:

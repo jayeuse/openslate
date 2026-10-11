@@ -7,9 +7,9 @@ from datetime import date
 import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
-from operations.sample.packs import get_pack
 from operations.sample.packs.school.links import student_index
-from operations.sample.scenario import SampleDataset, build_dataset
+from operations.sample.scenario import SampleDataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 _HARBOR_CROSS_DEPARTMENT = {
     "site_customer",
@@ -60,7 +60,7 @@ def _cross_department_keys(dataset: SampleDataset) -> set[str]:
 
 
 def test_relationship_definitions_and_edges_cross_departments_only_for_named_links() -> None:
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 29))
+    dataset = sample_dataset("small", 42, date(2026, 9, 29))
     document = SandboxDocument.model_validate(dataset.document)
     record_by_id = {record.logical_id: record for record in dataset.records}
     specs = {spec.key: spec for spec in dataset.organization.catalog.relationships}
@@ -101,7 +101,7 @@ def test_relationship_definitions_and_edges_cross_departments_only_for_named_lin
 
 @pytest.mark.parametrize("seed", [42, 7])
 def test_cross_department_business_links_name_the_records_the_codes_named(seed: int) -> None:
-    dataset = build_dataset("small", seed=seed, anchor_date=date(2026, 9, 29))
+    dataset = sample_dataset("small", seed, date(2026, 9, 29))
     records = {record.logical_id: record for record in dataset.records}
     counts = dataset.module_counts
     link_cases: tuple[tuple[str, str, str, Callable[[int], tuple[int, ...]]], ...] = (
@@ -170,9 +170,7 @@ def test_cross_department_business_links_name_the_records_the_codes_named(seed: 
 
 
 def test_school_links_across_departments_and_keeps_in_department_codes_as_text() -> None:
-    dataset = build_dataset(
-        "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack("school")
-    )
+    dataset = sample_dataset(pack="school")
     records = {record.logical_id: record for record in dataset.records}
     counts = dataset.module_counts
     cross = _cross_department_keys(dataset)

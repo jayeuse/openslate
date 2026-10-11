@@ -5,7 +5,7 @@ import threading
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Engine, create_engine, delete, event, select, text
+from sqlalchemy import Engine, create_engine, delete, select
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
@@ -21,6 +21,7 @@ from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from app.systems.sandbox.relationships.service import create_relationship
 from tests.postgres_runtime import assert_runner_database_url
+from tests.race_support import WAIT, StatementPause, wait_until_waiting
 from tests.record_versions import record_version
 from tests.relationships_integration.relationships_integration_support import _set_request
 from tests.sandbox_record_triggers.support import (
@@ -31,19 +32,6 @@ from tests.sandbox_record_triggers.support import (
 )
 
 pytestmark = pytest.mark.integration
-
-_WAIT = 10
-
-
-def _waiting_for_a_lock(engine: Engine, pid: int) -> bool:
-    with engine.connect() as connection:
-        return bool(
-            connection.scalar(
-                text("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = :pid AND NOT granted)"),
-                {"pid": pid},
-            )
-        )
-
 
 def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
     # School Standard 47ae8ca0 had 2 deadlocks. The worker locks the module's fields and
@@ -59,7 +47,7 @@ def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
     worker_engine = create_engine(database_url, pool_size=1, max_overflow=0)
     cleanup: tuple[UUID, UUID, UUID] | None = None
     link_ids: dict[str, UUID] = {}
-    release_worker = threading.Event()
+    pause: StatementPause | None = None
     threads: list[threading.Thread] = []
     try:
         with AuditSession(bind=engine, expire_on_commit=False) as db:
@@ -122,19 +110,9 @@ def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
             db.commit()
             assert len(claims) == 1
 
-        worker_holds_locks = threading.Event()
         link_pid: list[int] = []
         outcomes: dict[str, object] = {}
-
-        def pause_before_finishing_the_event(
-            _connection: object, _cursor: object, statement: str, *_args: object
-        ) -> None:
-            if statement.lstrip().upper().startswith("UPDATE RECORD_TRIGGER_EVENTS SET STATE"):
-                if not worker_holds_locks.is_set():
-                    worker_holds_locks.set()
-                    release_worker.wait(_WAIT)
-
-        event.listen(worker_engine, "before_cursor_execute", pause_before_finishing_the_event)
+        pause = StatementPause(worker_engine, "UPDATE RECORD_TRIGGER_EVENTS SET STATE")
 
         def run_worker() -> None:
             with AuditSession(bind=worker_engine) as session:
@@ -160,21 +138,15 @@ def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
         worker = threading.Thread(target=run_worker)
         threads.append(worker)
         worker.start()
-        assert worker_holds_locks.wait(_WAIT), "the worker never finished its event"
+        assert pause.paused.wait(WAIT), "the worker never finished its event"
         link = threading.Thread(target=write_link)
         threads.append(link)
         link.start()
         # Release the worker only once the link write is blocked behind one of its locks.
-        deadline = threading.Event()
-        timer = threading.Timer(_WAIT, deadline.set)
-        timer.start()
-        while not deadline.is_set() and not (link_pid and _waiting_for_a_lock(engine, link_pid[0])):
-            deadline.wait(0.01)
-        timer.cancel()
-        assert not deadline.is_set(), f"the link write never waited: {outcomes!r}"
-        release_worker.set()
+        assert wait_until_waiting(engine, link_pid), f"the link write never waited: {outcomes!r}"
+        pause.release.set()
         for thread in threads:
-            thread.join(_WAIT)
+            thread.join(WAIT)
 
         assert outcomes["worker"] is True, f"worker failed: {outcomes['worker']!r}"
         link_outcome = outcomes["link"]
@@ -191,9 +163,12 @@ def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
                 select(RelationshipEdge.id).where(RelationshipEdge.field_id == link_ids["field"])
             )
     finally:
-        release_worker.set()
+        if pause is not None:
+            pause.release.set()
         for thread in threads:
-            thread.join(_WAIT)
+            thread.join(WAIT)
+        if pause is not None:
+            pause.remove()
         worker_engine.dispose()
         if cleanup is not None:
             actor_id, module_id, definition_id = cleanup

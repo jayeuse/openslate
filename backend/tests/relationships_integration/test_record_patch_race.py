@@ -7,17 +7,17 @@ PostgreSQL shows the competitor blocked behind it (pg_locks + pg_blocking_pids).
 
 import os
 import threading
-import time
 from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
 import httpx
 import pytest
-from sqlalchemy import Engine, event, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from tests.race_support import WAIT, StatementPause, join, start, wait_until_blocked_by
 from tests.record_versions import record_version
 from tests.relationships_integration.relationship_http_support import RelationshipHTTPFixture
 
@@ -31,56 +31,6 @@ pytestmark = [
 ]
 pytest_plugins = ("tests.relationships_integration.relationship_http_support",)
 
-# Upper bound for every wait; the competitor's own lock wait is 2 s (LOCK_WAIT).
-_WAIT = 10.0
-
-
-class _Pause:
-    """Hold the first statement that starts with ``prefix`` until the test releases it."""
-
-    def __init__(self, engine: Engine, prefix: str) -> None:
-        self.paused = threading.Event()
-        self.release = threading.Event()
-        self.holder_pid = 0
-        self._engine = engine
-        wanted = prefix.upper()
-
-        def before_cursor_execute(
-            _connection: Any, cursor: Any, statement: str, *_args: Any
-        ) -> None:
-            if self.paused.is_set() or not statement.lstrip().upper().startswith(wanted):
-                return
-            self.holder_pid = int(cursor.connection.info.backend_pid)
-            self.paused.set()
-            self.release.wait(_WAIT)
-
-        self._listener = before_cursor_execute
-        event.listen(engine, "before_cursor_execute", before_cursor_execute)
-
-    def remove(self) -> None:
-        self.release.set()
-        if event.contains(self._engine, "before_cursor_execute", self._listener):
-            event.remove(self._engine, "before_cursor_execute", self._listener)
-
-
-def _wait_until_blocked_by(observer: Engine, holder_pid: int) -> None:
-    """Poll until some backend waits for a lock that ``holder_pid`` holds."""
-
-    deadline = time.monotonic() + _WAIT
-    while time.monotonic() < deadline:
-        with observer.connect() as connection:
-            if connection.scalar(
-                text(
-                    "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted "
-                    "AND :holder = ANY (pg_blocking_pids(pid)))"
-                ),
-                {"holder": holder_pid},
-            ):
-                return
-        threading.Event().wait(0.01)
-    raise AssertionError("the competing request never waited for the holder's lock")
-
-
 def _race(
     fixture: RelationshipHTTPFixture,
     prefix: str,
@@ -89,35 +39,21 @@ def _race(
 ) -> tuple[httpx.Response, httpx.Response]:
     """Run ``first`` until it pauses at ``prefix``, block ``second`` behind it, then release."""
 
-    outcomes: dict[str, object] = {}
-
-    def run(name: str, call: Callable[[], httpx.Response]) -> None:
-        try:
-            outcomes[name] = call()
-        except Exception as error:  # noqa: BLE001 - a server error is recorded for the assertion
-            outcomes[name] = error
-
-    threads = {
-        name: threading.Thread(target=run, args=(name, call))
-        for name, call in (("first", first), ("second", second))
-    }
-    pause = _Pause(fixture.runtime_engine, prefix)
+    pause = StatementPause(fixture.runtime_engine, prefix)
+    started: list[tuple[threading.Thread, list[Any]]] = []
     try:
-        threads["first"].start()
-        assert pause.paused.wait(_WAIT), "the first request never reached its pause point"
-        threads["second"].start()
-        _wait_until_blocked_by(fixture.owner_engine, pause.holder_pid)
-        pause.release.set()
+        started.append(start(first))
+        assert pause.paused.wait(WAIT), "the first request never reached its pause point"
+        started.append(start(second))
+        wait_until_blocked_by(fixture.owner_engine, pause.holder_pid)
     finally:
         # Release first so a failed poll cannot hang the holder; remove the listener only
         # after both requests finished, because removal mutates the engine's listener list.
         pause.release.set()
-        for thread in threads.values():
-            if thread.ident is not None:
-                thread.join(_WAIT)
+        for thread, _ in started:
+            thread.join(WAIT)
         pause.remove()
-    assert not any(thread.is_alive() for thread in threads.values()), "a request hung"
-    first_response, second_response = outcomes.get("first"), outcomes.get("second")
+    first_response, second_response = (join(thread, results) for thread, results in started)
     assert isinstance(first_response, httpx.Response), f"first failed: {first_response!r}"
     assert isinstance(second_response, httpx.Response), f"second failed: {second_response!r}"
     return first_response, second_response

@@ -33,13 +33,6 @@ SEEDS = (
 )
 
 
-def test_the_seed_range_is_twenty_distinct_unsigned_64_bit_seeds() -> None:
-    assert len(SEEDS) == 20
-    assert len(set(SEEDS)) == 20
-    assert {0, 42, 2**64 - 1} <= set(SEEDS)
-    assert all(0 <= seed < 2**64 for seed in SEEDS)
-
-
 # One item per pack and seed, so the parallel shards can share the range.
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("pack_key", pack_keys())

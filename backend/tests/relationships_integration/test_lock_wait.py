@@ -2,16 +2,15 @@
 
 import os
 import threading
-import time
 from uuid import UUID
 
 import pytest
-from sqlalchemy import text
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
 from app.systems.sandbox.relationships.service import create_relationship
 from tests.conftest import guarded_create_engine as create_engine
+from tests.race_support import wait_until_waiting
 from tests.relationships_integration.relationships_integration_support import (
     _seed_committed_graph,
     _set_request,
@@ -73,14 +72,7 @@ def test_two_concurrent_link_writes_in_the_same_modules_both_succeed(
         assert first_holds_locks.wait(5)
         second.start()
         # Watch for the second write's lock wait, well inside its 2 s lock_timeout.
-        waiting = text("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = :pid AND NOT granted)")
-        deadline = time.monotonic() + 1.5
-        with engine.connect() as probe:
-            while not observed_wait and second.is_alive() and time.monotonic() < deadline:
-                if second_pids:
-                    observed_wait = probe.execute(waiting, {"pid": second_pids[0]}).scalar_one()
-                if not observed_wait:
-                    time.sleep(0.01)
+        observed_wait = wait_until_waiting(engine, second_pids, wait=1.5, while_running=second)
     finally:
         second_waits.set()
         first.join(5)

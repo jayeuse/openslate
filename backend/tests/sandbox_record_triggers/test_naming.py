@@ -1,21 +1,14 @@
-"""Record triggers replace the published automation names everywhere."""
+"""Record triggers replace the published automation names in the application schema.
 
-import json
+The API contract is fixed by the committed contracts/openapi.json, which has no
+automation name; tests/contracts/test_openapi_snapshot.py owns it.
+"""
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.main import create_app
-
 OLD_NAME = "%automation%"
-
-
-def test_api_contract_has_no_automation_names() -> None:
-    contract = json.dumps(create_app().openapi()).lower()
-
-    assert "automation" not in contract
-    assert '"/api/sandbox/trigger-runs"' in contract
 
 
 @pytest.mark.integration

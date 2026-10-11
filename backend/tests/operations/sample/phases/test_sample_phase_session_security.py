@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import date
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -15,11 +14,11 @@ from operations.sample.client import SampleClient
 from operations.sample.phases.actions import PhaseExecutionContext, execute_phase_action
 from operations.sample.phases.plan import phase_action_to_manifest, plan_phases
 from operations.sample.phases.verification import verify_phases
-from operations.sample.scenario import build_dataset
 from tests.operations.sample.phases.sample_phase_verification_helpers import (
     _list_payload,
     _server_revocation_event,
 )
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
 @pytest.mark.parametrize(
@@ -55,7 +54,7 @@ from tests.operations.sample.phases.sample_phase_verification_helpers import (
 def test_real_session_revocation_security_evidence_is_required_and_bound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None
 ) -> None:
-    dataset = build_dataset("small", 42, date(2026, 9, 30))
+    dataset = sample_dataset()
     action = next(action for action in plan_phases(dataset) if action.kind == "end_session")
     admin_id, person_id, session_id, other_session_id = (str(uuid4()) for _ in range(4))
     user_ids = {"admin": admin_id, action.target_key: person_id}

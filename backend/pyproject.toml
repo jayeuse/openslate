@@ -61,7 +61,8 @@ source_paths = ["app/"]
 also_copy = ["operations/", "migrations/", "alembic.ini"]
 # Mutation runs cover app/ modules whose owner tests need no stack. Repository tooling
 # tests (tests/operations) and the email-template route read files outside the copy in
-# backend/mutants, so they stay out of mutation runs.
+# backend/mutants, so they stay out of mutation runs. The sample-data engine in
+# operations/sample has its own root and table: `uv run python tests/sample_mutation.py run`.
 pytest_add_cli_args = [
     "--no-cov",
     "-q",

@@ -8,7 +8,7 @@ from hashlib import sha256
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy import Engine, delete, func, or_, select, update
+from sqlalchemy import Engine, and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -24,7 +24,6 @@ from app.systems.sandbox.designs.schemas import SandboxDocument, TriggerDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.publications.executor import apply_publication, request_fingerprint
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.rules import _field_key
@@ -35,6 +34,7 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTriggerEvent,
     RecordTriggerRun,
 )
+from tests.sandbox_publications.support import publish_saved
 
 
 @dataclass(frozen=True)
@@ -78,11 +78,15 @@ def cleanup_committed_trigger(
     engine: Engine,
     *,
     actor_id: UUID,
-    module_id: UUID,
-    definition_id: UUID,
     baseline: DocumentBaseline,
+    module_id: UUID | None = None,
+    definition_id: UUID | None = None,
 ) -> None:
-    """Remove only rows committed by a direct multi-session trigger test."""
+    """Remove only rows committed by a direct multi-session publication test.
+
+    A trigger test passes the module and trigger it published. A structure-only publish
+    passes neither; its fields and modules are the ones its actor wrote.
+    """
 
     with engine.begin() as connection:
         version_ids = select(SandboxVersion.id).where(
@@ -90,36 +94,52 @@ def cleanup_committed_trigger(
         )
         connection.execute(
             delete(InAppNotification).where(
-                InAppNotification.kind == "sandbox-published",
-                InAppNotification.subject_type == "sandbox_version",
-                InAppNotification.subject_id.in_(version_ids),
+                or_(
+                    InAppNotification.recipient_id == actor_id,
+                    and_(
+                        InAppNotification.kind == "sandbox-published",
+                        InAppNotification.subject_type == "sandbox_version",
+                        InAppNotification.subject_id.in_(version_ids),
+                    ),
+                )
             )
         )
-        event_ids = list(
-            connection.scalars(
-                select(RecordTriggerEvent.id).where(RecordTriggerEvent.module_id == module_id)
+        event_ids: list[UUID] = []
+        if module_id is not None:
+            event_ids = list(
+                connection.scalars(
+                    select(RecordTriggerEvent.id).where(RecordTriggerEvent.module_id == module_id)
+                )
             )
-        )
-        connection.execute(
-            delete(RecordTriggerRun).where(RecordTriggerRun.trigger_id == definition_id)
-        )
-        connection.execute(
-            delete(RecordTriggerEvent).where(RecordTriggerEvent.module_id == module_id)
-        )
+        if definition_id is not None:
+            connection.execute(
+                delete(RecordTriggerRun).where(RecordTriggerRun.trigger_id == definition_id)
+            )
+        if module_id is not None:
+            connection.execute(
+                delete(RecordTriggerEvent).where(RecordTriggerEvent.module_id == module_id)
+            )
         connection.execute(delete(SandboxBinding).where(SandboxBinding.performed_by == actor_id))
-        connection.execute(
-            delete(RecordTriggerAction).where(RecordTriggerAction.trigger_id == definition_id)
-        )
-        connection.execute(
-            delete(RecordTriggerCondition).where(RecordTriggerCondition.trigger_id == definition_id)
-        )
-        connection.execute(delete(RecordTrigger).where(RecordTrigger.id == definition_id))
+        if definition_id is not None:
+            connection.execute(
+                delete(RecordTriggerAction).where(RecordTriggerAction.trigger_id == definition_id)
+            )
+            connection.execute(
+                delete(RecordTriggerCondition).where(
+                    RecordTriggerCondition.trigger_id == definition_id
+                )
+            )
+            connection.execute(delete(RecordTrigger).where(RecordTrigger.id == definition_id))
         connection.execute(
             delete(SandboxPublication).where(SandboxPublication.actor_id == actor_id)
         )
         connection.execute(delete(SandboxVersion).where(SandboxVersion.performed_by == actor_id))
-        connection.execute(delete(Field).where(Field.module_id == module_id))
-        connection.execute(delete(Module).where(Module.id == module_id))
+        if module_id is not None:
+            connection.execute(delete(Field).where(Field.module_id == module_id))
+            connection.execute(delete(Module).where(Module.id == module_id))
+        else:
+            connection.execute(delete(Field).where(Field.performed_by == actor_id))
+            connection.execute(delete(Module).where(Module.performed_by == actor_id))
         # A publish gives each new department its Board.
         connection.execute(
             delete(Board).where(
@@ -141,11 +161,12 @@ def cleanup_committed_trigger(
                 updated_at=baseline.updated_at,
             )
         )
-        audit_filter = or_(
-            AuditLog.performed_by == actor_id,
-            AuditLog.entity_id == actor_id,
-            AuditLog.request_path == f"/internal/sandbox/triggers/{definition_id}",
-        )
+        audit_filter = or_(AuditLog.performed_by == actor_id, AuditLog.entity_id == actor_id)
+        if definition_id is not None:
+            audit_filter = or_(
+                audit_filter,
+                AuditLog.request_path == f"/internal/sandbox/triggers/{definition_id}",
+            )
         if event_ids:
             audit_filter = or_(audit_filter, AuditLog.entity_id.in_(event_ids))
         connection.execute(delete(AuditLog).where(audit_filter))
@@ -192,23 +213,13 @@ def publish_trigger(
     )
     preview = publication_plan(db, saved.document)
     assert not preview.blockers
-    token_digest = sha256(f"trigger-{actor.id}".encode()).hexdigest()
-    apply_publication(
+    publish_saved(
         db,
-        actor_id=actor.id,
-        expected_revision=saved.revision,
-        impact_digest=preview.impact_digest,
-        expected_live_state_digest=preview.live_state_digest,
-        preview_token_digest=token_digest,
+        actor.id,
+        saved,
+        preview,
+        token_digest=sha256(f"trigger-{actor.id}".encode()).hexdigest(),
         idempotency_key=f"trigger-{actor.id}",
-        fingerprint=request_fingerprint(
-            expected_revision=saved.revision,
-            document_hash=saved.content_hash,
-            impact_digest=preview.impact_digest,
-            preview_token_digest=token_digest,
-            note=None,
-        ),
-        note=None,
     )
     module = bound_module(db, "sample-requests")
     fields = {

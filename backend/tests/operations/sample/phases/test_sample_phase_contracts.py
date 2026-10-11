@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import date
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -19,10 +18,10 @@ from operations.sample.phases.plan import (
     plan_phases,
 )
 from operations.sample.phases.verification import verify_phases
-from operations.sample.scenario import build_dataset
 from tests.operations.sample.phases.sample_phase_verification_helpers import (
     _server_revocation_event,
 )
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
 def _page(request: httpx.Request, rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -44,7 +43,7 @@ def _page(request: httpx.Request, rows: list[dict[str, Any]]) -> dict[str, Any]:
 def test_real_executor_no_audit_evidence_satisfies_verifier_contract(
     tmp_path: Path, kind: str
 ) -> None:
-    dataset = build_dataset("small", 42, date(2026, 9, 30))
+    dataset = sample_dataset()
     action = next(action for action in plan_phases(dataset) if action.kind == kind)
     user_ids = {
         person.key: str(uuid5(NAMESPACE_URL, "user:" + person.key))
@@ -133,7 +132,7 @@ def test_real_executor_no_audit_evidence_satisfies_verifier_contract(
 def test_real_executor_restore_and_session_evidence_uses_canonical_ids(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    dataset = build_dataset("small", 42, date(2026, 9, 30))
+    dataset = sample_dataset()
     plan = plan_phases(dataset)
     actions = [
         next(action for action in plan if action.kind == kind)

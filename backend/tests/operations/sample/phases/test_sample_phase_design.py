@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import date
 from uuid import uuid4
 
 import httpx
 import pytest
 
 from operations.sample.client import SampleClient
-from operations.sample.packs import get_pack
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.phases.design import execute_design_phase_action
 from operations.sample.phases.plan import phase_version_documents, plan_phases
-from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 NEW_MODULE_ID = "912c1dce-6bee-4d26-9e62-c6b9c7bba36b"
@@ -39,9 +37,7 @@ def _login_response(request: httpx.Request) -> httpx.Response | None:
 
 
 def _dataset():
-    return build_dataset(
-        "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack("harbor")
-    )
+    return sample_dataset()
 
 
 def _context(tmp_path, handler, *, mappings=None, module_ids=None):

@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import date
-from functools import cache
-
 import pytest
 
 from operations.sample.blueprint import SampleDataset
 from operations.sample.episodes import plan_sessions
 from operations.sample.history import RecordHistory, plan_history
-from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
-@cache
 def _dataset(profile: str) -> SampleDataset:
-    return build_dataset(profile, seed=42, anchor_date=date(2026, 9, 30))  # type: ignore[arg-type]
+    return sample_dataset(profile)
 
 
 def _status_label(dataset: SampleDataset, module_key: str, data: dict[str, object]) -> str:

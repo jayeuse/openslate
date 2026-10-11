@@ -1,6 +1,8 @@
 """Final configuration follows planned changes, rather than creation-time state."""
 
 import copy
+from datetime import UTC, datetime, timedelta
+from functools import cache
 
 import httpx
 import pytest
@@ -12,7 +14,9 @@ from operations.sample.phases.plan import phase_version_documents, plan_phases
 from operations.sample.verification.configuration import verify_configuration
 from operations.sample.verification.core import SampleVerificationError
 from operations.sample.verification.run import _people_issues, read_run_manifest
+from tests.operations.sample.sample_datasets import private_copy
 from tests.operations.sample.verification.test_sample_run_verification import (
+    _configuration_base,
     _configuration_fixture,
     _id,
     _manifest,
@@ -125,7 +129,20 @@ def test_creation_time_configuration_cannot_satisfy_the_planned_reorganization(t
 
 
 def _phase_configuration_fixture():
-    payloads, manifest, context = _configuration_fixture()
+    """Return a private copy of the reorganized readback, with guest expiry set from now."""
+
+    payloads, manifest, dataset, actions = private_copy(_phase_configuration_base())
+    for row in payloads["/api/users"]:
+        if row["role"] == "guest":
+            row["expires_at"] = (datetime.now(UTC) + timedelta(days=90)).isoformat()
+    return payloads, manifest, dataset, actions
+
+
+@cache
+def _phase_configuration_base():
+    """Build the reorganized readback once per process from the foundation readback."""
+
+    payloads, manifest, context = private_copy(_configuration_base())
     dataset = context["dataset"]
     actions = tuple(action for action in plan_phases(dataset) if action.kind.startswith("sandbox_"))
     documents = phase_version_documents(dataset, actions)

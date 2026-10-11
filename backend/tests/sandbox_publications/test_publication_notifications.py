@@ -1,5 +1,6 @@
 """Published occurrences notify current admins atomically without snapshot hydration."""
 
+from functools import partial
 from hashlib import sha256
 
 import pytest
@@ -17,40 +18,30 @@ from app.systems.sandbox.designs.service import (
     read_document,
     replace_document,
 )
-from app.systems.sandbox.publications.executor import (
-    PublicationError,
-    apply_publication,
-    request_fingerprint,
-)
+from app.systems.sandbox.publications.executor import PublicationError
 from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
 from tests.platform_scheduling.test_notification_routes import _client
 from tests.rbac.support import add_user
-from tests.sandbox_publications.support import publishable_document
+from tests.sandbox_publications.support import publish_saved, publishable_document
 
 pytestmark = pytest.mark.integration
 
 
 def _prepared(db, publisher):
+    """Return one reviewed publication request; calling it again replays the same request."""
     current = read_document(db)
     plan = publication_plan(db, current.document)
     assert not plan.blockers
     token = sha256(uuid7().bytes).hexdigest()
-    return dict(
-        actor_id=publisher.id,
-        expected_revision=current.revision,
-        impact_digest=plan.impact_digest,
-        expected_live_state_digest=plan.live_state_digest,
-        preview_token_digest=token,
+    return partial(
+        publish_saved,
+        db,
+        publisher.id,
+        current,
+        plan,
+        token_digest=token,
         idempotency_key=str(uuid7()),
-        fingerprint=request_fingerprint(
-            expected_revision=current.revision,
-            document_hash=current.content_hash,
-            impact_digest=plan.impact_digest,
-            preview_token_digest=token,
-            note=None,
-        ),
-        note=None,
     )
 
 
@@ -79,14 +70,14 @@ def test_fresh_publications_notify_eligible_admins_once_with_atomic_rollback(
 
         monkeypatch.setattr(db, "commit", reject)
         with pytest.raises(PublicationError) as failed:
-            apply_publication(db, **first)
+            first()
         assert failed.value.code == "publication_unavailable"
         assert list(db.scalars(select(SandboxPublication))) == []
         assert list(db.scalars(select(InAppNotification))) == []
         return
-    result = apply_publication(db, **first)
-    assert apply_publication(db, **first).id == result.id
-    next_result = apply_publication(db, **_prepared(db, publisher))
+    result = first()
+    assert first().id == result.id
+    next_result = _prepared(db, publisher)()
     assert next_result.version.id != result.version.id
     notices = list(db.scalars(select(InAppNotification)))
     assert {(n.recipient_id, n.subject_id) for n in notices} == {
