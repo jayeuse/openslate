@@ -75,6 +75,7 @@ async function setup(page: Page) {
     backupResponseId: backupId,
     commands: [] as string[],
     sourceReads: [] as string[],
+    backupRunIds: [] as (string | null)[],
   };
   await page.route("**/api/reports/**", async (route) => {
     state.sourceReads.push(new URL(route.request().url()).pathname);
@@ -108,7 +109,7 @@ async function setup(page: Page) {
   await page.route("**/api/backups?**", async (route) => {
     const url = new URL(route.request().url());
     state.sourceReads.push(url.pathname + url.search);
-    expect(url.searchParams.get("run_id")).toBe(backupId);
+    state.backupRunIds.push(url.searchParams.get("run_id"));
     if (state.backupStatus !== 200)
       return route.fulfill({
         status: state.backupStatus,
@@ -252,32 +253,8 @@ test("six new kinds show exact current-source titles and destinations with only 
   ).toBe(false);
   await expect(region).not.toContainText(recordId);
   await expect(region).not.toContainText("Private body/email/snapshot");
-});
-
-test("new-kind mark-one and read-all reconcile confirmed unread state", async ({
-  page,
-}) => {
-  const state = await setup(page);
-  await page.goto("/platform?section=notifications");
-  const region = inbox(page);
-  await expect(
-    region.getByText("Record assigned to you", { exact: true }),
-  ).toBeVisible();
-  const row = region
-    .getByRole("listitem")
-    .filter({ hasText: "Record assigned to you" });
-  await row.getByRole("button", { name: "Mark as read", exact: true }).click();
-  await expect(row.getByText("Read", { exact: true })).toBeVisible();
-  await region
-    .getByRole("button", { name: "Mark all as read", exact: true })
-    .click();
-  await expect(
-    region.getByRole("button", { name: "Mark as read", exact: true }),
-  ).toHaveCount(0);
-  expect(state.commands).toEqual([
-    `/api/notifications/${id(403)}/read`,
-    "/api/notifications/read-all",
-  ]);
+  // Every Backup title read asks for this notice's run.
+  expect([...new Set(state.backupRunIds)]).toEqual([backupId]);
 });
 
 test("source refusal and foreign Backup metadata expose no cached title or destination", async ({
@@ -325,4 +302,5 @@ test("source refusal and foreign Backup metadata expose no cached title or desti
   await expect(
     region.getByRole("link", { name: "Open backup history" }),
   ).toHaveCount(0);
+  expect([...new Set(state.backupRunIds)]).toEqual([backupId]);
 });

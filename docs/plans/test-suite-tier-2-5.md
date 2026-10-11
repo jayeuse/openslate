@@ -240,6 +240,7 @@ Area results (fill in during phase 6):
 | F3 | 6,571 http + 228 shared helper | 5,497 http + 668 sandbox helper + 259 shared helper | 107 http + Sandbox isolated | 96 http, +40 isolated rows | 33.7 s http (low load) | 52-55 s http (load 4-124, not comparable) | sandbox.md, one owner each; 1440x768 History overflow is a known gap | 1 timeout in 11 runs of one test, also on base |
 | F4 | 9,207 http + 868 access helper | 8,867 http + 900 access helper | 211 http runs + 52 isolated + 31 contract | 183 http runs + 132 isolated + 42 contract | not measured | 3.6 min http (load 16-21) | access.md, one owner each | 2 curtain tests in person-security failed once under load 21, passed on rerun; unchanged by F4 |
 | F7 | 2,692 http + 199 isolated/security | 2,523 http + 77 isolated/security + isolated/auth | 92 http runs + 50 isolated/security | 77 http runs + 36 isolated/security + 54 isolated/auth | not measured | 45 s auth http; full http 1,317 passed (23.8 min, load 10-41) | auth.md, one owner each | 0 failures in the full http run |
+| F5 | 6,529 http | 6,116 http | 96 sites, 123 http runs | 89 sites, 106 http runs + 184 isolated rows + 11 contract cases | 1.2 min http (load 3.5-12) | 22 s http (load 2.7-6.8) | platform.md, one owner each | Library catalog test failed 2 of 5 before the SearchSelect label fix, 5 of 5 after |
 
 ## 10. Exit criteria
 

@@ -89,6 +89,62 @@ export async function signedInAs(
   );
 }
 
+/**
+ * A session that a journey changes while it runs: switch the signed-in
+ * account, sign it out, fail its identity read, or hold its session reads.
+ * Fixed sessions use `signedInAs`, `signedInSession` or `signedOut` instead.
+ * Pass `identityRead: false` when the spec answers `/api/auth/me` itself.
+ */
+export async function controlledSession(
+  target: Page | BrowserContext,
+  identity: SignedInIdentity,
+  options: { identityRead?: boolean } = {},
+) {
+  const session = {
+    identity,
+    signedIn: true,
+    /** Any other status answers `/api/auth/me` with a private detail. */
+    identityStatus: 200,
+    /** While set, each session read waits for its release. */
+    hold: null as ReturnType<typeof heldResponse> | null,
+    /** Session reads that arrived while signed out. */
+    signedOutReads: 0,
+  };
+  await target.route("**/api/auth/session", async (route) => {
+    if (!session.signedIn) session.signedOutReads += 1;
+    const hold = session.hold;
+    if (hold) {
+      hold.enter();
+      await hold.released;
+    }
+    await route.fulfill({
+      json: session.signedIn
+        ? {
+            authenticated: true,
+            user_id: session.identity.id,
+            setup_required: false,
+          }
+        : { authenticated: false },
+    });
+  });
+  if (options.identityRead !== false)
+    await target.route("**/api/auth/me", (route) =>
+      session.identityStatus === 200
+        ? route.fulfill({
+            json: {
+              id: session.identity.id,
+              role: session.identity.role,
+              access: session.identity.access ?? [],
+            },
+          })
+        : route.fulfill({
+            status: session.identityStatus,
+            json: { detail: "Private database detail must never be displayed" },
+          }),
+    );
+  return session;
+}
+
 export const test = base.extend({
   context: async ({ context }, provide) => {
     await context.route("**/api/auth/session", (route) =>

@@ -1,5 +1,6 @@
 import {
   expect,
+  heldResponse,
   signedInAs,
   test,
   type Locator,
@@ -192,20 +193,21 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
     requests.push(p);
     const kind = p.get("kind");
     const offset = Number(p.get("offset"));
-    const items = Array.from(
-      { length: kind === "record" && offset === 0 ? 10 : 1 },
-      (_, i) => ({
-        kind,
-        id: uuid(offset + i + 1),
-        title: `${kind} match ${offset + i + 1}`,
-        context_label: kind === "person" ? "reader" : "Maintenance",
-        module_id: kind === "record" ? MODULE : null,
-        board_id: kind === "post" || kind === "event" ? BOARD : null,
-        can_open: kind !== "person",
-      }),
-    );
+    // Records fill a first page of ten; People hold one result that cannot
+    // open and one that can.
+    const length =
+      kind === "record" && offset === 0 ? 10 : kind === "person" ? 2 : 1;
+    const items = Array.from({ length }, (_, i) => ({
+      kind,
+      id: uuid(offset + i + 1),
+      title: `${kind} match ${offset + i + 1}`,
+      context_label: kind === "person" ? "reader" : "Maintenance",
+      module_id: kind === "record" ? MODULE : null,
+      board_id: kind === "post" || kind === "event" ? BOARD : null,
+      can_open: kind !== "person" || i === 1,
+    }));
     return r.fulfill({
-      json: list(items, kind === "record" ? 11 : 1, offset, 10),
+      json: list(items, kind === "record" ? 11 : length, offset, 10),
     });
   });
   await page.goto("/platform?section=search");
@@ -229,7 +231,12 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
     `/boards?board=${BOARD}&section=calendar&event=${uuid(1)}`,
   );
   await expect(page.getByText("person match 1", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /person match/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /person match 1/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("link", { name: "Open person match 2", exact: true }),
+  ).toHaveAttribute("href", `/access?view=people&user=${uuid(2)}`);
   for (const kind of ["record", "person", "post", "event"])
     expect(
       requests.some(
@@ -254,18 +261,17 @@ test("CSV preview and import use sequential complete batches, typed defaults and
 }) => {
   await catalog(page);
   const requests: ImportRequest[] = [];
+  const requestBytes: number[] = [];
   const committed = new Set<string>();
+  const recommitted: string[] = [];
   await page.route("**/api/records/import", async (r) => {
     const body = r.request().postDataJSON() as ImportRequest;
     requests.push(body);
-    expect(body.rows.length).toBeLessThanOrEqual(100);
-    expect(Buffer.byteLength(r.request().postData() ?? "")).toBeLessThanOrEqual(
-      900 * 1024,
-    );
+    requestBytes.push(Buffer.byteLength(r.request().postData() ?? ""));
     const result = importResult(body);
     for (const row of result.rows)
       if (row.record_id) {
-        expect(committed.has(row.record_id)).toBe(false);
+        if (committed.has(row.record_id)) recommitted.push(row.record_id);
         committed.add(row.record_id);
       }
     await r.fulfill({
@@ -317,6 +323,11 @@ test("CSV preview and import use sequential complete batches, typed defaults and
   expect(imports.flatMap((r) => r.rows).some((r) => r.row_number === 104)).toBe(
     false,
   );
+  expect(Math.max(...requests.map((r) => r.rows.length))).toBeLessThanOrEqual(
+    100,
+  );
+  expect(Math.max(...requestBytes)).toBeLessThanOrEqual(900 * 1024);
+  expect(recommitted).toEqual([]);
   await expect(
     page.getByRole("button", { name: /^Import \d+ valid rows$/ }),
   ).toBeDisabled();
@@ -372,35 +383,6 @@ test("Cancel stops future import batches while awaiting the committed current ba
   await expect(
     page.getByText("101 records imported.", { exact: true }),
   ).toBeVisible();
-});
-test("Unconfirmed import outcomes stop without retry or duplicate submission", async ({
-  page,
-}) => {
-  await catalog(page);
-  let imports = 0;
-  await page.route("**/api/records/import", (r) => {
-    const body = r.request().postDataJSON() as ImportRequest;
-    if (body.mode === "preview") return r.fulfill({ json: importResult(body) });
-    imports++;
-    return r.fulfill({ json: { ...importResult(body), created_count: 0 } });
-  });
-  await upload(page, "Title,Quantity\nPump,1");
-  await page
-    .getByRole("button", { name: "Preview import", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Import 1 valid rows", exact: true })
-    .click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText(
-    "unconfirmed",
-  );
-  await expect(
-    page.getByRole("button", { name: /^Import \d+ valid rows$/ }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Preview import", exact: true }),
-  ).toBeDisabled();
-  expect(imports).toBe(1);
 });
 test("Schema drift and oversized UTF-8 rows retain the draft without writes", async ({
   page,
@@ -566,45 +548,6 @@ test("CSV input rejects invalid UTF-8, row limits and widths while accepting one
   ).toHaveCount(0);
 });
 
-test("UTF-8 JSON byte budget splits batches even with fewer than 100 rows", async ({
-  page,
-}) => {
-  await catalog(page);
-  const requests: ImportRequest[] = [];
-  await page.route("**/api/records/import", (route) => {
-    const body = route.request().postDataJSON() as ImportRequest;
-    requests.push(body);
-    expect(
-      Buffer.byteLength(route.request().postData() ?? ""),
-    ).toBeLessThanOrEqual(900 * 1024);
-    return route.fulfill({ json: importResult(body) });
-  });
-  await upload(
-    page,
-    `Title,Quantity\n${"é".repeat(250000)},1\n${"é".repeat(250000)},2`,
-  );
-  await page
-    .getByRole("button", { name: "Preview import", exact: true })
-    .click();
-  await expect(
-    page.getByText("2 valid rows · 0 invalid rows", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Import 2 valid rows", exact: true })
-    .click();
-  await expect(
-    page.getByText("2 records imported.", { exact: true }),
-  ).toBeVisible();
-  expect(
-    requests.map((body) => [body.mode, body.rows.map((row) => row.row_number)]),
-  ).toEqual([
-    ["preview", [2]],
-    ["preview", [3]],
-    ["import", [2]],
-    ["import", [3]],
-  ]);
-});
-
 test("Leaving waits for the current import receipt and never starts a later batch", async ({
   page,
 }) => {
@@ -640,7 +583,29 @@ test("Leaving waits for the current import receipt and never starts a later batc
   expect(writes).toBe(1);
 });
 
-for (const failure of ["lost response", "unconfirmed 503"] as const) {
+// Each outcome leaves the batch unconfirmed: no answer, a 503 that says so,
+// or a receipt that confirms no record for the imported row.
+for (const [failure, answer] of [
+  ["lost response", (route: Route) => route.abort("connectionreset")],
+  [
+    "unconfirmed 503",
+    (route: Route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          detail: {
+            code: "record_import_unconfirmed",
+            message: "Import outcome could not be confirmed",
+          },
+        },
+      }),
+  ],
+  [
+    "malformed receipt",
+    (route: Route, body: ImportRequest) =>
+      route.fulfill({ json: { ...importResult(body), created_count: 0 } }),
+  ],
+] as const) {
   test(`Import ${failure} stops without retry`, async ({ page }) => {
     await catalog(page);
     let writes = 0;
@@ -649,17 +614,7 @@ for (const failure of ["lost response", "unconfirmed 503"] as const) {
       if (body.mode === "preview")
         return route.fulfill({ json: importResult(body) });
       writes++;
-      return failure === "lost response"
-        ? route.abort("connectionreset")
-        : route.fulfill({
-            status: 503,
-            json: {
-              detail: {
-                code: "record_import_unconfirmed",
-                message: "Import outcome could not be confirmed",
-              },
-            },
-          });
+      return answer(route, body);
     });
     await upload(page, "Title,Quantity\nPump,1");
     await page
@@ -684,14 +639,14 @@ for (const failure of ["lost response", "unconfirmed 503"] as const) {
 test("Search ignores old replies, hides denial and recovers with explicit retry", async ({
   page,
 }) => {
-  const releaseOld: (() => void)[] = [];
+  const oldSearch = heldResponse();
   let denied = true;
   await page.route("**/api/search?*", async (route) => {
     const params = new URL(route.request().url()).searchParams;
-    if (params.get("search") === "old")
-      await new Promise<void>((resolve) => {
-        releaseOld.push(resolve);
-      });
+    if (params.get("search") === "old") {
+      oldSearch.enter();
+      await oldSearch.released;
+    }
     if (params.get("kind") !== "record")
       return route.fulfill({ json: list([], 0, 0, 10) });
     if (params.get("search") === "fresh" && denied)
@@ -721,11 +676,14 @@ test("Search ignores old replies, hides denial and recovers with explicit retry"
   await page.goto("/platform?section=search");
   const input = page.getByRole("searchbox", { name: "Search workspace" });
   await input.fill("old");
-  await expect.poll(() => releaseOld.length).toBeGreaterThan(0);
+  await oldSearch.entered;
   await input.fill("fresh");
   const records = page.getByRole("region", { name: "Records search results" });
   await expect(records.getByRole("alert")).toBeVisible();
-  releaseOld.forEach((release) => release());
+  await expect(
+    page.getByRole("region", { name: "People search results" }),
+  ).toContainText("No matching people.");
+  oldSearch.release();
   await expect(page.getByText("old result", { exact: true })).toHaveCount(0);
   denied = false;
   await records.getByRole("button", { name: "Retry", exact: true }).click();
@@ -843,44 +801,6 @@ test("Import and export role refusals retain drafts and never report creation or
     page.getByRole("button", { name: "Download CSV", exact: true }),
   ).toHaveCount(0);
   expect(downloads).toBe(0);
-});
-
-test("Administrator people results open the existing People destination and empty groups stay truthful", async ({
-  page,
-}) => {
-  await page.route("**/api/search?*", (route) => {
-    const kind = new URL(route.request().url()).searchParams.get("kind");
-    return route.fulfill({
-      json: list(
-        kind === "person"
-          ? [
-              {
-                kind: "person",
-                id: uuid(1),
-                title: "Pump operator",
-                context_label: "operator",
-                module_id: null,
-                board_id: null,
-                can_open: true,
-              },
-            ]
-          : [],
-        kind === "person" ? 1 : 0,
-        0,
-        10,
-      ),
-    });
-  });
-  await page.goto("/platform?section=search");
-  await page
-    .getByRole("searchbox", { name: "Search workspace" })
-    .fill("operator");
-  await expect(
-    page.getByRole("link", { name: "Open Pump operator", exact: true }),
-  ).toHaveAttribute("href", `/access?view=people&user=${uuid(1)}`);
-  await expect(
-    page.getByRole("region", { name: "Records search results" }),
-  ).toContainText("No matching records.");
 });
 
 async function queueLeaveDuringSecondBatch(page: Page) {
@@ -1014,15 +934,6 @@ for (const dismissal of ["Stay", "Escape", "outside"] as const) {
   });
 }
 
-test("Queued leave positive control resumes after the same held second receipt", async ({
-  page,
-}) => {
-  const pending = await queueLeaveDuringSecondBatch(page);
-  await pending.held!.fulfill({ json: importResult(pending.submitted!) });
-  await expect(page).toHaveURL(/section=search/);
-  expect(pending.writes).toBe(2);
-});
-
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 1440, height: 900 },
@@ -1051,13 +962,12 @@ for (const viewport of [
       }),
     );
 
-    async function containedPage(stage: string) {
+    async function containedPage() {
       const geometry = await page.evaluate(() => ({
         client: document.documentElement.clientWidth,
         scroll: document.documentElement.scrollWidth,
         windowX: window.scrollX,
       }));
-      console.log(`${stage} ${viewport.width}x${viewport.height}`, geometry);
       expect(geometry.scroll).toBeLessThanOrEqual(geometry.client + 1);
       expect(geometry.windowX).toBe(0);
     }
@@ -1068,7 +978,7 @@ for (const viewport of [
       expect(bounds).not.toBeNull();
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width + 1);
-      await containedPage("Reachable action");
+      await containedPage();
     }
     async function localTableScroll(table: Locator) {
       await table.scrollIntoViewIfNeeded();
@@ -1096,21 +1006,17 @@ for (const viewport of [
           windowX: window.scrollX,
         };
       });
-      console.log(
-        `Local preview scroll ${viewport.width}x${viewport.height}`,
-        geometry,
-      );
       expect(geometry).not.toBeNull();
       expect(geometry!.scroll).toBeGreaterThan(geometry!.client);
       expect(geometry!.scrollLeft).toBeGreaterThan(0);
       expect(geometry!.left).toBeGreaterThanOrEqual(0);
       expect(geometry!.right).toBeLessThanOrEqual(viewport.width + 1);
       expect(geometry!.windowX).toBe(0);
-      await containedPage("Scrolled preview");
+      await containedPage();
     }
 
     await upload(page, `Title,Quantity\n${title},12\nReserve pump,2`);
-    await containedPage("Column mapping");
+    await containedPage();
     await reachable(page.getByLabel("Map column 1 · Title", { exact: true }));
     const importHeading = await page
       .getByRole("heading", { name: "Import records", exact: true })
@@ -1142,7 +1048,7 @@ for (const viewport of [
       name: "Validated import rows",
     });
     await expect(importTable).toContainText(title);
-    await containedPage("Import preview");
+    await containedPage();
     await localTableScroll(importTable);
     await reachable(
       page.getByRole("button", { name: "Import 2 valid rows", exact: true }),
@@ -1167,7 +1073,7 @@ for (const viewport of [
       .filter({
         has: page.getByRole("columnheader", { name: "Record ID", exact: true }),
       });
-    await containedPage("Export preview");
+    await containedPage();
     await localTableScroll(exportTable);
     const download = page.getByRole("button", {
       name: "Download CSV",
@@ -1202,6 +1108,6 @@ for (const viewport of [
     }
     await page.getByRole("link", { name: "Search", exact: true }).click();
     await expect(page).toHaveURL(/section=search/);
-    await containedPage("After leaving");
+    await containedPage();
   });
 }

@@ -1,5 +1,14 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Page, type Route } from "./helpers/test";
+import {
+  controlledSession,
+  expect,
+  expectNoHorizontalScroll,
+  heldResponse,
+  recheckSession,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -103,26 +112,28 @@ function libraryPage<Item>(
   };
 }
 
-function libraryGate() {
-  let release!: () => void;
-  let started!: () => void;
-  let finished!: () => void;
-  const wait = new Promise<void>((resolve) => (release = resolve));
-  const entered = new Promise<void>((resolve) => (started = resolve));
-  const completed = new Promise<void>((resolve) => (finished = resolve));
-  return { wait, entered, completed, release, started, finished };
+/**
+ * A held upload or download. `settled` is entered once the handler has
+ * answered: the browser may have cancelled the request by then, so no
+ * browser response event can stand in for it.
+ */
+function heldTransfer() {
+  return { ...heldResponse(), settled: heldResponse() };
 }
-type LibraryGate = ReturnType<typeof libraryGate>;
+type HeldTransfer = ReturnType<typeof heldTransfer>;
 
 async function installLibrary(
   page: Page,
   options: { role?: LibraryRole; access?: LibraryAccess[] } = {},
 ) {
   await installOpenViewEventSource(page);
-  const state = {
-    userId: LIBRARY_USER,
+  const session = await controlledSession(page, {
+    id: LIBRARY_USER,
     role: options.role ?? "admin",
     access: options.access ?? [],
+  });
+  const state = {
+    session,
     theme: "light" as "light" | "dark",
     departments: [
       libraryDepartment(LIBRARY_DEPARTMENT, "Maintenance"),
@@ -160,7 +171,6 @@ async function installLibrary(
       }),
     ],
     labels: { [LIBRARY_USER]: "Mara Santos" } as Record<string, string>,
-    identityStatus: 200,
     departmentStatus: 200,
     listStatus: 200,
     readbackStatus: 200,
@@ -171,14 +181,8 @@ async function installLibrary(
     downloadStatus: 200,
     downloadBroken: false,
     reserveBroken: false,
-    listBroken: null as
-      | "department"
-      | "purpose"
-      | "creator"
-      | "pagination"
-      | "continuation"
-      | "duplicate"
-      | null,
+    // Answers the list with one file of another department.
+    listBroken: false,
     uploadMode: "ready" as
       | "ready"
       | "ready-error"
@@ -188,11 +192,10 @@ async function installLibrary(
       | "purged"
       | "deleting"
       | "archived",
-    uploadHold: null as LibraryGate | null,
-    archiveHold: null as LibraryGate | null,
-    downloadHold: null as LibraryGate | null,
-    listHold: new Map<string, LibraryGate>(),
-    detailHold: null as LibraryGate | null,
+    uploadHold: null as HeldTransfer | null,
+    archiveHold: null as ReturnType<typeof heldResponse> | null,
+    downloadHold: null as HeldTransfer | null,
+    listHold: new Map<string, ReturnType<typeof heldResponse>>(),
     calls: [] as { method: string; path: string; body: unknown }[],
     listReads: [] as {
       department: string | null;
@@ -207,30 +210,19 @@ async function installLibrary(
       status,
       json: { detail: "Private database detail must never be displayed" },
     });
+  const grants = () => session.identity.access ?? [];
   const level = (departmentId: string | null) => {
-    if (state.role === "admin") return "manage";
-    const entry = state.access.find(
+    if (session.identity.role === "admin") return "manage";
+    const entry = grants().find(
       (access) =>
         access.department_id === departmentId && access.module_id === null,
     );
-    return entry ? (state.role === "guest" ? "read" : entry.level) : null;
+    return entry
+      ? session.identity.role === "guest"
+        ? "read"
+        : entry.level
+      : null;
   };
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: state.userId,
-        setup_required: false,
-      },
-    }),
-  );
-  await page.route("**/api/auth/me", (route) =>
-    state.identityStatus === 200
-      ? route.fulfill({
-          json: { id: state.userId, role: state.role, access: state.access },
-        })
-      : failure(route, state.identityStatus),
-  );
   await page.route("**/api/auth/refresh", (route) => failure(route, 401));
   await page.route("**/api/workspace", (route) =>
     state.workspaceStatus === 200
@@ -240,7 +232,7 @@ async function installLibrary(
             display_name: "Library test workspace",
             legal_name: null,
             description: null,
-            ...(state.role === "guest"
+            ...(session.identity.role === "guest"
               ? {}
               : {
                   contact_email: null,
@@ -284,8 +276,8 @@ async function installLibrary(
     const visible = state.departments
       .filter(
         (department) =>
-          (state.role === "admin" ||
-            state.access.some(
+          (session.identity.role === "admin" ||
+            grants().some(
               (access) => access.department_id === department.id,
             )) &&
           (parameters.get("deleted") === "include" || !department.is_deleted) &&
@@ -307,8 +299,8 @@ async function installLibrary(
     const department = state.departments.find(
       (item) =>
         item.id === id &&
-        (state.role === "admin" ||
-          state.access.some((access) => access.department_id === id)),
+        (session.identity.role === "admin" ||
+          grants().some((access) => access.department_id === id)),
     );
     if (state.departmentStatus !== 200)
       return failure(route, state.departmentStatus);
@@ -320,7 +312,7 @@ async function installLibrary(
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();
-    const actor = state.userId;
+    const actor = session.identity.id;
     state.calls.push({
       method,
       path: url.pathname,
@@ -335,7 +327,7 @@ async function installLibrary(
       const departmentId = url.searchParams.get("department_id");
       state.listReads.push({
         department: departmentId,
-        account: state.userId,
+        account: session.identity.id,
         parameters: url.searchParams,
       });
       if (!level(departmentId)) return failure(route, 404);
@@ -381,30 +373,17 @@ async function installLibrary(
           )
           .reduce((sum, file) => sum + (file.actual_size ?? 0), 0),
       };
-      if (state.listBroken === "creator")
-        response.creator_labels[libraryUuid(999)] = "Private unrelated person";
-      else if (state.listBroken === "pagination")
-        response.pagination.count += 1;
-      else if (state.listBroken === "continuation")
-        response.pagination.has_more = !response.pagination.has_more;
-      else if (state.listBroken === "duplicate" && items.length)
-        response.items = [items[0], items[0]];
-      else if (state.listBroken && items.length)
+      if (state.listBroken && items.length)
         response.items = [
           {
             ...items[0],
             filename: "Foreign private file.pdf",
-            ...(state.listBroken === "purpose"
-              ? {
-                  purpose: "record_attachment" as const,
-                  record_id: LIBRARY_MODULE,
-                }
-              : { department_id: LIBRARY_SECOND_DEPARTMENT }),
+            department_id: LIBRARY_SECOND_DEPARTMENT,
           },
         ];
       const hold = state.listHold.get(departmentId ?? "");
-      hold?.started();
-      await hold?.wait;
+      hold?.enter();
+      await hold?.released;
       return state.listStatus === 200
         ? route.fulfill({ json: response })
         : failure(route, state.listStatus);
@@ -433,7 +412,7 @@ async function installLibrary(
             ).length,
         ),
         department_id: body.department_id,
-        creator_id: state.userId,
+        creator_id: session.identity.id,
         filename: body.filename,
         expected_size: body.expected_size,
         actual_size: null,
@@ -453,8 +432,8 @@ async function installLibrary(
     if (!file || !level(file.department_id)) return failure(route, 404);
     if (method === "GET" && url.pathname.endsWith("/content")) {
       const hold = state.downloadHold;
-      hold?.started();
-      await hold?.wait;
+      hold?.enter();
+      await hold?.released;
       if (state.downloadStatus !== 200)
         return failure(route, state.downloadStatus);
       if (file.state !== "ready") return failure(route, 409);
@@ -470,11 +449,9 @@ async function installLibrary(
             "X-Content-Type-Options": "nosniff",
           },
         })
-        .finally(() => hold?.finished());
+        .finally(() => hold?.settled.enter());
     }
     if (method === "GET") {
-      state.detailHold?.started();
-      await state.detailHold?.wait;
       return state.readbackStatus === 200
         ? route.fulfill({
             json: state.readbackBroken
@@ -485,13 +462,13 @@ async function installLibrary(
     }
     if (method === "PUT") {
       const hold = state.uploadHold;
-      hold?.started();
-      await hold?.wait;
+      hold?.enter();
+      await hold?.released;
       if (
-        actor === state.userId &&
+        actor === session.identity.id &&
         (!level(file.department_id) || level(file.department_id) === "read")
       )
-        return failure(route, 403).finally(() => hold?.finished());
+        return failure(route, 403).finally(() => hold?.settled.enter());
       const mode = state.uploadMode;
       if (mode === "ready" || mode === "ready-error") {
         file.state = "ready";
@@ -509,7 +486,7 @@ async function installLibrary(
               contentType: "application/json",
               body: "unreadable",
             });
-      return response.finally(() => hold?.finished());
+      return response.finally(() => hold?.settled.enter());
     }
     const reopen = url.pathname.endsWith("/reopen");
     if (level(file.department_id) !== "manage") return failure(route, 403);
@@ -520,8 +497,8 @@ async function installLibrary(
       )?.is_deleted
     )
       return failure(route, 409);
-    state.archiveHold?.started();
-    await state.archiveHold?.wait;
+    state.archiveHold?.enter();
+    await state.archiveHold?.released;
     const status = reopen ? state.reopenStatus : state.archiveStatus;
     if (status !== 200) return failure(route, status);
     file.is_deleted = !reopen;
@@ -542,17 +519,16 @@ async function openLibrary(page: Page, department = LIBRARY_DEPARTMENT) {
   ).toBeVisible();
 }
 
-// File status sits behind the "More filters" disclosure at every width.
+// File status sits behind the "More filters" disclosure at every width; once
+// shown it stays open for the rest of the journey.
+async function showMoreFilters(page: Page) {
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
+}
+
 async function chooseFileStatus(page: Page, label: "Active" | "Archived") {
-  const status = page.getByRole("combobox", {
-    name: "File status",
-    exact: true,
-  });
-  if (!(await status.isVisible()))
-    await page
-      .getByRole("button", { name: "More filters", exact: true })
-      .click();
-  await status.selectOption({ label });
+  await page
+    .getByRole("combobox", { name: "File status", exact: true })
+    .selectOption({ label });
 }
 
 async function chooseLibraryFile(
@@ -686,7 +662,7 @@ test("Library files: writer uploads once and manage-only lifecycle actions use c
     ],
   });
   await openLibrary(page);
-  fixture.uploadHold = libraryGate();
+  fixture.uploadHold = heldTransfer();
   await chooseLibraryFile(page);
   await fixture.uploadHold.entered;
   await expect(page.getByLabel("Upload file", { exact: true })).toBeDisabled();
@@ -710,7 +686,12 @@ test("Library files: writer uploads once and manage-only lifecycle actions use c
     }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /^Archive/ })).toHaveCount(0);
-  fixture.access[0].level = "manage";
+  fixture.session.identity = {
+    ...fixture.session.identity,
+    access: [
+      { department_id: LIBRARY_DEPARTMENT, module_id: null, level: "manage" },
+    ],
+  };
   await sendOpenViewEvent(page, "invalidate", { entity: "group_access" });
   const archive = page.getByRole("button", {
     name: "Archive Upload guide.pdf",
@@ -729,7 +710,7 @@ test("Library files: writer uploads once and manage-only lifecycle actions use c
     }),
   ).toBeVisible();
   fixture.archiveStatus = 200;
-  fixture.archiveHold = libraryGate();
+  fixture.archiveHold = heldResponse();
   await archive.click();
   await fixture.archiveHold.entered;
   await expect(archive).toBeDisabled();
@@ -740,6 +721,7 @@ test("Library files: writer uploads once and manage-only lifecycle actions use c
       exact: true,
     }),
   ).toHaveCount(0);
+  await showMoreFilters(page);
   await chooseFileStatus(page, "Archived");
   const reopen = page.getByRole("button", {
     name: "Reopen Upload guide.pdf",
@@ -869,6 +851,7 @@ test("Library files: closed departments remain readable and archivable but canno
   await expect(archive).toBeEnabled();
   await archive.click();
   await expect(archive).toHaveCount(0);
+  await showMoreFilters(page);
   await chooseFileStatus(page, "Archived");
   const download = page.getByRole("button", {
     name: "Download Closed archived guide.pdf",
@@ -1011,13 +994,13 @@ test("Library files: unavailable identity and department catalogs make no librar
   page,
 }) => {
   const fixture = await installLibrary(page);
-  fixture.identityStatus = 403;
+  fixture.session.identityStatus = 403;
   await openLibrary(page);
   await expect(
     page.getByRole("button", { name: "Retry access", exact: true }),
   ).toBeVisible();
   expect(fixture.listReads).toEqual([]);
-  fixture.identityStatus = 200;
+  fixture.session.identityStatus = 200;
   fixture.departmentStatus = 503;
   await page.getByRole("button", { name: "Retry access", exact: true }).click();
   await expect(
@@ -1043,7 +1026,7 @@ test("Library files: slow and failed reads expose loading, safe retry and a true
 }) => {
   await page.clock.install();
   const fixture = await installLibrary(page);
-  const held = libraryGate();
+  const held = heldResponse();
   fixture.listHold.set(LIBRARY_DEPARTMENT, held);
   fixture.listStatus = 503;
   await openLibrary(page);
@@ -1102,42 +1085,35 @@ test("Library files: date-setting failure keeps file controls usable and offers 
   await expect(page.getByText(/Added.*5 Oct 2026/)).toBeVisible();
 });
 
-for (const broken of [
-  "department",
-  "purpose",
-  "creator",
-  "pagination",
-  "continuation",
-  "duplicate",
-] as const)
-  test(`Library files: ${broken} list contract violations reveal no foreign data and retry safely`, async ({
-    page,
-  }) => {
-    const fixture = await installLibrary(page);
-    fixture.listBroken = broken;
-    await openLibrary(page);
-    await expect(
-      page.getByRole("alert").filter({ hasText: /invalid.*response/i }),
-    ).toBeVisible();
-    await expect(
-      page.getByText("Foreign private file.pdf", { exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByText("Private unrelated person", { exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole("list", { name: "Library files", exact: true }),
-    ).toHaveCount(0);
-    fixture.listBroken = null;
-    await page
-      .getByRole("button", { name: "Retry files", exact: true })
-      .click();
-    await expect(
-      page
-        .getByRole("list", { name: "Library files", exact: true })
-        .getByRole("listitem"),
-    ).toHaveCount(2);
-  });
+// The other list contract rows (purpose, creator label, count, has_more,
+// duplicate and the rest) are owned by
+// isolated/platform/library-files-api.spec.ts.
+test("Library files: department list contract violations reveal no foreign data and retry safely", async ({
+  page,
+}) => {
+  const fixture = await installLibrary(page);
+  fixture.listBroken = true;
+  await openLibrary(page);
+  await expect(
+    page.getByRole("alert").filter({ hasText: /invalid.*response/i }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Foreign private file.pdf", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Private unrelated person", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("list", { name: "Library files", exact: true }),
+  ).toHaveCount(0);
+  fixture.listBroken = false;
+  await page.getByRole("button", { name: "Retry files", exact: true }).click();
+  await expect(
+    page
+      .getByRole("list", { name: "Library files", exact: true })
+      .getByRole("listitem"),
+  ).toHaveCount(2);
+});
 
 test("Library files: server search and name-size sorting page before rendering and keep the full storage total", async ({
   page,
@@ -1243,7 +1219,7 @@ test("Library files: a stale later page cannot follow search or department chang
       .getByRole("list", { name: "Library files", exact: true })
       .getByRole("listitem"),
   ).toHaveCount(25);
-  const held = libraryGate();
+  const held = heldResponse();
   fixture.listHold.set(LIBRARY_DEPARTMENT, held);
   await page
     .getByRole("button", { name: "Load more files", exact: true })
@@ -1486,6 +1462,7 @@ for (const status of [401, 403, 404])
     await expect(
       page.getByRole("list", { name: "Library files", exact: true }),
     ).toBeVisible();
+    await showMoreFilters(page);
     await chooseFileStatus(page, "Archived");
     await expect(
       page.getByRole("button", {
@@ -1671,13 +1648,16 @@ test("Library files: cached department revisits and shared invalidations preserv
       exact: true,
     }),
   ).toBeVisible();
-  fixture.access = [
-    {
-      department_id: LIBRARY_DEPARTMENT,
-      module_id: LIBRARY_MODULE,
-      level: "manage",
-    },
-  ];
+  fixture.session.identity = {
+    ...fixture.session.identity,
+    access: [
+      {
+        department_id: LIBRARY_DEPARTMENT,
+        module_id: LIBRARY_MODULE,
+        level: "manage",
+      },
+    ],
+  };
   await sendOpenViewEvent(page, "invalidate", { entity: "group_members" });
   await expect(
     page.getByRole("list", { name: "Library files", exact: true }),
@@ -1695,7 +1675,7 @@ test("Library files: a cold response predating stream connection is replaced by 
   page,
 }) => {
   const fixture = await installLibrary(page);
-  const held = libraryGate();
+  const held = heldResponse();
   fixture.listHold.set(LIBRARY_DEPARTMENT, held);
   await openLibrary(page);
   await held.entered;
@@ -1723,12 +1703,15 @@ test("Library files: old account transfer results cannot announce or restore pri
   page.on("download", (download) =>
     downloads.push(download.suggestedFilename()),
   );
-  const held = libraryGate();
+  const held = heldTransfer();
   fixture.uploadHold = held;
   await openLibrary(page);
   await chooseLibraryFile(page);
   await held.entered;
-  fixture.userId = LIBRARY_OTHER_USER;
+  fixture.session.identity = {
+    ...fixture.session.identity,
+    id: LIBRARY_OTHER_USER,
+  };
   fixture.files = [
     libraryFile({
       id: libraryUuid(900),
@@ -1737,9 +1720,7 @@ test("Library files: old account transfer results cannot announce or restore pri
     }),
   ];
   fixture.labels = { [LIBRARY_OTHER_USER]: "Eli Rivera" };
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  await recheckSession(page);
   await expect(
     page.getByRole("button", {
       name: "Download Second account guide.pdf",
@@ -1747,7 +1728,7 @@ test("Library files: old account transfer results cannot announce or restore pri
     }),
   ).toBeVisible();
   held.release();
-  await held.completed;
+  await held.settled.entered;
   await expect(page.getByText("Safety guide.pdf", { exact: true })).toHaveCount(
     0,
   );
@@ -1760,7 +1741,7 @@ test("Library files: old account transfer results cannot announce or restore pri
   await expect(
     page.getByRole("button", { name: "Check status", exact: true }),
   ).toHaveCount(0);
-  const heldDownload = libraryGate();
+  const heldDownload = heldTransfer();
   fixture.downloadHold = heldDownload;
   await page
     .getByRole("button", {
@@ -1769,17 +1750,18 @@ test("Library files: old account transfer results cannot announce or restore pri
     })
     .click();
   await heldDownload.entered;
-  fixture.userId = libraryUuid(999);
+  fixture.session.identity = {
+    ...fixture.session.identity,
+    id: libraryUuid(999),
+  };
   fixture.files = [
     libraryFile({
       filename: "Third account guide.pdf",
-      creator_id: fixture.userId,
+      creator_id: libraryUuid(999),
     }),
   ];
-  fixture.labels = { [fixture.userId]: "Tessa Reyes" };
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  fixture.labels = { [libraryUuid(999)]: "Tessa Reyes" };
+  await recheckSession(page);
   await expect(
     page.getByRole("button", {
       name: "Download Third account guide.pdf",
@@ -1787,7 +1769,7 @@ test("Library files: old account transfer results cannot announce or restore pri
     }),
   ).toBeVisible();
   heldDownload.release();
-  await heldDownload.completed;
+  await heldDownload.settled.entered;
   expect(downloads).toEqual([]);
   await expect(
     page.getByRole("button", {
@@ -1806,7 +1788,7 @@ test("Library files: old department downloads and upload producers cannot follow
     downloads.push(download.suggestedFilename()),
   );
   await openLibrary(page);
-  const heldDownload = libraryGate();
+  const heldDownload = heldTransfer();
   fixture.downloadHold = heldDownload;
   await page
     .getByRole("button", { name: "Download Safety guide.pdf", exact: true })
@@ -1821,7 +1803,7 @@ test("Library files: old department downloads and upload producers cannot follow
     }),
   ).toBeVisible();
   heldDownload.release();
-  await heldDownload.completed;
+  await heldDownload.settled.entered;
   expect(downloads).toEqual([]);
   await chooseLibraryDepartment(page, "Maintenance");
   await expect(
@@ -1829,7 +1811,7 @@ test("Library files: old department downloads and upload producers cannot follow
       .getByRole("button", { name: "Download Safety guide.pdf", exact: true })
       .first(),
   ).toBeVisible();
-  const heldUpload = libraryGate();
+  const heldUpload = heldTransfer();
   fixture.uploadHold = heldUpload;
   await chooseLibraryFile(page);
   await heldUpload.entered;
@@ -1841,7 +1823,7 @@ test("Library files: old department downloads and upload producers cannot follow
     }),
   ).toBeVisible();
   heldUpload.release();
-  await heldUpload.completed;
+  await heldUpload.settled.entered;
   await expect(
     page.getByText("Upload guide.pdf uploaded.", { exact: true }),
   ).toHaveCount(0);
@@ -1884,13 +1866,7 @@ test("Library files: mobile long names and keyboard controls keep the same autho
   const completed = page.waitForEvent("download");
   await page.keyboard.press("Enter");
   expect((await completed).suggestedFilename()).toBe(filename);
-  expect(
-    await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth <=
-        document.documentElement.clientWidth,
-    ),
-  ).toBe(true);
+  await expectNoHorizontalScroll(page);
   await expect(
     page.getByRole("button", { name: `Archive ${filename}`, exact: true }),
   ).toBeVisible();
@@ -1905,7 +1881,7 @@ test("Library files: a list response predating a refused status read cannot rest
   await chooseLibraryFile(page);
   const check = page.getByRole("button", { name: "Check status", exact: true });
   await expect(check).toBeEnabled();
-  const held = libraryGate();
+  const held = heldResponse();
   fixture.listHold.set(LIBRARY_DEPARTMENT, held);
   await sendOpenViewEvent(page, "invalidate", { entity: "files" });
   await held.entered;
@@ -1950,11 +1926,12 @@ test("Library files: transient access refresh preserves filters and pending work
     name: "File status",
     exact: true,
   });
+  await showMoreFilters(page);
   await chooseFileStatus(page, "Archived");
   await expect(
     page.getByText("No archived files in this department.", { exact: true }),
   ).toBeVisible();
-  fixture.identityStatus = 503;
+  fixture.session.identityStatus = 503;
   await sendOpenViewEvent(page, "invalidate", { entity: "group_access" });
   await expect(
     page.getByRole("button", { name: "Retry access", exact: true }),
@@ -1966,14 +1943,14 @@ test("Library files: transient access refresh preserves filters and pending work
   await expect(
     page.getByText("Upload guide.pdf", { exact: true }),
   ).toBeVisible();
-  fixture.identityStatus = 200;
+  fixture.session.identityStatus = 200;
   await page.getByRole("button", { name: "Retry access", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Retry access", exact: true }),
   ).toHaveCount(0);
   await expect(search).toHaveValue("Safety");
   await expect(status).toHaveValue("only");
-  fixture.identityStatus = 403;
+  fixture.session.identityStatus = 403;
   await sendOpenViewEvent(page, "invalidate", { entity: "users" });
   await expect(
     page.getByRole("button", { name: "Retry access", exact: true }),
@@ -1999,25 +1976,28 @@ test("Library files: losing direct eligibility during a held upload hides the pr
       { department_id: LIBRARY_DEPARTMENT, module_id: null, level: "manage" },
     ],
   });
-  const held = libraryGate();
+  const held = heldTransfer();
   fixture.uploadHold = held;
   await openLibrary(page);
   await chooseLibraryFile(page);
   await held.entered;
-  fixture.access = [
-    {
-      department_id: LIBRARY_DEPARTMENT,
-      module_id: LIBRARY_MODULE,
-      level: "manage",
-    },
-  ];
+  fixture.session.identity = {
+    ...fixture.session.identity,
+    access: [
+      {
+        department_id: LIBRARY_DEPARTMENT,
+        module_id: LIBRARY_MODULE,
+        level: "manage",
+      },
+    ],
+  };
   await sendOpenViewEvent(page, "invalidate", { entity: "group_access" });
   await expect(page.getByLabel("Upload file", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("list", { name: "Library files", exact: true }),
   ).toHaveCount(0);
   held.release();
-  await held.completed;
+  await held.settled.entered;
   await expect(page.getByText("Upload guide.pdf", { exact: true })).toHaveCount(
     0,
   );
@@ -2109,7 +2089,7 @@ test("department option search preserves file filters pages and a held download"
     .getByRole("button", { name: "Load more files", exact: true })
     .click();
   await expect(files.getByRole("listitem")).toHaveCount(35);
-  const gate = libraryGate();
+  const gate = heldTransfer();
   fixture.downloadHold = gate;
   const downloads: string[] = [];
   page.on("download", (download) =>
@@ -2138,7 +2118,7 @@ test("department option search preserves file filters pages and a held download"
     await expect(sort).toHaveValue("name-desc");
     await expect(files.getByRole("listitem")).toHaveCount(35);
     gate.release();
-    await gate.completed;
+    await gate.settled.entered;
     await expect.poll(() => downloads).toEqual(["Guide 01.pdf"]);
     expect(fixture.calls.filter((call) => call.method !== "GET")).toHaveLength(
       0,
@@ -2153,7 +2133,7 @@ test("department option search preserves an active upload producer", async ({
 }) => {
   const fixture = await installLibrary(page);
   await openLibrary(page);
-  const gate = libraryGate();
+  const gate = heldTransfer();
   fixture.uploadHold = gate;
   try {
     await chooseLibraryFile(page);
@@ -2173,7 +2153,7 @@ test("department option search preserves an active upload producer", async ({
     ).toBeVisible();
     await page.keyboard.press("Escape");
     gate.release();
-    await gate.completed;
+    await gate.settled.entered;
     await expect(
       page.getByText("Upload guide.pdf uploaded.", { exact: true }),
     ).toBeVisible();
