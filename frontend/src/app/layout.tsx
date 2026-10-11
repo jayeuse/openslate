@@ -12,6 +12,7 @@ import {
 } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { OrganizationThemeProvider } from "@/components/organization-theme-provider";
+import { X6Stylesheets } from "@/components/sandbox/x6-stylesheets";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -92,6 +93,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}
         <script src="/theme-init.js" />
+        <X6Stylesheets />
       </head>
       <body className="flex min-h-full flex-col">
         <ThemeProvider />
