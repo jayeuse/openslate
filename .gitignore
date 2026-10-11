@@ -69,3 +69,5 @@ next-env.d.ts
 supabase/
 # mutmut working copy
 backend/mutants/
+# Hypothesis example database (property tests)
+backend/.hypothesis/
