@@ -313,8 +313,9 @@ type ExportError = {
   retryAfter?: string;
 };
 
+/** A `heldResponse()` from `./test`: the fake enters it, then waits. */
 type HeldExportResponse = {
-  begun: () => void;
+  enter: () => void;
   released: Promise<void>;
 };
 
@@ -492,7 +493,7 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
     const held = state.holdSession;
     state.holdSession = null;
     if (held) {
-      held.begun();
+      held.enter();
       await held.released;
     }
     await route.fulfill({
@@ -512,7 +513,7 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
       return;
     }
     state.createSubmissions += 1;
-    if (!(await administrator(route)) || !(await checkCsrf(route))) return;
+    if (!(await administrator(route))) return;
     const body = readBody(route);
     const passphrase = body?.passphrase;
     const sourceId = body?.backup_run_id;
@@ -524,6 +525,13 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
       Buffer.byteLength(passphrase, "utf8") <= 512 &&
       passphrase.trim() === passphrase &&
       !/[\p{C}\p{Z}]/u.test(passphrase.replaceAll(" ", ""));
+    state.createRequests.push({
+      sourceId: typeof sourceId === "string" ? sourceId : "",
+      key,
+      passphraseValid: valid,
+      csrfPresent: csrfPresent(route),
+    });
+    if (!(await checkCsrf(route))) return;
     if (
       !body ||
       Object.keys(body).length !== 2 ||
@@ -537,15 +545,9 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
       await invalidBody(route);
       return;
     }
-    state.createRequests.push({
-      sourceId,
-      key,
-      passphraseValid: valid,
-      csrfPresent: csrfPresent(route),
-    });
     const held = state.holdCreate;
     if (held) {
-      held.begun();
+      held.enter();
       await held.released;
     }
     if (state.createError) {
@@ -658,10 +660,16 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
         return;
       }
       state.admissionSubmissions += 1;
-      if (!(await administrator(route)) || !(await checkCsrf(route))) return;
+      if (!(await administrator(route))) return;
       const id = new URL(route.request().url()).pathname.split("/").at(-2)!;
       const actorId = state.actorId;
       const body = readBody(route);
+      state.admissionRequests.push({
+        id,
+        actorId,
+        csrfPresent: csrfPresent(route),
+      });
+      if (!(await checkCsrf(route))) return;
       if (
         !body ||
         Object.keys(body).length !== 1 ||
@@ -672,11 +680,6 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
         await invalidBody(route);
         return;
       }
-      state.admissionRequests.push({
-        id,
-        actorId,
-        csrfPresent: csrfPresent(route),
-      });
       const operation = state.operations.get(id);
       if (!operation || operation.state === "expired") {
         await safeError(route, {
@@ -715,7 +718,7 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
       // so prior-account response handling can be tested independently.
       const held = state.holdAdmission;
       if (held) {
-        held.begun();
+        held.enter();
         await held.released;
       }
       const path = "/api/backups/exports/" + id + "/content";

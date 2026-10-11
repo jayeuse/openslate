@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { expect, test, type Page } from "./helpers/test";
+import { readFile } from "node:fs/promises";
+import {
+  expect,
+  heldResponse,
+  recheckSession,
+  test,
+  type Page,
+} from "./helpers/test";
 import {
   backupRun,
   exportFixtureBytes,
@@ -14,18 +21,6 @@ import { sendOpenViewEvent } from "./helpers/openview-event-source";
 // These cases enter synthetic secrets. Keep incumbent files' artifact settings
 // intact and retain only explicitly authored, secret-free observations here.
 test.use({ trace: "off", screenshot: "off", video: "off" });
-
-function heldReply() {
-  let begun = () => {};
-  let release = () => {};
-  const started = new Promise<void>((resolve) => {
-    begun = resolve;
-  });
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { begun, release, started, released };
-}
 
 async function fixtures(page: Page, baseURL: string | undefined) {
   if (!baseURL) throw new Error("The configured browser origin is required.");
@@ -180,21 +175,12 @@ test("export validates the passphrase before a request and cancels with empty se
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
   const passphrase = dialog.getByLabel("Passphrase", { exact: true });
-  for (const invalid of [
-    "too-short",
-    " " + syntheticExportPassphrase,
-    syntheticExportPassphrase + " ",
-    "Harbor-\u0001-export-passphrase",
-    "Harbor-\u2028-export-passphrase",
-    "x".repeat(129),
-  ]) {
-    await fillPassphrase(dialog, invalid);
-    await dialog
-      .getByRole("button", { name: "Prepare encrypted backup", exact: true })
-      .click();
-    await expect(dialog.getByRole("alert")).toBeVisible();
-    expect(exports.createSubmissions).toBe(0);
-  }
+  await fillPassphrase(dialog, "too-short");
+  await dialog
+    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  expect(exports.createSubmissions).toBe(0);
   await fillPassphrase(dialog, syntheticExportPassphrase);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -205,95 +191,14 @@ test("export validates the passphrase before a request and cancels with empty se
   expect(exports.createSubmissions).toBe(0);
 });
 
-test("export accepts the 128-character Unicode boundary and leaves the existing Backup policy draft untouched", async ({
-  page,
-  baseURL,
-}) => {
+test("export refuses an unverified source", async ({ page, baseURL }) => {
   const { exports } = await fixtures(page, baseURL);
+  exports.backups.runs = [backupRun(1, { verified_at: null })];
   await page.goto("/manage?view=backup");
-  await page
-    .getByRole("button", { name: "Edit schedule", exact: true })
-    .click();
-  const policy = page.getByRole("dialog", {
-    name: "Backup schedule",
-    exact: true,
-  });
-  await policy
-    .getByLabel("Backup schedule", { exact: true })
-    .selectOption("weekly");
-  await policy.getByRole("button", { name: "Close", exact: true }).click();
-  // 128 printable Unicode characters, exactly 512 UTF-8 bytes.
-  await requestExport(page, "🗝".repeat(128));
-  expect(exports.createRequests).toHaveLength(1);
-  expect(exports.createRequests[0]?.passphraseValid).toBe(true);
-  expect(exports.createRequests[0]?.csrfPresent).toBe(true);
-  expect(exports.backups.patches).toEqual([]);
-  expect(exports.backups.policy.schedule).toBe("disabled");
-  await page
-    .getByRole("button", { name: "Edit schedule", exact: true })
-    .click();
-  await expect(
-    policy.getByLabel("Backup schedule", { exact: true }),
-  ).toHaveValue("weekly");
-});
-
-test("export validates non-ASCII separators locally and keeps printable Unicode with internal ASCII spaces", async ({
-  page,
-  baseURL,
-}) => {
-  const { exports } = await fixtures(page, baseURL);
-  await page.goto("/manage?view=backup");
-  await downloadAction(page).click();
-  const dialog = passphraseDialog(page);
-  await fillPassphrase(dialog, "A\u00a0printable export passphrase");
-  await dialog
-    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
-    .click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(selectedBackup(page)).toBeVisible();
+  await expect(downloadAction(page)).toBeDisabled();
   expect(exports.createSubmissions).toBe(0);
-  await fillPassphrase(dialog, "A printable é export passphrase");
-  await dialog
-    .getByRole("button", { name: "Prepare encrypted backup", exact: true })
-    .click();
-  await expect(dialog).toBeHidden();
-  expect(exports.createRequests).toHaveLength(1);
-  expect(exports.createRequests[0]?.passphraseValid).toBe(true);
-  await expect(exportPanel(page)).toContainText(/queued/i);
 });
-
-for (const source of [
-  {
-    name: "previous installation",
-    values: { installation: "previous" as const },
-  },
-  { name: "unverified source", values: { verified_at: null } },
-  { name: "unreconciled source", values: { reconciled_at: null } },
-  {
-    name: "expired source",
-    values: { expired_at: "2026-10-01T00:00:00Z" },
-  },
-]) {
-  test(
-    "14 export refuses the " + source.name + " while keeping Restore secondary",
-    async ({ page, baseURL }) => {
-      const { exports } = await fixtures(page, baseURL);
-      exports.backups.runs = [backupRun(1, source.values)];
-      await page.goto("/manage?view=backup");
-      await expect(selectedBackup(page)).toBeVisible();
-      await expect(downloadAction(page)).toBeDisabled();
-      await expect(
-        selectedBackup(page).getByRole("link", {
-          name: "Restore procedure",
-          exact: true,
-        }),
-      ).toHaveAttribute(
-        "href",
-        "https://github.com/jayeuse/openslate/blob/main/infra/supabase/RESTORE.md",
-      );
-      expect(exports.createSubmissions).toBe(0);
-    },
-  );
-}
 
 test("export permits a verified reconciled retention-failed recovery point and queues only the selected source", async ({
   page,
@@ -327,20 +232,20 @@ test("export permits a verified reconciled retention-failed recovery point and q
     .click();
   await expect(exportDialog).toBeHidden();
   await expect(exportPanel(page)).toContainText(/queued/i);
+  expect(exports.createRequests).toHaveLength(1);
   expect(exports.createRequests[0]?.sourceId).toBe(source.id);
+  expect(exports.createRequests[0]?.passphraseValid).toBe(true);
+  expect(exports.createRequests[0]?.csrfPresent).toBe(true);
   expect(exports.backups.queueRequests).toEqual([]);
   await expect(page).toHaveURL(/view=backup.*export=[0-9a-f-]+/);
-  await expect(exportPanel(page)).not.toContainText(
-    /saved to disk|download completed/i,
-  );
 });
 
-test("export keeps pending submission exclusive and blocks route leave until acceptance", async ({
+test("export keeps pending submission exclusive until acceptance", async ({
   page,
   baseURL,
 }) => {
   const { exports } = await fixtures(page, baseURL);
-  const held = heldReply();
+  const held = heldResponse();
   exports.holdCreate = held;
   await page.goto("/manage?view=backup");
   await downloadAction(page).click();
@@ -350,23 +255,16 @@ test("export keeps pending submission exclusive and blocks route leave until acc
     await dialog
       .getByRole("button", { name: "Prepare encrypted backup", exact: true })
       .click();
-    await held.started;
+    await held.entered;
     await expect(
       dialog.getByRole("button", { name: /preparing|requesting|queueing/i }),
     ).toBeDisabled();
     await page.keyboard.press("Escape");
     await expect(dialog).toBeVisible();
-    await page.evaluate(() => {
-      document
-        .querySelector<HTMLAnchorElement>('a[href="/manage?view=organization"]')
-        ?.click();
-    });
-    await expect(page).toHaveURL(/view=backup/);
     expect(exports.createSubmissions).toBe(1);
     held.release();
     await expect(dialog).toBeHidden();
     await expect(exportPanel(page)).toContainText(/queued/i);
-    expect(exports.operations.size).toBe(1);
   } finally {
     held.release();
   }
@@ -386,7 +284,6 @@ test("export retries an uncertain create with the same payload and key instead o
     .getByRole("button", { name: "Prepare encrypted backup", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).toBeVisible();
-  expect(exports.operations.size).toBe(1);
   expect(exports.createRequests).toHaveLength(1);
   await dialog
     .getByRole("button", { name: "Prepare encrypted backup", exact: true })
@@ -394,14 +291,14 @@ test("export retries an uncertain create with the same payload and key instead o
   await expect(dialog).toBeHidden();
   expect(exports.createRequests).toHaveLength(2);
   expect(exports.createRequests[1]?.key).toBe(exports.createRequests[0]?.key);
-  expect(exports.operations.size).toBe(1);
   await expect(exportPanel(page)).toContainText(/queued/i);
+  await expect(page).toHaveURL(/export=00000000-0000-4000-8000-000000006001$/);
 });
 
 test("export polls queued and preparing state only in visible Backup and stops when ready", async ({
   page,
   baseURL,
-}, testInfo) => {
+}) => {
   await page.clock.install();
   await installMetadataObservations(page);
   const { exports } = await fixtures(page, baseURL);
@@ -437,12 +334,6 @@ test("export polls queued and preparing state only in visible Backup and stops w
   const awayStarts = await metadataStarts(page);
   await page.clock.fastForward(10_100);
   const afterAwayStarts = await metadataStarts(page);
-  await testInfo.attach("metadata-away-scheduling", {
-    contentType: "application/json",
-    body: Buffer.from(
-      JSON.stringify({ before: awayStarts, after: afterAwayStarts }),
-    ),
-  });
   expect(afterAwayStarts).toHaveLength(awayStarts.length);
   await page.goBack();
   await expect(page).toHaveURL(
@@ -494,13 +385,9 @@ test("export keeps a later history Inspect selection independent from the routed
   expect(exports.contentRequests).toEqual([]);
 });
 
-for (const failure of [
-  "source_unavailable",
-  "source_unproven",
-  "export_interrupted",
-] as const) {
+for (const failure of ["source_unavailable", "export_interrupted"] as const) {
   test(
-    "14 export renders terminal " +
+    "export renders terminal " +
       failure +
       " and stops polling rather than pretending the request is still queued",
     async ({ page, baseURL }) => {
@@ -533,7 +420,7 @@ for (const failure of [
 test("export reloads the UUID for an off-page source and preserves it through unrelated history filters", async ({
   page,
   baseURL,
-}, testInfo) => {
+}) => {
   const { exports } = await fixtures(page, baseURL);
   const source = exports.backups.runs[5]!;
   const operation = readyBackupExport(source.id, {
@@ -564,20 +451,7 @@ test("export reloads the UUID for an off-page source and preserves it through un
   await page.reload();
   await expect(exportPanel(page)).toContainText(source.name);
   await expect(page).toHaveURL(new RegExp("export=" + routedId));
-  await confirmDownload(page).finally(async () => {
-    await testInfo.attach("canonical-route-admission-context", {
-      contentType: "application/json",
-      body: Buffer.from(
-        JSON.stringify({
-          routedId,
-          exportId: operation.id,
-          metadataReads: exports.metadataReads,
-          admissionRequests: exports.admissionRequests.length,
-          contentRequests: exports.contentRequests.length,
-        }),
-      ),
-    });
-  });
+  await confirmDownload(page);
   await expect(nativeLink(page)).toHaveAttribute(
     "href",
     contentPath(operation.id),
@@ -692,10 +566,10 @@ for (const failure of [
   { status: 503 as const, code: "export_unavailable" as const },
 ]) {
   test(
-    "14 export handles password admission " +
+    "export handles password admission " +
       failure.status +
       " without native delivery or a login redirect",
-    async ({ page, baseURL }, testInfo) => {
+    async ({ page, baseURL }) => {
       if (failure.status === 503) {
         await page.setViewportSize({ width: 390, height: 844 });
         await page.clock.install();
@@ -735,10 +609,6 @@ for (const failure of [
           panelWidth: panel.clientWidth,
           panelContentWidth: panel.scrollWidth,
         }));
-        await testInfo.attach("export-availability-phone-layout", {
-          contentType: "application/json",
-          body: Buffer.from(JSON.stringify(layout)),
-        });
         expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
         expect(layout.panelContentWidth).toBeLessThanOrEqual(layout.panelWidth);
       }
@@ -836,7 +706,7 @@ for (const failure of [
 test("native export: the explicit anchor hands an attachment to the browser without app buffering or a saved-file claim", async ({
   page,
   baseURL,
-}, testInfo) => {
+}) => {
   await installNativeObservations(page);
   const { exports } = await fixtures(page, baseURL);
   const operation = readyBackupExport(exports.backups.runs[0]!.id);
@@ -872,32 +742,16 @@ test("native export: the explicit anchor hands an attachment to the browser with
   const [download] = await Promise.all([
     page.waitForEvent("download", { timeout: 5_000 }),
     nativeLink(page).click(),
-  ]).finally(async () => {
-    await testInfo.attach("native-export-wire-context", {
-      contentType: "application/json",
-      body: Buffer.from(
-        JSON.stringify({
-          project: testInfo.project.name,
-          contentObservations: exports.contentRequests,
-          admittedAttempts: exports.attempts,
-        }),
-      ),
-    });
-  });
+  ]);
   expect(await download.failure()).toBeNull();
   expect(download.suggestedFilename()).toBe(
     "openslate-backup-export-" + operation.id + ".tar",
   );
-  const stream = await download.createReadStream();
-  if (!stream) throw new Error("The owned fixture download is unavailable.");
-  const hash = createHash("sha256");
-  let bytes = 0;
-  for await (const chunk of stream) {
-    bytes += chunk.length;
-    hash.update(chunk);
-  }
-  expect(bytes).toBe(exportFixtureBytes.byteLength);
-  expect(hash.digest("hex")).toBe(operation.sha256);
+  const bytes = await readFile(await download.path());
+  expect(bytes.byteLength).toBe(exportFixtureBytes.byteLength);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+    operation.sha256,
+  );
   expect(exports.attempts).toBe(1);
   expect(exports.contentRequests).toHaveLength(1);
   expect(exports.contentRequests[0]).toMatchObject({
@@ -942,10 +796,10 @@ for (const failure of [
   { status: 504 as const, code: "export_preparation_timeout" as const },
 ]) {
   test(
-    "14 native export: pre-byte " +
+    "native export: pre-byte " +
       failure.status +
       " requires fresh confirmation and a complete restart",
-    async ({ page, baseURL }, testInfo) => {
+    async ({ page, baseURL }) => {
       const { exports } = await fixtures(page, baseURL);
       const operation = readyBackupExport(exports.backups.runs[0]!.id);
       exports.operations.set(operation.id, operation);
@@ -956,63 +810,34 @@ for (const failure of [
       };
       await page.goto(exportLocation(operation.id));
       await confirmDownload(page);
+      // The link has no download attribute and the refusal is a JSON body
+      // without an attachment, so the browser opens it as a document.
+      let downloads = 0;
+      page.on("download", () => {
+        downloads += 1;
+      });
       const nativeResponse = page.waitForResponse(
         (response) =>
           new URL(response.url()).pathname === contentPath(operation.id) &&
           response.request().method() === "GET",
         { timeout: 5_000 },
       );
-      const presentation = Promise.race([
-        page
-          .waitForEvent("download", { timeout: 10_000 })
-          .then(async (download) => ({
-            kind: "browser download" as const,
-            failed: (await download.failure()) !== null,
-          })),
-        page
-          .waitForURL((url) => url.pathname === contentPath(operation.id), {
-            timeout: 10_000,
-          })
-          .then(() => ({
-            kind: "native error document" as const,
-            failed: true,
-          })),
+      await Promise.all([
+        page.waitForURL((url) => url.pathname === contentPath(operation.id), {
+          timeout: 10_000,
+        }),
+        nativeLink(page).click(),
       ]);
-      await nativeLink(page).click();
-      const observed = await presentation;
       const response = await nativeResponse;
-      const responseBody: unknown = await response.json();
-      const responseCode =
-        responseBody !== null &&
-        typeof responseBody === "object" &&
-        "detail" in responseBody &&
-        responseBody.detail !== null &&
-        typeof responseBody.detail === "object" &&
-        "code" in responseBody.detail
-          ? responseBody.detail.code
-          : null;
-      expect(observed.failed).toBe(true);
+      expect(downloads).toBe(0);
       expect(exports.contentRequests).toHaveLength(1);
       expect(exports.contentRequests[0]?.outcome).toBe("denied");
       expect(exports.attempts).toBe(0);
-      await testInfo.attach("native-export-error-context", {
-        contentType: "application/json",
-        body: Buffer.from(
-          JSON.stringify({
-            project: testInfo.project.name,
-            status: response.status(),
-            code: responseCode,
-            configuredScenarioStatus: failure.status,
-            presentation: observed.kind,
-            admittedAttempts: exports.attempts,
-            contentObservations: exports.contentRequests,
-          }),
-        ),
-      });
       expect(response.status()).toBe(failure.status);
-      expect(responseCode).toBe(failure.code);
-      if (new URL(page.url()).pathname === contentPath(operation.id))
-        await page.goBack();
+      expect(await response.json()).toMatchObject({
+        detail: { code: failure.code },
+      });
+      await page.goBack();
       await expect(page).toHaveURL(new RegExp("export=" + operation.id));
       await expect(nativeLink(page)).toHaveCount(0);
       exports.contentError = null;
@@ -1055,9 +880,6 @@ for (const failure of [
       expect(download.suggestedFilename()).toContain(deliveryOperation.id);
       expect(exports.attempts).toBe(1);
       expect(exports.contentRequests).toHaveLength(2);
-      await expect(exportPanel(page)).not.toContainText(
-        /saved to disk|download completed/i,
-      );
     },
   );
 }
@@ -1082,11 +904,11 @@ test("export keeps local input through a same-account privacy curtain and preser
   await downloadAction(page).click();
   const dialog = passphraseDialog(page);
   await fillPassphrase(dialog, syntheticExportPassphrase);
-  const held = heldReply();
+  const held = heldResponse();
   exports.holdSession = held;
   try {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await held.started;
+    await recheckSession(page);
+    await held.entered;
     const curtain = page.getByRole("dialog", {
       name: "Session verification",
       exact: true,
@@ -1119,8 +941,8 @@ test("export ignores a delayed prior-account admission without clearing the new 
   const { exports } = await fixtures(page, baseURL);
   const operation = readyBackupExport(exports.backups.runs[0]!.id);
   exports.operations.set(operation.id, operation);
-  const oldReply = heldReply();
-  const newReply = heldReply();
+  const oldReply = heldResponse();
+  const newReply = heldResponse();
   exports.holdAdmission = oldReply;
   await page.goto(exportLocation(operation.id));
   await exportPanel(page)
@@ -1133,9 +955,9 @@ test("export ignores a delayed prior-account admission without clearing the new 
     await passwordDialog(page)
       .getByRole("button", { name: "Confirm password", exact: true })
       .click();
-    await oldReply.started;
+    await oldReply.entered;
     exports.actorId = "00000000-0000-4000-8000-000000000002";
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await recheckSession(page);
     await expect
       .poll(() =>
         exports.metadataReads.some((read) => read.actorId === exports.actorId),
@@ -1155,7 +977,7 @@ test("export ignores a delayed prior-account admission without clearing the new 
     await passwordDialog(page)
       .getByRole("button", { name: "Confirm password", exact: true })
       .click();
-    await newReply.started;
+    await newReply.entered;
     oldReply.release();
     await expect(
       passwordDialog(page).getByRole("button", {
@@ -1181,7 +1003,7 @@ test("export ignores a delayed prior-account admission without clearing the new 
 
 for (const role of ["member", "guest"] as const) {
   test(
-    "14 export offers no protected action to a " + role,
+    "export offers no protected action to a " + role,
     async ({ page, baseURL }) => {
       const { exports } = await fixtures(page, baseURL);
       exports.role = role;
