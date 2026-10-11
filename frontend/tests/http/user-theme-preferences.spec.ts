@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Route } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 import { profileSelf } from "./helpers/profile-api";
 
 const userA = "00000000-0000-4000-8000-000000000001";
@@ -13,17 +19,10 @@ const defaultRegionalAppearance = {
 } as const;
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
-function deferred() {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-}
-
 async function installIdentity(
   page: Page,
   role: "admin" | "member" | "guest" = "admin",
+  organizationLook = "slate",
 ) {
   let user = userA;
   let checks = 0;
@@ -39,7 +38,7 @@ async function installIdentity(
   await page.route("**/api/auth/sessions", (route) =>
     route.fulfill({ json: [] }),
   );
-  let organizationTheme = "slate";
+  let organizationTheme = organizationLook;
   let revision = 1;
   await page.route("**/api/workspace/appearance", (route) =>
     route.fulfill({ json: { theme: organizationTheme } }),
@@ -114,7 +113,7 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
     route.fulfill({ json: { theme: "stockroom" } }),
   );
 
-  const gate = deferred();
+  const gate = heldResponse();
   let reads = 0;
   let recovered = false;
   await page.addInitScript(() => {
@@ -124,7 +123,7 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
   await page.route(`**${preferencePath(userA)}`, async (route) => {
     reads += 1;
     if (!recovered) {
-      await gate.promise;
+      await gate.released;
       await route.fulfill({
         status: 503,
         json: { detail: "Private upstream diagnostic" },
@@ -205,14 +204,14 @@ test("legacy Appearance and Your profile share only confirmed theme saves, prese
   page,
 }) => {
   await installIdentity(page, "member");
-  const gate = deferred();
+  const gate = heldResponse();
   let theme = "light";
   const writes: unknown[] = [];
   await page.route(`**${preferencePath(userA)}`, async (route) => {
     if (route.request().method() === "PATCH") {
       const body: unknown = route.request().postDataJSON();
       writes.push(body);
-      await gate.promise;
+      await gate.released;
       if (
         typeof body !== "object" ||
         body === null ||
@@ -420,8 +419,8 @@ for (const delayed of ["GET", "PATCH"] as const) {
     page,
   }) => {
     const identity = await installIdentity(page);
-    const gate = deferred();
-    const answered = deferred();
+    const gate = heldResponse();
+    const answered = heldResponse();
     let oldRequests = 0;
     await page.route("**/api/users/*/preferences", async (route: Route) => {
       const path = new URL(route.request().url()).pathname;
@@ -439,7 +438,7 @@ for (const delayed of ["GET", "PATCH"] as const) {
         });
       if (route.request().method() === delayed) {
         oldRequests += 1;
-        await gate.promise;
+        await gate.released;
         await route
           .fulfill({
             json: {
@@ -490,7 +489,7 @@ for (const delayed of ["GET", "PATCH"] as const) {
       // through the old account's mount.
       const startedOldRequests = oldRequests;
       gate.release();
-      await answered.promise;
+      await answered.released;
       await openAccount(page);
       await expect(light(page)).toBeChecked();
       await expect(page.locator("html")).not.toHaveClass(/dark/);
@@ -502,87 +501,56 @@ for (const delayed of ["GET", "PATCH"] as const) {
   });
 }
 
-test("legacy Account opens Profile with working color preferences without language and presence stubs", async ({
+test("a read for another account never applies and can be explicitly retried", async ({
   page,
 }) => {
-  await installIdentity(page);
-  await page.goto("/platform?section=account");
-  await expect(page).toHaveURL(/\/profile#security$/);
-  const theme = dark(page);
-  await expect(theme).toBeEnabled();
-  await expect(
-    page.getByRole("combobox", { name: "Display language", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("combobox", { name: "My presence", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByText("Team presence", { exact: true })).toHaveCount(0);
-  await theme.click();
-  await expect(theme).toBeChecked();
-  await expect(page.locator("html")).toHaveClass(/dark/);
-  await expect(page.getByText("Morgan Kim", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Your status:")).toHaveCount(0);
-  await expect(page.getByText("Maligayang pagdating")).toHaveCount(0);
-});
-
-for (const fault of ["malformed", "identity"] as const) {
-  test(`a ${fault} read never applies and can be explicitly retried`, async ({
-    page,
-  }) => {
-    const identity = await installIdentity(page);
-    let reads = 0;
-    let recovered = false;
-    await page.route(`**${preferencePath(userA)}`, (route) => {
-      reads += 1;
-      return route.fulfill({
-        json: !recovered
-          ? {
-              user_id: fault === "identity" ? userB : userA,
-              theme: fault === "malformed" ? "sepia" : "dark",
-              appearance: {
-                ...defaultRegionalAppearance,
-                motion: "system",
-                keyboard_shortcuts: true,
-              },
-            }
-          : {
-              user_id: userA,
-              theme: "dark",
-              appearance: {
-                ...defaultRegionalAppearance,
-                motion: "system",
-                keyboard_shortcuts: true,
-              },
-            },
-      });
+  const identity = await installIdentity(page);
+  let reads = 0;
+  let recovered = false;
+  await page.route(`**${preferencePath(userA)}`, (route) => {
+    reads += 1;
+    return route.fulfill({
+      json: {
+        user_id: recovered ? userA : userB,
+        theme: "dark",
+        appearance: {
+          ...defaultRegionalAppearance,
+          motion: "system",
+          keyboard_shortcuts: true,
+        },
+      },
     });
-    await page.goto("/settings/appearance");
-    await expect(
-      look(page).getByRole("button", {
-        name: "Retry preferences",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(page.locator("html")).not.toHaveClass(/dark/);
-    await expect(dark(page)).toBeDisabled();
-    if (fault === "identity")
-      await expect.poll(() => identity.checks).toBeGreaterThan(1);
-    const beforeRetry = reads;
-    recovered = true;
-    await look(page)
-      .getByRole("button", { name: "Retry preferences", exact: true })
-      .click();
-    await expect(dark(page)).toBeChecked();
-    await expect(page.locator("html")).toHaveClass(/dark/);
-    expect(reads).toBe(beforeRetry + 1);
   });
-}
+  await page.goto("/settings/appearance");
+  await expect(
+    look(page).getByRole("button", {
+      name: "Retry preferences",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await expect(dark(page)).toBeDisabled();
+  await expect.poll(() => identity.checks).toBeGreaterThan(1);
+  const beforeRetry = reads;
+  recovered = true;
+  await look(page)
+    .getByRole("button", { name: "Retry preferences", exact: true })
+    .click();
+  await expect(dark(page)).toBeChecked();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  expect(reads).toBe(beforeRetry + 1);
+});
 
 test("confirmed theme saves preserve applied motion and organization look when browser writes are blocked", async ({
   page,
 }) => {
-  await installIdentity(page);
-  const gate = deferred();
+  await installIdentity(page, "admin", "stockroom");
+  await page.addInitScript(() => {
+    Storage.prototype.setItem = () => {
+      throw new DOMException("Storage writes are blocked", "SecurityError");
+    };
+  });
+  const gate = heldResponse();
   let theme = "light";
   let motion = "system";
   const writes: unknown[] = [];
@@ -596,7 +564,7 @@ test("confirmed theme saves preserve applied motion and organization look when b
         "theme" in body &&
         (body.theme === "light" || body.theme === "dark")
       ) {
-        await gate.promise;
+        await gate.released;
         theme = body.theme;
       } else if (
         "appearance" in body &&
@@ -621,29 +589,16 @@ test("confirmed theme saves preserve applied motion and organization look when b
     });
   });
   try {
-    await page.goto("/manage?view=organization");
-    const look = page.getByRole("radiogroup", { name: "Organization look" });
-    await expect(look.getByRole("radio", { name: /^Slate/ })).toBeChecked();
-    await page.evaluate(() => {
-      Storage.prototype.setItem = () => {
-        throw new DOMException("Storage writes are blocked", "SecurityError");
-      };
-    });
-    await look.locator("label").filter({ hasText: "Stockroom" }).click();
+    await page.goto("/settings/appearance");
+    await expect(light(page)).toBeChecked();
     await expect(page.locator("html")).toHaveAttribute(
       "data-theme",
       "stockroom",
     );
-    await page
-      .getByRole("button", { name: "Save settings", exact: true })
-      .click();
-    await expect(
-      page.getByText("Organization settings saved.", { exact: true }),
-    ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Your profile", exact: true })
-      .click();
-    await expect(light(page)).toBeChecked();
+    // The applied look lives only in the page: the cache write failed.
+    expect(
+      await page.evaluate(() => localStorage.getItem("openslate-org-theme")),
+    ).toBeNull();
     const motion = page.getByRole("switch", { name: "Reduce motion" });
     await motion.click();
     await expect(motion).toBeChecked();
@@ -742,16 +697,22 @@ test("additive regional appearance remains display-only while partial theme and 
     { theme: "dark" },
     { appearance: { motion: "reduce" } },
   ]);
-  expect(appearance).toEqual({
-    motion: "reduce",
-    keyboard_shortcuts: true,
-    ...regional,
-  });
   await page.reload();
   await expect(dark(page)).toBeChecked();
   await expect(
     page.getByRole("switch", { name: "Reduce motion" }),
   ).toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: "Convenience shortcuts" }),
+  ).toBeChecked();
+  for (const [label, value] of [
+    ["Timezone", "Europe/London"],
+    ["Date format", "dmy"],
+    ["Time format", "24h"],
+    ["First day of the week", "sunday"],
+    ["Start page after sign-in", "manage"],
+  ])
+    await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
   await expect(page).toHaveURL(/\/profile#look$/);
 });
 
@@ -787,46 +748,18 @@ test("System follows OS color without writes and explicit color stays fixed", as
   expect(writes).toEqual([{ theme: "dark" }]);
 });
 
-for (const malformed of [
-  fullPreference("dark", null),
-  fullPreference("dark", { motion: "normal", keyboard_shortcuts: true }),
-  fullPreference("dark", { motion: "system", keyboard_shortcuts: "false" }),
-  fullPreference("dark", { motion: "system" }),
-  fullPreference("dark", {
-    motion: "system",
-    keyboard_shortcuts: true,
-    density: "compact",
-  }),
-  { ...fullPreference("dark"), density: "compact" },
-  ...[
-    { timezone: 42 },
-    { date_format: "locale" },
-    { time_format: null },
-    { week_start: "tuesday" },
-    { start_page: "profile" },
-  ].map((invalid) =>
-    fullPreference("dark", {
-      motion: "system",
-      keyboard_shortcuts: true,
-      ...invalid,
-    }),
-  ),
-]) {
-  test(`strict preferences refuse malformed shape ${JSON.stringify(malformed)}`, async ({
-    page,
-  }) => {
-    await installIdentity(page);
-    await page.route(`**${preferencePath(userA)}`, (route) =>
-      route.fulfill({ json: malformed }),
-    );
-    await page.goto("/settings/appearance");
-    await expect(dark(page)).toBeDisabled();
-    await expect(
-      look(page).getByRole("alert").filter({ hasText: "could not be loaded" }),
-    ).toContainText("could not be loaded");
-    await expect(page.locator("html")).not.toHaveClass(/dark/);
-  });
-}
+test("strict preferences refuse a null appearance", async ({ page }) => {
+  await installIdentity(page);
+  await page.route(`**${preferencePath(userA)}`, (route) =>
+    route.fulfill({ json: fullPreference("dark", null) }),
+  );
+  await page.goto("/settings/appearance");
+  await expect(dark(page)).toBeDisabled();
+  await expect(
+    look(page).getByRole("alert").filter({ hasText: "could not be loaded" }),
+  ).toContainText("could not be loaded");
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+});
 
 test("account motion and shortcut commands are partial and confirmed before preview", async ({
   page,
@@ -835,14 +768,14 @@ test("account motion and shortcut commands are partial and confirmed before prev
   // Retain the legacy omission case: the current reader supplies regional defaults.
   let appearance = { motion: "system", keyboard_shortcuts: true };
   const writes: unknown[] = [];
-  const hold = deferred();
+  const hold = heldResponse();
   await page.route(`**${preferencePath(userA)}`, async (route) => {
     if (route.request().method() === "PATCH") {
       const body = route.request().postDataJSON() as {
         appearance: Partial<typeof appearance>;
       };
       writes.push(body);
-      await hold.promise;
+      await hold.released;
       appearance = { ...appearance, ...body.appearance };
     }
     await route.fulfill({ json: fullPreference("light", appearance) });
@@ -873,6 +806,10 @@ test("account motion and shortcut commands are partial and confirmed before prev
       { appearance: { keyboard_shortcuts: false } },
     ]);
     await page.reload();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-motion",
+      "reduced",
+    );
     await expect(
       page.getByRole("switch", { name: "Reduce motion" }),
     ).toBeChecked();
@@ -901,11 +838,11 @@ test("device text and density scale pages without changing account preferences",
   });
   await page.goto("/settings/appearance");
   await expect(dark(page)).toBeEnabled();
-  await expect
-    .poll(() =>
-      page.locator("html").evaluate((node) => getComputedStyle(node).fontSize),
-    )
-    .toBe("20px");
+  const html = page.locator("html");
+  const rootSize = () =>
+    html.evaluate((node) => parseFloat(getComputedStyle(node).fontSize));
+  await expect(html).toHaveAttribute("data-text-size", "125");
+  const larger = await rootSize();
   await expect(page.getByRole("combobox", { name: "Text size" })).toHaveValue(
     "125",
   );
@@ -919,15 +856,17 @@ test("device text and density scale pages without changing account preferences",
   await expect(
     page.getByRole("region", { name: "Appearance preview" }),
   ).toBeVisible();
+  await page.getByRole("combobox", { name: "Text size" }).selectOption("100");
+  await expect(html).toHaveAttribute("data-text-size", "100");
+  // Text size scales the whole page relative to the default size.
+  await expect.poll(async () => larger / (await rootSize())).toBe(1.25);
+  const standard = await rootSize();
   await page.getByRole("combobox", { name: "Text size" }).selectOption("112.5");
   await page
     .getByRole("combobox", { name: "Page spacing" })
     .selectOption("compact");
-  await expect
-    .poll(() =>
-      page.locator("html").evaluate((node) => getComputedStyle(node).fontSize),
-    )
-    .toBe("18px");
+  await expect(html).toHaveAttribute("data-text-size", "112.5");
+  await expect.poll(async () => (await rootSize()) / standard).toBe(1.125);
   await page.reload();
   await expect(page.getByRole("combobox", { name: "Text size" })).toHaveValue(
     "112.5",
@@ -956,11 +895,7 @@ test("public prepaint resolves System and device text before hydration including
   await page.route("**/_next/**/*.js*", (route) => route.abort());
   await page.goto("/login");
   await expect(page.locator("html")).toHaveClass(/dark/);
-  await expect
-    .poll(() =>
-      page.locator("html").evaluate((node) => getComputedStyle(node).fontSize),
-    )
-    .toBe("20px");
+  await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");
   await expect(page.locator("html")).toHaveAttribute(
     "data-density",
     "spacious",
@@ -978,11 +913,7 @@ test("public prepaint resolves System and device text before hydration including
   });
   await page.reload();
   await expect(page.locator("html")).toHaveClass(/dark/);
-  await expect
-    .poll(() =>
-      page.locator("html").evaluate((node) => getComputedStyle(node).fontSize),
-    )
-    .toBe("16px");
+  await expect(page.locator("html")).toHaveAttribute("data-text-size", "100");
 });
 
 test("blocked device storage still applies text and spacing without claiming persistence", async ({
@@ -1000,11 +931,7 @@ test("blocked device storage still applies text and spacing without claiming per
   await page
     .getByRole("combobox", { name: "Page spacing" })
     .selectOption("spacious");
-  await expect
-    .poll(() =>
-      page.locator("html").evaluate((el) => getComputedStyle(el).fontSize),
-    )
-    .toBe("20px");
+  await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");
   await expect(
     page
       .getByRole("status")
@@ -1052,11 +979,7 @@ test("Compact spacing respects 1279 and 1280 fine-pointer admission and device s
     "112.5",
   );
   await expect(density).toHaveValue("spacious");
-  await expect
-    .poll(() =>
-      page.locator("html").evaluate((el) => getComputedStyle(el).fontSize),
-    )
-    .toBe("18px");
+  await expect(page.locator("html")).toHaveAttribute("data-text-size", "112.5");
   await expect(page.locator("html")).toHaveAttribute("class", color ?? "");
 });
 
@@ -1117,8 +1040,8 @@ test("Retry keeps account controls locked until its authoritative read completes
   page,
 }) => {
   await installIdentity(page);
-  const hold = deferred();
-  const started = deferred();
+  const hold = heldResponse();
+  const started = heldResponse();
   let failed = false;
   let writes = 0;
   await page.route(`**${preferencePath(userA)}`, async (route) => {
@@ -1132,7 +1055,7 @@ test("Retry keeps account controls locked until its authoritative read completes
     }
     if (failed) {
       started.release();
-      await hold.promise;
+      await hold.released;
     }
     return route.fulfill({ json: fullPreference(failed ? "dark" : "light") });
   });
@@ -1143,7 +1066,7 @@ test("Retry keeps account controls locked until its authoritative read completes
     await look(page)
       .getByRole("button", { name: "Retry preferences", exact: true })
       .click();
-    await started.promise;
+    await started.released;
     await expect(
       look(page).getByRole("button", {
         name: "Retry preferences",
@@ -1169,16 +1092,16 @@ test("a write completing behind the session curtain waits for a fresh verified r
   page,
 }) => {
   await installIdentity(page);
-  const verification = deferred();
-  const write = deferred();
-  const writing = deferred();
-  const fresh = deferred();
-  const freshRequested = deferred();
+  const verification = heldResponse();
+  const write = heldResponse();
+  const writing = heldResponse();
+  const fresh = heldResponse();
+  const freshRequested = heldResponse();
   let holdVerification = false;
   let completed = false;
   let writes = 0;
   await page.route("**/api/auth/session", async (route) => {
-    if (holdVerification) await verification.promise;
+    if (holdVerification) await verification.released;
     return route.fulfill({
       json: { authenticated: true, user_id: userA, setup_required: false },
     });
@@ -1187,11 +1110,11 @@ test("a write completing behind the session curtain waits for a fresh verified r
     if (route.request().method() === "PATCH") {
       writes++;
       writing.release();
-      await write.promise;
+      await write.released;
       completed = true;
     } else if (completed) {
       freshRequested.release();
-      await fresh.promise;
+      await fresh.released;
     }
     await route.fulfill({ json: fullPreference(completed ? "dark" : "light") });
   });
@@ -1199,7 +1122,7 @@ test("a write completing behind the session curtain waits for a fresh verified r
     await page.goto("/settings/appearance");
     await expect(light(page)).toBeChecked();
     await dark(page).click();
-    await writing.promise;
+    await writing.released;
     holdVerification = true;
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
     await expect(
@@ -1214,7 +1137,7 @@ test("a write completing behind the session curtain waits for a fresh verified r
     await returned;
     await expect(page.locator("html")).not.toHaveClass(/dark/);
     verification.release();
-    await freshRequested.promise;
+    await freshRequested.released;
     await expect(
       page.getByText("Checking your session…", { exact: true }),
     ).toBeHidden();
@@ -1263,6 +1186,17 @@ test("appearance switches keep their thumbs inside the track and a 44 pixel hit 
   await page
     .getByRole("combobox", { name: "Page spacing" })
     .selectOption("compact");
+  // Read the hit target only after the new size and spacing apply and the
+  // track's size transition ends; a box read earlier misses the target.
+  await expect(page.locator("html")).toHaveAttribute("data-text-size", "100");
+  await expect(page.locator("html")).toHaveAttribute("data-density", "compact");
+  await expect
+    .poll(() =>
+      toggle.evaluate(
+        (element) => element.getAnimations({ subtree: true }).length,
+      ),
+    )
+    .toBe(0);
   const box = await toggle.boundingBox();
   if (!box) throw new Error("Switch hit target missing");
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + 21);
@@ -1273,15 +1207,15 @@ test("an ordinary preference GET completing behind the curtain requires a fresh 
   page,
 }) => {
   await installIdentity(page);
-  const verification = deferred();
-  const ordinary = deferred();
-  const fresh = deferred();
+  const verification = heldResponse();
+  const ordinary = heldResponse();
+  const fresh = heldResponse();
   let holdVerification = false;
   let reads = 0;
   let writes = 0;
   let phase: "bootstrap" | "ordinary" | "fresh" = "bootstrap";
   await page.route("**/api/auth/session", async (route) => {
-    if (holdVerification) await verification.promise;
+    if (holdVerification) await verification.released;
     return route.fulfill({
       json: { authenticated: true, user_id: userA, setup_required: false },
     });
@@ -1293,8 +1227,8 @@ test("an ordinary preference GET completing behind the curtain requires a fresh 
     }
     reads += 1;
     const requestPhase = phase;
-    if (requestPhase === "ordinary") await ordinary.promise;
-    if (requestPhase === "fresh") await fresh.promise;
+    if (requestPhase === "ordinary") await ordinary.released;
+    if (requestPhase === "fresh") await fresh.released;
     return route.fulfill({
       json: fullPreference(requestPhase === "ordinary" ? "dark" : "light"),
     });

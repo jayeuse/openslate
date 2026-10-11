@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, test } from "./helpers/test";
 import {
   avatarFileId,
   avatarPng,
@@ -66,16 +66,16 @@ for (const role of ["member", "guest"] as const) {
         userId: profileUserA,
       },
     ]);
-    expect(api.people.get(profileUserA)).toMatchObject({
-      display_name: "Maya Chen",
-      job_title: "Equipment coordinator",
-      bio: "Coordinates shared equipment.",
-      phone: "+1 555 0102",
-    });
     await page.reload();
     await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
       "+1 555 0102",
     );
+    for (const [label, value] of [
+      ["Display name", "Maya Chen"],
+      ["Job title", "Equipment coordinator"],
+      ["Short bio", "Coordinates shared equipment."],
+    ])
+      await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
     await expect(save).toBeDisabled();
     expect(api.forbiddenReads).toEqual([]);
   });
@@ -109,6 +109,7 @@ test("Profile email request needs the current password and keeps saved email rea
   await dialog
     .getByLabel("Current password", { exact: true })
     .fill("owned current password");
+  // The email-change helper takes the profileGate names.
   const hold = profileGate();
   api.holdRequest = hold;
   try {
@@ -223,12 +224,9 @@ for (const failure of [422, 503] as const) {
   });
 }
 
-for (const defect of [
-  "missing-phone",
-  "wrong-owner",
-  "invalid-avatar",
-  "extra",
-] as const) {
+// The invalid photo id and the extra key are rows of
+// isolated/shell/profile-api.spec.ts.
+for (const defect of ["missing-phone", "wrong-owner"] as const) {
   test(`Profile refuses ${defect} private self data instead of inventing nullable defaults`, async ({
     page,
   }) => {
@@ -239,10 +237,7 @@ for (const defect of [
         void omitted;
         return rest;
       }
-      if (defect === "wrong-owner") return { ...body, id: profileUserB };
-      if (defect === "invalid-avatar")
-        return { ...body, avatar_file_id: "not-a-uuid" };
-      return { ...body, provider_secret: "Must not render" };
+      return { ...body, id: profileUserB };
     };
     await page.goto("/profile");
     await expect(
@@ -253,7 +248,6 @@ for (const defect of [
     await expect(page.getByLabel("Phone", { exact: true })).not.toHaveValue(
       "+1 555 0101",
     );
-    await expect(page.getByText("Must not render")).toHaveCount(0);
     expect(api.writes).toEqual([]);
     expect(api.forbiddenReads).toEqual([]);
   });
@@ -267,14 +261,14 @@ test("Profile serializes pending edits and ignores a late old-account completion
   await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
     "+1 555 0101",
   );
-  const hold = profileGate();
+  const hold = heldResponse();
   api.holdPatch = hold;
   try {
     await page.getByLabel("Phone", { exact: true }).fill("Owned delayed edit");
     await page
       .getByRole("button", { name: "Save identity", exact: true })
       .click();
-    await hold.begun;
+    await hold.entered;
     await expect(
       page.getByRole("button", { name: "Save identity", exact: true }),
     ).toBeDisabled();
@@ -374,76 +368,51 @@ test("Profile uploads and clears an owned private avatar without purge or automa
   );
 });
 
-for (const invalid of ["mime", "size"] as const) {
-  test(`Profile rejects an invalid ${invalid} photo selection before reservation`, async ({
-    page,
-  }) => {
-    const api = await installProfileApi(page);
-    await page.goto("/profile");
-    await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
-      "Maya Chen",
-    );
-    await page.getByLabel("Upload photo", { exact: true }).setInputFiles({
-      name: "portrait.png",
-      mimeType: invalid === "mime" ? "text/html" : "image/png",
-      buffer:
-        invalid === "size" ? Buffer.alloc(2 * 1024 * 1024 + 1) : avatarPng,
-    });
-    await expect(
-      page.getByRole("alert").filter({ hasText: /PNG.*JPEG.*2/i }),
-    ).toBeVisible();
-    expect(api.writes).toEqual([]);
+// The size limit is a row of isolated/shell/profile-api.spec.ts.
+test("Profile rejects an invalid mime photo selection before reservation", async ({
+  page,
+}) => {
+  const api = await installProfileApi(page);
+  await page.goto("/profile");
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
+    "Maya Chen",
+  );
+  await page.getByLabel("Upload photo", { exact: true }).setInputFiles({
+    name: "portrait.png",
+    mimeType: "text/html",
+    buffer: avatarPng,
   });
-}
+  await expect(
+    page.getByRole("alert").filter({ hasText: /PNG.*JPEG.*2/i }),
+  ).toBeVisible();
+  expect(api.writes).toEqual([]);
+});
 
-for (const defect of [
-  "creator",
-  "purpose",
-  "parent",
-  "size",
-  "ready-mime",
-  "ready-state",
-  "actual-size",
-  "upload-id",
-] as const) {
-  test(`Profile refuses ${defect} avatar metadata before binding`, async ({
-    page,
-  }) => {
-    const api = await installProfileApi(page);
-    api.fileShape = (file) => {
-      if (defect === "creator") return { ...file, creator_id: profileUserB };
-      if (defect === "purpose") return { ...file, purpose: "workspace_logo" };
-      if (defect === "parent") return { ...file, record_id: profileUserB };
-      if (defect === "size")
-        return { ...file, expected_size: 2 * 1024 * 1024 + 1 };
-      if (file.state !== "ready") return file;
-      if (defect === "ready-state")
-        return { ...file, state: "awaiting_upload" };
-      if (defect === "actual-size") return { ...file, actual_size: null };
-      return defect === "ready-mime"
-        ? { ...file, media_type: "text/html" }
-        : { ...file, id: profileUserB };
-    };
-    await page.goto("/profile");
-    await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
-      "Maya Chen",
-    );
-    await page.getByLabel("Upload photo", { exact: true }).setInputFiles({
-      name: "portrait.png",
-      mimeType: "image/png",
-      buffer: avatarPng,
-    });
-    await expect(
-      page
-        .getByRole("alert")
-        .filter({ hasText: /photo.*(invalid|not|could|unable|unavailable)/i }),
-    ).toBeVisible();
-    expect(
-      api.writes.filter(({ path }) => path === "/api/auth/me/profile"),
-    ).toEqual([]);
-    expect(api.people.get(profileUserA)?.avatar_file_id).toBeNull();
+// The other metadata defects are rows of isolated/shell/profile-api.spec.ts.
+test("Profile refuses creator avatar metadata before binding", async ({
+  page,
+}) => {
+  const api = await installProfileApi(page);
+  api.fileShape = (file) => ({ ...file, creator_id: profileUserB });
+  await page.goto("/profile");
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
+    "Maya Chen",
+  );
+  await page.getByLabel("Upload photo", { exact: true }).setInputFiles({
+    name: "portrait.png",
+    mimeType: "image/png",
+    buffer: avatarPng,
   });
-}
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: /photo.*(invalid|not|could|unable|unavailable)/i }),
+  ).toBeVisible();
+  expect(
+    api.writes.filter(({ path }) => path === "/api/auth/me/profile"),
+  ).toEqual([]);
+  expect(api.people.get(profileUserA)?.avatar_file_id).toBeNull();
+});
 
 test("Profile explains committed avatar cleanup 503 and never reserves or binds again on reload", async ({
   page,
@@ -479,49 +448,48 @@ test("Profile explains committed avatar cleanup 503 and never reserves or binds 
   expect(api.writes).toHaveLength(count);
 });
 
-for (const fault of ["mime", "oversize", "headers"] as const) {
-  test(`Profile refuses private avatar ${fault} delivery without clearing the saved binding`, async ({
-    page,
-  }) => {
-    const api = await installProfileApi(page);
-    api.people.get(profileUserA)!.avatar_file_id = avatarFileId;
-    api.avatarFault = fault;
-    await page.goto("/profile");
-    await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
-      "Maya Chen",
-    );
-    await expect(
-      page.getByRole("alert").filter({ hasText: /photo could not be loaded/i }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("img", { name: "Your profile photo", exact: true }),
-    ).toHaveCount(0);
-    expect(api.writes).toEqual([]);
-    expect(api.people.get(profileUserA)?.avatar_file_id).toBe(avatarFileId);
-    api.avatarFault = null;
-    await page
-      .getByRole("button", { name: "Reload profile", exact: true })
-      .click();
-    await expect(
-      page.getByRole("img", { name: "Your profile photo", exact: true }),
-    ).toBeVisible();
-    expect(api.writes).toEqual([]);
-  });
-}
+// The oversize and header faults are rows of isolated/shell/profile-api.spec.ts.
+test("Profile refuses private avatar mime delivery without clearing the saved binding", async ({
+  page,
+}) => {
+  const api = await installProfileApi(page);
+  api.people.get(profileUserA)!.avatar_file_id = avatarFileId;
+  api.avatarFault = "mime";
+  await page.goto("/profile");
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
+    "Maya Chen",
+  );
+  await expect(
+    page.getByRole("alert").filter({ hasText: /photo could not be loaded/i }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "Your profile photo", exact: true }),
+  ).toHaveCount(0);
+  expect(api.writes).toEqual([]);
+  expect(api.people.get(profileUserA)?.avatar_file_id).toBe(avatarFileId);
+  api.avatarFault = null;
+  await page
+    .getByRole("button", { name: "Reload profile", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "Your profile photo", exact: true }),
+  ).toBeVisible();
+  expect(api.writes).toEqual([]);
+});
 
 test("Profile avatar refusal rechecks once and stays usable until explicit reload", async ({
   page,
 }) => {
   const api = await installProfileApi(page, { session: false });
   api.people.get(profileUserA)!.avatar_file_id = avatarFileId;
-  const recheck = profileGate();
+  const recheck = heldResponse();
   let sessionChecks = 0;
   let refused = false;
   await page.route("**/api/auth/session", async (route) => {
     sessionChecks += 1;
     if (refused && sessionChecks === 1) {
-      recheck.start();
-      await recheck.waiting;
+      recheck.enter();
+      await recheck.released;
     }
     await route.fulfill({
       json: {
@@ -555,7 +523,7 @@ test("Profile avatar refusal rechecks once and stays usable until explicit reloa
     await page
       .getByRole("button", { name: "Reload profile", exact: true })
       .click();
-    await recheck.begun;
+    await recheck.entered;
     const alert = page
       .getByRole("alert")
       .filter({ hasText: /photo could not be loaded/i });
@@ -643,7 +611,7 @@ test("Profile revokes the old account photo URL and never binds a late old-accou
   await expect(photo).toBeVisible();
   const oldUrl = await photo.getAttribute("src");
   expect(oldUrl).toMatch(/^blob:/);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.holdUpload = hold;
   try {
     await page.getByLabel("Upload photo", { exact: true }).setInputFiles({
@@ -651,7 +619,7 @@ test("Profile revokes the old account photo URL and never binds a late old-accou
       mimeType: "image/png",
       buffer: avatarPng,
     });
-    await hold.begun;
+    await hold.entered;
     await expect(
       page.getByLabel("Upload photo", { exact: true }),
     ).toBeDisabled();

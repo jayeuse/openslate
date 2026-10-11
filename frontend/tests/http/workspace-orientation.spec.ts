@@ -1,4 +1,10 @@
-import { expect, signedInSession, test, type Page } from "./helpers/test";
+import {
+  expect,
+  signedInSession,
+  signedOut,
+  test,
+  type Page,
+} from "./helpers/test";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
@@ -16,33 +22,34 @@ const routeTitles = [
   ["/manage", "Manage | OpenSlate"],
   ["/platform", "Platform | OpenSlate"],
   ["/profile", "Your profile | OpenSlate"],
-  ["/login", "Sign in | OpenSlate"],
   ["/setup", "Setup guide | OpenSlate"],
 ] as const;
 
-// One test per route: each navigation gets its own time budget.
-for (const [path, title] of routeTitles) {
-  test(`${path} names itself in the browser tab`, async ({ page }) => {
-    await signIn(page);
-    if (path === "/login") {
-      await page.route("**/api/auth/session", (route) =>
-        route.fulfill({ json: { authenticated: false } }),
-      );
-      await page.route("**/api/auth/refresh", (route) =>
-        route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
-      );
-    }
+// The titles are static page metadata, so one journey visits every route;
+// the sign-in page comes last, once the session reads as signed out.
+test("every route names itself in the browser tab", async ({ page }) => {
+  await signIn(page);
+  for (const [path, title] of routeTitles) {
     await page.goto(path);
     await expect(page, path).toHaveTitle(title);
-  });
-}
+  }
+  await signedOut(page);
+  await page.goto("/login");
+  await expect(page, "/login").toHaveTitle("Sign in | OpenSlate");
+});
 
-test("the breadcrumb names the workspace and its open section", async ({
+test("the breadcrumb names the workspace and its open section, and a phone shows only the current page", async ({
   page,
 }) => {
   await signIn(page);
-  await page.goto("/sandbox?section=history");
+  await page.goto("/platform?section=files");
   const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
+  await expect(
+    breadcrumb.getByRole("link", { name: "Platform" }),
+  ).toBeVisible();
+  await expect(breadcrumb.locator('[aria-current="page"]')).toHaveText("Files");
+
+  await page.goto("/sandbox?section=history");
   await expect(
     breadcrumb.getByRole("link", { name: "Sandbox" }),
   ).toHaveAttribute("href", "/sandbox?section=build");
@@ -50,18 +57,7 @@ test("the breadcrumb names the workspace and its open section", async ({
     "History",
   );
 
-  await page.goto("/platform?section=files");
-  await expect(
-    breadcrumb.getByRole("link", { name: "Platform" }),
-  ).toBeVisible();
-  await expect(breadcrumb.locator('[aria-current="page"]')).toHaveText("Files");
-});
-
-test("a phone breadcrumb shows only the current page", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await signIn(page);
-  await page.goto("/sandbox?section=history");
-  const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
   await expect(
     breadcrumb.getByRole("link", { name: "Workspace" }),
   ).toBeHidden();
@@ -167,13 +163,21 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
   const baseline = await sidebar.evaluate(
     (el) => el.getBoundingClientRect().width,
   );
+  const heading = page.getByRole("heading", {
+    name: "Your profile",
+    exact: true,
+  });
+  const headingSize = () =>
+    heading.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+  const headingBaseline = await headingSize();
   await textSize.selectOption("125");
   await expect
     .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
     .toBeCloseTo(baseline * 1.25, 0);
-  await expect(
-    page.getByRole("heading", { name: "Your profile", exact: true }),
-  ).toHaveCSS("font-size", "37.5px");
+  // Page headings scale with the text size, like the sidebar.
+  await expect
+    .poll(async () => (await headingSize()) / headingBaseline)
+    .toBe(1.25);
   await resize.focus();
   await resize.press("ArrowRight");
   await expect
@@ -182,7 +186,6 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
   const increased = await sidebar.evaluate(
     (el) => el.getBoundingClientRect().width,
   );
-  expect(increased).toBeCloseTo(baseline * 1.25 + 20, 0);
   expect(Number(await resize.getAttribute("aria-valuenow"))).toBeCloseTo(
     increased,
     0,

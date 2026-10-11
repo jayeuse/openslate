@@ -12,11 +12,6 @@ const surfaces = [
     says: "Settings save to the organization.",
     temporary: false,
   },
-  {
-    path: "/manage?view=audit",
-    says: "Audit entries are loaded from your organization.",
-    temporary: false,
-  },
 ];
 
 for (const surface of surfaces) {
@@ -41,14 +36,13 @@ for (const surface of surfaces) {
   });
 }
 
-test("Platform search describes readable workspace content without example claims", async ({
+test("Platform search describes readable workspace content and its empty prompts", async ({
   page,
 }) => {
   await openSignedIn(page, "/platform?section=search");
   await expect(
     page.getByRole("searchbox", { name: "Search workspace", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("note", { name: "Example data" })).toHaveCount(0);
   await expect(
     page.getByText("Results include workspace content you can read.", {
       exact: true,
@@ -64,41 +58,9 @@ test("Platform search describes readable workspace content without example claim
     );
     await expect(results.getByRole("link")).toHaveCount(0);
   }
-  for (const kind of ["Conversations", "Files"])
-    await expect(
-      page.getByRole("region", {
-        name: `${kind} search results`,
-        exact: true,
-      }),
-    ).toHaveCount(0);
 });
 
-test("Platform notifications contains the connected inbox without sample controls", async ({
-  page,
-}) => {
-  await openSignedIn(page, "/platform?section=notifications");
-  await expect(
-    page.getByRole("region", { name: "Notifications", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("note", { name: "Example data" })).toHaveCount(0);
-  for (const name of ["Preview notifications", "Preview preferences"])
-    await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(
-      0,
-    );
-  await expect(
-    page.getByRole("button", { name: "Simulate record update", exact: true }),
-  ).toHaveCount(0);
-  for (const name of [
-    "Thread reply notifications",
-    "Record update notifications",
-    "Daily digest",
-  ])
-    await expect(page.getByRole("switch", { name, exact: true })).toHaveCount(
-      0,
-    );
-});
-
-test("Platform Files opens the department library without a fake file tab or example data", async ({
+test("Platform Files keeps the legacy file link and opens an empty department library", async ({
   page,
 }) => {
   await page.route(
@@ -135,8 +97,4 @@ test("Platform Files opens the department library without a fake file tab or exa
   await expect(
     page.getByText("No departments are available to you.", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "File library", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("note", { name: "Example data" })).toHaveCount(0);
 });

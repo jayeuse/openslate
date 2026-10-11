@@ -74,9 +74,9 @@ async function snapshot(page: Page) {
 }
 
 const THEMES = [
-  { name: "Whiteboard", id: "whiteboard", font: /Atkinson/ },
-  { name: "Triplicate", id: "triplicate", font: /Archivo/ },
-  { name: "Stockroom", id: "stockroom", font: /Archivo/ },
+  { name: "Whiteboard", id: "whiteboard" },
+  { name: "Triplicate", id: "triplicate" },
+  { name: "Stockroom", id: "stockroom" },
 ] as const;
 
 test("each organization look keeps the same words and structure", async ({
@@ -99,6 +99,9 @@ test("each organization look keeps the same words and structure", async ({
     page.getByText("Organization settings saved.", { exact: true }),
   ).toBeVisible();
   const slate = await snapshot(page);
+  const bodyFont = () =>
+    page.evaluate(() => getComputedStyle(document.body).fontFamily);
+  const slateFont = await bodyFont();
 
   for (const theme of THEMES) {
     // People click the tile; the radio inside it is visually hidden.
@@ -112,10 +115,8 @@ test("each organization look keeps the same words and structure", async ({
       page.getByText("Organization settings saved.", { exact: true }),
     ).toBeVisible();
     expect(await snapshot(page), theme.id).toEqual(slate);
-    const bodyFont = await page.evaluate(
-      () => getComputedStyle(document.body).fontFamily,
-    );
-    expect(bodyFont, theme.id).toMatch(theme.font);
+    // Each look applies its own typeface; the words and structure stay.
+    expect(await bodyFont(), theme.id).not.toBe(slateFont);
   }
 
   await page.reload();

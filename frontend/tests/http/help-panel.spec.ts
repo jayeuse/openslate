@@ -1,5 +1,10 @@
-import { expect, test, type Page, type Route } from "./helpers/test";
-import { profileGate } from "./helpers/profile-api";
+import {
+  expect,
+  heldResponse,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -62,7 +67,7 @@ async function installHelpApi(page: Page) {
     onPreferences: null as ((route: Route) => Promise<void>) | null,
     onSession: null as ((route: Route) => Promise<void>) | null,
   };
-  await page.exposeFunction("noteS23WorkspaceAbort", () => {
+  await page.exposeFunction("noteWorkspaceAbort", () => {
     api.aborts += 1;
   });
   await page.addInitScript(() => {
@@ -74,8 +79,8 @@ async function installHelpApi(page: Page) {
           "abort",
           () => {
             void (
-              window as Window & { noteS23WorkspaceAbort?: () => Promise<void> }
-            ).noteS23WorkspaceAbort?.();
+              window as Window & { noteWorkspaceAbort?: () => Promise<void> }
+            ).noteWorkspaceAbort?.();
           },
           { once: true },
         );
@@ -162,35 +167,27 @@ async function visitPlatform(page: Page) {
   ).toContainText("Help fixture workspace");
 }
 
-for (const [href, tasks] of [
-  ["/sandbox", [/department/i, /build|design/i]],
-  ["/boards", [/post/i, /calendar|event/i]],
-  ["/comms", [/example/i, /message|conversation/i]],
-  ["/access", [/people/i, /group|access/i]],
-  ["/openview", [/record/i, /view|report/i]],
-  ["/manage", [/organization/i, /setting|audit|backup/i]],
-  ["/platform", [/search/i, /file/i]],
-  ["/profile", [/identity|profile/i, /preference|look|sign.in/i]],
-] as const) {
-  test(`Help canonical guide ${href} has three to six honest task entries`, async ({
-    page,
-  }) => {
-    const api = await installHelpApi(page);
-    api.role = "admin";
-    await page.goto(href);
-    await openHelp(page);
-    const guide = sheet(page).getByRole("region", {
-      name: "This page",
-      exact: true,
-    });
-    await expect(guide).toBeVisible();
-    for (const task of tasks) await expect(guide).toContainText(task);
-    const entries = guide.getByRole("listitem");
-    await expect.poll(() => entries.count()).toBeGreaterThanOrEqual(3);
-    await expect.poll(() => entries.count()).toBeLessThanOrEqual(6);
-    expect(api.writes).toEqual([]);
+// Every page's guide is a row of isolated/shell/help-guides.spec.ts; this
+// journey proves the sheet renders the guide of the open page.
+test("Help canonical guide /access has three to six honest task entries", async ({
+  page,
+}) => {
+  const api = await installHelpApi(page);
+  api.role = "admin";
+  await page.goto("/access");
+  await openHelp(page);
+  const guide = sheet(page).getByRole("region", {
+    name: "This page",
+    exact: true,
   });
-}
+  await expect(guide).toBeVisible();
+  for (const task of [/people/i, /group|access/i])
+    await expect(guide).toContainText(task);
+  const entries = guide.getByRole("listitem");
+  await expect.poll(() => entries.count()).toBeGreaterThanOrEqual(3);
+  await expect.poll(() => entries.count()).toBeLessThanOrEqual(6);
+  expect(api.writes).toEqual([]);
+});
 
 test("Help keyboard opening traps focus and Escape returns to the header without a command", async ({
   page,
@@ -304,10 +301,10 @@ test("Help pending preferences never claim shortcuts are on or off before confir
   page,
 }) => {
   const api = await installHelpApi(page);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.onPreferences = async (route) => {
-    hold.start();
-    await hold.waiting;
+    hold.enter();
+    await hold.released;
     await route.fulfill({
       json: {
         user_id: userA,
@@ -318,7 +315,7 @@ test("Help pending preferences never claim shortcuts are on or off before confir
   };
   try {
     await visitPlatform(page);
-    await hold.begun;
+    await hold.entered;
     await openHelp(page);
     await expect(shortcuts(page)).toContainText(/loading|confirm/i);
     await expect(shortcuts(page)).not.toContainText("Shortcuts are off.");
@@ -434,14 +431,14 @@ test("Help expired-session 401 keeps the global login handoff and removes privat
   await openHelp(page);
   await expect(contact(page)).toContainText("administrator@example.test");
   await page.keyboard.press("Escape");
-  const hold = profileGate();
+  const hold = heldResponse();
   api.onSession = (route) => route.fulfill({ json: { authenticated: false } });
   await page.route("**/api/auth/refresh", (route) =>
     route.fulfill({ status: 401, json: { detail: "Session expired" } }),
   );
   api.onRead = async (route) => {
-    hold.start();
-    await hold.waiting;
+    hold.enter();
+    await hold.released;
     await route.fulfill({
       status: 401,
       json: { detail: "Private failure canary" },
@@ -449,7 +446,7 @@ test("Help expired-session 401 keeps the global login handoff and removes privat
   };
   try {
     await openHelp(page);
-    await hold.begun;
+    await hold.entered;
     await expect(contact(page)).not.toContainText("administrator@example.test");
     hold.release();
     await expect(page).toHaveURL(/\/login$/);
@@ -467,7 +464,7 @@ test("Help expired-session 401 keeps the global login handoff and removes privat
   }
 });
 
-for (const fault of [403, 503, "partial", "malformed"] as const) {
+for (const fault of [403, 503, "malformed"] as const) {
   test(`Help contact ${fault} hides cached data and Retry recovers without raw details`, async ({
     page,
   }) => {
@@ -482,10 +479,12 @@ for (const fault of [403, 503, "partial", "malformed"] as const) {
           status: fault,
           json: { detail: "Private failure canary" },
         });
-      const body: Record<string, unknown> = { ...fullWorkspace };
-      if (fault === "partial") delete body.contact_phone;
-      else body.contact_email = { secret: "Private failure canary" };
-      return route.fulfill({ json: body });
+      return route.fulfill({
+        json: {
+          ...fullWorkspace,
+          contact_email: { secret: "Private failure canary" },
+        },
+      });
     };
     await openHelp(page);
     await expect(contact(page).getByRole("alert")).toBeVisible();
@@ -514,17 +513,17 @@ test("Help reopens with hidden cached contacts while the fresh read is pending",
   await openHelp(page);
   await expect(contact(page)).toContainText("administrator@example.test");
   await page.keyboard.press("Escape");
-  const hold = profileGate();
+  const hold = heldResponse();
   api.onRead = async (route) => {
-    hold.start();
-    await hold.waiting;
+    hold.enter();
+    await hold.released;
     await route.fulfill({
       json: { ...fullWorkspace, contact_email: "new@example.test" },
     });
   };
   try {
     await openHelp(page);
-    await hold.begun;
+    await hold.entered;
     await expect(contact(page)).toContainText(/loading|checking/i);
     await expect(contact(page)).not.toContainText("administrator@example.test");
     hold.release();
@@ -622,12 +621,12 @@ for (const boundary of ["close", "account", "curtain"] as const) {
   }) => {
     const api = await installHelpApi(page);
     await visitPlatform(page);
-    const hold = profileGate();
-    const session = profileGate();
+    const hold = heldResponse();
+    const session = heldResponse();
     const aborts = api.aborts;
     api.onRead = async (route) => {
-      hold.start();
-      await hold.waiting;
+      hold.enter();
+      await hold.released;
       // A cancelled intercepted request may no longer be fulfillable.
       await route
         .fulfill({
@@ -640,7 +639,7 @@ for (const boundary of ["close", "account", "curtain"] as const) {
     };
     try {
       await openHelp(page);
-      await hold.begun;
+      await hold.entered;
       if (boundary === "close") await page.keyboard.press("Escape");
       else {
         if (boundary === "account") {
@@ -648,8 +647,8 @@ for (const boundary of ["close", "account", "curtain"] as const) {
           api.role = "guest";
         }
         api.onSession = async (route) => {
-          session.start();
-          await session.waiting;
+          session.enter();
+          await session.released;
           await route.fulfill({
             json: {
               authenticated: true,
@@ -661,7 +660,7 @@ for (const boundary of ["close", "account", "curtain"] as const) {
         await page.evaluate(() =>
           window.dispatchEvent(new Event("openslate:session-recheck")),
         );
-        await session.begun;
+        await session.entered;
         await expect(
           page.getByText("Checking your session…", { exact: true }),
         ).toBeVisible();

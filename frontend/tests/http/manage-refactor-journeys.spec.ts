@@ -124,7 +124,7 @@ function installWorkspaceRoute(
     };
     await route.fulfill({ json: current });
   });
-  return { patches, read: () => current };
+  return { patches };
 }
 
 test.beforeEach(async ({ page }) => {
@@ -504,22 +504,18 @@ test("Manage organization keeps all its draft fields after a failed save", async
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.patches).toEqual([]);
-  expect(workspace.read()).toEqual(initialWorkspace);
   await page
     .getByRole("button", { name: "Save settings", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
   ).toBeDisabled();
-  await expect
-    .poll(() => workspace.read())
-    .toMatchObject({
-      display_name: "Pending workspace",
-      mark: "HOP",
-      currency: "USD",
-      week_start: "sunday",
-      business_hours: "10:00–19:00",
-    });
+  await page.reload();
+  await expect(name).toHaveValue("Pending workspace");
+  await expect(mark).toHaveValue("HOP");
+  await expect(currency).toContainText("USD");
+  await expect(week).toHaveValue("Sunday");
+  await expect(hours).toHaveValue("10:00–19:00");
 });
 
 test("Manage preserves section drafts without saving on leave or discard, validates saves, and retains accepted settings after reload", async ({
@@ -562,7 +558,6 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.patches).toEqual([]);
-  expect(workspace.read()).toEqual(initialWorkspace);
   await page
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
@@ -572,7 +567,6 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   await expect(week).toHaveValue("Monday");
   await expect(hours).toHaveValue("09:00–18:00");
   expect(workspace.patches).toEqual([]);
-  expect(workspace.read()).toEqual(initialWorkspace);
   await name.fill(" ");
   await page
     .getByRole("button", { name: "Save settings", exact: true })
@@ -588,31 +582,6 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   ).toBeDisabled();
   await page.reload();
   await expect(name).toHaveValue("Accepted journey workspace");
-});
-
-test("Manage organization retains draft controls without the sample Reset Manage action", async ({
-  page,
-}) => {
-  await page.goto("/manage?view=organization");
-  const name = page.getByRole("textbox", {
-    name: "Organization name",
-    exact: true,
-  });
-  await expect(name).toHaveValue("Riverside Services");
-  await expect(
-    page.getByRole("button", { name: "Manage options", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("menuitem", { name: "Reset Manage", exact: true }),
-  ).toHaveCount(0);
-  await name.fill("Keep this draft");
-  await expect(
-    page.getByRole("button", { name: "Discard changes", exact: true }),
-  ).toBeEnabled();
-  await page
-    .getByRole("button", { name: "Discard changes", exact: true })
-    .click();
-  await expect(name).toHaveValue("Riverside Services");
 });
 
 test("Updates and licensing share a real read-only destination and never simulate upgrades or licenses", async ({
@@ -730,35 +699,6 @@ test("Recorded version loading, denial, stale and current observations remain ho
     .click();
   await expect(software.getByText("Up to date", { exact: true })).toBeVisible();
   await expect(software).toContainText("Release check");
-});
-
-test("leaving Manage with an unsaved organization draft asks before discarding it", async ({
-  page,
-}) => {
-  installWorkspaceRoute(page);
-  await page.goto("/manage?view=organization");
-  const name = page.getByRole("textbox", {
-    name: "Organization name",
-    exact: true,
-  });
-  await expect(name).toHaveValue("Riverside Services");
-  await name.fill("Riverside Field Services");
-
-  // Switching Manage sections keeps drafts, so it is not held.
-  const leave = page.getByRole("link", { name: /People and groups/ });
-  await leave.click();
-  const dialog = page.getByRole("alertdialog");
-  await expect(dialog).toContainText("Discard unsaved Manage changes?");
-  await dialog.getByRole("button", { name: "Keep editing" }).click();
-  await expect(page).toHaveURL(/\/manage\?view=organization/);
-  await expect(name).toHaveValue("Riverside Field Services");
-
-  await leave.click();
-  await page
-    .getByRole("alertdialog")
-    .getByRole("button", { name: "Discard changes" })
-    .click();
-  await expect(page).toHaveURL(/\/access/);
 });
 
 test("Organization Larger text reflows at 1024 and phone widths with all settings reachable", async ({

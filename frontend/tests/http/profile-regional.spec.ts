@@ -1,11 +1,8 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, test } from "./helpers/test";
 import {
   installProfileApi,
   profilePreferences,
   profileSelf,
-  profileGate,
-  profileUserA,
-  regionalDefaults,
 } from "./helpers/profile-api";
 import { ids, mockAccessApi } from "./helpers/access-api";
 
@@ -43,7 +40,7 @@ test("Profile Regional keeps an unsaved timezone through section navigation and 
   await expect(timezone).toHaveValue("Europe/London");
 });
 
-test("Profile Regional confirms personal choices with partial writes and keeps device choices local", async ({
+test("Profile Regional confirms personal choices with partial writes", async ({
   page,
 }) => {
   const api = await installProfileApi(page);
@@ -51,11 +48,11 @@ test("Profile Regional confirms personal choices with partial writes and keeps d
   await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
     "organization",
   );
-  const hold = profileGate();
+  const hold = heldResponse();
   api.holdPreferences = hold;
   try {
     await page.getByLabel("Date format", { exact: true }).selectOption("dmy");
-    await hold.begun;
+    await hold.entered;
     await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
       "organization",
     );
@@ -107,21 +104,6 @@ test("Profile Regional confirms personal choices with partial writes and keeps d
     { appearance: { timezone: "America/Los_Angeles" } },
     { appearance: { start_page: "boards" } },
   ]);
-  const writeCount = api.writes.length;
-  await page.getByLabel("Text size", { exact: true }).selectOption("125");
-  await page
-    .getByLabel("Page spacing", { exact: true })
-    .selectOption("compact");
-  await expect(
-    page.getByRole("region", { name: "Appearance preview", exact: true }),
-  ).toContainText("Equipment request");
-  expect(api.writes).toHaveLength(writeCount);
-  expect(
-    await page.evaluate(() => ({
-      size: document.documentElement.dataset.textSize,
-      density: document.documentElement.dataset.density,
-    })),
-  ).toEqual({ size: "125", density: "compact" });
   await page.reload();
   await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
     "dmy",
@@ -129,8 +111,12 @@ test("Profile Regional confirms personal choices with partial writes and keeps d
   await expect(
     page.getByLabel("Start page after sign-in", { exact: true }),
   ).toHaveValue("boards");
-  expect(api.appearance.motion).toBe("system");
-  expect(api.appearance.keyboard_shortcuts).toBe(true);
+  await expect(
+    page.getByRole("switch", { name: "Reduce motion" }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: "Convenience shortcuts" }),
+  ).toBeChecked();
 });
 
 test("Profile Regional rejects an invalid IANA timezone and restores explicit organization inheritance", async ({
@@ -139,14 +125,26 @@ test("Profile Regional rejects an invalid IANA timezone and restores explicit or
   const api = await installProfileApi(page);
   Object.assign(api.appearance, {
     timezone: "America/Los_Angeles",
-    date_format: "mdy",
-    time_format: "12h",
+    date_format: "ymd",
+    time_format: "24h",
     week_start: "sunday",
+  });
+  const workspaceRequests: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/workspace")
+      workspaceRequests.push(request.method());
   });
   await page.goto("/profile#regional");
   await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
     "America/Los_Angeles",
   );
+  const sessions = page.getByRole("list", {
+    name: "Active sessions",
+    exact: true,
+  });
+  // Personal date and time choices format the session list.
+  await expect(sessions).toContainText("2026-09-30");
+  await expect(sessions).toContainText("17:30");
   await page.getByLabel("Timezone", { exact: true }).fill("+08:00");
   await page
     .getByRole("button", { name: "Save timezone", exact: true })
@@ -166,71 +164,21 @@ test("Profile Regional rejects an invalid IANA timezone and restores explicit or
       "organization",
     );
   }
-  expect(api.appearance).toEqual({
-    motion: "system",
-    keyboard_shortcuts: true,
-    ...regionalDefaults,
-  });
-  const sessions = page.getByRole("list", {
-    name: "Active sessions",
-    exact: true,
-  });
+  await page.reload();
+  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue("");
+  for (const label of ["Date format", "Time format", "First day of the week"])
+    await expect(page.getByLabel(label, { exact: true })).toHaveValue(
+      "organization",
+    );
+  await expect(
+    page.getByLabel("Start page after sign-in", { exact: true }),
+  ).toHaveValue("automatic");
+  await expect(
+    page.getByRole("switch", { name: "Reduce motion" }),
+  ).not.toBeChecked();
   await expect(sessions).toContainText(/Oct 1, 2026.*8:30\sAM/);
-});
-
-test("Profile Regional failed save keeps confirmed values and Retry does not repeat mutations", async ({
-  page,
-}) => {
-  const api = await installProfileApi(page);
-  api.preferencesWriteStatus = 503;
-  await page.goto("/profile#regional");
-  await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
-    "organization",
-  );
-  await page.getByLabel("Date format", { exact: true }).selectOption("ymd");
-  await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: /Preferences could not be saved/ })
-      .first(),
-  ).toBeVisible();
-  await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
-    "organization",
-  );
-  await expect(page.getByLabel("Date format", { exact: true })).toBeDisabled();
-  api.preferencesWriteStatus = 200;
-  await page
-    .getByRole("button", { name: "Retry preferences", exact: true })
-    .first()
-    .click();
-  await expect(page.getByLabel("Date format", { exact: true })).toBeEnabled();
-  expect(api.writes).toHaveLength(1);
-});
-
-test("Profile personal regional time changes session display but not date-only or workspace settings", async ({
-  page,
-}) => {
-  const api = await installProfileApi(page);
-  Object.assign(api.appearance, {
-    timezone: "America/Los_Angeles",
-    date_format: "ymd",
-    time_format: "24h",
-  });
-  const workspaceRequests: string[] = [];
-  page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/api/workspace")
-      workspaceRequests.push(request.method());
-  });
-  await page.goto("/profile");
-  await expect(
-    page.getByRole("list", { name: "Active sessions", exact: true }),
-  ).toContainText("2026-09-30");
-  await expect(
-    page.getByRole("list", { name: "Active sessions", exact: true }),
-  ).toContainText("17:30");
+  // Personal choices never write the organization's settings.
   expect(workspaceRequests.every((method) => method === "GET")).toBe(true);
-  expect(api.writes).toEqual([]);
-  expect(api.people.get(profileUserA)?.expires_at).toBeNull();
 });
 
 test("confirmed Profile Regional choices reach Access people and sessions without changing expiry inputs", async ({

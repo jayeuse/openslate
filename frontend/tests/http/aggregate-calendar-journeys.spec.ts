@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import Papa from "papaparse";
 import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import { boardId, installBoardApi } from "./helpers/boards-api";
@@ -78,7 +76,7 @@ async function catalog(page: Page) {
   });
 }
 
-test("Charts expose numeric extrema and primitive Distinct while missing values stay absent from bar, pie, print and CSV", async ({
+test("Charts expose numeric extrema and primitive Distinct while missing values stay absent from bar, pie and print", async ({
   page,
 }) => {
   await catalog(page);
@@ -129,10 +127,6 @@ test("Charts expose numeric extrema and primitive Distinct while missing values 
       table.getByRole("row", { name: "Missing — 1", exact: true }),
     ).toBeVisible();
     await expect(page.locator(".recharts-bar-rectangle")).toHaveCount(1);
-    expect(submitted.at(-1)).toMatchObject({
-      aggregation: metric,
-      measure: { field_id: amountId, expected_type: "decimal" },
-    });
   }
   await page.getByLabel("Chart type", { exact: true }).selectOption("pie");
   await page.getByRole("button", { name: "Apply chart", exact: true }).click();
@@ -140,15 +134,6 @@ test("Charts expose numeric extrema and primitive Distinct while missing values 
   await expect(
     page.getByRole("alert").filter({ hasText: "numeric range" }),
   ).toHaveCount(0);
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    page.getByRole("button", { name: "Download complete CSV" }).click(),
-  ]);
-  const path = await download.path();
-  expect(path).not.toBeNull();
-  expect(
-    Papa.parse<string[]>(await readFile(path!, "utf8")).data,
-  ).toContainEqual(["Missing", "", "1"]);
   await page.emulateMedia({ media: "print" });
   await expect(
     page

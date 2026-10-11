@@ -52,14 +52,6 @@ export function logoFile(
 }
 type LogoFile = ReturnType<typeof logoFile>;
 
-export function deferred() {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-}
-
 /** Owned public-API fixtures; lifecycle origin never crosses the wire. */
 export async function installLogoApi(page: Page) {
   const api = {

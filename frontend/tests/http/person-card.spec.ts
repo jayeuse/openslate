@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Locator } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  test,
+  type Page,
+  type Locator,
+} from "./helpers/test";
 import {
   cardTarget,
   cardViewer,
@@ -11,10 +17,7 @@ import {
   cardPage,
   type CardSurface,
 } from "./helpers/person-card-api";
-import {
-  profileGate,
-  observeProfilePhotoRevocations,
-} from "./helpers/profile-api";
+import { observeProfilePhotoRevocations } from "./helpers/profile-api";
 import { boardId } from "./helpers/boards-api";
 
 const card = (page: Page) =>
@@ -51,11 +54,11 @@ test("Person card intent loads one target, keyboard opens and Escape restores fo
   const api = await installPersonCardApi(page);
   await visit(page, api);
   expect(api.reads).toHaveLength(0);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.hold = hold;
   try {
     await trigger(page).focus();
-    await hold.begun;
+    await hold.entered;
     await page.keyboard.press("Enter");
     await expect(card(page)).toBeVisible();
     await expect(card(page).locator('[aria-busy="true"]')).toBeVisible();
@@ -124,47 +127,29 @@ test("Person card guest DTO omits private keys and nullable member values remain
   expect(api.writes).toEqual([]);
 });
 
-for (const fault of [
-  "guest-private-key",
-  "missing-member-key",
-  "unexpected-id",
-  "external-avatar",
-  "foreign-avatar",
-] as const) {
-  test(`Person card rejects ${fault} without leaking response metadata or fetching unsafe photos`, async ({
-    page,
-  }) => {
-    const api = await installPersonCardApi(
-      page,
-      "platform",
-      fault === "guest-private-key" ? "guest" : "member",
-    );
-    const body: Record<string, unknown> = {
-      ...(fault === "guest-private-key" ? publicCard : memberCard),
-      display_name: "Private leaked name",
-    };
-    if (fault === "guest-private-key") body.email = "private@example.test";
-    if (fault === "missing-member-key") delete body.phone;
-    if (fault === "unexpected-id") body.id = cardTarget;
-    if (fault === "external-avatar")
-      body.avatar_url = "https://example.test/private.png";
-    if (fault === "foreign-avatar")
-      body.avatar_url = `/api/users/${secondViewer}/avatar`;
-    api.cards.set(cardTarget, body);
-    await visit(page, api);
-    await trigger(page).click();
-    await expect(card(page).getByRole("alert")).toContainText(
-      "Person unavailable",
-    );
-    await expect(
-      card(page).getByText(
-        /Private leaked name|private@example.test|ana@example.test/,
-      ),
-    ).toHaveCount(0);
-    expect(api.avatarReads).toEqual([]);
-    expect(api.writes).toEqual([]);
+// The other malformed cards are rows of isolated/shell/profile-api.spec.ts.
+test("Person card rejects guest-private-key without leaking response metadata or fetching unsafe photos", async ({
+  page,
+}) => {
+  const api = await installPersonCardApi(page, "platform", "guest");
+  api.cards.set(cardTarget, {
+    ...publicCard,
+    display_name: "Private leaked name",
+    email: "private@example.test",
   });
-}
+  await visit(page, api);
+  await trigger(page).click();
+  await expect(card(page).getByRole("alert")).toContainText(
+    "Person unavailable",
+  );
+  await expect(
+    card(page).getByText(
+      /Private leaked name|private@example.test|ana@example.test/,
+    ),
+  ).toHaveCount(0);
+  expect(api.avatarReads).toEqual([]);
+  expect(api.writes).toEqual([]);
+});
 
 for (const status of [401, 403, 500]) {
   test(`Person card ${status} shows safe unavailability and retries only on request`, async ({
@@ -261,11 +246,11 @@ test("Person card ignores a late removed target and a late previous-account repl
 }) => {
   const api = await installPersonCardApi(page);
   await visit(page, api);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.hold = hold;
   try {
     await trigger(page).click();
-    await hold.begun;
+    await hold.entered;
     await page.keyboard.press("Escape");
     await page.getByRole("searchbox", { name: "Search workspace" }).fill("Ben");
     await expect(trigger(page, "Ben Cruz")).toBeVisible();
@@ -276,14 +261,14 @@ test("Person card ignores a late removed target and a late previous-account repl
     await page.keyboard.press("Escape");
     await page.getByRole("searchbox", { name: "Search workspace" }).fill("Ana");
     await expect(trigger(page)).toBeVisible();
-    const accountHold = profileGate();
+    const accountHold = heldResponse();
     await trigger(page).click();
     await expectMemberCard(page);
     api.hold = accountHold;
     await card(page)
       .getByRole("button", { name: "Reload person card", exact: true })
       .click();
-    await accountHold.begun;
+    await accountHold.entered;
     api.viewer = secondViewer;
     api.cards.set(cardTarget, {
       ...memberCard,
@@ -331,11 +316,11 @@ test("Person card private avatar is target-bound, revoked on close and unavailab
   ).toBe(true);
   await page.keyboard.press("Escape");
   await expect.poll(() => revoked.includes(url!)).toBe(true);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.holdAvatar = hold;
   try {
     await trigger(page).click();
-    await hold.begun;
+    await hold.entered;
     api.status = 404;
     hold.release();
     await expect(card(page).getByRole("alert")).toContainText(
@@ -356,12 +341,12 @@ test("Person card accepts current text and drops bytes when the avatar disappear
     ...memberCard,
     avatar_url: `/api/users/${cardTarget}/avatar`,
   });
-  const hold = profileGate();
+  const hold = heldResponse();
   api.holdAvatar = hold;
   try {
     await visit(page, api);
     await trigger(page).click();
-    await hold.begun;
+    await hold.entered;
     api.cards.set(cardTarget, {
       ...memberCard,
       email: "current@example.test",
@@ -377,31 +362,30 @@ test("Person card accepts current text and drops bytes when the avatar disappear
   }
 });
 
-for (const fault of ["mime", "headers", "empty", "oversize"] as const) {
-  test(`Person card rejects ${fault} avatar bytes and keeps accepted text with explicit photo retry`, async ({
-    page,
-  }) => {
-    const api = await installPersonCardApi(page);
-    api.cards.set(cardTarget, {
-      ...memberCard,
-      avatar_url: `/api/users/${cardTarget}/avatar`,
-    });
-    api.avatarFault = fault;
-    await visit(page, api);
-    await trigger(page).click();
-    await expectMemberCard(page);
-    await expect(card(page).getByRole("alert")).toContainText(
-      "Photo unavailable",
-    );
-    await expect(card(page).getByRole("img")).toHaveCount(0);
-    api.avatarFault = null;
-    await card(page)
-      .getByRole("button", { name: "Retry photo", exact: true })
-      .click();
-    await expect(card(page).getByRole("img")).toHaveAttribute("src", /^blob:/);
-    expect(api.writes).toEqual([]);
+// The other byte faults are rows of isolated/shell/profile-api.spec.ts.
+test("Person card rejects mime avatar bytes and keeps accepted text with explicit photo retry", async ({
+  page,
+}) => {
+  const api = await installPersonCardApi(page);
+  api.cards.set(cardTarget, {
+    ...memberCard,
+    avatar_url: `/api/users/${cardTarget}/avatar`,
   });
-}
+  api.avatarFault = "mime";
+  await visit(page, api);
+  await trigger(page).click();
+  await expectMemberCard(page);
+  await expect(card(page).getByRole("alert")).toContainText(
+    "Photo unavailable",
+  );
+  await expect(card(page).getByRole("img")).toHaveCount(0);
+  api.avatarFault = null;
+  await card(page)
+    .getByRole("button", { name: "Retry photo", exact: true })
+    .click();
+  await expect(card(page).getByRole("img")).toHaveAttribute("src", /^blob:/);
+  expect(api.writes).toEqual([]);
+});
 
 test("Person card calendar resolves visible author ids once and never requests an administrator catalog", async ({
   page,
@@ -412,11 +396,11 @@ test("Person card calendar resolves visible author ids once and never requests a
     const url = new URL(request.url());
     if (url.pathname === "/api/users") catalogs.push(url.href);
   });
-  const hold = profileGate();
+  const hold = heldResponse();
   api.hold = hold;
   try {
     await page.goto(api.href);
-    await hold.begun;
+    await hold.entered;
     await expect(
       page.getByText("Loading person…", { exact: true }),
     ).toHaveCount(2);

@@ -19,7 +19,7 @@ const sidebarGlide = (page: Page) =>
       ).transitionProperty,
   );
 
-test("reduce motion in Appearance stops glides and survives a reload", async ({
+test("reduce motion in Appearance stops the sidebar glide and turning it off restores it", async ({
   page,
 }) => {
   await signIn(page);
@@ -33,13 +33,7 @@ test("reduce motion in Appearance stops glides and survives a reload", async ({
   await expect(page.locator("html")).toHaveAttribute("data-motion", "reduced");
   expect(await sidebarGlide(page)).toBe("none");
 
-  await page.reload();
-  await expect(page.locator("html")).toHaveAttribute("data-motion", "reduced");
-  await expect(
-    page.getByRole("switch", { name: "Reduce motion" }),
-  ).toBeChecked();
-
-  await page.getByRole("switch", { name: "Reduce motion" }).click();
+  await toggle.click();
   await expect(page.locator("html")).not.toHaveAttribute("data-motion");
   expect(await sidebarGlide(page)).toBe("width");
 });

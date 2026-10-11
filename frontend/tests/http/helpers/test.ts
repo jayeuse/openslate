@@ -202,7 +202,7 @@ export const test = base.extend({
     await context.route("**/api/events", () => undefined);
     // Preferences are read under the verified session ID, which individual
     // journeys may override independently of this default navigation identity.
-    // Full preferences mirror the separate strict9a DTO; each context owns its state.
+    // Full preferences mirror the strict preferences DTO; each context owns its state.
     type Preference = {
       theme: "light" | "dark" | "system";
       appearance: { motion: "system" | "reduce"; keyboard_shortcuts: boolean };
