@@ -32,7 +32,7 @@ export function AppQueryProvider({ children }: { children: ReactNode }) {
   const [client] = useState(() => {
     const created = createQueryClient();
     // A new account starts with OpenView access unknown, not refused.
-    bindOpenViewAccess(created);
+    bindOpenViewAccess();
     bindSandboxHistoryAccess(created);
     return created;
   });

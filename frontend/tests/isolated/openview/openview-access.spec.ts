@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { QueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../../src/lib/api";
 import {
   bindOpenViewAccess,
@@ -23,7 +22,7 @@ function deferred() {
 }
 
 test.beforeEach(() => {
-  bindOpenViewAccess(new QueryClient());
+  bindOpenViewAccess();
 });
 
 test("a refused read refuses access until a read started later succeeds", async () => {
@@ -58,7 +57,7 @@ test("a refusal older than a read that already succeeded is stale", async () => 
 test("a new account starts with access not refused", async () => {
   await trackOpenViewRead(refused).catch(() => undefined);
   expect(isOpenViewAccessDenied()).toBe(true);
-  bindOpenViewAccess(new QueryClient());
+  bindOpenViewAccess();
   expect(isOpenViewAccessDenied()).toBe(false);
 });
 
@@ -67,7 +66,7 @@ test("a previous account's read cannot refuse the next account", async () => {
   const previousRead = trackOpenViewRead(() => previous.promise).catch(
     () => undefined,
   );
-  bindOpenViewAccess(new QueryClient());
+  bindOpenViewAccess();
   previous.reject();
   await previousRead;
   expect(isOpenViewAccessDenied()).toBe(false);

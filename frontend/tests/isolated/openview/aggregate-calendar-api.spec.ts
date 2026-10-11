@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { QueryClient } from "@tanstack/react-query";
 import * as analytics from "../../../src/components/systems/openview/adapters/analytics-api";
 import {
   bindOpenViewAccess,
@@ -62,7 +61,7 @@ function snapshot(
 function mockApi(responder: (path: string, body: unknown) => Response) {
   const original = globalThis.fetch;
   const calls: { path: string; body: unknown }[] = [];
-  bindOpenViewAccess(new QueryClient());
+  bindOpenViewAccess();
   globalThis.fetch = (async (input, init) => {
     const path = String(input);
     const body: unknown = init?.body ? JSON.parse(String(init.body)) : null;
