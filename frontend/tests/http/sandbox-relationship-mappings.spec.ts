@@ -3609,9 +3609,7 @@ test("History comparison stays tied to compared versions while inspecting anothe
   await expect.poll(() => comparison.innerText()).toBe(savedComparison);
   expect(reads).toBe(2);
   // The History workspace fits from 1920 to 390 px with no horizontal page
-  // overflow, and a wide screen has no vertical page overflow. History
-  // overflows a 1440x768 page by 49 px today (F3 report, suspected product
-  // bug); add that size here once the layout fits it.
+  // overflow, and wide screens have no vertical page overflow.
   await page
     .getByRole("button", { name: "View Release snapshot 1", exact: true })
     .click();
@@ -3631,7 +3629,10 @@ test("History comparison stays tied to compared versions while inspecting anothe
       )
       .toBeLessThanOrEqual(1);
   }
-  for (const view of [{ width: 1920, height: 1000 }]) {
+  for (const view of [
+    { width: 1920, height: 1000 },
+    { width: 1440, height: 768 },
+  ]) {
     await page.setViewportSize(view);
     await expect
       .poll(() =>

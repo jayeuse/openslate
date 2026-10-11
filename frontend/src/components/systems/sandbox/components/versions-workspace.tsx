@@ -493,7 +493,7 @@ export function VersionsWorkspace({
         <div className="grid min-w-0 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(30rem,2fr)_minmax(18rem,1.2fr)]">
           <section
             aria-label="Version timeline"
-            className="bg-card border-border min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
+            className="bg-card border-border relative min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
           >
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
@@ -744,7 +744,7 @@ export function VersionsWorkspace({
 
           <section
             aria-label="Version comparison"
-            className="bg-background border-border min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
+            className="bg-background border-border relative min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
           >
             <div>
               <h2 data-slot="section-title" className="font-semibold">
@@ -825,7 +825,7 @@ export function VersionsWorkspace({
 
           <section
             aria-label="Selected version"
-            className="bg-card min-w-0 p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto"
+            className="bg-card relative min-w-0 p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto"
           >
             {selectedVersion ? (
               <>
