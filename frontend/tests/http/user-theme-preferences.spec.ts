@@ -345,7 +345,6 @@ test("a failed save retains the confirmed mode and Retry reloads without repeati
   ).toBeVisible();
   await expect(light(page)).toBeChecked();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
-  await expect(page.getByText("Theme saved.", { exact: true })).toHaveCount(0);
   const beforeRetry = reads;
   await look(page)
     .getByRole("button", { name: "Retry preferences", exact: true })

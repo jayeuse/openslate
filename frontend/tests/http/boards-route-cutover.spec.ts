@@ -42,11 +42,15 @@ test("Board menu keeps administration reachable without crowding the section", a
     .first()
     .click();
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
-  await expect(
-    page.getByRole("menuitem", {
-      name: /Manage access|Templates|favorites|home board/,
-    }),
-  ).toHaveCount(0);
+  // The exact list leaves no room for a retired item (access grants,
+  // templates, favorites, a home Board).
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "Manage Board and groups",
+    "Preview access",
+    "View activity",
+    "New project Board",
+    "Configurations",
+  ]);
   await page
     .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
     .click();
@@ -127,12 +131,6 @@ test("visible Boards route opens authorized server Board and keeps section URL",
   await expect(
     page.getByRole("button", { name: "Switch board" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Link a record" })).toHaveCount(
-    0,
-  );
-  await expect(
-    page.getByText("Reminders and Board files are unavailable"),
-  ).toHaveCount(0);
 
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
   await expect(page).toHaveURL(

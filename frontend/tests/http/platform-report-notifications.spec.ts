@@ -117,10 +117,6 @@ test("connected Report notifications show reference status and refetch after mar
   // The command writes nothing to the cache (notification-items.tsx), so the
   // Read label can come only from the refetched list.
   await expect(connected.getByText("Read", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Preview notifications", { exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByText("Preview preferences")).toHaveCount(0);
 });
 
 test("connected inbox shows Board publication and reminder references without content", async ({

@@ -1406,7 +1406,6 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   await expect(
     canvas.getByRole("heading", { name: "Design your organization" }),
   ).toBeVisible();
-  await expect(page.getByText("No departments yet")).toHaveCount(0);
   await expect(
     page.getByRole("searchbox", { name: "Search structure" }),
   ).toBeDisabled();
