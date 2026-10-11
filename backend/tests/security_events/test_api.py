@@ -4,7 +4,6 @@ from secrets import token_urlsafe
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.config import get_settings
@@ -13,6 +12,9 @@ from app.main import create_app
 from app.systems.access.users.models import User, UserRole
 
 from .support import _make_event, _payload_values, _SecurityEventDatabase, _user
+
+# Fixed, so parametrized test IDs are the same in every process.
+_PATH_ID = "0190a000-0000-7000-8000-000000000001"
 
 SERVER_KEY = token_urlsafe(32)
 WRONG_SERVER_KEY = token_urlsafe(32)
@@ -66,7 +68,7 @@ def test_exact_admin_can_list_detail_and_bounded_export(api: FastAPI) -> None:
     [
         "/api/security-events",
         "/api/security-events/export",
-        f"/api/security-events/{uuid7()}",
+        f"/api/security-events/{_PATH_ID}",
     ],
 )
 def test_non_admin_cannot_list_detail_or_export_security_events(api: FastAPI, path: str) -> None:

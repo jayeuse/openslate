@@ -70,6 +70,44 @@ jobs:
       - name: Verify test selection and tooling
         run: uv run python -m unittest discover -s ../tests/tooling -t .. -p 'test_*.py'
 
+  unit:
+    # Tests not marked `integration` need no stack; they run here in parallel and the
+    # stack shards below run only the integration tests.
+    needs: changes
+    if: needs.changes.outputs.run_backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          # Match the development machine (uv 0.12); bump both together.
+          version: "0.12.x"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked
+      - name: Run the unit lane without a stack
+        env:
+          COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}
+        run: uv run python tests/backend_coverage.py unit --workers 4
+      - name: Upload unit lane coverage data
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-coverage-unit
+          path: |
+            backend/test-results/coverage/coverage.data
+            backend/test-results/coverage/pytest.xml
+            backend/test-results/coverage/metadata.json
+          if-no-files-found: ignore
+          retention-days: 3
+
   coverage:
     name: coverage (${{ matrix.shard }}/5)
     needs: changes
@@ -137,7 +175,7 @@ jobs:
           retention-days: 3
 
   coverage-gate:
-    needs: [changes, coverage]
+    needs: [changes, unit, coverage]
     if: needs.changes.outputs.run_backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -160,7 +198,8 @@ jobs:
       - run: uv sync --locked
       - uses: actions/download-artifact@v7
         with:
-          pattern: backend-coverage-shard-*
+          # The stack shards and the unit lane.
+          pattern: backend-coverage-*
           path: ${{ runner.temp }}/coverage-shards
       - name: Combine shards and apply the coverage gates
         env:
@@ -236,6 +275,7 @@ jobs:
     needs:
       - changes
       - quality
+      - unit
       - coverage
       - coverage-gate
       - reset-acceptance
@@ -249,6 +289,7 @@ jobs:
           RUN_BACKEND: ${{ needs.changes.outputs.run_backend }}
           RUN_SERVER_IMAGE: ${{ needs.changes.outputs.run_server_image }}
           QUALITY: ${{ needs.quality.result }}
+          UNIT: ${{ needs.unit.result }}
           COVERAGE: ${{ needs.coverage.result }}
           COVERAGE_GATE: ${{ needs.coverage-gate.result }}
           RESET: ${{ needs.reset-acceptance.result }}
@@ -258,11 +299,13 @@ jobs:
           test "$CHANGES" = "success"
           if [ "$RUN_BACKEND" = "true" ]; then
             test "$QUALITY" = "success"
+            test "$UNIT" = "success"
             test "$COVERAGE" = "success"
             test "$COVERAGE_GATE" = "success"
             test "$RESET" = "success"
           else
             test "$QUALITY" = "skipped"
+            test "$UNIT" = "skipped"
             test "$COVERAGE" = "skipped"
             test "$COVERAGE_GATE" = "skipped"
             test "$RESET" = "skipped"

@@ -2,6 +2,7 @@ import csv
 import io
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from record_queries.test_database import request_for, setup_rows
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -18,6 +19,7 @@ from app.systems.sandbox.records.query_schemas import ExportRequest
 from tests.rbac.support import add_department, add_module, add_user
 
 
+@pytest.mark.integration
 def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -> None:
     engine = query_db.get_bind().engine
     with AuditSession(engine) as setup:
@@ -101,6 +103,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
             cleanup.commit()
 
 
+@pytest.mark.integration
 def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, monkeypatch):
     # The guard runs before acquiring a second independently committed connection.
     engine = query_db.get_bind().engine
@@ -146,6 +149,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
             cleanup.commit()
 
 
+@pytest.mark.integration
 def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     from fastapi.testclient import TestClient
     from sqlalchemy import select

@@ -1,4 +1,4 @@
-"""Run the backend coverage gate as parallel shards on this machine, then combine them.
+"""Run the backend coverage gate on this machine: the unit lane, then parallel stack shards.
 
 CI runs five shards on separate runners. Locally, three disposable stacks fit beside the
 development stack (10 CPUs, 8 GB for Docker); each test stack takes its own network block
@@ -22,10 +22,10 @@ import threading
 from pathlib import Path
 
 if __package__:
-    from .backend_coverage import OUTPUT_OVERRIDE, combine_backend_coverage
+    from .backend_coverage import OUTPUT_OVERRIDE, combine_backend_coverage, run_unit_lane
     from .runner_console import relay, stop_on_signals, stop_process_groups
 else:
-    from backend_coverage import OUTPUT_OVERRIDE, combine_backend_coverage
+    from backend_coverage import OUTPUT_OVERRIDE, combine_backend_coverage, run_unit_lane
     from runner_console import relay, stop_on_signals, stop_process_groups
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -33,6 +33,9 @@ SHARDS_ROOT = BACKEND / "test-results/coverage-shards"
 # A stopped shard stops pytest and removes its stack (several bounded Docker calls of up
 # to 30 s each); after this long, its process group is killed.
 SHARD_STOP_SECONDS = 180.0
+# Tests that need no stack run first, in parallel on the host (measured: 3,032 tests in
+# 218 s on 6 workers); the stack shards then run only `integration` tests.
+UNIT_LANE_WORKERS = 6
 
 
 def shard_command(group: int, total: int) -> list[str]:
@@ -64,6 +67,9 @@ def main(arguments: list[str]) -> int:
     if SHARDS_ROOT.exists():
         shutil.rmtree(SHARDS_ROOT)
     SHARDS_ROOT.mkdir(parents=True)
+    if run_unit_lane(BACKEND, SHARDS_ROOT / "unit", UNIT_LANE_WORKERS):
+        print(f"Backend unit lane FAIL; evidence is in {SHARDS_ROOT / 'unit'}")
+        return 1
     runs = []
     try:
         for group in range(1, total + 1):

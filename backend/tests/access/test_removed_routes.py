@@ -2,13 +2,13 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from uuid6 import uuid7
 
 from app.main import app, create_app
 from app.systems.access.users.models import UserRole
 from tests.rbac.support import _client, make_user
 
-_ID = str(uuid7())
+# Fixed, so parametrized test IDs are the same in every process.
+_ID = "0190a000-0000-7000-8000-000000000001"
 
 REMOVED_ROUTES: tuple[tuple[str, str], ...] = (
     ("/api/roles", "GET"),

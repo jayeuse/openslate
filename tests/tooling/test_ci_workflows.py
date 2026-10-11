@@ -111,6 +111,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         for job in (
             "changes",
             "quality",
+            "unit",
             "coverage",
             "coverage-gate",
             "reset-acceptance",
@@ -122,12 +123,20 @@ class CiWorkflowContractTests(unittest.TestCase):
         needs = re.findall(r"(?m)^      - ([a-z-]+)$", verify.split("    if:", 1)[0])
         self.assertEqual(
             needs,
-            ["changes", "quality", "coverage", "coverage-gate", "reset-acceptance", "container"],
+            [
+                "changes",
+                "quality",
+                "unit",
+                "coverage",
+                "coverage-gate",
+                "reset-acceptance",
+                "container",
+            ],
         )
         self.assertIn("if: ${{ always() }}", source)
         self.assertIn("CHANGES: ${{ needs.changes.result }}", source)
         self.assertIn('test "$CHANGES" = "success"', source)
-        for result in ("COVERAGE", "COVERAGE_GATE", "RESET"):
+        for result in ("UNIT", "COVERAGE", "COVERAGE_GATE", "RESET"):
             with self.subTest(result=result):
                 self.assertIn(f'test "${result}" = "success"', source)
         self.assertIn("run_server_image", source)
@@ -145,9 +154,13 @@ class CiWorkflowContractTests(unittest.TestCase):
             "tests.fullstack_runner --backend-coverage-shard ${{ matrix.shard }}/5", coverage
         )
         self.assertIn("name: backend-coverage-shard-${{ matrix.shard }}", coverage)
-        self.assertIn("needs: [changes, coverage]", gate)
+        unit = source.split("\n  unit:\n", 1)[1].split("\n  coverage:\n", 1)[0]
+        self.assertIn("tests/backend_coverage.py unit --workers 4", unit)
+        self.assertIn("name: backend-coverage-unit", unit)
+        self.assertNotIn("fullstack_runner", unit)
+        self.assertIn("needs: [changes, unit, coverage]", gate)
         self.assertIn("fetch-depth: 0", gate)
-        self.assertIn("pattern: backend-coverage-shard-*", gate)
+        self.assertIn("pattern: backend-coverage-*", gate)
         self.assertIn("tests/backend_coverage.py combine", gate)
         self.assertIn("--shards 5", gate)
         self.assertIn("COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}", gate)

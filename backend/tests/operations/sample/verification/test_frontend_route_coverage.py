@@ -15,6 +15,9 @@ from app.main import app
 from operations.sample.client import SampleClient
 from operations.sample.journal import append_event
 
+# Fixed, so parametrized test IDs are the same in every process.
+_PATH_ID = "0190a000-0000-7000-8000-000000000001"
+
 MANIFEST = Path(__file__).resolve().parents[5] / "frontend" / "api-route-manifest.json"
 
 
@@ -159,19 +162,19 @@ def test_host_only_routes_are_required_only_for_host_acceptance(tmp_path: Path) 
 @pytest.mark.parametrize(
     "route,path",
     [
-        (("POST", "/api/users/{user_id}/mfa/reset"), "/api/users/" + str(uuid4()) + "/mfa/reset"),
+        (("POST", "/api/users/{user_id}/mfa/reset"), "/api/users/" + _PATH_ID + "/mfa/reset"),
         (
             ("POST", "/api/auth/mfa/factors/{factor_id}/verification"),
-            "/api/auth/mfa/factors/" + str(uuid4()) + "/verification",
+            "/api/auth/mfa/factors/" + _PATH_ID + "/verification",
         ),
         (("POST", "/api/notifications/read-all"), "/api/notifications/read-all"),
         (
             ("POST", "/api/backups/exports/{export_id}/download-admission"),
-            "/api/backups/exports/" + str(uuid4()) + "/download-admission",
+            "/api/backups/exports/" + _PATH_ID + "/download-admission",
         ),
         (
             ("GET", "/api/backups/exports/{export_id}/content"),
-            "/api/backups/exports/" + str(uuid4()) + "/content",
+            "/api/backups/exports/" + _PATH_ID + "/content",
         ),
     ],
 )

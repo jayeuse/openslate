@@ -141,7 +141,10 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
         source = newest_durations(backend)
         if source is not None:
             shutil.copyfile(source, durations)
+        # Tests that need no stack run in the unit lane (run_unit_lane).
         reports = [
+            "-m",
+            "integration",
             f"--splits={total}",
             f"--group={group}",
             "--splitting-algorithm=least_duration",
@@ -224,6 +227,60 @@ def run_backend_coverage(run, backend, private, environment, run_id, shard=None)
     )
 
 
+def run_unit_lane(backend, output, workers):
+    """Run every test not marked `integration` without a stack, in parallel.
+
+    It writes shard-like evidence (coverage data, JUnit, metadata with
+    lane "unit") that combine_backend_coverage merges with the stack shards.
+    A test that needs a stack fails or skips here, and either fails the lane.
+    """
+    if any(os.getenv(name) for name in ("TEST_DATABASE_URL", "MIGRATION_DATABASE_URL")):
+        raise SystemExit("The unit lane runs without a stack; unset the database URLs")
+    if output.exists():
+        shutil.rmtree(output)
+    output.mkdir(parents=True)
+    before = source_inventory(backend)
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-m",
+            "not integration",
+            "-n",
+            str(workers),
+            "--dist",
+            "worksteal",
+            "--cov=app",
+            "--cov-report=",
+            "--cov-fail-under=0",
+            f"--junitxml={output / 'pytest.xml'}",
+        ],
+        cwd=backend,
+        env={**os.environ, "COVERAGE_FILE": str(output / "coverage.data")},
+    )
+    counts = junit_counts(output / "pytest.xml") if (output / "pytest.xml").exists() else {}
+    stable = before == source_inventory(backend)
+    (output / "metadata.json").write_text(
+        json.dumps(
+            {
+                "revision": revision,
+                "base_ref": os.getenv("COVERAGE_BASE_REF"),
+                "lane": "unit",
+                "source_hashes": before,
+                "source_stable": stable,
+                "test_counts": counts,
+            },
+            indent=2,
+        )
+    )
+    passed = result.returncode == 0 and suite_passed(counts, stable)
+    print(f"Backend unit lane {'PASS' if passed else 'FAIL'}: {counts}", flush=True)
+    return 0 if passed else 1
+
+
 def combine_backend_coverage(backend, shards_dir, total):
     """Merge every CI shard into one report, then apply the normal coverage gate."""
     from coverage import Coverage
@@ -233,8 +290,12 @@ def combine_backend_coverage(backend, shards_dir, total):
         shutil.rmtree(output)
     output.mkdir(parents=True)
     shards = {}
+    units = []
     for metadata_path in sorted(shards_dir.rglob("metadata.json")):
         metadata = json.loads(metadata_path.read_text())
+        if metadata.get("lane") == "unit":
+            units.append(metadata_path.parent)
+            continue
         group = tuple(metadata.get("shard") or ())
         if len(group) != 2 or group[1] != total or group in shards:
             raise SystemExit(f"Unexpected or duplicate shard evidence: {metadata_path}")
@@ -242,13 +303,15 @@ def combine_backend_coverage(backend, shards_dir, total):
     expected = {(group, total) for group in range(1, total + 1)}
     if set(shards) != expected:
         raise SystemExit(f"Expected {total} coverage shards, found {sorted(shards)}")
+    if len(units) != 1:
+        raise SystemExit(f"Expected one unit lane beside the shards, found {len(units)}")
+    folders = [shards[group] for group in sorted(shards)] + units
 
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
     counts = dict.fromkeys(COUNT_KEYS, 0)
     stable = True
     durations = {}
-    for group in sorted(shards):
-        folder = shards[group]
+    for folder in folders:
         metadata = json.loads((folder / "metadata.json").read_text())
         stable = stable and metadata["source_stable"] and metadata["revision"] == revision
         stable = stable and metadata["source_hashes"] == source_inventory(backend)
@@ -262,7 +325,7 @@ def combine_backend_coverage(backend, shards_dir, total):
             )
 
     coverage = Coverage(data_file=str(output / ".coverage"), source=[str(backend / "app")])
-    coverage.combine([str(shards[group] / "coverage.data") for group in sorted(shards)], keep=True)
+    coverage.combine([str(folder / "coverage.data") for folder in folders], keep=True)
     coverage.save()
     coverage.json_report(outfile=str(output / "coverage.json"))
     coverage.xml_report(outfile=str(output / "coverage.xml"))
@@ -287,6 +350,12 @@ def combine_backend_coverage(backend, shards_dir, total):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["unit"]:
+        parser = argparse.ArgumentParser(prog="backend_coverage.py unit")
+        parser.add_argument("--workers", type=int, default=4)
+        options = parser.parse_args(sys.argv[2:])
+        backend = Path(__file__).resolve().parents[1]
+        raise SystemExit(run_unit_lane(backend, coverage_output(backend), options.workers))
     if sys.argv[1:2] == ["combine"]:
         parser = argparse.ArgumentParser(prog="backend_coverage.py combine")
         parser.add_argument("shards_dir", type=Path)

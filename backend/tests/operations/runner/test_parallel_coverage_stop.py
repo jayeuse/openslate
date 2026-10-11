@@ -46,6 +46,7 @@ from tests import parallel_coverage
 state, fake, stubborn = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 parallel_coverage.SHARDS_ROOT = state / "shards"
 parallel_coverage.SHARD_STOP_SECONDS = 2.0
+parallel_coverage.run_unit_lane = lambda *_arguments: 0  # these tests stop the shards
 parallel_coverage.shard_command = lambda group, total: [
     sys.executable, fake, str(state), str(group), "stubborn" if str(group) == stubborn else "ok"
 ]

@@ -29,6 +29,9 @@ from app.systems.sandbox.lifecycle.schemas import (
 
 from .support import _client, _empty_list_result, make_user
 
+# Fixed, so parametrized test IDs are the same in every process.
+_PATH_ID = "0190a000-0000-7000-8000-000000000001"
+
 CONFIRMATION_TOKEN = token_urlsafe(32)
 CONFIRMATION_PASSWORD = token_urlsafe(32)
 
@@ -39,32 +42,32 @@ CONFIRMATION_PASSWORD = token_urlsafe(32)
         (
             LifecycleTargetType.DEPARTMENT,
             LifecycleOperation.CLOSE,
-            f"/api/departments/{uuid7()}/close",
+            f"/api/departments/{_PATH_ID}/close",
         ),
         (
             LifecycleTargetType.DEPARTMENT,
             LifecycleOperation.REOPEN,
-            f"/api/departments/{uuid7()}/reopen",
+            f"/api/departments/{_PATH_ID}/reopen",
         ),
         (
             LifecycleTargetType.MODULE,
             LifecycleOperation.CLOSE,
-            f"/api/modules/{uuid7()}/close",
+            f"/api/modules/{_PATH_ID}/close",
         ),
         (
             LifecycleTargetType.MODULE,
             LifecycleOperation.REOPEN,
-            f"/api/modules/{uuid7()}/reopen",
+            f"/api/modules/{_PATH_ID}/reopen",
         ),
         (
             LifecycleTargetType.FIELD,
             LifecycleOperation.CLOSE,
-            f"/api/fields/{uuid7()}/close",
+            f"/api/fields/{_PATH_ID}/close",
         ),
         (
             LifecycleTargetType.FIELD,
             LifecycleOperation.REOPEN,
-            f"/api/fields/{uuid7()}/reopen",
+            f"/api/fields/{_PATH_ID}/reopen",
         ),
     ],
 )
@@ -116,15 +119,15 @@ def _purge_impact(target_type: LifecycleTargetType) -> LifecycleImpactResponse:
     [
         (
             LifecycleTargetType.DEPARTMENT,
-            f"/api/departments/{uuid7()}/purge/preview",
+            f"/api/departments/{_PATH_ID}/purge/preview",
         ),
-        (LifecycleTargetType.DEPARTMENT, f"/api/departments/{uuid7()}/purge"),
-        (LifecycleTargetType.MODULE, f"/api/modules/{uuid7()}/purge/preview"),
-        (LifecycleTargetType.MODULE, f"/api/modules/{uuid7()}/purge"),
-        (LifecycleTargetType.FIELD, f"/api/fields/{uuid7()}/purge/preview"),
-        (LifecycleTargetType.FIELD, f"/api/fields/{uuid7()}/purge"),
-        (LifecycleTargetType.RECORD, f"/api/records/{uuid7()}/purge/preview"),
-        (LifecycleTargetType.RECORD, f"/api/records/{uuid7()}/purge"),
+        (LifecycleTargetType.DEPARTMENT, f"/api/departments/{_PATH_ID}/purge"),
+        (LifecycleTargetType.MODULE, f"/api/modules/{_PATH_ID}/purge/preview"),
+        (LifecycleTargetType.MODULE, f"/api/modules/{_PATH_ID}/purge"),
+        (LifecycleTargetType.FIELD, f"/api/fields/{_PATH_ID}/purge/preview"),
+        (LifecycleTargetType.FIELD, f"/api/fields/{_PATH_ID}/purge"),
+        (LifecycleTargetType.RECORD, f"/api/records/{_PATH_ID}/purge/preview"),
+        (LifecycleTargetType.RECORD, f"/api/records/{_PATH_ID}/purge"),
     ],
 )
 def test_all_purge_routes_remain_literal_admin_only(

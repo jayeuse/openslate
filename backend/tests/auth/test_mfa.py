@@ -161,6 +161,7 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
         assert response.json()["detail"]["code"] == "mfa_required"
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "source,expected", [("10.1.2.3", 200), ("203.0.113.8", 403), ("unknown", 403)]
 )
@@ -221,6 +222,7 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
         assert response.json()["detail"]["code"] == "ip_not_allowed"
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "path,payload",
     [
