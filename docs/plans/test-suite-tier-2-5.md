@@ -235,6 +235,8 @@ Area results (fill in during phase 6):
 
 | WP | Lines before | Lines after | Tests before | Tests after | Time before | Time after | Mutation or behavior map | Flake rate |
 |---|---|---|---|---|---|---|---|---|
+| F1 | 26,939 | 26,978 | 369 http + 105 isolated | 339 http + 150 isolated | not measured | 4.7 min http (under load) | 357 rows, one owner each | not measured |
+| F2 | 19,553 | 19,304 | 255 http + 113 isolated | 146 http + 234 isolated | not measured | 56 s http | all owners resolve, none duplicated | not measured |
 
 ## 10. Exit criteria
 

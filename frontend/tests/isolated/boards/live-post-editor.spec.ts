@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { BoardPost } from "../../src/components/systems/boards/adapters/board-posts-api";
+import type { BoardPost } from "../../../src/components/systems/boards/adapters/board-posts-api";
 import {
   ServerBoardPostEditorDisplay,
   type PostEditorView,
-} from "../../src/components/systems/boards/components/server-backed-board-post-editor";
+} from "../../../src/components/systems/boards/components/server-backed-board-post-editor";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";

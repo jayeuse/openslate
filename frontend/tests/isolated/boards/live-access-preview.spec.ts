@@ -1,13 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BoardAccessPreviewResult } from "../../src/components/systems/boards/components/server-backed-board-access-preview";
+import { BoardAccessPreviewResult } from "../../../src/components/systems/boards/components/server-backed-board-access-preview";
 import {
   transitionAccessPreview,
   transitionBoardPreviewEligibility,
   type AccessPreviewState,
   type BoardPreviewEligibility,
-} from "../../src/components/systems/boards/hooks/use-server-board-access-preview";
+} from "../../../src/components/systems/boards/hooks/use-server-board-access-preview";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";

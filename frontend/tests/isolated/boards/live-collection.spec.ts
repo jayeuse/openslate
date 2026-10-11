@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { ApiError } from "../../src/lib/api";
-import type { BoardManagementBoard } from "../../src/components/systems/boards/adapters/board-management-api";
+import { ApiError } from "../../../src/lib/api";
+import type { BoardManagementBoard } from "../../../src/components/systems/boards/adapters/board-management-api";
 import {
   applyBoardMutationToDetail,
   boardListKey,
@@ -8,15 +8,14 @@ import {
   chooseBoardCandidate,
   invalidateBoardResourcesIfAuthorizationDenied,
   parseBoardRoute,
-  resolveBoardSection,
   transitionResource,
   type ResourceState,
-} from "../../src/components/systems/boards/hooks/use-server-boards";
+} from "../../../src/components/systems/boards/hooks/use-server-boards";
 import {
   boardSearchEmptyCopy,
   isSelectedBoardPostManagerOpen,
   isSelectedBoardWidgetManagerOpen,
-} from "../../src/components/systems/boards/components/server-backed-boards";
+} from "../../../src/components/systems/boards/components/server-backed-boards";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const homeId = "00000000-0000-4000-8000-000000000002";
@@ -131,27 +130,6 @@ test("explicit Board URL retains its UUID outside the page and fails closed on i
   );
   expect(boardUrl(homeId, "posts")).toBe(
     `/boards?board=${homeId}&section=posts`,
-  );
-});
-
-test("no-ID selection prefers the company Board, then the first active list item", () => {
-  const none = parseBoardRoute("?section=posts");
-  const page = [
-    { id: archivedId, scope: "company" as const, status: "archived" as const },
-    { id: boardId, scope: "project" as const, status: "active" as const },
-    { id: homeId, scope: "company" as const, status: "active" as const },
-  ];
-  expect(chooseBoardCandidate(none, page)).toEqual({
-    id: homeId,
-    source: "list",
-  });
-  expect(chooseBoardCandidate(none, page.slice(0, 2))).toEqual({
-    id: boardId,
-    source: "list",
-  });
-  expect(resolveBoardSection(none)).toBe("posts");
-  expect(resolveBoardSection(parseBoardRoute("?section=unsupported"))).toBe(
-    "overview",
   );
 });
 

@@ -1,18 +1,18 @@
 import { expect, test } from "@playwright/test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ApiError } from "../../src/lib/api";
+import { ApiError } from "../../../src/lib/api";
 import type {
   BoardActivity,
   BoardToolsPage,
-} from "../../src/components/systems/boards/adapters/board-tools-api";
-import { ServerBoardActivityDisplay } from "../../src/components/systems/boards/components/server-backed-board-activity";
-import { isSelectedBoardActivityOpen } from "../../src/components/systems/boards/components/server-backed-boards";
+} from "../../../src/components/systems/boards/adapters/board-tools-api";
+import { ServerBoardActivityDisplay } from "../../../src/components/systems/boards/components/server-backed-board-activity";
+import { isSelectedBoardActivityOpen } from "../../../src/components/systems/boards/components/server-backed-boards";
 import {
   boardActivityFailure,
   transitionBoardActivity,
   type BoardActivityState,
-} from "../../src/components/systems/boards/hooks/use-server-board-activity";
+} from "../../../src/components/systems/boards/hooks/use-server-board-activity";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";

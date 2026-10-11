@@ -1,4 +1,5 @@
 import { expect, signedInSession, test, type Page } from "./helpers/test";
+import { pageOf } from "./helpers/openview-catalog";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";
@@ -41,16 +42,7 @@ async function installServerBoards(page: Page) {
         body: JSON.stringify(body),
       });
     if (path === "/api/boards")
-      return reply(200, {
-        items: [board],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
-      });
+      return reply(200, pageOf([board], { limit: 25 }));
     if (path === `/api/boards/${boardId}`) return reply(200, board);
     if (path === `/api/boards/${boardId}/my-access`)
       return reply(200, {
@@ -60,16 +52,7 @@ async function installServerBoards(page: Page) {
         manage: false,
       });
     if (path === `/api/boards/${boardId}/post-authors`)
-      return reply(200, {
-        items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
-      });
+      return reply(200, pageOf([], { limit: 25 }));
     return reply(404, { detail: "Content route unavailable" });
   });
 }

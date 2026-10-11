@@ -7,6 +7,7 @@ import {
   userId,
 } from "./helpers/boards-api";
 import { dummyFile, type DummyFile } from "../helpers/dummy-files";
+import { pageOf } from "./helpers/openview-catalog";
 
 const UNCLEAR_UPLOAD =
   "The upload result is unclear. Use Attach file to finish, or choose the file again.";
@@ -64,17 +65,7 @@ function postWire(
 }
 
 function listPage(items: unknown[], extra: Record<string, unknown> = {}) {
-  return {
-    items,
-    pagination: {
-      limit: 25,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-    ...extra,
-  };
+  return { ...pageOf(items, { limit: 25 }), ...extra };
 }
 
 type Options = {
