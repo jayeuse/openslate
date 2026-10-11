@@ -24,6 +24,15 @@ class AssertionCountTests(unittest.TestCase):
         ]
         self.assertEqual(guard.count_assertions("backend/tests/a/test_x.py", lines), 3)
 
+    def test_counts_an_expectation_split_across_lines(self):
+        lines = [
+            "  await expect",
+            "    .poll(() => reads)",
+            "    .toBe(2);",
+            '  import { expect, test } from "@playwright/test";',
+        ]
+        self.assertEqual(guard.count_assertions("frontend/tests/http/a.spec.ts", lines), 1)
+
     def test_counts_typescript_expectations_once_per_expect(self):
         lines = [
             "  await expect(page.getByRole('heading')).toHaveText('Boards');",

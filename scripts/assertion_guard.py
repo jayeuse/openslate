@@ -38,7 +38,9 @@ _PY_ASSERTIONS: Final = (
     re.compile(r"\bpytest\.(raises|warns)\("),
     re.compile(r"\.assert_(called|not_called|awaited|has_calls|any_call)\w*\("),
 )
-_TS_ASSERTION: Final = re.compile(r"\bexpect(\.(soft|poll))?\(")
+# `expect(`, `expect.poll(`, `expect.soft(`, or `expect` ending a line whose call
+# continues on the next line; an import of `expect` does not count.
+_TS_ASSERTION: Final = re.compile(r"\bexpect(?=\s*(\(|\.(soft|poll)\b|$))")
 
 _PY_FORBIDDEN: Final = {
     "skip or xfail": re.compile(

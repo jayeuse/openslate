@@ -28,6 +28,8 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("npm test -- ${{ matrix.args }}", source)
         isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
         self.assertIn("run: npm test -- --project=isolated", isolated)
+        # One isolated test drives next dev in Chromium.
+        self.assertIn("playwright install --with-deps chromium", isolated)
         self.assertNotIn("download-artifact", isolated)
         for shard in range(1, 7):
             with self.subTest(shard=shard):
