@@ -34,6 +34,14 @@ class PrepushTests(unittest.TestCase):
         )
         self.assertLess(names.index("backend-coverage"), names.index(reset.name))
 
+    def test_test_guard_runs_first_against_the_base_for_any_test_lane(self):
+        plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
+        guard = plan.steps[0]
+        self.assertEqual(guard.name, "test-guard")
+        self.assertEqual(guard.command, ("python3", "scripts/assertion_guard.py"))
+        self.assertEqual((guard.cwd, guard.phase), (".", "fast"))
+        self.assertTrue(guard.needs_base)
+
     def test_local_backend_coverage_runs_parallel_shards_and_combines_them(self):
         plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
         coverage = next(step for step in plan.steps if step.name == "backend-coverage")

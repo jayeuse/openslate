@@ -60,6 +60,12 @@ const frontendEnvironment: Record<string, string> =
       );
 Object.assign(process.env, frontendEnvironment);
 
+// Plan item 1: `export` serves the `next build` output through the production
+// static-site code (backend/tests/static_export_server.py); `dev` uses `next dev`.
+const httpServer = process.env.PLAYWRIGHT_HTTP_SERVER ?? "dev";
+if (!["dev", "export"].includes(httpServer))
+  throw new Error("PLAYWRIGHT_HTTP_SERVER must be dev or export");
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -67,6 +73,10 @@ function shellQuote(value: string): string {
 function isolatedCommand(command: string): string {
   const path = process.env.PATH;
   const pathAssignment = path === undefined ? [] : [`PATH=${shellQuote(path)}`];
+  // uv needs HOME for its cache; the export server reads no other environment.
+  const home = process.env.HOME;
+  if (httpServer === "export" && home !== undefined)
+    pathAssignment.push(`HOME=${shellQuote(home)}`);
   const environment = Object.entries(frontendEnvironment).map(
     ([name, value]) => `${name}=${shellQuote(value)}`,
   );
@@ -110,12 +120,19 @@ export default defineConfig({
         }))
       : []),
   ],
-  globalSetup: testLayer === "isolated" ? undefined : "./tests/warm-routes.ts",
+  globalSetup:
+    testLayer === "isolated" || httpServer === "export"
+      ? undefined
+      : "./tests/warm-routes.ts",
   webServer:
     testLayer === "isolated"
       ? undefined
       : {
-          command: isolatedCommand("npm run dev"),
+          command: isolatedCommand(
+            httpServer === "export"
+              ? `uv run --directory ../backend python -m tests.static_export_server --root ../frontend/out --port ${target.port}`
+              : "npm run dev",
+          ),
           url: baseURL,
           env: frontendEnvironment,
           reuseExistingServer: !isCI,

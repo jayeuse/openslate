@@ -122,6 +122,20 @@ def _add_frontend_steps(steps: list[Step]) -> None:
     )
 
 
+def _add_test_guard_step(steps: list[Step]) -> None:
+    # Plan item 14: refuse weakened tests before any lane spends time on them.
+    steps.append(
+        Step(
+            name="test-guard",
+            gate="tests",
+            phase="fast",
+            cwd=".",
+            command=("python3", "scripts/assertion_guard.py"),
+            needs_base=True,
+        )
+    )
+
+
 def _add_backend_steps(steps: list[Step], coverage_stacks: int = 3) -> None:
     steps.extend(
         (
@@ -157,6 +171,7 @@ def _add_backend_steps(steps: list[Step], coverage_stacks: int = 3) -> None:
                     "../scripts/environment.py",
                     "../scripts/dev.py",
                     "../scripts/run_tests.py",
+                    "../scripts/assertion_guard.py",
                     "../packaging/backup/backup_installation.py",
                     "../packaging/backup/restore_installation.py",
                 ),
@@ -289,6 +304,8 @@ def build_plan(
 
     del root  # The plan uses repository-relative working directories.
     steps: list[Step] = []
+    if scope.decisions["frontend"].run or scope.decisions["backend"].run:
+        _add_test_guard_step(steps)
     if scope.decisions["frontend"].run:
         _add_frontend_steps(steps)
     if scope.decisions["backend"].run:
