@@ -1243,12 +1243,22 @@ test("appearance switches keep their thumbs inside the track and a 44 pixel hit 
     .selectOption("spacious");
   const toggle = page.getByRole("switch", { name: "Convenience shortcuts" });
   await expect(toggle).toBeEnabled();
-  const track = await toggle.boundingBox();
-  const thumb = await toggle
-    .locator('[data-slot="switch-thumb"]')
-    .boundingBox();
-  if (!track || !thumb) throw new Error("Switch geometry missing");
-  expect(thumb.height).toBeLessThanOrEqual(track.height);
+  // Measure the layout these settings produce, not the frame before they apply.
+  await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-density",
+    "spacious",
+  );
+  await expect
+    .poll(async () => {
+      const track = await toggle.boundingBox();
+      const thumb = await toggle
+        .locator('[data-slot="switch-thumb"]')
+        .boundingBox();
+      if (!track || !thumb) throw new Error("Switch geometry missing");
+      return track.height - thumb.height;
+    })
+    .toBeGreaterThanOrEqual(0);
   await page.getByRole("combobox", { name: "Text size" }).selectOption("100");
   await page
     .getByRole("combobox", { name: "Page spacing" })

@@ -1,0 +1,348 @@
+# OpenView behavior map
+
+Baseline: commit 87a45d3c. Loop titles are quoted as source templates, with `${…}` left unexpanded. Source `—` means no criterion, contract, or bug is evident in the test or its comments. Rows owned by an isolated test appear only where an http test of this family repeats the rule.
+
+## Views: saved views, filters, presentation
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| A save in flight keeps newer edits as an unsaved draft, and a saved search survives reload | http | http/openview-views-api.spec.ts › server-backed Views preserve edits through save, conflict, archive, restore, and module default changes | — |
+| A stale save opens the Update saved view dialog with the local search; Save my version over latest overwrites on the second try | http | http/openview-views-api.spec.ts › server-backed Views preserve edits through save, conflict, archive, restore, and module default changes | — |
+| Archive and Restore ask before discarding a dirty draft, and a rejected mutation keeps the draft with an alert | http | http/openview-views-api.spec.ts › server-backed Views preserve edits through save, conflict, archive, restore, and module default changes | — |
+| Restore selects the view, the archived list is read with deleted=include, and Make default view marks Module default | http | http/openview-views-api.spec.ts › server-backed Views preserve edits through save, conflict, archive, restore, and module default changes | — |
+| Reload latest in the conflict dialog replaces the draft with the authoritative saved version | http | http/openview-views-api.spec.ts › stale conflict can reload the authoritative saved version without losing it implicitly | — |
+| Clearing the default asks before discarding the draft; a rejected clear keeps the draft | http | http/openview-views-api.spec.ts › clearing an implicit default asks before discarding its local draft | — |
+| Selecting Unsaved view overrides the module default after discard confirmation | http | http/openview-views-api.spec.ts › selecting Unsaved view overrides the module default after discard confirmation | — |
+| A default changed elsewhere leaves an implicit selection and its dirty draft anchored | http | http/openview-views-api.spec.ts › default invalidation keeps an implicit selected view and its dirty draft anchored | — |
+| A default changed elsewhere moves the selection once the implicit draft is reverted | http | http/openview-views-api.spec.ts › default invalidation follows the new default after an implicit draft is reverted | — |
+| A same-view invalidation refreshes a clean implicit editor after a local revert or save | http | http/openview-views-api.spec.ts › same-view invalidation refreshes a clean implicit editor after local ${localAction} | — |
+| A saved_views or records invalidation refreshes reads and keeps the dirty search | http | http/openview-views-api.spec.ts › OpenView invalidations refresh Views while preserving dirty edits and clear denied records | frontend/AGENTS.md (SSE invalidations) |
+| Duplicate saves the current draft as a selected, non-default copy and leaves the original unchanged | http | http/openview-views-api.spec.ts › duplicating a saved view saves the current draft as a selected copy | — |
+| A copy name of a 100-emoji view stays within 200 characters and ends " (copy)" | http | http/openview-views-api.spec.ts › duplicating a long Unicode view keeps the copy name within the API limit | — |
+| Reset changes restores the saved base, or clears an unsaved draft and its address | http | http/openview-views-api.spec.ts › resetting changes restores the saved base or clears an unsaved draft | — |
+| A saved view beyond the first catalog page loads by UUID deep link and can be archived and restored | http | http/openview-views-api.spec.ts › a saved view beyond the first page loads through its UUID deep link | — |
+| Changing the saved view resets record pagination | http | http/openview-views-api.spec.ts › changing saved views resets record pagination | — |
+| Invalid UUID view and module links recover to the first active data source | http | http/openview-views-api.spec.ts › invalid UUID view links recover to the first active catalog source | — |
+| A catalog 503 shows destructive feedback without server detail | http | http/openview-views-api.spec.ts › OpenView request failures use safe destructive feedback without server detail | — |
+| Draft equal to its View, or with only unfinished filters, keeps no address value | isolated | isolated/openview/temporary-view.spec.ts › a draft equal to its View, or with only unfinished filters, keeps no address value | — |
+| Only changed settings travel in the address and the View name never does | isolated | isolated/openview/temporary-view.spec.ts › a temporary filter, sort and layout survive the address and restore the same draft | — |
+| A malformed or unknown-field temporary address is refused | isolated | isolated/openview/temporary-view.spec.ts › a shared address that is malformed or names unknown fields is refused | — |
+| Temporary changes live in the address, survive reload and are never saved | http | http/openview-views-api.spec.ts › temporary View changes live in the address, survive reload, and are never saved | — |
+| A reader keeps temporary filters in the address without save controls | http | http/openview-views-api.spec.ts › a reader keeps temporary View filters in the address without save controls | AGENTS.md access policy |
+| A module reader browses archived Views without a Restore action | http | http/openview-views-api.spec.ts › a module reader can browse archived Views without a Restore action | AGENTS.md access policy |
+| A malformed changes value is removed from the URL and the saved view renders | http | http/openview-views-api.spec.ts › a malformed temporary View address is ignored and removed | — |
+| Decimal filters send ordinary and 16-digit strings unchanged | http | http/openview-views-api.spec.ts › decimal View filters retain ordinary and high-precision strings | — |
+| Number filters send numeric values | http | http/openview-views-api.spec.ts › number View filters continue sending numeric values | — |
+| Clearing a number filter stays blank, is never queried as 0, and disables Save | http | http/openview-views-api.spec.ts › clearing a number View filter stays blank instead of querying zero | — |
+| An unsafe integer filter fails locally (aria-invalid, message) and sends nothing | http | http/openview-views-api.spec.ts › unsafe integer View filters fail locally without sending a rounded value | — |
+| Membership filters pick choices by label, send stable IDs, and Save stores them | http | http/openview-views-api.spec.ts › membership View filters select choices by label and submit stable IDs | — |
+| Switching between scalar and membership operators clears the incompatible value | http | http/openview-views-api.spec.ts › switching scalar and membership View filters clears incompatible values | — |
+| Kanban, Calendar and Timeline queries skip an incomplete filter | http | http/openview-views-api.spec.ts › ${layout} does not query incomplete filters and sends typed membership values | — |
+| Changing a filter field by keyboard keeps focus | http | http/openview-views-api.spec.ts › changing a Views filter field with the keyboard retains focus | — |
+| Choice and person filters show labels, submit stable or eligible IDs, and hide unavailable users | http | http/openview-views-api.spec.ts › Views show authorized labels while filters keep stable choice and eligible user IDs | — |
+| Up to three ordered sort rules are sent, saved and reloaded; Add sort rule disables at three | http | http/openview-views-api.spec.ts › saved Views send, save, and reload up to three ordered sort rules | contract: isolated/openview/views-api.spec.ts |
+| Sort, columns, filters and layout editors stay temporary until one Save writes revision 2 | http | http/openview-views-api.spec.ts › Views exposes its filter, column, and layout editors on demand | — |
+| Table presentation (order, pin, hide, density, wrap) persists and drives the rendered table | http | http/openview-views-api.spec.ts › saved table presentation controls persist and drive the rendered table | — |
+| Grid and Gallery card fields, wrapping and size persist and drive the cards | http | http/openview-views-api.spec.ts › ${layout} consumes saved card fields, wrapping, and size after reload | — |
+| Grid and Gallery render the current server page and Save only the selected layout | http | http/openview-views-api.spec.ts › Grid and Gallery use the current server page and save only the selected layout | — |
+| Table, Grid and Gallery grouping use server counts and page the selected group separately | http | http/openview-views-api.spec.ts › ${layout} grouping uses server counts and separately paginates selected records | — |
+| Calendar and Timeline keep the saved group field inactive while querying their window | http | http/openview-views-api.spec.ts › ${layout} preserves saved general grouping as inactive while querying its window | — |
+| Kanban uses paginated lane counts, pages only the selected lane, and shows safe failure with Retry | http | http/openview-views-api.spec.ts › Kanban uses paginated server lane counts and only pages the selected lane | — |
+| A grouped member page size keeps twelve-group directory paging | http | http/openview-views-api.spec.ts › Views grouped member page size preserves twelve-group directory paging | — |
+| Saved view controls fit a 390px viewport at 125% text and spacious density | http | http/openview-views-api.spec.ts › ${layout} Saved view controls fit mobile Larger Spacious in ${mode} | — |
+
+## Views: record results, inspector, calendar, timeline
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| Page size drives server offsets and inspector adjacency | http | http/openview-views-api.spec.ts › Views page size drives server offsets and inspector adjacency | — |
+| The inspector follows the filtered page both ways, copies a safe link, and reopens it through record authorization | http | http/openview-views-api.spec.ts › Views inspector follows the filtered page in both directions and reopens safe links through record authorization | — |
+| The inspector never shows a stale list row before record authorization finishes | http | http/openview-views-api.spec.ts › Views inspector does not reveal a stale list row before record authorization finishes | — |
+| Closing the inspector returns to the page reached through inspector navigation | http | http/openview-views-api.spec.ts › closing record details returns to the page reached through inspector navigation | — |
+| Calendar and Timeline details navigate across the server page and close back to it | http | http/openview-views-api.spec.ts › ${layout} record details navigate across the server page and close back to it | — |
+| The organization week start aligns the initial week query and month columns | http | http/openview-views-api.spec.ts › OpenView ${weekStart} preference aligns the initial week query and month columns | — |
+| Calendar waits for organization settings, retries, and keeps a manual range through refresh | http | http/openview-views-api.spec.ts › OpenView waits for organization settings, retries failures, and retains a manual range during preference refresh | — |
+| Calendar shows workspace-local matches, pages, and retries window and undated failures | http | http/openview-views-api.spec.ts › Calendar displays workspace-local window matches, pages results, and retries failures | — |
+| The saved Calendar range and Month/List scale drive and persist the live layouts | http | http/openview-views-api.spec.ts › saved Calendar range and Month/List scale drive and persist the live layouts | — |
+| Timeline shows complete intervals with deadline and progress and keeps unscheduled records separate | http | http/openview-views-api.spec.ts › Timeline renders complete intervals and keeps unscheduled records separate | — |
+| Timeline accepts a DATETIME deadline beside DATE interval fields | http | http/openview-views-api.spec.ts › Timeline accepts a DATETIME deadline alongside DATE interval fields | contract: isolated/openview/window-api.spec.ts |
+| Calendar reads a timezone-free DATETIME as UTC before the workspace conversion | http | http/openview-views-api.spec.ts › interprets timezone-free DATETIME values as UTC before workspace conversion | — |
+| Updated dates use the workspace locale and cross-midnight date in Table, Grid, Gallery and Kanban | http | http/openview-views-api.spec.ts › ${layout} Updated dates use the workspace locale and cross-midnight date | — |
+| Record details and history localize workspace timestamps at their existing precision | http | http/openview-views-api.spec.ts › record details and history localize workspace timestamps with their existing precision | — |
+| Calendar localizes visible dates and keeps the response timezone and machine keys | http | http/openview-views-api.spec.ts › Calendar localizes visible dates while retaining its response timezone and machine keys | — |
+| Timeline localizes date-only and response-zone intervals without changing window requests | http | http/openview-views-api.spec.ts › Timeline localizes date-only and response-zone intervals without changing window requests | — |
+| Personal date and week-start preferences change Calendar presentation only; a move starts on the workspace day | http | http/openview-views-api.spec.ts › Calendar personal dates and week start change presentation only, retaining workspace grouping and requests | — |
+| Personal formatting keeps date-only days and the workspace window in Timeline | http | http/openview-views-api.spec.ts › Timeline personal formatting preserves date-only days and the workspace window | — |
+| A failed regional read keeps record content usable and recovers dates separately | http | http/openview-views-api.spec.ts › failed regional reads keep record content usable and recover dates separately | — |
+| A regional invalidation replaces a cold old read without discarding the local draft | http | http/openview-views-api.spec.ts › regional invalidation replaces a cold old read without discarding a local view draft | — |
+| A prior account's regional response cannot replace the next account's dates | http | http/openview-views-api.spec.ts › a prior account regional response cannot replace the next account dates | — |
+| A 366-day Calendar window is serialized with DATE values and pagination preserved | isolated | isolated/openview/window-api.spec.ts › serializes a 366-day Calendar window and preserves DATE values and pagination | — |
+
+## Views: layout moves (Calendar, Timeline, Kanban)
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| Timeline stages one atomic start and end change through repeated moves, resize and remount, then saves one batch with the original revision | http | http/openview-date-moves.spec.ts › Timeline stages one atomic interval through repeated moves, end resize, and a layout remount | — |
+| Calendar keeps workspace wall time and fractional seconds across DST; the undated list is read only on intent and pages | http | http/openview-date-moves.spec.ts › Calendar preserves workspace wall time and fractional seconds across DST and reads undated pages only on intent | — |
+| A nonexistent workspace time refuses staging, and an overlapping time needs an explicit UTC offset | http | http/openview-date-moves.spec.ts › nonexistent workspace times refuse staging and overlaps require an explicit offset | — |
+| Timeline pointer shift uses unclipped dates and the end handle changes only the end | http | http/openview-date-moves.spec.ts › Timeline pointer shift uses unclipped dates and its end handle changes only end | — |
+| Dropping an undated Calendar card on a visible day stages it with no eager read or write | http | http/openview-date-moves.spec.ts › Calendar drops an undated card on a visible day without an eager read or write | — |
+| Phone keyboard Move to cancels, rejects a reversed end, composes, and clears when returned to the original | http | http/openview-date-moves.spec.ts › phone keyboard Move to can cancel, reject a reversed end, compose, and return to the original interval | — |
+| A partial stale, invalid or forbidden batch keeps the failed card and announces the success once | http | http/openview-date-moves.spec.ts › partial ${outcome} keeps the failed card and announces the successful move once | — |
+| An unconfirmed compound receipt refreshes reads and keeps the original revision | http | http/openview-date-moves.spec.ts › ${fault} compound receipt refreshes reads but retains the original pending revision without retry | — |
+| A held Save blocks duplicate staging, and a read refusal withdraws date controls and pending metadata | http | http/openview-date-moves.spec.ts › held Save blocks duplicate staging and read refusal withdraws date controls and pending metadata | — |
+| Incomplete intervals and read-only access never expose working move controls | http | http/openview-date-moves.spec.ts › incomplete intervals and read-only access never expose functioning move controls | AGENTS.md access policy |
+| A late held receipt cannot republish results after a records-read refusal | http | http/openview-date-moves.spec.ts › a late held receipt cannot republish results after records-read refusal | — |
+| Timeline shifts mixed date and datetime fields together across DST without losing wall precision | http | http/openview-date-moves.spec.ts › Timeline shifts mixed date and datetime fields together across DST without losing wall precision | — |
+| Calendar treats a timezone-free datetime as UTC and shifts its cross-midnight workspace day | http | http/openview-date-moves.spec.ts › Calendar interprets timezone-free datetime as UTC and shifts its cross-midnight workspace day | — |
+| Returning a legacy timezone-free datetime to its original day clears the move with no write | http | http/openview-date-moves.spec.ts › returning a legacy timezone-free datetime to its original workspace day clears the move without a write | — |
+| Timeline phone handles are distinct 44px targets and a touch shift stages both dates | http | http/openview-date-moves.spec.ts › touch › Timeline phone handles are distinct 44px targets and touch shift stages both dates | — |
+| A Kanban menu move survives a filter remount and saves only the lane field with its original revision | http | http/openview-kanban-moves.spec.ts › Kanban stages a menu move across a filter remount and saves only the field with its original revision | — |
+| Kanban keeps the first revision through remote refresh and keeps only the conflicting move after partial success | http | http/openview-kanban-moves.spec.ts › Kanban retains the first revision through remote refresh and keeps only a conflicting move after partial success | — |
+| Required Unspecified stages as null and the failed card is kept for correction | http | http/openview-kanban-moves.spec.ts › Kanban stages required Unspecified as null and preserves the failed card for correction | — |
+| Pending moves block unload and navigation, Discard clears them, and the temporary view draft is kept | http | http/openview-kanban-moves.spec.ts › Kanban Discard and the existing navigation guard protect moves without clearing a temporary view draft | — |
+| Boolean and user lane moves submit stable typed values | http | http/openview-kanban-moves.spec.ts › Kanban ${laneType} moves submit stable typed values | — |
+| Readers and unsupported lane types get no move or drag controls | http | http/openview-kanban-moves.spec.ts › Kanban hides move controls for ${"level" in options ? "readers" : "unsupported lane types"} | AGENTS.md access policy |
+| Unsaved moves survive an unknown, malformed or denied batch result, and a denied result drops the controls | http | http/openview-kanban-moves.spec.ts › Kanban retains unsaved moves after a ${failure} batch result | — |
+| A pending Save blocks a duplicate Save, Discard and Move to | http | http/openview-kanban-moves.spec.ts › Kanban blocks a duplicate Save and preserves the submitted batch while it is pending | — |
+| A pointer drag stages a Kanban move without saving | http | http/openview-kanban-moves.spec.ts › Kanban pointer drag stages a move without saving | — |
+| A keyboard drag cancels with Escape and saves the chosen lane | http | http/openview-kanban-moves.spec.ts › Kanban keyboard drag cancels with Escape and saves the chosen lane | — |
+| 100 pending moves are retained across pages and a 101st is refused before saving | http | http/openview-kanban-moves.spec.ts › Kanban retains 100 pending records across pages and refuses a 101st before saving | — |
+| A phone touch drag stages a move and the menu stays available | http | http/openview-kanban-moves.spec.ts › Kanban touch › a touch drag on a phone stages a move and the menu remains available | — |
+
+## Views: export
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| Members and guests export the current query with the chosen pinned columns without saving the view | http | http/openview-views-api.spec.ts › export journeys › ${role} exports current query and chosen pinned columns without saving | export journeys |
+| Excel options stay local across format changes and the workbook bytes are preserved | http | http/openview-views-api.spec.ts › export journeys › Excel choices stay local across format changes and preserve workbook bytes | export journeys |
+| With no columns, export needs an explicit Record ID and never restores removed fields | http | http/openview-views-api.spec.ts › export journeys › empty columns require an explicit Record ID and never restore removed fields | export journeys |
+| An invalid reply is never an attachment and Retry keeps options | http | http/openview-views-api.spec.ts › export journeys › ${invalid.name} is never an attachment and Retry keeps options | export journeys |
+| Each safe failure code keeps the query and allows recovery | http | http/openview-views-api.spec.ts › export journeys › safe ${failure.code} failure retains query and allows recovery | export journeys |
+| A 403 export hides all retained read data and exposes no private detail | http | http/openview-views-api.spec.ts › export journeys › a denied export hides all retained read data and never exposes private details | export journeys |
+| One submit; a late cancel, account change, refusal or navigation cannot download or announce success | http | http/openview-views-api.spec.ts › export journeys › one submit and late ${end} completion cannot download or announce success | export journeys |
+| The export dialog is keyboard-usable, mobile-fit and shows pending and error in light and dark | http | http/openview-views-api.spec.ts › export journeys › ${theme} keyboard, mobile and pending/error controls remain usable | export journeys |
+| CSV after Excel omits every Excel-only option | http | http/openview-views-api.spec.ts › export journeys › CSV after Excel omits every Excel-only option | export journeys |
+| An incomplete filter disables export with no request | http | http/openview-views-api.spec.ts › export journeys › an incomplete filter disables export without a request | export journeys |
+
+## Dashboards
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| One correlated aggregate batch renders every widget; records are read independently; no single-RPC fallback | http | http/openview-dashboards.spec.ts › renders every widget in one correlated aggregate batch and independent records read | — |
+| Size and stored-order changes keep tile paging and save only with the Dashboard revision | http | http/openview-dashboards.spec.ts › size and stored-order changes retain tile paging and save only with the Dashboard revision | — |
+| Editing a widget loads the whole current definition and keeps it through a conflict | http | http/openview-dashboards.spec.ts › editing ${kind} initializes the complete current definition and retains it through a conflict | — |
+| A malformed batch clears the protected cohort and Retry widgets recovers | http | http/openview-dashboards.spec.ts › malformed batch clears the protected cohort and retries without single-RPC fallback | — |
+| An edited source fences a held cohort result while other tiles stay refreshable | http | http/openview-dashboards.spec.ts › edited source fences a held cohort result while other saved tiles remain refreshable | — |
+| The grid uses thirds, halves and full rows (full width on phones) with keyboard edit | http | http/openview-dashboards.spec.ts › grid uses thirds halves full rows and full-width phone tiles with keyboard edit | — |
+| Edit resolves the current source and referenced fields beyond their first catalog pages | http | http/openview-dashboards.spec.ts › edit resolves the current source and referenced fields beyond their first catalog pages | — |
+| Add from saved chart and reference edit keep reference-or-inline exclusivity while current definitions drive all tiles | http | http/openview-dashboards.spec.ts › Add from saved chart and reference edit keep XOR while current definitions drive all tiles | — |
+| One refused saved Chart clears its whole aggregate cohort until an explicit retry | http | http/openview-dashboards.spec.ts › one refused saved Chart clears its entire aggregate cohort until explicit current-authority retry | — |
+| A held editor source blocks changes, and Cancel fences it from the next tile | http | http/openview-dashboards.spec.ts › a held editor source blocks changes and cancellation fences it from the next tile | — |
+| An unsaved monthly draft previews and saves the exact inline instructions only on request | http | http/openview-dashboards.spec.ts › Dashboard previews an unsaved monthly draft and saves the exact inline instructions only on request | — |
+| The records editor keeps ordered columns, filters, search, sort and lifecycle | http | http/openview-dashboards.spec.ts › Dashboard records editor preserves ordered columns filters search sort and lifecycle grammar | — |
+| Cancel fences a late preview without saving or adding a widget | http | http/openview-dashboards.spec.ts › Dashboard cancel fences a late preview without saving or adding a widget | — |
+| A saved-picker preview refuses a changed source and saves reference-only after recovery | http | http/openview-dashboards.spec.ts › Dashboard saved picker preview refuses a changed source and saves reference-only after recovery | — |
+| A saved Chart reference and its L size survive settings save and reload | http | http/openview-dashboards.spec.ts › Dashboard preserves a saved Chart reference and L size through settings save and reload | — |
+| A summary shows exact values and null for inline and referenced widgets with no record-count substitute | http | http/openview-dashboards.spec.ts › ${sourceKind} summary shows exact ${aggregation} values and null without record-count substitution | — |
+| A current Chart fault withdraws private results and stops downstream reads | http | http/openview-dashboards.spec.ts › current Chart ${fault} refuses stale private results and downstream reads | — |
+| A Chart invalidation refreshes the current query and preserves a dirty Dashboard draft | http | http/openview-dashboards.spec.ts › Chart invalidation refreshes its current query while preserving a dirty Dashboard draft | — |
+| A Board and a Dashboard follow one Chart revision with no source writes or draft replacement (cross-family) | http | http/openview-dashboards.spec.ts › paired Board and Dashboard follow one Chart revision without source writes or draft replacement | — |
+| A referenced date series keeps its month or year bucket over more than 366 days | http | http/openview-dashboards.spec.ts › referenced date series preserves its ${bucket} bucket over more than 366 days | — |
+| A dashboards invalidation updates the saved name and widget without reload | http | http/openview-dashboards.spec.ts › Dashboard invalidation updates its saved name and widget without reloading | frontend/AGENTS.md (SSE invalidations) |
+| A dashboards invalidation keeps a dirty name, cadence and widgets until Discard draft and reload | http | http/openview-dashboards.spec.ts › Dashboard invalidation retains a dirty name cadence and widgets until discard | frontend/AGENTS.md (SSE invalidations) |
+| Record invalidations refresh visible module results once per burst | http | http/openview-dashboards.spec.ts › Dashboard record invalidations refresh visible module results once per burst | — |
+| A mobile keyboard-only user creates, saves and reloads a Dashboard | http | http/openview-dashboards.spec.ts › department Dashboard supports mobile keyboard-only controls and survives reload | — |
+| New Dashboard and widget dialogs keep configuration local until Dashboard save | http | http/openview-dashboards.spec.ts › new Dashboard and widget dialogs keep configuration local until Dashboard save | — |
+| Dashboard settings stay a visible draft until saved with the revision | http | http/openview-dashboards.spec.ts › Dashboard settings remain a visible draft until explicitly saved | — |
+| Ordered charts save and reload in one batch, tiles page, and a failed refresh keeps the last good data | http | http/openview-dashboards.spec.ts › department Dashboard saves ordered charts and reloads every complete snapshot in one batch | — |
+| Switching Dashboards fences the old cohort's pending refresh | http | http/openview-dashboards.spec.ts › switching Dashboards fences an old cohort's pending refresh | — |
+| A Count over time widget saves and reloads the complete daily series | http | http/openview-dashboards.spec.ts › department Dashboard builder saves Count over time and reloads the complete daily series | — |
+| A bar Sum widget requires and saves a typed numeric measure | http | http/openview-dashboards.spec.ts › Dashboard bar builder requires and saves a typed numeric measure for Sum | — |
+| A Pie Sum widget saves and reloads its preview and complete table | http | http/openview-dashboards.spec.ts › department Dashboard Pie builder saves Sum and reloads its preview and complete table | — |
+| A line Average widget requires and saves a typed numeric measure | http | http/openview-dashboards.spec.ts › Dashboard line builder requires and saves a typed numeric measure for Average | — |
+| The line builder blocks missing, reversed and overlong date ranges | http | http/openview-dashboards.spec.ts › line chart builder blocks missing, reversed, and overlong date ranges | — |
+| A stale Dashboard save keeps the name and ordered widget draft | http | http/openview-dashboards.spec.ts › stale Dashboard save keeps the name and ordered widget draft available | — |
+| Archive and Restore use the saved revision | http | http/openview-dashboards.spec.ts › archiving and restoring a Dashboard uses the saved revision | contract: isolated/openview/dashboards-api.spec.ts |
+| Restoring at the current URL does not suppress a later re-selection | http | http/openview-dashboards.spec.ts › restoring at the current URL does not suppress a later Dashboard re-selection | — |
+| A pending deep link is cleared when switching to the archived list | http | http/openview-dashboards.spec.ts › a pending Dashboard deep link is cleared when switching to archived list | — |
+| A pending deep link cannot overwrite a new Dashboard draft | http | http/openview-dashboards.spec.ts › a pending Dashboard deep link cannot overwrite a new Dashboard draft | — |
+| Restoring from the archived list does not overwrite a new Dashboard draft | http | http/openview-dashboards.spec.ts › restoring from the archived list does not overwrite a new Dashboard draft | — |
+| A repeated restore is disabled while the revision-checked restore is pending | http | http/openview-dashboards.spec.ts › a repeated restore is disabled while the revision-checked restore is pending | — |
+| Date-line previews keep the complete chronological 366-day window | http | http/openview-dashboards.spec.ts › date-line Dashboard previews retain the complete chronological window | — |
+| A shorter refreshed snapshot clamps the data page | http | http/openview-dashboards.spec.ts › a shorter refreshed snapshot clamps the data page before Previous is used | — |
+| The categorical Count builder excludes numeric and date fields | http | http/openview-dashboards.spec.ts › the categorical Count builder excludes numeric and date fields | — |
+| An unsaved Dashboard draft needs an explicit keep or discard before navigation | http | http/openview-dashboards.spec.ts › unsaved Dashboard drafts require an explicit keep or discard before navigation | — |
+| The archived list cannot restore stale active rows | http | http/openview-dashboards.spec.ts › switching to archived Dashboards cannot restore stale active rows | — |
+| A delayed active Dashboard page cannot enter the archived list | http | http/openview-dashboards.spec.ts › a delayed active Dashboard page cannot enter the archived list | — |
+| A delayed field page cannot corrupt pagination after switching modules | http | http/openview-dashboards.spec.ts › a delayed field page cannot corrupt pagination after switching modules | — |
+| Summary, workload, records and chart widgets save and reload with tile paging | http | http/openview-dashboards.spec.ts › department Dashboard saves and reloads all four live widget types | — |
+| A saved Record widget shows values for a field beyond the first catalog page | http | http/openview-dashboards.spec.ts › saved Record widget shows values for a field beyond the first catalog page after reload | — |
+| A 401 or 403 refresh denial clears a cached Dashboard chart | http | http/openview-dashboards.spec.ts › clears a cached Dashboard chart after a ${status} refresh denial | AGENTS.md access policy |
+| A 401 refresh denial clears cached Dashboard record rows | http | http/openview-dashboards.spec.ts › clears cached Dashboard record rows after a 401 refresh denial | AGENTS.md access policy |
+| Cadence counts from fetch completion, pauses while dirty or hidden, and resumes an overdue read once | http | http/openview-dashboards.spec.ts › Dashboard cadence counts from fetch completion and resumes overdue reads once | — |
+| A hidden pending refresh cannot block a new visible refresh | http | http/openview-dashboards.spec.ts › a hidden pending Dashboard refresh cannot block a new visible refresh | — |
+| A stale initial or manual 403 cannot clear a newer snapshot | http | http/openview-dashboards.spec.ts › a stale ${requestPath} denial cannot clear a newer Dashboard snapshot | AGENTS.md access policy |
+| A refused Dashboard read hides the retained Dashboard and Retry reads the widget again | http | http/openview-dashboards.spec.ts › a refused Dashboard read hides the retained Dashboard and offers Retry | AGENTS.md access policy |
+| Duplicate creates an independent copy in the same department | http | http/openview-dashboards.spec.ts › duplicating a Dashboard creates an independent copy in the same department | — |
+| A department reader sees its Dashboards with no change controls | http | http/openview-dashboards.spec.ts › a department reader sees its Dashboards without change controls | AGENTS.md access policy |
+| With none chosen, Dashboards opens the first Dashboard by position | http | http/openview-dashboards.spec.ts › Dashboards opens the first Dashboard by position when none is chosen | — |
+| A new Dashboard is created in a managed department | http | http/openview-dashboards.spec.ts › a new Dashboard is created in a managed department | AGENTS.md access policy |
+| Dashboards can be created only in departments managed by a department row | isolated | isolated/openview/manage-access.spec.ts › Dashboards can be created only in departments managed by a department row | AGENTS.md access policy |
+| Cancel discards a new Dashboard draft and returns to the selected Dashboard | http | http/openview-dashboards.spec.ts › Cancel discards a new Dashboard draft and returns to the selected Dashboard | — |
+| The department picker searches beyond its first page and resolves the saved label | http | http/openview-dashboards.spec.ts › a Dashboard department picker searches beyond its first page and resolves the saved label | — |
+| The Dashboards section loads the Dashboard API and fetches no saved Views | http | http/openview-views-api.spec.ts › Dashboard section loads the live Dashboard API without fetching saved Views | — |
+
+## Charts and saved Charts
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| Charts filters show choice labels and eligible person names, submit stable IDs, and refresh on a users invalidation | http | http/openview-charts.spec.ts › Charts filter on stable choice and eligible person IDs | — |
+| Top choices change only the preview; the wire query, table, CSV and print stay complete | http | http/openview-charts.spec.ts › Top choices change only the preview and retain the complete wire query, table, CSV and print | — |
+| Six metrics keep typed user and boolean dimensions and Count omits the measure | http | http/openview-charts.spec.ts › six metrics retain typed user and boolean dimensions and count omits measure | — |
+| Five calendar buckets and the period wording follow the last applied query while the draft is dirty | http | http/openview-charts.spec.ts › five calendar buckets and period wording follow the last applied query while the draft is dirty | — |
+| A month or year series accepts a window longer than 366 days | http | http/openview-charts.spec.ts › ${current.bucket} series accepts a calendar window longer than 366 days | — |
+| Incomplete, reversed and over-limit windows send nothing | http | http/openview-charts.spec.ts › incomplete, reversed and over-limit windows send nothing; grouped windows keep the 366-day boundary | — |
+| Calendar bucket starts are validated per bucket, including 366 yearly buckets | isolated | isolated/openview/aggregate-calendar-api.spec.ts › calendar snapshot validates exact ${range.bucket} starts from ${range.fromDate} | — |
+| A 366-day date-series snapshot is sent in full and over-366-day windows are rejected | isolated | isolated/openview/analytics-api.spec.ts › sends a full explicit 366-day date-series aggregate snapshot | — |
+| Incomplete numeric inputs and surviving filter rows stay controlled through a metadata refresh | http | http/openview-charts.spec.ts › incomplete numeric inputs and surviving filter rows stay controlled through metadata refresh | — |
+| Changed field metadata cannot silently substitute a different dimension | http | http/openview-charts.spec.ts › changed field metadata cannot silently substitute a different dimension | — |
+| The saved picker searches and pages without replacing an off-page selection or the inline draft | http | http/openview-charts.spec.ts › saved picker searches and loads later pages without replacing an off-page selection or inline draft | — |
+| A source refusal on invalidation or Apply withdraws the result and metadata until Retry saved Chart | http | http/openview-charts.spec.ts › saved picker refuses current source without using cached metadata or downstream data | — |
+| A 403 list refusal withdraws cached Chart names and applied data | http | http/openview-charts.spec.ts › saved picker list refusal withdraws cached names and applied data | — |
+| A transient saved-Chart list failure keeps the applied Chart and offers a list retry | http | http/openview-charts.spec.ts › a transient saved Chart list failure keeps the applied Chart and offers a list retry | — |
+| A refused saved Chart keeps the other Charts available as replacements | http | http/openview-charts.spec.ts › a refused saved Chart keeps the other Charts available as replacements | — |
+| A picker refusal fences a held Apply with no transient private commit | http | http/openview-charts.spec.ts › picker refusal fences a held ${priorApply ? "different Chart" : "first Chart"} Apply without a transient private commit | — |
+| Saved Chart result metadata belongs to its resolved module and leaves the inline draft untouched | http | http/openview-charts.spec.ts › saved Chart result metadata belongs to its resolved module without replacing the inline draft | — |
+| Save, edit, rename and Save as send revisioned literal definitions and reload from the URL | http | http/openview-saved-charts.spec.ts › named Save, edited query, rename and Save as use revisioned literal definitions and URL reload | — |
+| A saved URL opens an off-page source and the full filter grammar without paged metadata substitution | http | http/openview-saved-charts.spec.ts › saved URL opens off-page source and full grammar without substituting paged metadata | — |
+| A revision conflict keeps the edited draft and refreshes the current read only on request | http | http/openview-saved-charts.spec.ts › revision conflict preserves edited draft and refreshes current read only on intent | — |
+| Module-only and read-only access can read but not save or archive Charts | http | http/openview-saved-charts.spec.ts › ${access} permission may read but cannot save or archive Charts | AGENTS.md access policy |
+| A save denial or unknown receipt keeps the name and never auto-retries the POST | http | http/openview-saved-charts.spec.ts › save denial and unknown receipt retain name and never automatically retry POST | — |
+| Saved list search, paging, archive and restore use the accepted revision and refresh rows | http | http/openview-saved-charts.spec.ts › saved list search paging archive and restore use accepted revision and refresh authoritative rows | — |
+| A chart_in_use 409 shows readable consumers and a generic restricted flag, never hidden counts | http | http/openview-saved-charts.spec.ts › usage 409 renders readable consumers and generic restricted flag, never hidden counts or identities | — |
+| Changing the editor module detaches the saved identity; a list refusal withdraws names | http | http/openview-saved-charts.spec.ts › changing the editor module detaches saved identity and list refusal withdraws names | — |
+| An archived chart URL cannot Apply or Save until restored | http | http/openview-saved-charts.spec.ts › archived URL cannot apply or save until restored | — |
+| An opened chart resolves fresh bounded labels before Apply and withdraws on metadata refusal | http | http/openview-saved-charts.spec.ts › an opened chart resolves fresh bounded labels before Apply and withdraws on metadata refusal | — |
+| Date-series Save stores bucket, window and measure but no preview settings | http | http/openview-saved-charts.spec.ts › date-series Save persists bucket, window and measure without preview settings | — |
+| Admin usage pages show every consumer with no restricted flag | http | http/openview-saved-charts.spec.ts › admin usage pages show every returned consumer without a restricted flag | — |
+| Navigating away from a held open fences the late definition | http | http/openview-saved-charts.spec.ts › navigating away from a held open fences the late definition | — |
+| A held save receipt after a read refusal cannot select the saved object or show a server name | http | http/openview-saved-charts.spec.ts › held save receipt after read refusal ${recover ? "and later read recovery " : ""}cannot select the saved object or expose a server name | — |
+| A mobile keyboard Save form rejects a blank name, then saves and applies | http | http/openview-saved-charts.spec.ts › mobile keyboard Save form rejects a blank name, then saves and applies the Chart | — |
+| A catalog 503 on Charts shows destructive feedback and keeps Retry visible | http | http/openview-charts.spec.ts › Chart source failures keep retry visible with destructive safe feedback | — |
+| A Chart legend falls back to the payload label when config keys differ | isolated | isolated/openview/chart-legend.spec.ts › chart legends fall back to the payload label when config keys differ | — |
+
+## Reports
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| An owner runs, schedules and exports a saved recipe (non-UTC browser) | http | http/openview-reports.spec.ts › Reports in a non-UTC browser timezone › connected Reports let an owner run, schedule, and export a saved recipe | — |
+| Report metadata follows personal display; schedule inputs and the frozen CSV stay unchanged | http | http/openview-reports.spec.ts › Report metadata follows personal display while schedule inputs and frozen CSV remain unchanged | — |
+| A reader sees only authorized shared-run metadata and can download and page | http | http/openview-reports.spec.ts › connected Reports expose only authorized shared-run metadata to a reader | — |
+| Owned and shared output page sizes reset independently to the first page | http | http/openview-reports.spec.ts › owned and shared output page sizes reset independently to the first page | — |
+| A failed owned or available output page withdraws old results and their actions; Retry recovers | http | http/openview-reports.spec.ts › failed owned output page does not relabel old results or leave their actions available | — |
+| A confirmed new run caps the selected page size when the history refresh fails | http | http/openview-reports.spec.ts › a confirmed new run caps the selected page size when history refresh fails | — |
+| Output actions fit a narrow viewport | http | http/openview-reports.spec.ts › saved and available output actions fit a narrow viewport | — |
+| A module reader runs a Report but cannot change, copy or schedule it | http | http/openview-reports.spec.ts › a module reader runs a Report but cannot change, copy or schedule it | AGENTS.md access policy |
+| A new Report offers only data sources the member manages | http | http/openview-reports.spec.ts › a new Report offers only data sources the member manages | AGENTS.md access policy |
+| An administrator's new Report offers every data source | http | http/openview-reports.spec.ts › an administrator's new Report offers every data source | AGENTS.md access policy |
+| Saved Report cards name the department of their module | http | http/openview-reports.spec.ts › saved Report cards name the department of their module | — |
+| Duplicating or starting from a saved Report makes a separate draft that creates a new Report on first Save | http | http/openview-reports.spec.ts › duplicating a saved Report creates a separate draft on its first Save | — |
+| Unsaved Report edits guard workspace navigation (Keep editing, Discard and continue) | http | http/openview-reports.spec.ts › unsaved Report edits guard workspace navigation | — |
+| Report recipes open on demand and cross-tab drafts survive closing the editor | http | http/openview-reports.spec.ts › Report recipes open on demand and preserve cross-tab drafts when closed | — |
+| Report filters show Select labels, submit stable IDs, and use module-eligible people | http | http/openview-reports.spec.ts › Report filters display Select labels, submit stable IDs, and use module-eligible people | — |
+| A CSV fetch error cannot impersonate browser-blocked print guidance | http | http/openview-reports.spec.ts › Report CSV errors cannot impersonate browser-blocked print guidance | — |
+| A genuinely blocked print popup shows its own guidance | http | http/openview-reports.spec.ts › Report printing preserves genuine blocked-popup guidance | — |
+| A notification URL opens the exact Report and run beyond the first catalog and history pages | http | http/openview-reports.spec.ts › notification URL opens the exact Report and run beyond the first catalog and history pages | — |
+| A Report-only link keeps its exact selection and Back restores it after Leave | http | http/openview-reports.spec.ts › Report-only links retain their exact selection and dirty recipe navigation uses Stay and Leave | — |
+| A missing, wrong-parent, invalid or run-only target selects no default Report or wrong output | http | http/openview-reports.spec.ts › a ${failure} Report target cannot select a default Report or wrong output | — |
+| A late old Report target cannot replace a newer URL selection | http | http/openview-reports.spec.ts › a late old Report target cannot replace a newer URL selection | — |
+| An unavailable explicit Report clears the selection and supports a current-access retry | http | http/openview-reports.spec.ts › an unavailable explicit Report clears the selection and supports a current-access retry | — |
+| Reports navigation keeps module context and invents no invalid selection | http | http/openview-reports.spec.ts › Reports navigation preserves existing module context without inventing an invalid Report selection | — |
+| Reselecting the current Report still does its exact read after a same-account session check | http | http/openview-reports.spec.ts › reselecting the current Report does not skip its exact read after a same-account session check | — |
+| A notification keeps dirty edits on canceled navigation and closes only after accepted navigation | http | http/openview-reports.spec.ts › a notice keeps dirty Report edits on canceled navigation and closes only after accepted navigation | — |
+| Back from a pristine saved Report restores unselected Reports and creates no copy | http | http/openview-reports.spec.ts › Reports review regression: Back from a pristine saved Report restores unselected Reports without creating a copy | review regression |
+| A held old-account template or create result cannot navigate the new account away from Search | http | http/openview-reports.spec.ts › Reports review regression: a held old-account ${operation} result cannot navigate the new account away from Search | review regression |
+| A new or template draft survives same-account session verification | http | http/openview-reports.spec.ts › Reports correction preserves an intentional ${operation} draft through same-account verification | correction |
+| A held template cannot restore Reports after same-account SPA Back to Search | http | http/openview-reports.spec.ts › Reports correction: a held template cannot restore Reports after same-account SPA Back to Search | correction |
+| Archived Report purge confirms the exact name, clears only the deleted selection, and a failed challenge offers a fresh review | http | http/openview-reports.spec.ts › archived Report purge ${failure ? "keeps its target and offers a fresh review for an unavailable challenge" : "confirms exact name and clears only its deleted selection"} | contract: isolated/openview/reports-api.spec.ts |
+| A member may restore an archived Report but cannot permanently delete it | http | http/openview-reports.spec.ts › member may restore an archived Report but cannot permanently delete it | AGENTS.md access policy |
+| The last-run summary (none, failed, running) is server-authored, regional, and keeps schedule policy | http | http/openview-reports.spec.ts › Report last-run summary › ${state} last run is server-authored, regional and preserves schedule policy | — |
+| A Report draft round-trips its recipe and rejects empty or unsafe numeric input | isolated | isolated/openview/report-draft.spec.ts › draft validation rejects an empty recipe and unsafe numeric input before a write | — |
+| Switching cadence keeps the active anchor and clears the inactive one | isolated | isolated/openview/report-schedule-controls.spec.ts › switching cadence sends the active anchor and clears the inactive one | — |
+| CSV bytes download with a validated safe filename | isolated | isolated/openview/reports-api.spec.ts › downloads immutable CSV bytes with a validated safe filename | — |
+
+## Records, files, links
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| A settled unfinished upload does not block archiving under a closed record | http | http/openview-views-api.spec.ts › Record files: a settled unfinished upload does not block archiving under a closed record | — |
+| A purged, deleting or archived upload status releases the guard with no download | http | http/openview-views-api.spec.ts › Record files: ${terminal} upload status releases the guard without offering a download | — |
+| An upload result cannot follow another record or a changed account | http | http/openview-views-api.spec.ts › Record files: in-flight upload results cannot follow another record or a changed account | — |
+| A 401, 403 or 404 read refusal hides cached files and upload recovery data | http | http/openview-views-api.spec.ts › Record files: ${status} read refusal hides cached files and upload recovery data | AGENTS.md access policy |
+| Cached revisits and shared invalidations refresh file reads | http | http/openview-views-api.spec.ts › Record files: cached revisits and shared invalidations refresh file reads | frontend/AGENTS.md (SSE invalidations) |
+| Broken list replies fail safely and pagination retries complete the list | http | http/openview-views-api.spec.ts › Record files: ${broken} list responses fail safely and pagination retries complete the list | — |
+| An uncertain committed upload is read back without reserving or sending twice | http | http/openview-views-api.spec.ts › Record files: an uncertain committed upload is read back without reserving or sending it twice | — |
+| Unresolved uploads survive tab unmount and need a matching explicit retry | http | http/openview-views-api.spec.ts › Record files: unresolved uploads survive tab unmount and require a matching explicit retry | — |
+| Member and guest readers download ready files with no mutation controls | http | http/openview-views-api.spec.ts › Record files: ${role} readers download ready files without mutation controls | AGENTS.md access policy |
+| A writer uploads, downloads and archives with guarded list actions | http | http/openview-views-api.spec.ts › Record files: a writer uploads, downloads and archives with guarded list actions | — |
+| Closed records allow archive but no upload | http | http/openview-views-api.spec.ts › Record files: closed records allow archive without uploads | — |
+| Local validation writes nothing and a server rejection offers no download | http | http/openview-views-api.spec.ts › Record files: local validation writes nothing and a server rejection offers no download | — |
+| Record details save every active value with the revision the user opened, and a stale save offers Load latest values | http | http/openview-views-api.spec.ts › record details save every active value with the revision the user opened | — |
+| Record delete happens only after confirmation | http | http/openview-views-api.spec.ts › record details delete only after confirmation | — |
+| An administrator previews and confirms purging a deleted record with a fresh password each time | http | http/openview-views-api.spec.ts › an administrator can preview and confirm deleted-record purging with a fresh password for each attempt | contract: isolated/openview/records-purge-api.spec.ts |
+| A blocked record purge lists the dependency and hides password confirmation | http | http/openview-views-api.spec.ts › a blocked record purge lists the dependency and hides password confirmation | — |
+| A member with write access can restore a deleted record but cannot see permanent deletion | http | http/openview-views-api.spec.ts › members with write access can restore a deleted record but cannot see permanent deletion | AGENTS.md access policy |
+| Restore stays available while permanent deletion is disabled, unknown or unavailable | http | http/openview-views-api.spec.ts › a deleted record remains restorable while permanent deletion is ${state} | AGENTS.md (LIFECYCLE_PURGE_ENABLED) |
+| New record checks required values, then opens the created record | http | http/openview-views-api.spec.ts › New record checks required values, then opens the created record | — |
+| A Comms example record link shows a notice and returns to live Views | http | http/openview-views-api.spec.ts › a Comms example record link shows a notice and returns to live Views | — |
+| A legacy sample Board URL cannot create a local OpenView record link (Boards route) | http | http/openview-views-api.spec.ts › a legacy sample Board URL cannot create a local OpenView record link | — |
+| Legacy Board record links resolve to Views and reserialize to a canonical URL | isolated | isolated/openview/url-state.spec.ts › legacy Board record links resolve to Views and reserialize to a canonical OpenView URL | — |
+| A busy link save is reconciled before it is reported as saved | http | http/openview-record-links-busy.spec.ts › a busy link save is reconciled before it is reported as saved | — |
+| A missing busy link offers an explicit retry and keeps the search | http | http/openview-record-links-busy.spec.ts › a missing busy link offers an explicit retry and keeps the search | — |
+| Cancel after a missing-link retry releases other Add and Remove controls | http | http/openview-record-links-busy.spec.ts › Cancel after a missing-link retry releases other Add and Remove controls | — |
+| A failed status check offers a read-only Check again action | http | http/openview-record-links-busy.spec.ts › a failed status check offers a read-only check again action | — |
+| A busy removal is reconciled when the link is already gone | http | http/openview-record-links-busy.spec.ts › a busy removal is reconciled when the link is already gone | — |
+| A busy removal still present can be retried explicitly | http | http/openview-record-links-busy.spec.ts › a busy removal still present can be retried explicitly | — |
+| A link to another department names that department beside the record | http | http/openview-record-links-busy.spec.ts › a link to another department names that department beside the record | — |
+| A link inside the record's department shows no department name | http | http/openview-record-links-busy.spec.ts › a link inside the record's department shows no department name | — |
+| A link field into an unreadable data source offers no Add link | http | http/openview-record-links-busy.spec.ts › a link field into a data source the person cannot read offers no Add link | AGENTS.md access policy |
+| Incident links load later pages only on request | http | http/openview-record-links-busy.spec.ts › incident links load later pages only on request | — |
+| A busy write beyond the visible incident page is checked by exact relationship filters | http | http/openview-record-links-busy.spec.ts › a busy write beyond the visible incident page is checked by exact relationship filters | — |
+| A single-source picker checks current candidates without crawling field links | http | http/openview-record-links-busy.spec.ts › a single-source picker checks current candidates without crawling field links | — |
+| Link target search exposes an explicit continuation | http | http/openview-record-links-busy.spec.ts › link target search exposes an explicit continuation | — |
+| A linked source and department beyond the first pages keep their labels | http | http/openview-record-links-busy.spec.ts › a linked source and department beyond the first pages retain their labels | — |
+| A selected data source beyond the catalog page resolves after reload | http | http/openview-record-links-busy.spec.ts › a selected data source beyond the catalog page resolves after reload | — |
+| An off-page source refusal recovers through Retry catalog | http | http/openview-record-links-busy.spec.ts › an off-page source refusal recovers through Retry catalog | — |
+| Record editing waits for complete fields and preserves an off-page value | http | http/openview-record-links-busy.spec.ts › record editing waits for complete fields and preserves an off-page value | — |
+| Record editing keeps page-two values after a metadata refresh | http | http/openview-record-links-busy.spec.ts › record editing preserves page-two values after metadata refresh | — |
+| Temporary off-page fields wait for detail hydration and survive reload | http | http/openview-record-links-busy.spec.ts › temporary off-page fields wait for detail hydration and survive reload | — |
+| Selected saved-view columns keep an off-page field label | http | http/openview-record-links-busy.spec.ts › selected saved-view columns retain an off-page field label | — |
+| A record-links page returns one explicit page and keeps its continuation | isolated | isolated/openview/record-links-paging.spec.ts › record links return one explicit page and preserve its continuation | — |
+
+## Cache and access
+
+| Behavior | Layer | Owner test (file › title) | Source |
+| --- | --- | --- | --- |
+| A refused read refuses access until a read started later succeeds | isolated | isolated/openview/openview-access.spec.ts › a refused read refuses access until a read started later succeeds | AGENTS.md access policy |
+| A read that started before the refusal cannot clear it | isolated | isolated/openview/openview-access.spec.ts › a read that started before the refusal cannot clear it | — |
+| A previous account's read cannot refuse the next account | isolated | isolated/openview/openview-access.spec.ts › a previous account's read cannot refuse the next account | — |
+| Only manage on the department or module shows OpenView change controls | isolated | isolated/openview/manage-access.spec.ts › only manage on the department or the module shows OpenView change controls | AGENTS.md access policy |
+| A module entry wins over its department entry, and a guest only reads | isolated | isolated/openview/manage-access.spec.ts › a module entry wins over its department entry and a guest only reads | AGENTS.md access policy |
+| Later catalog pages load only on an explicit action | isolated | isolated/openview/catalog-paging.spec.ts › OpenView catalog and department reads leave later pages for explicit loading | — |
+| Revisiting Reports inside the cache window shows the list at once with no request, skeleton or new stream | http | http/openview-query-cache.spec.ts › revisiting Reports within the cache window shows its list at once without a new request | — |
+| A list prefetched before the stream connects refreshes once it connects | http | http/openview-query-cache.spec.ts › a Reports list prefetched before the stream connects refreshes once it connects | — |
+| A refused Reports refresh hides the cached reports | http | http/openview-query-cache.spec.ts › a refused Reports refresh hides the reports it had cached | AGENTS.md access policy |
+| A catalog denial stays in force while its Retry is in flight (Views and Charts) | http | http/openview-query-cache.spec.ts › a Views denial stays in force while its Retry is in flight | AGENTS.md access policy |
+| A refused later catalog page stays in force while the catalog retries | http | http/openview-query-cache.spec.ts › a refused Charts catalog page stays in force while the catalog retries | — |
+| A refused catalog page or refresh hides data sources from a new Report recipe | http | http/openview-query-cache.spec.ts › a refused catalog page in Charts hides cached data sources from a new Report recipe | — |
+| An invalidation drops loaded catalog pages even when the first page is unchanged | http | http/openview-query-cache.spec.ts › an invalidation drops loaded catalog pages even when the first page is unchanged | — |
+| A refused catalog page outlasts a first-page read already in flight | http | http/openview-query-cache.spec.ts › a refused catalog page outlasts a first-page read already in flight | — |
+| A refused Reports list hides the other archive filter's cached list too | http | http/openview-query-cache.spec.ts › a refused Reports list hides the other archive filter's cached list too | — |
+| A refusal seen in Charts or Dashboards hides cached data in Reports or Views until an authorized read | http | http/openview-query-cache.spec.ts › a refusal in Charts hides cached Reports until an authorized read | — |
+| A cold read in flight restarts on the opening resync and on a later resync | http | http/openview-query-cache.spec.ts › a cold read in flight during a later resync reads again | — |
+| A refusal hides an opened Report, not only the list | http | http/openview-query-cache.spec.ts › a refusal hides an opened Report, not only the list | — |
+| Each invalidation entity reloads only its reads; resync and Refresh reload cached reads | http | http/openview-query-cache.spec.ts › server invalidations and Refresh still reload cached OpenView reads | frontend/AGENTS.md (SSE invalidations) |
+| A slow list shows its skeleton only after the reserve delay and keeps it for the minimum time | http | http/openview-query-cache.spec.ts › a slow Reports list shows its skeleton only after the reserve delay | — |
+| A fast list never announces a skeleton | http | http/openview-query-cache.spec.ts › a fast Reports list never announces a skeleton | — |
+| A different account never sees the previous account's cached Reports | http | http/openview-query-cache.spec.ts › a different account never sees the previous account's cached Reports | AGENTS.md access policy |

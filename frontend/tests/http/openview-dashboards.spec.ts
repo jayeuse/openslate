@@ -9,7 +9,11 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { isEventStream } from "./helpers/test";
+import {
+  isEventStream,
+  signedInAs,
+  type SignedInIdentity,
+} from "./helpers/test";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -386,10 +390,7 @@ function dateSnapshot(from: string, to: string) {
 async function installDashboardApi(
   page: Page,
   initial: DashboardWire | null = null,
-  identity: {
-    role: "admin" | "member" | "guest";
-    access: { department_id: string; module_id: null; level: string }[];
-  } = { role: "admin", access: [] },
+  identity: Omit<SignedInIdentity, "id"> = { role: "admin", access: [] },
 ) {
   await installOpenViewEventSource(page);
   await page.route("**/api/**", (route) =>
@@ -465,22 +466,7 @@ async function installDashboardApi(
   let recordResultCount = 2;
   let recordFieldId = categoryFieldId;
 
-  await page.route("**/api/auth/session", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
-  await page.route("**/api/auth/me", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ id: userId, ...identity }),
-    }),
-  );
+  await signedInAs(page, { id: userId, ...identity });
   await page.route("**/api/auth/refresh", (route) =>
     route.request().method() === "POST"
       ? route.fulfill({
@@ -1217,7 +1203,9 @@ async function editGridWidget(page: Page, title: string) {
   await page
     .getByRole("button", { name: `Widget options: ${title}`, exact: true })
     .click();
+  // Target this widget's menu: an earlier widget's menu can still be closing.
   await page
+    .getByRole("menu", { name: `Widget options: ${title}`, exact: true })
     .getByRole("menuitem", { name: "Edit widget", exact: true })
     .click();
   const dialog = page.getByRole("dialog", { name: "Edit widget", exact: true });

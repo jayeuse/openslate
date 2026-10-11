@@ -1,4 +1,9 @@
-import { expect, test } from "./helpers/test";
+import { expect, signedOut, test } from "./helpers/test";
+
+// Account setup and recovery are for signed-out people.
+test.beforeEach(async ({ page }) => {
+  await signedOut(page);
+});
 
 test("setup without an invitation link explains how to recover", async ({
   page,
