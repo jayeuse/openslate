@@ -12,6 +12,7 @@ import {
   mockAccessApi,
   person,
 } from "./helpers/access-api";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 // The People tab against the mocked Access API (see helpers/access-api.ts).
 
@@ -1113,9 +1114,7 @@ async function prepareS05PeopleAppearance(page: Page) {
 
 async function captureS05People(page: Page, name: string, anchor: Locator) {
   if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  await page.addStyleTag({
-    content: "nextjs-portal { display: none !important; }",
-  });
+  await hideDevOverlay(page);
   await page.evaluate(() => document.fonts.ready);
   for (const mode of ["light", "dark"] as const) {
     await page.evaluate(applyAppearancePreferences, {

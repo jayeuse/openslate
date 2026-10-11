@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "./helpers/test";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const ADMIN = "00000000-0000-4000-8000-000000000101";
 const OTHER = "00000000-0000-4000-8000-000000000102";
@@ -311,9 +312,7 @@ async function captureS14Jobs(page: Page, name: string) {
   await captureOpenViewReview(page, `${name}-${theme}`, {
     beforeScreenshot: async (capture) => {
       // Exclude Next's development overlay from opt-in product captures.
-      await capture.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
+      await hideDevOverlay(capture);
       await expect(capture.locator("html")).toHaveClass(
         theme === "dark" ? /dark/ : /^(?!.*dark)/,
       );

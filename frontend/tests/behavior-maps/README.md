@@ -18,7 +18,7 @@ Wrong: `| setConflict is called | http | openview-views-api.spec.ts | — |`
 ```markdown
 # <Family> behavior map
 
-| Behavior | Layer | Owner test (file › title) | Source |
-| --- | --- | --- | --- |
+| Behavior             | Layer                        | Owner test (file › title)                  | Source                                   |
+| -------------------- | ---------------------------- | ------------------------------------------ | ---------------------------------------- |
 | <observable outcome> | isolated, http, or fullstack | <path under frontend/tests> › <test title> | <acceptance criterion, contract, or bug> |
 ```

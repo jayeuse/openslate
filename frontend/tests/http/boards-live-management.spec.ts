@@ -23,6 +23,7 @@ import {
 } from "../../src/components/systems/boards/components/server-backed-board-management";
 
 import { group as accessGroupFixture } from "../isolated/access/fixtures";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -1170,9 +1171,7 @@ for (const changed of [false, true]) {
           .getByLabel("Type the file name")
           .fill(controlFile.filename);
         if (process.env.OPENVIEW_CAPTURE_DIR) {
-          await page.addStyleTag({
-            content: "nextjs-portal { display: none !important; }",
-          });
+          await hideDevOverlay(page);
           await page.evaluate(() => document.fonts.ready);
           for (const mode of ["light", "dark"] as const) {
             await page.evaluate(applyAppearancePreferences, {

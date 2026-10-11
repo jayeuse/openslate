@@ -33,6 +33,7 @@ import {
   transitionCalendarState,
   type CalendarState,
 } from "../../src/components/systems/boards/hooks/use-server-board-events";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
@@ -331,9 +332,7 @@ for (const dirty of [false, true]) {
           .filter({ hasText: "Remote planning details" }),
       ).toBeVisible();
       if (process.env.OPENVIEW_CAPTURE_DIR) {
-        await browser.addStyleTag({
-          content: "nextjs-portal { display: none !important; }",
-        });
+        await hideDevOverlay(browser);
         await browser.evaluate(() => document.fonts.ready);
         const notice = browser.getByText(
           "Changed by someone else — review latest",

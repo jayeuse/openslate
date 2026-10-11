@@ -8,6 +8,7 @@ import {
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { readFile } from "node:fs/promises";
 import { profilePreferences } from "./helpers/profile-api";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -2272,9 +2273,7 @@ test.describe("S14 Report last-run summary", () => {
         await captureOpenViewReview(page, `s14-report-last-run-${theme}`, {
           beforeScreenshot: async (capture) => {
             // Exclude Next's development overlay from opt-in product captures.
-            await capture.addStyleTag({
-              content: "nextjs-portal { display: none !important; }",
-            });
+            await hideDevOverlay(capture);
             await expect(capture.locator("html")).toHaveClass(
               theme === "dark" ? /dark/ : /^(?!.*dark)/,
             );

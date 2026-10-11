@@ -23,6 +23,7 @@ import {
   visiblePostAuthorId,
   type PostFeedState,
 } from "../../src/components/systems/boards/hooks/use-server-board-posts";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -154,11 +155,15 @@ async function installPostBrowserApi(page: Page) {
   });
 
   await page.route("**/api/**", (route) =>
-    route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ detail: "Unmocked post test API route" }),
-    }),
+    // The event stream stays held by the base fixture: a 404 here makes the
+    // stream fail at a random moment and its resync reloads the feed.
+    new URL(route.request().url()).pathname === "/api/events"
+      ? route.fallback()
+      : route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Unmocked post test API route" }),
+        }),
   );
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
@@ -2026,9 +2031,7 @@ test("S11 matching post burst refreshes the bounded feed without wrong-scope rea
 
 async function s05Capture(page: Page, name: string, anchor?: Locator) {
   if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  await page.addStyleTag({
-    content: "nextjs-portal { display: none !important; }",
-  });
+  await hideDevOverlay(page);
   await page.evaluate(() => document.fonts.ready);
   for (const mode of ["light", "dark"] as const) {
     await page.evaluate(applyAppearancePreferences, {

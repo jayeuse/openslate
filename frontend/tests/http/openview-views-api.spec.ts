@@ -12,6 +12,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { readFile } from "node:fs/promises";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -6842,9 +6843,7 @@ test.describe("S16 export journeys", () => {
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", { name: "Export records" });
       await expect(dialog).toBeVisible();
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
+      await hideDevOverlay(page);
       await expect(
         dialog.getByText("Exports up to 10,000 rows. Your export is recorded."),
       ).toBeVisible();

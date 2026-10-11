@@ -4,6 +4,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -729,9 +730,7 @@ test("Help four captures: desktop and phone in light and dark", async ({
       await sheet(page).evaluate((el) => {
         el.scrollTop = 0;
       });
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
+      await hideDevOverlay(page);
       const filename = `help-${theme}-${viewport.width}x${viewport.height}.png`;
       await page.screenshot({
         path: testInfo.outputPath(filename),

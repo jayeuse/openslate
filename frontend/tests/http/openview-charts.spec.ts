@@ -6,6 +6,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const moduleId = "00000000-0000-4000-8000-000000000110";
 const departmentId = "00000000-0000-4000-8000-000000000111";
@@ -622,9 +623,7 @@ test("Unit A five calendar buckets and period wording follow the last applied qu
     if (current.bucket === "week" && process.env.OPENVIEW_CAPTURE_DIR) {
       // One opt-in four-image review round through the existing capture helper.
       await page.emulateMedia({ reducedMotion: "reduce" });
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
+      await hideDevOverlay(page);
       const options = {
         beforeScreenshot: async (
           page: Page,
@@ -1670,9 +1669,7 @@ test("S27 correction F3 saved Chart result metadata belongs to its resolved modu
   );
   if (process.env.OPENVIEW_CAPTURE_DIR) {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
+    await hideDevOverlay(page);
     const options = {
       beforeScreenshot: async (
         capture: Page,

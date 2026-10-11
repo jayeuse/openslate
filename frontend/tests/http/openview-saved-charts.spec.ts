@@ -4,6 +4,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const moduleId = "00000000-0000-4000-8000-000000000210";
 const otherModule = "00000000-0000-4000-8000-000000000211";
@@ -1047,9 +1048,7 @@ test("S28 mobile keyboard Save form rejects empty name and captures saved Charts
   await page.getByRole("button", { name: "Saved charts", exact: true }).click();
   if (process.env.OPENVIEW_CAPTURE_DIR) {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
+    await hideDevOverlay(page);
     const options = {
       beforeScreenshot: async (
         capture: Page,

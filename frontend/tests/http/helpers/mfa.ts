@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Page } from "./test";
+import { addTestStylesheet } from "./test-styles";
 
 export const mfaUserA = "00000000-0000-4000-8000-000000000001";
 export const mfaUserB = "00000000-0000-4000-8000-000000000002";
@@ -316,9 +317,11 @@ export async function mockMfa(
 
 export async function concealMfaTestCredentials(page: Page) {
   if (page.isClosed()) return;
-  await page.addStyleTag({
-    content: "[data-mfa-credential] { display: none !important; }",
-  });
+  await addTestStylesheet(
+    page,
+    "conceal-mfa-credentials",
+    "[data-mfa-credential] { display: none !important; }",
+  );
   await page.evaluate(() => {
     for (const region of document.querySelectorAll("[data-mfa-credential]"))
       region.replaceChildren();

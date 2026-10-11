@@ -10,6 +10,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 async function captureS26Dashboard(page: Page, name: string) {
   await captureOpenViewReview(
@@ -17,9 +18,7 @@ async function captureS26Dashboard(page: Page, name: string) {
     `${name}-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
     {
       beforeScreenshot: async (capture) => {
-        await capture.addStyleTag({
-          content: "nextjs-portal { display: none !important; }",
-        });
+        await hideDevOverlay(capture);
         await expect(capture.locator("html")).toHaveClass(
           process.env.S26_CAPTURE_THEME === "dark" ? /dark/ : /^(?!.*dark)/,
         );
@@ -1688,9 +1687,7 @@ test("S29 grid uses thirds halves full rows and full-width phone tiles with keyb
   await expect(page.getByRole("table", { name: "Live records" })).toBeVisible();
   if (process.env.OPENVIEW_CAPTURE_DIR) {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
+    await hideDevOverlay(page);
     const options = {
       beforeScreenshot: async (
         capture: Page,
@@ -2164,9 +2161,7 @@ test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline
   ).toContainText("12.5");
   if (process.env.OPENVIEW_CAPTURE_DIR) {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
+    await hideDevOverlay(page);
     const options = {
       beforeScreenshot: async (
         capture: Page,
@@ -4377,8 +4372,9 @@ test("a pending Dashboard deep link is cleared when switching to archived list",
         response.request().method() === "GET"
       );
     });
+    // The deep link is still pending when the list view changes.
+    await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
     await page.getByRole("button", { name: "Show archived" }).click();
-    expect(page.url()).toContain(`dashboard=${dashboardId}`);
     const newDialog = await openNewDashboardDialog(page);
     const dashboardName = newDialog.getByLabel("Dashboard name");
     await dashboardName.fill("Draft after changing the list view");
@@ -4415,8 +4411,9 @@ test("a pending Dashboard deep link cannot overwrite a new Dashboard draft", asy
         response.request().method() === "GET"
       );
     });
+    // The deep link is still pending when the new Dashboard starts.
+    await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
     await page.getByRole("button", { name: "New Dashboard" }).click();
-    expect(page.url()).toContain(`dashboard=${dashboardId}`);
     const newDialog = page.getByRole("dialog", { name: "New Dashboard" });
     await expect(newDialog).toBeVisible();
     const dashboardName = newDialog.getByLabel("Dashboard name");

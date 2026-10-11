@@ -15,6 +15,7 @@ import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 type SandboxOptions = {
   importFailure?: string;
@@ -1605,9 +1606,7 @@ test("S26 a retained saved Chart query blocks bound field purge until repaired",
     `s26-chart-purge-blocked-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
     {
       beforeScreenshot: async (capture) => {
-        await capture.addStyleTag({
-          content: "nextjs-portal { display: none !important; }",
-        });
+        await hideDevOverlay(capture);
         await expect(capture.locator("html")).toHaveClass(
           process.env.S26_CAPTURE_THEME === "dark" ? /dark/ : /^(?!.*dark)/,
         );

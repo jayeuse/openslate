@@ -15,6 +15,7 @@ import {
   installEmailChangeApi,
   observeEmailSecretExposure,
 } from "./helpers/email-change";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -907,9 +908,7 @@ test("Profile four captures: desktop and mobile in light and dark", async ({
         ),
       ).toBe(true);
       // Only the developer overlay is suppressed, never product UI.
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
+      await hideDevOverlay(page);
       const filename = `profile-${viewport.width}x${viewport.height}-${theme}.png`;
       await page.screenshot({
         path: testInfo.outputPath(filename),

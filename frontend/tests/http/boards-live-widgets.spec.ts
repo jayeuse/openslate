@@ -28,6 +28,7 @@ import {
   type LiveWidgetItem,
   type LiveWidgetsState,
 } from "../../src/components/systems/boards/hooks/use-live-widgets";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -331,9 +332,7 @@ for (const sourceKind of ["inline", "reference"] as const) {
           `s26-board-native-reference-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
           {
             beforeScreenshot: async (capture) => {
-              await capture.addStyleTag({
-                content: "nextjs-portal { display: none !important; }",
-              });
+              await hideDevOverlay(capture);
               await expect(capture.locator("html")).toHaveClass(
                 process.env.S26_CAPTURE_THEME === "dark"
                   ? /dark/
@@ -1412,9 +1411,7 @@ test("S27 Board query editing preserves full definition and outer name module si
   await settings.getByLabel("Measure", { exact: true }).selectOption("min");
   if (process.env.OPENVIEW_CAPTURE_DIR) {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
+    await hideDevOverlay(page);
     const options = {
       beforeScreenshot: async (
         capture: Page,
@@ -1596,9 +1593,7 @@ test("S27 correction F2 later field-page denial hides all catalog names but reta
   expect(api.writes).toEqual([]);
   if (process.env.OPENVIEW_CAPTURE_DIR) {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
+    await hideDevOverlay(page);
     const options = {
       beforeScreenshot: async (
         capture: Page,
@@ -3700,9 +3695,7 @@ test("live Board Overview renders supported group and date charts with exact val
     await expectGeometryReady(phase);
   }
   if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
+    await hideDevOverlay(page);
     await page.evaluate(() => document.fonts.ready);
     for (const mode of ["light", "dark"] as const) {
       await page.evaluate(applyAppearancePreferences, {
@@ -4198,9 +4191,7 @@ test("S11 widget metadata and scoped record bursts refresh once on the shared st
     }),
   ).toBe(1);
   if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
+    await hideDevOverlay(page);
     await page.evaluate(() => document.fonts.ready);
     for (const mode of ["light", "dark"] as const) {
       await page.evaluate(applyAppearancePreferences, {

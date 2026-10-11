@@ -5,6 +5,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -1133,9 +1134,7 @@ if (process.env.S19_CAPTURE_DIR) {
               "Changed by someone else — review",
             );
           }
-          await page.addStyleTag({
-            content: "nextjs-portal { display: none !important; }",
-          });
+          await hideDevOverlay(page);
           await page.evaluate(async () => {
             await document.fonts.ready;
           });

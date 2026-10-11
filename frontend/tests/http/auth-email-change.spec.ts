@@ -16,6 +16,7 @@ import {
   newEmailProof,
   observeEmailSecretExposure,
 } from "./helpers/email-change";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 // Prepared browser specifications, not an executed red/green claim.
 // Cryptography, provider consumption and transaction guarantees are native tests.
@@ -548,9 +549,7 @@ test("S24 email surfaces eight-image acceptance round", async ({
           exact: true,
         }),
       ).toBeEnabled();
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
+      await hideDevOverlay(page);
       const profileImage = `s24-email-form-${viewport.width}-${theme}.png`;
       await page.screenshot({
         path: testInfo.outputPath(profileImage),
@@ -572,9 +571,7 @@ test("S24 email surfaces eight-image acceptance round", async ({
         (dark) => document.documentElement.classList.toggle("dark", dark),
         theme === "dark",
       );
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
+      await hideDevOverlay(page);
       const landingImage = `s24-email-confirmation-${viewport.width}-${theme}.png`;
       await page.screenshot({
         path: testInfo.outputPath(landingImage),
