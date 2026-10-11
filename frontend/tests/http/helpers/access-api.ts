@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { isEventStream } from "./test";
 
 // A mocked Access API for the People, Groups and Overview HTTP specs. Every
 // response matches the strict frontend contracts, and every list answers
@@ -367,6 +368,7 @@ export async function mockAccessApi(
   };
 
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;

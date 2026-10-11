@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Page, isEventStream } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
 import {
   installOpenViewEventSource,
@@ -116,10 +116,12 @@ async function installSelectedEventApi(
     updated_at: selectedEventWire.updated_at,
   };
   await browser.route("**/api/**", (route) =>
-    route.fulfill({
-      status: 404,
-      json: { detail: "Unavailable in calendar test" },
-    }),
+    isEventStream(route)
+      ? route.fallback()
+      : route.fulfill({
+          status: 404,
+          json: { detail: "Unavailable in calendar test" },
+        }),
   );
   await browser.route("**/api/auth/me", (route) =>
     route.fulfill({ json: { id: authorId, role: "member", access: [] } }),

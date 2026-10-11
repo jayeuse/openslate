@@ -1,4 +1,10 @@
-import { expect, test, type Locator, type Page } from "./helpers/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  isEventStream,
+} from "./helpers/test";
 import { writeFile } from "node:fs/promises";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -155,9 +161,7 @@ async function installPostBrowserApi(page: Page) {
   });
 
   await page.route("**/api/**", (route) =>
-    // The event stream stays held by the base fixture: a 404 here makes the
-    // stream fail at a random moment and its resync reloads the feed.
-    new URL(route.request().url()).pathname === "/api/events"
+    isEventStream(route)
       ? route.fallback()
       : route.fulfill({
           status: 404,

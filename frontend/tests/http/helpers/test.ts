@@ -1,4 +1,4 @@
-import { test as base } from "@playwright/test";
+import { test as base, type Route } from "@playwright/test";
 
 // The shared `test` for HTTP specs. The app navigation reads `/api/auth/me`
 // on every signed-in page, and the synthetic dev server has no backend, so
@@ -138,3 +138,13 @@ export const test = base.extend({
 
 export { expect } from "@playwright/test";
 export type { BrowserContext, Locator, Page, Route } from "@playwright/test";
+
+/**
+ * The event stream stays held by the context route above. A spec's catch-all
+ * `/api/**` page route takes precedence over it, so it hands the stream back
+ * with `route.fallback()`; answering it instead makes the stream fail at a
+ * random moment, and its resync reloads whatever the journey is doing.
+ */
+export function isEventStream(route: Route): boolean {
+  return new URL(route.request().url()).pathname === "/api/events";
+}

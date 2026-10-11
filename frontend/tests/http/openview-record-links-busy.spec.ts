@@ -6,6 +6,7 @@ import {
   type Locator,
   type Page,
   type Route,
+  isEventStream,
 } from "./helpers/test";
 import {
   installOpenViewEventSource,
@@ -257,6 +258,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
   const deleteModes = options.deleteModes ?? ["success"];
 
   await page.route("**/api/**", async (route: Route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();

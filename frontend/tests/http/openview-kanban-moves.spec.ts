@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { test } from "./helpers/test";
+import { test, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -168,6 +168,7 @@ async function installKanbanApi(
   let holdBatch: Promise<void> | null = null;
   let revision = 0;
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const target = new URL(request.url());
     const path = target.pathname;

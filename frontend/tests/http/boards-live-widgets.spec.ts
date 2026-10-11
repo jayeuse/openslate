@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Page, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -127,6 +127,7 @@ async function installS26WidgetApi(page: Page, widgets: unknown[]) {
     },
   });
   await page.route("**/api/**", (route) => {
+    if (isEventStream(route)) return route.fallback();
     const url = new URL(route.request().url());
     const reply = (json: unknown) => route.fulfill({ json });
     if (url.pathname === "/api/auth/session")
@@ -3913,6 +3914,7 @@ test("S05 widget create and edit omit refresh even when the server returns a leg
     },
   });
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
@@ -4074,6 +4076,7 @@ test("S11 widget metadata and scoped record bursts refresh once on the shared st
     updated_at: timestamp,
   };
   await page.route("**/api/**", (route) => {
+    if (isEventStream(route)) return route.fallback();
     const path = new URL(route.request().url()).pathname;
     const reply = (json: unknown) => route.fulfill({ json });
     if (path === "/api/auth/session")

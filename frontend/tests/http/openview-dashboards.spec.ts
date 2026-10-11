@@ -11,6 +11,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { hideDevOverlay } from "./helpers/test-styles";
+import { isEventStream } from "./helpers/test";
 
 async function captureS26Dashboard(page: Page, name: string) {
   await captureOpenViewReview(
@@ -429,11 +430,13 @@ async function installDashboardApi(
 ) {
   await installOpenViewEventSource(page);
   await page.route("**/api/**", (route) =>
-    route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ detail: "Not available in this route test" }),
-    }),
+    isEventStream(route)
+      ? route.fallback()
+      : route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Not available in this route test" }),
+        }),
   );
   await page.route("**/api/workspace", (route) =>
     route.request().method() === "GET"

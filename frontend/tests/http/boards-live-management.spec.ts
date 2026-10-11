@@ -24,6 +24,7 @@ import {
 
 import { group as accessGroupFixture } from "../isolated/access/fixtures";
 import { hideDevOverlay } from "./helpers/test-styles";
+import { isEventStream } from "./helpers/test";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -124,6 +125,7 @@ async function installArchivedBoard(page: Page) {
     updated_at: board.updatedAt,
   };
   await page.route("**/api/**", (route) => {
+    if (isEventStream(route)) return route.fallback();
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/auth/session")
       return route.fulfill({

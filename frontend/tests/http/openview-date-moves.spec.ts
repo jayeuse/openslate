@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
-import { test } from "./helpers/test";
+import { test, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -205,6 +205,7 @@ async function installDates(
     return `${parts.find((p) => p.type === "year")!.value}-${parts.find((p) => p.type === "month")!.value}-${parts.find((p) => p.type === "day")!.value}`;
   };
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const target = new URL(request.url());
     const path = target.pathname;

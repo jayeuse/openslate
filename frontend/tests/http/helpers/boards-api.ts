@@ -1,4 +1,5 @@
 import type { Page } from "./test";
+import { isEventStream } from "./test";
 
 // The Board shell's API, mocked for HTTP specs: an authorized administrator,
 // two Boards, and empty posts, events and widgets. A spec registers its own
@@ -51,11 +52,13 @@ export async function installBoardApi(
 ) {
   const visibleBoard = { ...board, level: access.level };
   await page.route("**/api/**", (route) =>
-    route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ detail: "Not available in this route test" }),
-    }),
+    isEventStream(route)
+      ? route.fallback()
+      : route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Not available in this route test" }),
+        }),
   );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({ json: { id: userId, role: "admin", access: [] } }),
