@@ -30,6 +30,7 @@ dev = [
     "mypy>=2.3.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "pytest-randomly>=5.0.0",
     "pytest-split>=0.10",
     "pytest-xdist>=3.8.0",
     "ruff>=0.16.7",
@@ -44,7 +45,9 @@ manager = [
 package = false
 
 [tool.pytest.ini_options]
-addopts = "--cov=app --cov-report=term-missing --cov-fail-under=90"
+# Random order (pytest-randomly) is opt-in for a manual run, never the gates:
+# `uv run pytest -p randomly ...` turns it back on (plan item 10).
+addopts = "-p no:randomly --cov=app --cov-report=term-missing --cov-fail-under=90"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["integration: requires a PostgreSQL test database"]
