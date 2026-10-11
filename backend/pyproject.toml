@@ -55,7 +55,17 @@ markers = ["integration: requires a PostgreSQL test database"]
 # run to the modules under review with `only_mutate`, never the whole app.
 source_paths = ["app/"]
 also_copy = ["operations/", "migrations/", "alembic.ini"]
-pytest_add_cli_args = ["--no-cov", "-q"]
+# Mutation runs cover app/ modules whose owner tests need no stack. Repository tooling
+# tests (tests/operations) and the email-template route read files outside the copy in
+# backend/mutants, so they stay out of mutation runs.
+pytest_add_cli_args = [
+    "--no-cov",
+    "-q",
+    "-m",
+    "not integration",
+    "--ignore=tests/operations",
+    "--ignore=tests/auth/test_email_templates.py",
+]
 # Fork children would inherit pooled database connections.
 process_isolation = "forkserver"
 
