@@ -1,7 +1,14 @@
-import { expect, test, type Locator, type Page } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  recheckSession,
+  test,
+  type Locator,
+  type Page,
+} from "./helpers/test";
 import {
   created,
-  DAY,
+  fixtureId,
   group,
   ids,
   listPage,
@@ -9,18 +16,17 @@ import {
   person,
 } from "./helpers/access-api";
 
-const fixtureId = (index: number) =>
-  `00000000-0000-4000-8000-${String(80_000 + index).padStart(12, "0")}`;
+const membershipId = (index: number) => fixtureId(80_000 + index);
 
 async function membershipsFixture(page: Page, count: number) {
   const api = await mockAccessApi(page);
   api.groups.clear();
   for (let index = 0; index < 110; index += 1) {
-    const id = fixtureId(index);
+    const id = membershipId(index);
     api.groups.set(id, group(id, `A unrelated ${index}`, [ids.cy], []));
   }
   for (let index = 0; index < count; index += 1) {
-    const id = fixtureId(200 + index);
+    const id = membershipId(200 + index);
     api.groups.set(
       id,
       group(
@@ -50,27 +56,13 @@ function peopleRow(page: Page, name = "Ben Cruz") {
     .filter({ hasText: name });
 }
 
+/** A held response that also reports when the held route has finished. */
 function readGate() {
-  let enter!: () => void;
-  let release!: () => void;
   let complete!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
   const completed = new Promise<void>((resolve) => {
     complete = resolve;
   });
-  return {
-    entered,
-    released,
-    completed,
-    enter: () => enter(),
-    release: () => release(),
-    complete: () => complete(),
-  };
+  return { ...heldResponse(), completed, complete: () => complete() };
 }
 
 async function disableBen(page: Page) {
@@ -243,9 +235,7 @@ test("People membership cache is replaced when the verified account changes", as
         name: item.name.replace("Z membership", "New account group"),
       });
   signedInId = ids.dee;
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  await recheckSession(page);
   await expect(groups).toContainText("New account group 00");
   await expect(groups).not.toContainText("Z membership");
 });
@@ -254,7 +244,7 @@ test("People department reach is explicitly partial until the shared membership 
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
-  const lastGroup = fixtureId(226);
+  const lastGroup = membershipId(226);
   api.groups.set(
     lastGroup,
     group(
@@ -263,7 +253,7 @@ test("People department reach is explicitly partial until the shared membership 
       [ids.ben],
       [
         {
-          department_id: fixtureId(400),
+          department_id: membershipId(400),
           department_name: "Beyond-catalog department",
           module_id: null,
           level: "read",
@@ -282,10 +272,15 @@ test("People department reach is explicitly partial until the shared membership 
     .click();
   await expect(departments).toHaveText("Beyond-catalog department");
   await expect(groups).toContainText("Z membership 26");
-  expect(api.sent("GET", `/api/departments/${fixtureId(400)}`)).toHaveLength(0);
+  expect(api.sent("GET", `/api/departments/${membershipId(400)}`)).toHaveLength(
+    0,
+  );
 });
 
-for (const state of ["pending", "disabled", "expired", "deleted"] as const)
+// Membership reads skip only administrators (use-people-memberships.ts), so
+// pending, disabled and expired people take the same branch; disabled stands
+// for them. A deleted person changes the directory query (status=deleted).
+for (const state of ["disabled", "deleted"] as const)
   test(`People preserve assigned department reach for ${state} people`, async ({
     page,
   }) => {
@@ -293,13 +288,12 @@ for (const state of ["pending", "disabled", "expired", "deleted"] as const)
     const ben = api.users.get(ids.ben)!;
     api.users.set(ids.ben, {
       ...ben,
-      status: state === "pending" || state === "disabled" ? state : "active",
-      expires_at:
-        state === "expired" ? new Date(Date.now() - DAY).toISOString() : null,
+      status: state === "disabled" ? state : "active",
+      expires_at: null,
       is_deleted: state === "deleted",
       deleted_at: state === "deleted" ? created : null,
     });
-    const assigned = fixtureId(200);
+    const assigned = membershipId(200);
     api.groups.set(
       assigned,
       group(
@@ -308,7 +302,7 @@ for (const state of ["pending", "disabled", "expired", "deleted"] as const)
         [ids.ben],
         [
           {
-            department_id: fixtureId(401),
+            department_id: membershipId(401),
             department_name: "Assigned department",
             module_id: null,
             level: "read",
@@ -329,7 +323,7 @@ test("the offpage selected person shares membership continuation with their dire
 }) => {
   const { api, reads } = await membershipsFixture(page, 27);
   for (let index = 0; index < 30; index += 1) {
-    const id = fixtureId(500 + index);
+    const id = membershipId(500 + index);
     api.users.set(
       id,
       person({
@@ -537,7 +531,7 @@ test("membership loading discards a held extension after an accepted action repl
     for (const [id, item] of api.groups)
       if (item.member_ids.includes(ids.ben)) api.groups.delete(id);
     for (let index = 0; index < 27; index += 1) {
-      const id = fixtureId(700 + index);
+      const id = membershipId(700 + index);
       api.groups.set(
         id,
         group(

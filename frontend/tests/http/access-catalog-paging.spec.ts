@@ -1,8 +1,13 @@
 import { expect, test } from "./helpers/test";
-import { group, ids, listPage, mockAccessApi } from "./helpers/access-api";
+import {
+  expectNoWrites,
+  fixtureId,
+  group,
+  ids,
+  listPage,
+  mockAccessApi,
+} from "./helpers/access-api";
 
-const fixtureId = (index: number) =>
-  `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 const metadata = {
   created_at: "2026-01-10T09:00:00Z",
   updated_at: "2026-01-10T09:00:00Z",
@@ -207,7 +212,7 @@ test("catalog search refusal survives cached keys until explicit Retry", async (
   await expect(
     sheet.getByLabel("Inventory level", { exact: true }),
   ).toBeVisible();
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
 
 test("Access summary describes overrides without claiming module totals", async ({
@@ -232,5 +237,5 @@ test("Access summary describes overrides without claiming module totals", async 
   await sheet.getByLabel("Prices level", { exact: true }).selectOption("read");
   await expect(inventory).toContainText("1 module has its own level");
   await expect(inventory).not.toContainText("1 of");
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });

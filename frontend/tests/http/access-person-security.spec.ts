@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, recheckSession, test, type Page } from "./helpers/test";
 import { ids, mockAccessApi } from "./helpers/access-api";
 import { deferredMfaResponse } from "./helpers/mfa";
 
@@ -383,7 +383,7 @@ test("partial revocation is truthful and performs session read-back without repl
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(1);
 });
 
-test("a command returning401 requests session verification without refresh or replay", async ({
+test("a command returning 401 requests session verification without refresh or replay", async ({
   page,
 }) => {
   const api = await setup(page);
@@ -438,9 +438,7 @@ test("old pending completion behind same-account verification cannot change curr
       json: { authenticated: true, user_id: ids.rosa, setup_required: false },
     });
   });
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  await recheckSession(page);
   await verification.begun;
   held.release();
   const curtain = page.getByRole("dialog", {
@@ -560,9 +558,7 @@ test("account replacement clears old pending ownership and cannot display its re
       },
     }),
   );
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  await recheckSession(page);
   await expect(
     sheet.getByRole("tab", { name: "Details", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -649,7 +645,7 @@ test("large-text phone panel keeps security actions and confirmation reachable",
 });
 
 // Recovery feedback follows the submitted command, including confirmed facts
-// from an overall partial result. Generic attachments contain only rendered copy.
+// from an overall partial result.
 for (const state of [
   {
     name: "recovery committed accepted",
@@ -676,7 +672,7 @@ for (const state of [
     local: "unconfirmed",
   },
 ] as const) {
-  test(`partial feedback: ${state.name}`, async ({ page }, testInfo) => {
+  test(`partial feedback: ${state.name}`, async ({ page }) => {
     const api = await setup(page);
     const path = `/api/users/${ids.ben}/recovery`;
     api.on("POST", path, (route) =>
@@ -717,10 +713,6 @@ for (const state of [
     });
     expect(api.sent("POST", `/api/users/${ids.ben}/mfa/reset`)).toHaveLength(0);
     const observed = (await outcome.innerText()).replace(/\s+/g, " ").trim();
-    await testInfo.attach("recovery-partial-outcome", {
-      body: Buffer.from(observed),
-      contentType: "text/plain",
-    });
     expect.soft(observed).not.toMatch(/authenticator|two-step/i);
     if (sent) expect(observed).toMatch(/Recovery email sent to \S+@\S+\./);
     else if (state.local === "committed")

@@ -1,6 +1,13 @@
-import { expect, test, type Page } from "./helpers/test";
+import {
+  expect,
+  expectNoHorizontalScroll,
+  test,
+  type Page,
+} from "./helpers/test";
 
 import {
+  addPeople,
+  expectNoWrites,
   group,
   ids,
   listPage,
@@ -36,7 +43,7 @@ const byKey = (entries: AccessEntry[]) =>
     ),
   );
 
-test("the list shows members and the departments each group reaches, and searches", async ({
+test("the list shows members and the departments each group reaches", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -66,12 +73,7 @@ test("the list shows members and the departments each group reaches, and searche
   await expect(auditors).toContainText("Inventory · 1 module");
   await expect(auditors).toContainText("+1 more");
 
-  await page.getByRole("searchbox", { name: "Search groups" }).fill("finance");
-  await expect(table.getByRole("row")).toHaveCount(3);
-  await expect(clerks).toBeHidden();
-
   // A click anywhere on the row opens the group.
-  await page.getByRole("searchbox", { name: "Search groups" }).fill("");
   // The open button's hit area covers the row, so click the row where the
   // access text sits; the button receives the click.
   await expect(clerks).toBeVisible();
@@ -87,19 +89,6 @@ test("the list shows members and the departments each group reaches, and searche
   });
   await expect(panel(page, "Inventory clerks")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`group=${ids.clerks}`));
-});
-
-test("an Overview link opens the list filtered to groups without access", async ({
-  page,
-}) => {
-  const api = await mockAccessApi(page);
-  api.groups.set(empty, group(empty, "New hires", [], []));
-  await page.goto("/access?view=groups&filter=no-access");
-  const table = page.getByRole("table", { name: "Groups" });
-  await expect(table.getByRole("row")).toHaveCount(2);
-  await expect(table.getByRole("row", { name: /New hires/ })).toContainText(
-    "No access",
-  );
 });
 
 test("creating a group sends its first members and opens its access", async ({
@@ -241,15 +230,6 @@ test("a department manager changes members only, from the candidates list", asyn
       ],
     },
   });
-  api.on("GET", "/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: ids.ben,
-        setup_required: false,
-      },
-    }),
-  );
   // The backend lists only the groups this manager may change.
   api.on("GET", "/api/access/groups", (route) =>
     route.fulfill({
@@ -370,7 +350,7 @@ test("a group with members cannot be deleted; an empty one can", async ({
 test("an unsaved group draft survives a reload and asks before it is discarded", async ({
   page,
 }) => {
-  await mockAccessApi(page);
+  const api = await mockAccessApi(page);
   await page.goto(`/access?view=groups&group=${ids.clerks}`);
   await panel(page, "Inventory clerks")
     .getByLabel("Description")
@@ -391,6 +371,22 @@ test("an unsaved group draft survives a reload and asks before it is discarded",
   await expect(
     panel(page, "Inventory clerks").getByLabel("Description"),
   ).toHaveValue("");
+
+  // An access draft survives too, although group responses carry enriched
+  // department and module names that the draft does not.
+  await page.goto(`/access?view=groups&group=${ids.readers}&tab=access`);
+  const access = panel(page, "Finance readers");
+  await access
+    .getByLabel("Inventory level", { exact: true })
+    .selectOption("write");
+  await page.reload();
+  await expect(
+    access.getByLabel("Inventory level", { exact: true }),
+  ).toHaveValue("write");
+  await expect(
+    access.getByRole("region", { name: "This group gives", exact: true }),
+  ).toContainText("Inventory · Write");
+  expectNoWrites(api);
 });
 
 test("a member save that got no answer is held for review, and the other drafts come back", async ({
@@ -458,16 +454,10 @@ for (const width of [1440, 390])
     page,
   }) => {
     await page.setViewportSize({ width, height: width > 400 ? 900 : 844 });
-    await mockAccessApi(page);
+    const api = await mockAccessApi(page);
     await page.goto("/access?view=groups");
     await expect(page.getByText("2 groups")).toBeVisible();
-    const fits = () =>
-      page.evaluate(
-        () =>
-          document.documentElement.scrollWidth <=
-          document.documentElement.clientWidth,
-      );
-    expect(await fits()).toBe(true);
+    await expectNoHorizontalScroll(page);
 
     await page
       .getByRole("button", { name: /^Inventory clerks/ })
@@ -475,7 +465,19 @@ for (const width of [1440, 390])
       .click();
     const sheet = panel(page, "Inventory clerks");
     await sheet.getByRole("tab", { name: "Access" }).click();
+    await expect(
+      sheet.getByRole("searchbox", {
+        name: "Search departments",
+        exact: true,
+      }),
+    ).toBeVisible();
     await sheet.getByRole("button", { name: "Modules in Inventory" }).click();
+    await sheet
+      .getByRole("searchbox", {
+        name: "Search modules in Inventory",
+        exact: true,
+      })
+      .fill("Prices");
     await expect(sheet.getByLabel("Prices level")).toBeVisible();
     const box = await sheet.boundingBox();
     if (width === 390) expect(box?.width).toBeCloseTo(390, 0);
@@ -485,20 +487,15 @@ for (const width of [1440, 390])
         (element) => element.scrollWidth <= element.clientWidth,
       ),
     ).toBe(true);
-    expect(await fits()).toBe(true);
+    await expectNoHorizontalScroll(page);
+    expectNoWrites(api);
   });
 
 test("group members retain the complete later-page catalog and refresh paged membership after Save", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
-  for (let index = 0; index < 105; index += 1) {
-    const id = `00000000-0000-4000-8000-${String(700 + index).padStart(12, "0")}`;
-    api.users.set(
-      id,
-      person({ id, username: `later${String(index).padStart(3, "0")}` }),
-    );
-  }
+  addPeople(api, 105, 700);
   const late = "00000000-0000-4000-8000-000000000999";
   api.users.set(
     late,

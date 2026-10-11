@@ -1,4 +1,9 @@
-import { expect, test } from "./helpers/test";
+import {
+  expect,
+  expectNoHorizontalScroll,
+  heldResponse,
+  test,
+} from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
 import { mockManageBackups } from "./helpers/manage-backups";
 import { mockAccessApi, person, created } from "./helpers/access-api";
@@ -32,6 +37,7 @@ async function openLiveMfa(page: Page) {
 test("MFA enrollment verifies the provider factor, retries invalid codes, and removal signs out", async ({
   page,
 }) => {
+  await mockManageSecurity(page);
   const state = await mockMfa(page);
   state.statusFailure = 503;
   const dialog = await openLiveMfa(page);
@@ -106,6 +112,7 @@ test("MFA enrollment verifies the provider factor, retries invalid codes, and re
 test("Cancel and route leave clean only the pending MFA factor, with truthful cleanup retry", async ({
   page,
 }) => {
+  await mockManageSecurity(page);
   const state = await mockMfa(page);
   const pending = deferredMfaResponse();
   state.holdEnroll = pending;
@@ -323,6 +330,7 @@ test("saving required MFA immediately gates protected interaction and resumes th
 test("accepted MFA verification remains truthful when the following settings read fails", async ({
   page,
 }) => {
+  await mockManageSecurity(page);
   const state = await mockMfa(page);
   const dialog = await openLiveMfa(page);
   await dialog
@@ -348,10 +356,6 @@ test("accepted MFA verification remains truthful when the following settings rea
   state.statusFailure = 0;
   await dialog.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(dialog).toContainText("Authenticator verified");
-});
-
-test.beforeEach(async ({ page }) => {
-  await mockManageSecurity(page);
 });
 
 test("Security and recovery keeps policy drafts and protects the current session", async ({
@@ -830,6 +834,10 @@ test("independent roles and numeric limits save only changed keys, including fal
   await expect(save).toBeDisabled();
 });
 
+// The value rules (each bound, whole numbers, exponents, empty input) are the
+// isolated table in isolated/access/security-settings.spec.ts. This journey
+// keeps one invalid draft per field, to prove each field shows its own error,
+// and the exact body of the valid save.
 test("numeric bounds and whole numbers retain invalid drafts without a request or page error", async ({
   page,
 }) => {
@@ -849,10 +857,6 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
   await policy
     .getByLabel("Total session lifetime", { exact: true })
     .selectOption("Limited");
-  await save.click();
-  await expect(
-    policy.getByLabel("Lifetime (minutes)", { exact: true }),
-  ).toHaveAttribute("aria-invalid", "true");
   await policy
     .getByLabel("Concurrent session limit", { exact: true })
     .selectOption("Limited");
@@ -878,35 +882,17 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
       invalid,
     );
   }
-  await policy
-    .getByLabel("Lockout duration (minutes)", { exact: true })
-    .fill("1e2");
-  await save.click();
-  await expect(
-    policy.getByLabel("Lockout duration (minutes)", { exact: true }),
-  ).toHaveAttribute("aria-invalid", "true");
+  for (const label of [
+    "Session retention (days)",
+    "Security event retention (days)",
+  ])
+    await expect(
+      policy.getByLabel(label, { exact: true }),
+    ).toHaveAccessibleDescription(/whole number from 1 to 3650/);
   expect(state.writes).toEqual([]);
   expect(pageErrors).toEqual([]);
   for (const [label, , valid] of cases)
     await policy.getByLabel(label, { exact: true }).fill(valid);
-  // Each retention field must reject its own draft while every sibling is valid.
-  for (const [label, valid] of [
-    ["Session retention (days)", "1"],
-    ["Security event retention (days)", "3650"],
-  ] as const) {
-    const field = policy.getByLabel(label, { exact: true });
-    for (const invalid of ["", "0", "-1", "1.5", "1e2", "3651"]) {
-      await field.fill(invalid);
-      await save.click();
-      await expect(field).toHaveAttribute("aria-invalid", "true");
-      await expect(field).toHaveAccessibleDescription(
-        /whole number from 1 to 3650/,
-      );
-      await expect(field).toHaveValue(invalid);
-      expect(state.writes).toEqual([]);
-    }
-    await field.fill(valid);
-  }
   await save.click();
   await expect(save).toBeDisabled();
   expect(state.writes.at(-1)?.body).toEqual({
@@ -922,124 +908,115 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
   expect(pageErrors).toEqual([]);
 });
 
-for (const width of [1440, 390])
-  test(`separate retention days use Save and Discard without changing Backup at ${width}px`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-    const state = await mockManageSecurity(page);
-    const backup = await mockManageBackups(page);
-    await page.goto("/access?view=security");
-    await page
-      .getByRole("button", { name: "Edit policy", exact: true })
-      .click();
-    const policy = page.getByRole("dialog", {
-      name: "Account policy",
-      exact: true,
-    });
-    const retention = policy.getByRole("group", {
-      name: "Retention",
-      exact: true,
-    });
-    const sessions = retention.getByLabel("Session retention (days)", {
-      exact: true,
-    });
-    const events = retention.getByLabel("Security event retention (days)", {
-      exact: true,
-    });
-    const save = policy.getByRole("button", {
-      name: "Save settings",
-      exact: true,
-    });
-    const discard = policy.getByRole("button", {
-      name: "Discard changes",
-      exact: true,
-    });
-    await expect(sessions).toHaveValue("365");
-    await expect(events).toHaveValue("365");
-    // The warning appears only when a draft shortens a saved period.
-    await expect(retention).not.toContainText(/shorten.*older.*next cleanup/i);
-    await expect(save).toBeDisabled();
-    await expect(discard).toBeDisabled();
-    expect(
-      await policy.evaluate(
-        (dialog) => dialog.scrollWidth <= dialog.clientWidth,
-      ),
-    ).toBe(true);
-
-    await sessions.fill("90");
-    await events.fill("180");
-    await expect(retention).toContainText(/shorten.*older.*next cleanup/i);
-    await policy
-      .getByRole("button", { name: "Close account policy", exact: true })
-      .click();
-    expect(state.writes).toEqual([]);
-    await page
-      .getByRole("button", { name: "Edit policy", exact: true })
-      .click();
-    await expect(sessions).toHaveValue("90");
-    await expect(events).toHaveValue("180");
-    await discard.click();
-    await expect(sessions).toHaveValue("365");
-    await expect(events).toHaveValue("365");
-    await expect(save).toBeDisabled();
-    expect(state.writes).toEqual([]);
-
-    await sessions.fill("90");
-    await expect(save).toBeEnabled();
-    await save.click();
-    await expect(save).toBeDisabled();
-    await expect(events).toHaveValue("365");
-    expect(state.writes).toEqual([
-      {
-        path: "/workspace/security",
-        body: { revision: 1, session_retention_days: 90 },
-      },
-    ]);
-    await page.reload();
-    await page
-      .getByRole("button", { name: "Edit policy", exact: true })
-      .click();
-    await expect(sessions).toHaveValue("90");
-    await expect(events).toHaveValue("365");
-    await events.fill("730");
-    await expect(save).toBeEnabled();
-    await save.click();
-    await expect(save).toBeDisabled();
-    expect(state.writes.at(-1)).toEqual({
-      path: "/workspace/security",
-      body: { revision: 2, security_event_retention_days: 730 },
-    });
-    await page.reload();
-    await page
-      .getByRole("button", { name: "Edit policy", exact: true })
-      .click();
-    await expect(sessions).toHaveValue("90");
-    await expect(events).toHaveValue("730");
-    await expect(save).toBeDisabled();
-    await expect(discard).toBeDisabled();
-    expect(backup.patches).toEqual([]);
-
-    await page.goto("/manage?view=backup");
-    await page
-      .getByRole("button", { name: "Edit schedule", exact: true })
-      .click();
-    const backupPolicy = page.getByRole("dialog", {
-      name: "Backup schedule",
-      exact: true,
-    });
-    const backupRetention = backupPolicy.getByLabel("Retention period", {
-      exact: true,
-    });
-    await expect(backupRetention).toHaveValue("30");
-    await expect(backupRetention.getByRole("option")).toHaveText([
-      "7 days",
-      "30 days",
-      "90 days",
-    ]);
-    expect(backup.patches).toEqual([]);
-    expect(state.writes).toHaveLength(2);
+// The retention controls have one layout branch; the phone width is the
+// tighter fit for the dialog check below.
+test("separate retention days use Save and Discard without changing Backup", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  await page.goto("/access?view=security");
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const policy = page.getByRole("dialog", {
+    name: "Account policy",
+    exact: true,
   });
+  const retention = policy.getByRole("group", {
+    name: "Retention",
+    exact: true,
+  });
+  const sessions = retention.getByLabel("Session retention (days)", {
+    exact: true,
+  });
+  const events = retention.getByLabel("Security event retention (days)", {
+    exact: true,
+  });
+  const save = policy.getByRole("button", {
+    name: "Save settings",
+    exact: true,
+  });
+  const discard = policy.getByRole("button", {
+    name: "Discard changes",
+    exact: true,
+  });
+  await expect(sessions).toHaveValue("365");
+  await expect(events).toHaveValue("365");
+  // The warning appears only when a draft shortens a saved period.
+  await expect(retention).not.toContainText(/shorten.*older.*next cleanup/i);
+  await expect(save).toBeDisabled();
+  await expect(discard).toBeDisabled();
+  expect(
+    await policy.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth),
+  ).toBe(true);
+
+  await sessions.fill("90");
+  await events.fill("180");
+  await expect(retention).toContainText(/shorten.*older.*next cleanup/i);
+  await policy
+    .getByRole("button", { name: "Close account policy", exact: true })
+    .click();
+  expect(state.writes).toEqual([]);
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(sessions).toHaveValue("90");
+  await expect(events).toHaveValue("180");
+  await discard.click();
+  await expect(sessions).toHaveValue("365");
+  await expect(events).toHaveValue("365");
+  await expect(save).toBeDisabled();
+  expect(state.writes).toEqual([]);
+
+  await sessions.fill("90");
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(save).toBeDisabled();
+  await expect(events).toHaveValue("365");
+  expect(state.writes).toEqual([
+    {
+      path: "/workspace/security",
+      body: { revision: 1, session_retention_days: 90 },
+    },
+  ]);
+  await page.reload();
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(sessions).toHaveValue("90");
+  await expect(events).toHaveValue("365");
+  await events.fill("730");
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(save).toBeDisabled();
+  expect(state.writes.at(-1)).toEqual({
+    path: "/workspace/security",
+    body: { revision: 2, security_event_retention_days: 730 },
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await expect(sessions).toHaveValue("90");
+  await expect(events).toHaveValue("730");
+  await expect(save).toBeDisabled();
+  await expect(discard).toBeDisabled();
+  expect(backup.patches).toEqual([]);
+
+  await page.goto("/manage?view=backup");
+  await page
+    .getByRole("button", { name: "Edit schedule", exact: true })
+    .click();
+  const backupPolicy = page.getByRole("dialog", {
+    name: "Backup schedule",
+    exact: true,
+  });
+  const backupRetention = backupPolicy.getByLabel("Retention period", {
+    exact: true,
+  });
+  await expect(backupRetention).toHaveValue("30");
+  await expect(backupRetention.getByRole("option")).toHaveText([
+    "7 days",
+    "30 days",
+    "90 days",
+  ]);
+  expect(backup.patches).toEqual([]);
+  expect(state.writes).toHaveLength(2);
+});
 
 async function openMalformedRetentionPolicy(
   page: Page,
@@ -1085,19 +1062,14 @@ async function openMalformedRetentionPolicy(
   return { state, policy, malformed };
 }
 
-// One page load per case: fourteen loads in one test exceed the CI time budget.
-for (const field of [
-  "session_retention_days",
-  "security_event_retention_days",
-] as const) {
-  for (const invalid of [undefined, null, false, "365", 365.5, 0, 3651]) {
-    test(`malformed ${field} ${JSON.stringify(invalid) ?? "missing"} cannot manufacture defaults`, async ({
-      page,
-    }) => {
-      await openMalformedRetentionPolicy(page, field, invalid);
-    });
-  }
-}
+// The malformed values of both retention fields are the isolated table
+// "security policy read refuses malformed ..."; one missing value proves the
+// dialog shows the read as unavailable, and the Retry test below a second.
+test("a missing session retention value cannot manufacture defaults", async ({
+  page,
+}) => {
+  await openMalformedRetentionPolicy(page, "session_retention_days", undefined);
+});
 
 test("explicit Retry recovers a malformed retention policy", async ({
   page,
@@ -1306,20 +1278,13 @@ test("Security reads show recovery and denial without sample sessions", async ({
   await expect(
     page.getByRole("region", { name: "Security workspace", exact: true }),
   ).toHaveCount(0);
-  let releaseBackgroundRead = () => {};
-  let signalBackgroundRead = () => {};
-  const backgroundReleased = new Promise<void>((resolve) => {
-    releaseBackgroundRead = resolve;
-  });
-  const backgroundStarted = new Promise<void>((resolve) => {
-    signalBackgroundRead = resolve;
-  });
+  const backgroundRead = heldResponse();
   let holdNextRead = true;
   await page.route("**/api/auth/admin-sessions**", async (route) => {
     if (holdNextRead && route.request().method() === "GET") {
       holdNextRead = false;
-      signalBackgroundRead();
-      await backgroundReleased;
+      backgroundRead.enter();
+      await backgroundRead.released;
     }
     await route.fallback();
   });
@@ -1329,7 +1294,7 @@ test("Security reads show recovery and denial without sample sessions", async ({
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("link", { name: "Security", exact: true })
       .click();
-    await backgroundStarted;
+    await backgroundRead.entered;
     await page
       .getByRole("button", { name: "End session for Eli", exact: true })
       .click();
@@ -1338,7 +1303,7 @@ test("Security reads show recovery and denial without sample sessions", async ({
       exact: true,
     });
     await expect(sessionConfirmation).toContainText("Eli");
-    releaseBackgroundRead();
+    backgroundRead.release();
     await expect(
       page.getByText("Only administrators can review sessions.", {
         exact: true,
@@ -1346,7 +1311,7 @@ test("Security reads show recovery and denial without sample sessions", async ({
     ).toBeVisible();
     await expect(sessionConfirmation).toBeHidden();
   } finally {
-    releaseBackgroundRead();
+    backgroundRead.release();
   }
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page
@@ -1663,20 +1628,13 @@ test("a failed background session reread retains rows while disabling session-en
     page.getByRole("region", { name: "Security workspace", exact: true }),
   ).toHaveCount(0);
   await page.clock.fastForward(31_000);
-  let releaseRead = () => {};
-  let signalRead = () => {};
-  const released = new Promise<void>((resolve) => {
-    releaseRead = resolve;
-  });
-  const started = new Promise<void>((resolve) => {
-    signalRead = resolve;
-  });
+  const sessionRead = heldResponse();
   let holdNextRead = true;
   await page.route("**/api/auth/admin-sessions**", async (route) => {
     if (holdNextRead && route.request().method() === "GET") {
       holdNextRead = false;
-      signalRead();
-      await released;
+      sessionRead.enter();
+      await sessionRead.released;
     }
     await route.fallback();
   });
@@ -1686,7 +1644,7 @@ test("a failed background session reread retains rows while disabling session-en
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("link", { name: "Security", exact: true })
       .click();
-    await started;
+    await sessionRead.entered;
     await page
       .getByRole("button", { name: "End session for Eli", exact: true })
       .click();
@@ -1695,7 +1653,7 @@ test("a failed background session reread retains rows while disabling session-en
       exact: true,
     });
     await expect(confirmation).toContainText("Eli");
-    releaseRead();
+    sessionRead.release();
     await expect(
       page.getByText("Sessions could not be loaded.", { exact: true }),
     ).toBeVisible();
@@ -1712,7 +1670,7 @@ test("a failed background session reread retains rows while disabling session-en
       .getByRole("button", { name: "Cancel", exact: true })
       .click();
   } finally {
-    releaseRead();
+    sessionRead.release();
   }
   await expect(table).toBeVisible();
   await expect(
@@ -1863,116 +1821,72 @@ test("a late prior-account policy response cannot replace the new owner's draft 
 
 test("dismissing self MFA releases ownership of a later gate enrollment on Back", async ({
   page,
-}, testInfo) => {
+}) => {
+  await mockManageSecurity(page);
   const state = await mockMfa(page);
-  const observation = {
-    phase: "setup",
-    selfCancelled: false,
-    gateEnrollmentReached: false,
-    backReached: false,
-    gateFactorCountBeforeBack: 0,
-    gateFactorCountAfterBack: 0,
-    deleteCallsBeforeBack: 0,
-    deleteCallsAfterBack: 0,
-    sameFactorSurvives: false,
-    qrVisibleAfterBack: false,
-    finalPath: "",
-  };
-  let gateFactorId = "";
-  try {
-    await page.goto("/access?view=overview");
-    await expect(
-      page.getByRole("heading", { name: "Access overview", exact: true }),
-    ).toBeVisible();
-    await page
-      .getByRole("navigation", { name: "Main navigation" })
-      .getByRole("link", { name: "Security", exact: true })
-      .click();
-    await expect(page).toHaveURL(/\/access\?view=security$/);
-    await page
-      .getByRole("button", { name: "Edit policy", exact: true })
-      .click();
-    await page
-      .getByRole("button", {
-        name: "Manage two-step verification",
-        exact: true,
-      })
-      .click();
-    const self = page.getByRole("dialog", {
-      name: "Two-step verification",
+  await page.goto("/access?view=overview");
+  await expect(
+    page.getByRole("heading", { name: "Access overview", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "Security", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/access\?view=security$/);
+  await page.getByRole("button", { name: "Edit policy", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Manage two-step verification",
       exact: true,
-    });
-    await expect(
-      self.getByRole("button", { name: "Set up authenticator", exact: true }),
-    ).toBeVisible();
-    await self.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(self).toBeHidden();
-    expect(state.actors.get(mfaUserA)?.factors).toHaveLength(0);
-    observation.selfCancelled = true;
-    observation.phase = "self-closed";
+    })
+    .click();
+  const self = page.getByRole("dialog", {
+    name: "Two-step verification",
+    exact: true,
+  });
+  await expect(
+    self.getByRole("button", { name: "Set up authenticator", exact: true }),
+  ).toBeVisible();
+  await self.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(self).toBeHidden();
+  expect(state.actors.get(mfaUserA)?.factors).toHaveLength(0);
 
-    state.actors.get(mfaUserA)!.policyRequired = true;
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await expect(
-      page.getByRole("heading", {
-        name: "Complete two-step verification",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Set up authenticator", exact: true })
-      .click();
-    const qr = page.getByRole("img", {
-      name: "Authenticator QR code",
+  state.actors.get(mfaUserA)!.policyRequired = true;
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await expect(
+    page.getByRole("heading", {
+      name: "Complete two-step verification",
       exact: true,
-    });
-    await expect(qr).toBeVisible();
-    expect(state.actors.get(mfaUserA)?.factors).toHaveLength(1);
-    gateFactorId = state.actors.get(mfaUserA)!.factors[0]!.id;
-    observation.gateEnrollmentReached = true;
-    observation.gateFactorCountBeforeBack = 1;
-    observation.deleteCallsBeforeBack = state.calls.filter(
-      (call) => call.method === "DELETE",
-    ).length;
-    observation.phase = "gate-enrolled";
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Set up authenticator", exact: true })
+    .click();
+  const qr = page.getByRole("img", {
+    name: "Authenticator QR code",
+    exact: true,
+  });
+  await expect(qr).toBeVisible();
+  expect(state.actors.get(mfaUserA)?.factors).toHaveLength(1);
+  const gateFactorId = state.actors.get(mfaUserA)!.factors[0]!.id;
+  const deleteCallsBeforeBack = state.calls.filter(
+    (call) => call.method === "DELETE",
+  ).length;
 
-    await page.goBack();
-    await expect(page).toHaveURL(/\/access\?view=overview$/);
-    observation.backReached = true;
-    observation.phase = "back-reached";
-    await expect(
-      page.getByRole("heading", {
-        name: "Complete two-step verification",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(qr).toBeVisible();
-    expect(state.actors.get(mfaUserA)?.factors).toHaveLength(1);
-    expect(state.actors.get(mfaUserA)?.factors[0]?.id).toBe(gateFactorId);
-    expect(state.calls.filter((call) => call.method === "DELETE")).toHaveLength(
-      observation.deleteCallsBeforeBack,
-    );
-    observation.phase = "survived";
-  } finally {
-    observation.gateFactorCountAfterBack =
-      state.actors.get(mfaUserA)?.factors.length ?? 0;
-    observation.sameFactorSurvives =
-      state.actors
-        .get(mfaUserA)
-        ?.factors.some((factor) => factor.id === gateFactorId) ?? false;
-    observation.deleteCallsAfterBack = state.calls.filter(
-      (call) => call.method === "DELETE",
-    ).length;
-    observation.qrVisibleAfterBack = await page
-      .getByRole("img", { name: "Authenticator QR code", exact: true })
-      .isVisible();
-    observation.finalPath =
-      new URL(page.url()).pathname + new URL(page.url()).search;
-    await testInfo.attach("MFA ownership observations", {
-      body: JSON.stringify(observation, null, 2),
-      contentType: "application/json",
-    });
-  }
+  await page.goBack();
+  await expect(page).toHaveURL(/\/access\?view=overview$/);
+  await expect(
+    page.getByRole("heading", {
+      name: "Complete two-step verification",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(qr).toBeVisible();
+  expect(state.actors.get(mfaUserA)?.factors).toHaveLength(1);
+  expect(state.actors.get(mfaUserA)?.factors[0]?.id).toBe(gateFactorId);
+  expect(state.calls.filter((call) => call.method === "DELETE")).toHaveLength(
+    deleteCallsBeforeBack,
+  );
 });
 
 test("custom password rules and address chips save explicitly and reload independent values", async ({
@@ -2216,13 +2130,7 @@ for (const width of [1440, 390])
     await expect(
       page.getByRole("button", { name: "End session for Eli", exact: true }),
     ).toBeEnabled();
-    expect(
-      await page.evaluate(
-        () =>
-          document.documentElement.scrollWidth <=
-          document.documentElement.clientWidth,
-      ),
-    ).toBe(true);
+    await expectNoHorizontalScroll(page);
   });
 
 for (const observation of ["status", "enrollment", "verification"] as const)

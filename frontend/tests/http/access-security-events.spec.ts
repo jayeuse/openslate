@@ -587,54 +587,29 @@ test("Events cold unavailable and detail failure offer explicit recovery with no
   await expect(dialog).toContainText("198.51.100.42");
 });
 
-for (const malformed of [
-  { title: "invalid outcome", patch: { outcome: "unknown" } },
-  { title: "naive occurrence", patch: { occurred_at: "2026-10-06T12:00:00" } },
-  { title: "non-UUID person", patch: { actor_id: "email@example.invalid" } },
-]) {
-  test(`Events malformed ${malformed.title} response is unavailable rather than trusted`, async ({
-    page,
-  }) => {
-    const state = await mockSecurityEvents(page);
-    state.malformedList = {
-      items: [{ ...securityEvent(0), ...malformed.patch }],
-      pagination: { limit: 10, offset: 0, count: 1, total: 1, has_more: false },
-    };
-    await page.goto("/manage?view=audit&audit=security-events");
-    await expect(feed(page).getByRole("alert")).toContainText(
-      "could not be loaded",
-    );
-    await expect(eventRows(page).getByText(/sign-in was accepted/)).toHaveCount(
-      0,
-    );
-    state.malformedList = null;
-    await feed(page)
-      .getByRole("button", { name: "Retry security events", exact: true })
-      .click();
-    await expect(
-      eventRows(page).getByText(/sign-in was accepted/),
-    ).toBeVisible();
-  });
-}
-
-test("Events detail identity mismatch cannot show another event's facts", async ({
+// The other unsupported facts (naive times, non-UUID people, unknown fields)
+// and the detail identity guard are isolated rows in
+// isolated/access/security-events-api.spec.ts.
+test("Events malformed invalid outcome response is unavailable rather than trusted", async ({
   page,
 }) => {
   const state = await mockSecurityEvents(page);
-  await openFeed(page);
-  state.malformedDetail = securityEvent(2);
-  const dialog = await details(page, "Sign-in failure");
-  await expect(dialog.getByRole("alert")).toContainText(
-    "Details could not be loaded",
+  state.malformedList = {
+    items: [{ ...securityEvent(0), outcome: "unknown" }],
+    pagination: { limit: 10, offset: 0, count: 1, total: 1, has_more: false },
+  };
+  await page.goto("/manage?view=audit&audit=security-events");
+  await expect(feed(page).getByRole("alert")).toContainText(
+    "could not be loaded",
   );
-  await expect(dialog).not.toContainText("198.51.100.42");
-  state.malformedDetail = null;
-  await dialog
-    .getByRole("button", { name: "Retry event details", exact: true })
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toHaveCount(
+    0,
+  );
+  state.malformedList = null;
+  await feed(page)
+    .getByRole("button", { name: "Retry security events", exact: true })
     .click();
-  await expect(dialog).toContainText(
-    "Sign-in failures from this address during this hour",
-  );
+  await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
 });
 
 for (const role of ["member", "guest", "manager"] as const) {
@@ -1012,58 +987,57 @@ test("Events desktop keyboard Escape returns focus to the invoking detail row at
   expect(state.security.writes).toEqual([]);
 });
 
-for (const mode of ["light", "dark"] as const) {
-  test(`Events compact ${mode} keyboard details and date filters remain reachable at 125 percent reflow`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await mockSecurityEvents(page);
-    await openFeed(page);
-    await page.evaluate((theme) => {
-      document.documentElement.classList.toggle("dark", theme === "dark");
-      document.documentElement.dataset.textSize = "125";
-      document.documentElement.dataset.density = "spacious";
-    }, mode);
-    const more = feed(page).getByRole("button", {
-      name: "More filters",
-      exact: true,
-    });
-    await more.focus();
-    await page.keyboard.press("Enter");
-    await expect(more).toHaveAttribute("aria-expanded", "true");
-    await expect(feed(page).getByLabel("From", { exact: true })).toBeVisible();
-    const opener = feed(page)
-      .getByRole("button", { name: /^Details for Sign-in failure/ })
-      .first();
-    await opener.focus();
-    await page.keyboard.press("Enter");
-    const dialog = page.getByRole("dialog", {
-      name: "Security event details",
-      exact: true,
-    });
-    await expect(dialog).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(dialog).toBeHidden();
-    await expect(opener).toBeFocused();
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
-    const targets = [
-      more,
-      opener,
-      feed(page).getByRole("button", {
-        name: "Refresh security events",
-        exact: true,
-      }),
-    ];
-    for (const target of targets) {
-      const box = await target.boundingBox();
-      expect(box?.height).toBeGreaterThanOrEqual(44);
-    }
+// Light and dark share this layout; the color theme changes no reflow branch.
+test("Events compact keyboard details and date filters remain reachable at 125 percent reflow", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockSecurityEvents(page);
+  await openFeed(page);
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.dataset.textSize = "125";
+    document.documentElement.dataset.density = "spacious";
   });
-}
+  const more = feed(page).getByRole("button", {
+    name: "More filters",
+    exact: true,
+  });
+  await more.focus();
+  await page.keyboard.press("Enter");
+  await expect(more).toHaveAttribute("aria-expanded", "true");
+  await expect(feed(page).getByLabel("From", { exact: true })).toBeVisible();
+  const opener = feed(page)
+    .getByRole("button", { name: /^Details for Sign-in failure/ })
+    .first();
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", {
+    name: "Security event details",
+    exact: true,
+  });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(opener).toBeFocused();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  const targets = [
+    more,
+    opener,
+    feed(page).getByRole("button", {
+      name: "Refresh security events",
+      exact: true,
+    }),
+  ];
+  for (const target of targets) {
+    const box = await target.boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+  }
+});
 
 test("Events names offpage actors with bounded ID lookup without eager pages", async ({
   page,
@@ -1640,7 +1614,7 @@ for (const [width, height] of [
   for (const mode of ["light", "dark"] as const) {
     test(`Access security and Audit events render at ${width}x${height} in ${mode} theme without writes or page errors`, async ({
       page,
-    }, testInfo) => {
+    }) => {
       await page.setViewportSize({ width, height });
       const state = await mockSecurityEvents(page);
       await page.route(
@@ -1698,13 +1672,6 @@ for (const [width, height] of [
       if (mode === "dark")
         await expect(page.locator("html")).toHaveClass(/dark/);
       else await expect(page.locator("html")).not.toHaveClass(/dark/);
-      await page.screenshot({
-        animations: "disabled",
-        style: "nextjs-portal { visibility: hidden; }",
-        path: testInfo.outputPath(
-          `access-security-${width}x${height}-${mode}.png`,
-        ),
-      });
       await visitAuditSecurity(page);
       await expect(eventRows(page)).toContainText(
         "Mara's sign-in was accepted",
@@ -1715,13 +1682,6 @@ for (const [width, height] of [
       if (mode === "dark")
         await expect(page.locator("html")).toHaveClass(/dark/);
       else await expect(page.locator("html")).not.toHaveClass(/dark/);
-      await page.screenshot({
-        animations: "disabled",
-        style: "nextjs-portal { visibility: hidden; }",
-        path: testInfo.outputPath(
-          `audit-security-events-${width}x${height}-${mode}.png`,
-        ),
-      });
       expect(state.commands).toEqual([]);
       expect(state.security.writes).toEqual([]);
       expect(pageErrors).toEqual([]);

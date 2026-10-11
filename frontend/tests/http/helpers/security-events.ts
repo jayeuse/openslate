@@ -124,7 +124,6 @@ export async function mockSecurityEvents(page: Page) {
     detailStatus: 200,
     usersStatus: 200,
     malformedList: null as unknown,
-    malformedDetail: null as unknown,
     reads: [] as URLSearchParams[],
     details: [] as string[],
     userReads: 0,
@@ -268,7 +267,6 @@ export async function mockSecurityEvents(page: Page) {
     const found = structuredClone(
       state.events.find((event) => event.id === id),
     );
-    const malformed = state.malformedDetail;
     const hold = state.holdDetail;
     state.holdDetail = null;
     if (hold) {
@@ -281,7 +279,7 @@ export async function mockSecurityEvents(page: Page) {
     }
     await route.fulfill({
       headers: { "Cache-Control": "no-store" },
-      json: malformed ?? found,
+      json: found,
     });
   });
   return state;

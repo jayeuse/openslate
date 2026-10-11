@@ -1,8 +1,13 @@
-import { expect, test, type Page } from "./helpers/test";
-
-import { installOpenViewEventSource } from "./helpers/openview-event-source";
+import {
+  expect,
+  expectNoHorizontalScroll,
+  heldResponse,
+  test,
+  type Page,
+} from "./helpers/test";
 
 import {
+  addPeople,
   DAY,
   created,
   ids,
@@ -12,25 +17,6 @@ import {
 } from "./helpers/access-api";
 
 // The People tab against the mocked Access API (see helpers/access-api.ts).
-
-const mockPeopleApi = (page: Page) => mockAccessApi(page);
-
-function addLaterPeople(
-  api: Awaited<ReturnType<typeof mockAccessApi>>,
-  count = 110,
-) {
-  for (let index = 0; index < count; index += 1) {
-    const id = `00000000-0000-4000-8000-${String(700 + index).padStart(12, "0")}`;
-    api.users.set(
-      id,
-      person({
-        id,
-        username: `later${String(index).padStart(3, "0")}`,
-        display_name: `Later ${String(index).padStart(3, "0")}`,
-      }),
-    );
-  }
-}
 
 function panel(page: Page, name: string) {
   return page.getByRole("dialog", { name });
@@ -85,7 +71,7 @@ async function expectHistoryField(
 test("the directory shows role, status, groups and derived departments, and searches", async ({
   page,
 }) => {
-  await mockPeopleApi(page);
+  await mockAccessApi(page);
   await page.goto("/access?view=people");
 
   const table = page.getByRole("table", { name: "People" });
@@ -111,7 +97,7 @@ test("the directory shows role, status, groups and derived departments, and sear
 test("a person link opens their panel, and the old identities link still works", async ({
   page,
 }) => {
-  await mockPeopleApi(page);
+  await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
   await expect(panel(page, "Ben Cruz")).toBeVisible();
   await page.getByRole("button", { name: "Close" }).click();
@@ -127,7 +113,7 @@ test("a person link opens their panel, and the old identities link still works",
 test("the whole row opens a person, and the name reads as body text, not a link", async ({
   page,
 }) => {
-  await mockPeopleApi(page);
+  await mockAccessApi(page);
   await page.goto("/access?view=people");
   const row = page
     .getByRole("table", { name: "People" })
@@ -158,7 +144,7 @@ test("the whole row opens a person, and the name reads as body text, not a link"
 });
 
 test("a group chip opens that group's members", async ({ page }) => {
-  await mockPeopleApi(page);
+  await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
   await panel(page, "Ben Cruz")
     .getByRole("list", { name: "Groups" })
@@ -178,7 +164,7 @@ test("a group chip opens that group's members", async ({ page }) => {
 });
 
 test("inviting a member sends the chosen groups", async ({ page }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   await page.goto("/access?view=people");
 
   await page.getByRole("button", { name: "Invite person" }).click();
@@ -207,7 +193,7 @@ test("inviting a member sends the chosen groups", async ({ page }) => {
 test("a guest invitation needs a sponsor and starts from the workspace guest length", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   await page.goto("/access?view=people");
 
   await page.getByRole("button", { name: "Invite person" }).click();
@@ -248,7 +234,7 @@ test("a guest invitation needs a sponsor and starts from the workspace guest len
 test("a role change that meets a newer save asks which value to keep", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
   const sheet = panel(page, "Ben Cruz");
 
@@ -279,7 +265,7 @@ test("a role change that meets a newer save asks which value to keep", async ({
 test("a save refused as stale re-reads the person before asking again", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   let refused = false;
   api.on("PATCH", `/api/users/${ids.ben}`, async (route) => {
     if (refused) return "next";
@@ -310,7 +296,7 @@ test("a save refused as stale re-reads the person before asking again", async ({
 test("disabling sends the status and a refusal shows the server's reason", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   api.on("PATCH", `/api/users/${ids.dee}`, (route) =>
     route.fulfill({
       status: 409,
@@ -341,7 +327,7 @@ test("disabling sends the status and a refusal shows the server's reason", async
 test("the signed-in administrator cannot disable or delete themselves", async ({
   page,
 }) => {
-  await mockPeopleApi(page);
+  await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.rosa}`);
   const sheet = panel(page, "Rosa Reyes");
   await expect(sheet).toContainText("This is your account.");
@@ -350,43 +336,10 @@ test("the signed-in administrator cannot disable or delete themselves", async ({
   await expect(sheet).toContainText("are not members of groups");
 });
 
-test("sessions can be signed out one at a time or everywhere", async ({
-  page,
-}) => {
-  const api = await mockPeopleApi(page);
-  await page.goto(`/access?view=people&user=${ids.ben}`);
-  const sheet = panel(page, "Ben Cruz");
-  await sheet.getByRole("tab", { name: "Sessions" }).click();
-  const list = sheet.getByRole("list", { name: "Sessions" });
-  await expect(list.getByRole("listitem")).toHaveCount(2);
-
-  await list.getByRole("button", { name: /Sign out Laptop browser/ }).click();
-  await page
-    .getByRole("alertdialog", { name: "Sign out this session?" })
-    .getByRole("button", { name: "Sign out" })
-    .click();
-  await expect
-    .poll(
-      () =>
-        api.sent("DELETE", `/api/users/${ids.ben}/sessions/${ids.laptop}`)
-          .length,
-    )
-    .toBe(1);
-
-  await sheet.getByRole("button", { name: "Sign out everywhere" }).click();
-  await page
-    .getByRole("alertdialog", { name: "Sign out everywhere?" })
-    .getByRole("button", { name: "Sign out" })
-    .click();
-  await expect
-    .poll(() => api.sent("DELETE", `/api/users/${ids.ben}/sessions`).length)
-    .toBe(1);
-});
-
 test("the access panel names the level and its groups, full access for administrators, and the guest limit", async ({
   page,
 }) => {
-  await mockPeopleApi(page);
+  await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
   let sheet = panel(page, "Ben Cruz");
   await sheet.getByRole("tab", { name: "Access" }).click();
@@ -417,7 +370,7 @@ test("the access panel names the level and its groups, full access for administr
 test("a deleted person shows no access and offers a restore", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.eli}`);
   const sheet = panel(page, "Eli Tan");
   await expect(sheet.getByText("Deleted", { exact: true })).toBeVisible();
@@ -430,7 +383,7 @@ test("a deleted person shows no access and offers a restore", async ({
 test("unsaved details warn before a reload, survive it, and ask before they are discarded", async ({
   page,
 }) => {
-  await mockPeopleApi(page);
+  await mockAccessApi(page);
   await page.goto(`/access?view=people&user=${ids.ben}`);
   const details = panel(page, "Ben Cruz").getByRole("tab", {
     name: "Details",
@@ -473,7 +426,7 @@ test("unsaved details warn before a reload, survive it, and ask before they are 
 test("a save that got no answer is held for review instead of being sent again", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   api.on("PATCH", `/api/users/${ids.ben}`, (route) => route.abort());
   await page.goto(`/access?view=people&user=${ids.ben}`);
   let sheet = panel(page, "Ben Cruz");
@@ -504,7 +457,7 @@ test("a save that got no answer is held for review instead of being sent again",
 test("the directory offers a retry after a failed load and explains a refusal", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   let failing = true;
   api.on("GET", "/api/users", async (route) => {
     if (!failing) return "next";
@@ -536,7 +489,7 @@ test("the directory offers a retry after a failed load and explains a refusal", 
 test("closing an invitation with details asks before discarding them", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   await page.goto("/access?view=people");
   await page.getByRole("button", { name: "Invite person" }).click();
   const dialog = page.getByRole("dialog", { name: "Invite a person" });
@@ -562,16 +515,10 @@ for (const width of [1440, 390])
     page,
   }) => {
     await page.setViewportSize({ width, height: width > 400 ? 900 : 844 });
-    await mockPeopleApi(page);
+    await mockAccessApi(page);
     await page.goto(`/access?view=people`);
     await expect(page.getByText("5 people")).toBeVisible();
-    const fits = () =>
-      page.evaluate(
-        () =>
-          document.documentElement.scrollWidth <=
-          document.documentElement.clientWidth,
-      );
-    expect(await fits()).toBe(true);
+    await expectNoHorizontalScroll(page);
 
     await page
       .getByRole("button", { name: "Manage Ben Cruz", exact: true })
@@ -582,7 +529,7 @@ for (const width of [1440, 390])
     const box = await sheet.boundingBox();
     if (width === 390) expect(box?.width).toBeCloseTo(390, 0);
     else expect(box?.width).toBeLessThan(width / 2);
-    expect(await fits()).toBe(true);
+    await expectNoHorizontalScroll(page);
   });
 
 // These HTTP journeys exercise the adopted list boundary and rendered controls.
@@ -590,9 +537,9 @@ for (const width of [1440, 390])
 test("the closed directory requests server pages and searches before paging", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   api.users.clear();
-  addLaterPeople(api);
+  addPeople(api, 110, 700);
   api.users.set(
     ids.ben,
     person({
@@ -642,8 +589,8 @@ test("the closed directory requests server pages and searches before paging", as
 test("combined directory filters and sort aliases reach the server with the matching total", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
-  addLaterPeople(api);
+  const api = await mockAccessApi(page);
+  addPeople(api, 110, 700);
   for (const [sort, field, order] of [
     ["expiry", "expires_at", "asc"],
     ["newest", "created_at", "desc"],
@@ -679,7 +626,7 @@ for (const width of [1600, 1440, 390])
     page,
   }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-    const api = await mockPeopleApi(page);
+    const api = await mockAccessApi(page);
     api.monitoring.set(ids.rosa, {
       active_session_count: 1,
       mfa_verified_totp: true,
@@ -763,27 +710,18 @@ for (const width of [1600, 1440, 390])
         );
     }
     await expect(people).not.toContainText(/never signed in|provider live/i);
-    expect(
-      await page.evaluate(
-        () =>
-          document.documentElement.scrollWidth <=
-          document.documentElement.clientWidth,
-      ),
-    ).toBe(true);
+    await expectNoHorizontalScroll(page);
   });
 
 test("offpage deleted deep link survives bounded ID loading and Restore", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
-  addLaterPeople(api);
-  let release: (() => void) | undefined;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const api = await mockAccessApi(page);
+  addPeople(api, 110, 700);
+  const gate = heldResponse();
   api.on("GET", "/api/users", async (route) => {
     const url = new URL(route.request().url());
-    if (url.searchParams.get("deleted") === "include") await gate;
+    if (url.searchParams.get("deleted") === "include") await gate.released;
     return "next" as const;
   });
   await page.goto(`/access?view=people&role=guest&user=${ids.eli}`);
@@ -794,7 +732,7 @@ test("offpage deleted deep link survives bounded ID loading and Restore", async 
     .toBe(true);
   await expect(page).toHaveURL(new RegExp(`user=${ids.eli}`));
   await expect(panel(page, "Eli Tan")).toBeHidden();
-  release?.();
+  gate.release();
   const sheet = page.getByRole("dialog", { name: "Eli Tan", exact: true });
   await expect(sheet).toBeVisible();
   expect(api.sent("GET", `/api/users/${ids.eli}`)).toHaveLength(0);
@@ -830,8 +768,8 @@ test("offpage deleted deep link survives bounded ID loading and Restore", async 
 test("an invitation searches later-page sponsor choices without changing base invitation responses", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
-  addLaterPeople(api);
+  const api = await mockAccessApi(page);
+  addPeople(api, 110, 700);
   const sponsor = "00000000-0000-4000-8000-000000000999";
   api.users.set(
     sponsor,
@@ -876,58 +814,54 @@ test("an invitation searches later-page sponsor choices without changing base in
   });
 });
 
-for (const [contract, fields] of [
-  ["monitoring", { active_session_count: -1, last_sign_in_at: null }],
-  [
-    "history contract",
-    { active_session_count: 2, last_sign_in_at: "not-an-instant" },
-  ],
-] as const)
-  test(`malformed ${contract} stays unavailable and a fresh Retry returns supported facts`, async ({
-    page,
-  }) => {
-    const api = await mockPeopleApi(page);
-    let malformed = true;
-    api.on("GET", "/api/users", (route) =>
-      malformed
-        ? route.fulfill({
-            json: listPage(
-              [
-                {
-                  ...api.users.get(ids.ben),
-                  mfa_verified_totp: false,
-                  mfa_observed_at: created,
-                  last_active_at: null,
-                  ...fields,
-                },
-              ],
-              new URL(route.request().url()),
-            ),
-          })
-        : "next",
-    );
-    await page.goto("/access?view=people");
-    await expect(
-      page.getByRole("alert").filter({ hasText: "People could not be loaded" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("table", { name: "People", exact: true }),
-    ).toHaveCount(0);
-    malformed = false;
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
-    await expect(
-      page
-        .getByRole("table", { name: "People", exact: true })
-        .getByRole("row", { name: /Ben Cruz/ }),
-    ).toContainText("Not verified");
-  });
+// The other unsupported facts (fractional or missing counts, times that are
+// not instants) are the isolated table in isolated/access/directory-list.spec.ts.
+test("a malformed monitoring count stays unavailable and a fresh Retry returns supported facts", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  let malformed = true;
+  api.on("GET", "/api/users", (route) =>
+    malformed
+      ? route.fulfill({
+          json: listPage(
+            [
+              {
+                ...api.users.get(ids.ben),
+                mfa_verified_totp: false,
+                mfa_observed_at: created,
+                last_active_at: null,
+                active_session_count: -1,
+                last_sign_in_at: null,
+              },
+            ],
+            new URL(route.request().url()),
+          ),
+        })
+      : "next",
+  );
+  await page.goto("/access?view=people");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "People could not be loaded" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "People", exact: true }),
+  ).toHaveCount(0);
+  malformed = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page
+      .getByRole("table", { name: "People", exact: true })
+      .getByRole("row", { name: /Ben Cruz/ }),
+  ).toContainText("Not verified");
+});
 
 test("person sessions show sign-in addresses and accepted revocation refreshes the directory count", async ({
   page,
 }) => {
   // The directory count column shows from the 2xl breakpoint.
   await page.setViewportSize({ width: 1600, height: 900 });
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   api.sessions.push({
     id: "00000000-0000-4000-8000-0000000000f3",
     created_at: created,
@@ -951,14 +885,19 @@ test("person sessions show sign-in addresses and accepted revocation refreshes t
   await expect(sessions).toContainText("Sign-in IP: 198.51.100.101");
   await expect(sessions).toContainText("Sign-in IP: 2001:db8::102");
   await expect(sessions).toContainText("Sign-in IP: Unknown");
+  await expect(sessions.getByRole("listitem")).toHaveCount(3);
   await sessions
     .getByRole("button", { name: /^Sign out Laptop browser/ })
     .click();
   await page
-    .getByRole("alertdialog")
+    .getByRole("alertdialog", { name: "Sign out this session?" })
     .getByRole("button", { name: "Sign out", exact: true })
     .click();
   await expect(sessions).not.toContainText("198.51.100.101");
+  await expect(sessions).toContainText("Sign-in IP: 2001:db8::102");
+  expect(
+    api.sent("DELETE", `/api/users/${ids.ben}/sessions/${ids.laptop}`),
+  ).toHaveLength(1);
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   const ben = page
     .getByRole("table", { name: "People", exact: true })
@@ -983,12 +922,13 @@ test("person sessions show sign-in addresses and accepted revocation refreshes t
     .getByRole("button", { name: "Sign out everywhere", exact: true })
     .click();
   await page
-    .getByRole("alertdialog")
+    .getByRole("alertdialog", { name: "Sign out everywhere?" })
     .getByRole("button", { name: "Sign out", exact: true })
     .click();
   await expect(
     sheet.getByRole("list", { name: "Sessions", exact: true }),
   ).toHaveCount(0);
+  expect(api.sent("DELETE", `/api/users/${ids.ben}/sessions`)).toHaveLength(1);
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await expect(ben.getByText("0", { exact: true })).toBeVisible();
   await expectHistoryField(
@@ -1008,14 +948,11 @@ test("person sessions show sign-in addresses and accepted revocation refreshes t
 test("an accepted person edit returns an out-of-range last page to current rows", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   api.users.clear();
-  addLaterPeople(api, 11);
+  addPeople(api, 11, 700);
   let holdLastPage = false;
-  let release: (() => void) | undefined;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const gate = heldResponse();
   api.on("GET", "/api/users", async (route) => {
     const query = new URL(route.request().url()).searchParams;
     if (
@@ -1023,7 +960,7 @@ test("an accepted person edit returns an out-of-range last page to current rows"
       query.get("role") === "member" &&
       query.get("offset") === "10"
     )
-      await gate;
+      await gate.released;
     return "next" as const;
   });
   await page.goto("/access?view=people&role=member");
@@ -1050,7 +987,7 @@ test("an accepted person edit returns an out-of-range last page to current rows"
   await sheet
     .getByLabel("Job title", { exact: true })
     .fill("Kept while paging adjusts");
-  release?.();
+  gate.release();
   await expect
     .poll(() =>
       api.listReads
@@ -1076,61 +1013,15 @@ test("an accepted person edit returns an out-of-range last page to current rows"
   ).toHaveCount(11);
 });
 
-async function prepareS05PeopleAppearance(page: Page) {
-  await installOpenViewEventSource(page);
-  await page.route(`**/api/users/${ids.rosa}/preferences`, (route) =>
-    route.fulfill({
-      json: {
-        user_id: ids.rosa,
-        theme: "light",
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
-      },
-    }),
-  );
-  await page.route("**/api/workspace/appearance", (route) =>
-    route.fulfill({ json: { theme: "slate" } }),
-  );
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill({
-      json: {
-        id: ids.inventory,
-        display_name: "OpenSlate",
-        legal_name: null,
-        description: null,
-        contact_email: null,
-        contact_phone: null,
-        postal_address: null,
-        logo_file_id: null,
-        locale: "en-PH",
-        timezone: "Asia/Manila",
-        mark: "OS",
-        currency: "PHP",
-        week_start: "monday",
-        business_hours: "09:00–18:00",
-        theme: "slate",
-        revision: 1,
-        today: "2026-10-09",
-        purge_enabled: false,
-        invitation_expiry_days: 7,
-        guest_duration_days: 45,
-      },
-    }),
-  );
-}
-
 for (const failure of [0, 503]) {
   test(`unsent invitation finishes through direct user response with ${failure ? "recoverable failure" : "pending protection"}`, async ({
     page,
   }) => {
-    const api = await mockPeopleApi(page);
-    await prepareS05PeopleAppearance(page);
+    const api = await mockAccessApi(page);
     const path = `/api/auth/invitations/${ids.cy}/reconcile`;
-    let release = () => {};
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const held = heldResponse();
     api.on("POST", path, async (route) => {
-      await held;
+      await held.released;
       if (failure) {
         await route.fulfill({
           status: failure,
@@ -1169,7 +1060,7 @@ for (const failure of [0, 503]) {
     await expect(
       confirmation.getByRole("button", { name: "Working…", exact: true }),
     ).toBeDisabled();
-    release();
+    held.release();
     if (failure) {
       await expect(confirmation.getByRole("alert")).toBeVisible();
       await expect(confirmation).toBeVisible();
@@ -1205,7 +1096,7 @@ for (const failure of [0, 503]) {
 test("reconcile is offered only for nondeleted pending unsent people", async ({
   page,
 }) => {
-  const api = await mockPeopleApi(page);
+  const api = await mockAccessApi(page);
   for (const fields of [
     { id: ids.ben, status: "active" as const, invitation_sent_at: null },
     { id: ids.cy, status: "pending" as const, invitation_sent_at: created },

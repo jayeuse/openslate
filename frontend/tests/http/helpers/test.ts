@@ -1,4 +1,5 @@
 import {
+  expect as baseExpect,
   test as base,
   type BrowserContext,
   type Page,
@@ -255,5 +256,44 @@ export async function settleReact(page: Page, frames = 2): Promise<void> {
         step(count);
       }),
     frames,
+  );
+}
+
+/**
+ * A held mock response. The route handler calls `enter()` and awaits
+ * `released`; the test awaits `entered`, acts, then calls `release()`.
+ */
+export function heldResponse() {
+  let enter = () => {};
+  let release = () => {};
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    entered,
+    released,
+    enter: () => enter(),
+    release: () => release(),
+  };
+}
+
+/** The page does not scroll sideways at the current viewport. */
+export async function expectNoHorizontalScroll(page: Page): Promise<void> {
+  baseExpect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth <=
+        document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+}
+
+/** Asks the auth gate to verify the current session again, as a focus or retry does. */
+export async function recheckSession(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("openslate:session-recheck")),
   );
 }

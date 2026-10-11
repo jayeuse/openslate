@@ -1,9 +1,9 @@
-import type { Page, Route } from "@playwright/test";
+import { expect, type Page, type Route } from "@playwright/test";
 import { isEventStream } from "./test";
 
 // A mocked Access API for the People, Groups and Overview HTTP specs. Every
 // response matches the strict frontend contracts, and every list answers
-// with requested server pages; complete catalog consumers still request100. Groups
+// with requested server pages; complete catalog consumers still request 100. Groups
 // carry an ETag ("<id>:<revision>") and refuse a stale If-Match with 412,
 // like the backend.
 
@@ -11,6 +11,10 @@ export const DAY = 86_400_000;
 export const at = (offset: number) =>
   new Date(Date.now() + offset).toISOString();
 export const created = "2026-01-10T09:00:00Z";
+
+/** A synthetic UUID whose last block is `index`, zero-padded. */
+export const fixtureId = (index: number) =>
+  `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 
 export const ids = {
   rosa: "00000000-0000-4000-8000-000000000101",
@@ -392,7 +396,11 @@ export async function mockAccessApi(
 
     if (path === "/api/auth/session")
       return route.fulfill({
-        json: { authenticated: true, user_id: ids.rosa, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: options.identity?.id ?? ids.rosa,
+          setup_required: false,
+        },
       });
     if (path === "/api/auth/me")
       return route.fulfill({
@@ -865,4 +873,28 @@ export async function mockAccessApi(
 
 export function etag(item: { id: string; revision: number }): string {
   return `"${item.id}:${item.revision}"`;
+}
+
+/**
+ * Adds `count` members after the first page: IDs `fixtureId(start + n)`,
+ * usernames `later000`, `later001`, ... and names `Later 000`, ...
+ */
+export function addPeople(api: Api, count: number, start: number): void {
+  for (let index = 0; index < count; index += 1) {
+    const id = fixtureId(start + index);
+    const suffix = String(index).padStart(3, "0");
+    api.users.set(
+      id,
+      person({
+        id,
+        username: `later${suffix}`,
+        display_name: `Later ${suffix}`,
+      }),
+    );
+  }
+}
+
+/** The journey sent no create, update or delete request to the Access API. */
+export function expectNoWrites(api: Api): void {
+  expect(api.calls.filter((call) => call.method !== "GET")).toEqual([]);
 }

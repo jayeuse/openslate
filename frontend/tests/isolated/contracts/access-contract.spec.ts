@@ -3,9 +3,24 @@ import {
   endAccessSession,
   getAccessCallerIp,
   getAccessSecurityPolicy,
+  getPersonSecurity,
   listAccessSessions,
+  recoverPerson,
+  resetPersonMfa,
   updateAccessSecurityPolicy,
 } from "../../../src/components/systems/access/adapters/security-api";
+import {
+  defaultSecurityEventsRequest,
+  getAccessSecurityEvent,
+  listAccessSecurityEvents,
+} from "../../../src/components/systems/access/adapters/security-events-api";
+import {
+  cancelMfaEnrollment,
+  enrollMfa,
+  getMfaStatus,
+  removeMfa,
+  verifyMfa,
+} from "../../../src/lib/mfa-api";
 import {
   createAccessGroup,
   deleteAccessGroup,
@@ -41,6 +56,8 @@ const sessionId = "00000000-0000-4000-8000-000000000003";
 const departmentId = "00000000-0000-4000-8000-000000000004";
 const moduleId = "00000000-0000-4000-8000-000000000005";
 const etag = '"group-1"';
+const eventId = "00000000-0000-4000-8000-000000000006";
+const factorId = "00000000-0000-4000-8000-000000000007";
 const list = {
   limit: 25,
   offset: 0,
@@ -124,6 +141,80 @@ describeContracts("Access", [
     name: "endAllAccessRemoteSessions",
     run: () => endAllAccessRemoteSessions(),
   },
+  {
+    name: "listAccessSecurityEvents",
+    run: () =>
+      listAccessSecurityEvents({
+        ...defaultSecurityEventsRequest,
+        search: "sign",
+        event_type: "identity.sign_in",
+        outcome: "failure",
+        person_id: userId,
+        occurred_after: "2026-10-01T00:00:00Z",
+        occurred_before: "2026-10-02T00:00:00Z",
+        operation_id: sessionId,
+      }),
+  },
+  {
+    name: "getAccessSecurityEvent",
+    run: () => getAccessSecurityEvent(eventId),
+    // The adapter refuses a detail for another event on purpose.
+    responses: {
+      "GET /api/security-events/{security_event_id}": { id: eventId },
+    },
+  },
+  {
+    name: "getPersonSecurity",
+    run: () => getPersonSecurity(userId),
+    // The adapter refuses a status for another person on purpose.
+    responses: { "GET /api/users/{user_id}/security": { user_id: userId } },
+  },
+  // UserRecoveryResponse declares local_revocation and revoked_sessions
+  // independently; the route sends a count only with "committed", and the
+  // adapter refuses any other pairing (finding in the F4 report).
+  {
+    name: "recoverPerson",
+    run: () => recoverPerson(userId, true),
+    responses: {
+      "POST /api/users/{user_id}/recovery": {
+        user_id: userId,
+        local_revocation: "committed",
+        revoked_sessions: 2,
+      },
+    },
+  },
+  {
+    name: "recoverPerson without signing out",
+    run: () => recoverPerson(userId, false),
+    responses: {
+      "POST /api/users/{user_id}/recovery": {
+        user_id: userId,
+        local_revocation: "not_requested",
+        revoked_sessions: null,
+      },
+    },
+  },
+  {
+    name: "resetPersonMfa",
+    run: () => resetPersonMfa(userId),
+    responses: { "POST /api/users/{user_id}/mfa/reset": { user_id: userId } },
+  },
+  { name: "getMfaStatus", run: () => getMfaStatus() },
+  { name: "enrollMfa", run: () => enrollMfa() },
+  {
+    name: "verifyMfa",
+    run: () => verifyMfa(factorId, "123456"),
+    // The route returns the access token only to bearer clients
+    // (mfa_router.py); a cookie-authenticated browser gets null, the only
+    // value the adapter accepts (finding in the F4 report).
+    responses: {
+      "POST /api/auth/mfa/factors/{factor_id}/verification": {
+        access_token: null,
+      },
+    },
+  },
+  { name: "removeMfa", run: () => removeMfa(factorId) },
+  { name: "cancelMfaEnrollment", run: () => cancelMfaEnrollment(factorId) },
 
   {
     name: "listAccessUsers",

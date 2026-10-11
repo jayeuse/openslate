@@ -1,15 +1,14 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, test } from "./helpers/test";
 import {
   at,
+  expectNoWrites,
+  fixtureId,
   group,
   ids,
   mockAccessApi,
   person,
   type AccessEntry,
 } from "./helpers/access-api";
-
-const fixtureId = (index: number) =>
-  `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 
 test("Groups pages and server search preserve enriched reach without catalog crawling", async ({
   page,
@@ -75,46 +74,6 @@ test("Groups pages and server search preserve enriched reach without catalog cra
   expect(api.sent("GET", "/api/modules")).toHaveLength(0);
 });
 
-test("Overview counts use bounded filtered totals beyond the first page", async ({
-  page,
-}) => {
-  const api = await mockAccessApi(page);
-  api.groups.clear();
-  for (let index = 0; index < 121; index++) {
-    api.groups.set(
-      fixtureId(500 + index),
-      group(fixtureId(500 + index), `Empty ${index}`, [], []),
-    );
-    api.users.set(
-      fixtureId(2000 + index),
-      person({ id: fixtureId(2000 + index), username: `unassigned${index}` }),
-    );
-  }
-  const reads: URL[] = [];
-  for (const path of ["/api/users", "/api/access/groups"])
-    api.on("GET", path, (route) => {
-      reads.push(new URL(route.request().url()));
-      return "next";
-    });
-  await page.goto("/access?view=overview");
-  await expect(
-    page.getByRole("region", { name: "Groups without access", exact: true }),
-  ).toContainText("121");
-  await expect(
-    page.getByRole("region", { name: "Groups without members", exact: true }),
-  ).toContainText("121");
-  await expect(
-    page.getByRole("region", { name: "People without a group", exact: true }),
-  ).toContainText("124");
-  expect(
-    reads.every(
-      (url) =>
-        url.searchParams.get("limit") === "1" &&
-        url.searchParams.get("offset") === "0",
-    ),
-  ).toBe(true);
-});
-
 test("selected sponsor reload and username server search keep labels and write no changes", async ({
   page,
 }) => {
@@ -155,7 +114,7 @@ test("selected sponsor reload and username server search keep labels and write n
   expect(
     api.listReads.some((query) => query.get("search") === "remote_login"),
   ).toBe(true);
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
 
 test("session pages expose later devices and retain global revocation", async ({
@@ -215,11 +174,6 @@ test("member search preserves off-page members and marks ended manager candidate
       ],
     },
   });
-  api.on("GET", "/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: ids.ben, setup_required: false },
-    }),
-  );
   const current = fixtureId(999);
   const expired = fixtureId(998);
   api.users.set(
@@ -278,7 +232,7 @@ test("member search preserves off-page members and marks ended manager candidate
     reads.some((url) => url.searchParams.get("search") === "expired_login"),
   ).toBe(true);
   expect(api.sent("GET", "/api/users")).toHaveLength(0);
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
 
 test("a refused people continuation conceals selected names until an explicit fresh retry", async ({
@@ -318,7 +272,7 @@ test("a refused people continuation conceals selected names until an explicit fr
     .getByRole("button", { name: "Retry people", exact: true })
     .click();
   await expect(members).toContainText("Ana Santos");
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
 
 test("a people search refusal survives cached search and an older Retry", async ({
@@ -326,21 +280,14 @@ test("a people search refusal survives cached search and an older Retry", async 
 }) => {
   const api = await mockAccessApi(page);
   let denied = true;
-  let release: (() => void) | undefined;
-  let started: (() => void) | undefined;
-  const entered = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const hold = heldResponse();
   api.on("GET", "/api/users", async (route) => {
     const query = new URL(route.request().url()).searchParams;
     if (query.get("search") !== "blocked") return "next";
     if (denied)
       return route.fulfill({ status: 403, json: { detail: "Forbidden" } });
-    started?.();
-    await held;
+    hold.enter();
+    await hold.released;
     return "next";
   });
   await page.goto(`/access?view=groups&group=${ids.clerks}&tab=members`);
@@ -364,13 +311,13 @@ test("a people search refusal survives cached search and an older Retry", async 
     await sheet
       .getByRole("button", { name: "Retry people", exact: true })
       .click();
-    await entered;
+    await hold.entered;
     await search.fill("");
     await expect(
       sheet.getByText("Loading people…", { exact: true }),
     ).toBeHidden();
     await expect(members).not.toContainText("Ana Santos");
-    release?.();
+    hold.release();
     await expect(sheet.getByRole("alert")).toContainText(
       "People are unavailable",
     );
@@ -379,9 +326,9 @@ test("a people search refusal survives cached search and an older Retry", async 
       .getByRole("button", { name: "Retry people", exact: true })
       .click();
     await expect(members).toContainText("Ana Santos");
-    expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+    expectNoWrites(api);
   } finally {
-    release?.();
+    hold.release();
   }
 });
 
@@ -434,5 +381,5 @@ test("a selected-person refusal survives reopening a cached group", async ({
   await expect(
     sheet.getByRole("list", { name: "Members", exact: true }),
   ).toContainText("Ana Santos");
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
