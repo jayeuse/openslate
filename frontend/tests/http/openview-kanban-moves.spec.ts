@@ -152,6 +152,7 @@ async function installKanbanApi(
   let authReads = 0;
   let groupedReads = 0;
   let nextBatchStatus = 200;
+  let committedFailure: "malformed" | null = null;
   let holdBatch: Promise<void> | null = null;
   let revision = 0;
   await page.route("**/api/**", async (route) => {
@@ -333,6 +334,9 @@ async function installKanbanApi(
           record: updated,
         };
       });
+      const failure = committedFailure;
+      committedFailure = null;
+      if (failure === "malformed") return json({ results: [] });
       return json({ results });
     }
     const recordId = path.match(/^\/api\/records\/([^/]+)$/)?.[1];
@@ -358,6 +362,9 @@ async function installKanbanApi(
     },
     failBatch: (status: number) => {
       nextBatchStatus = status;
+    },
+    commitThenFail: (failure: "malformed") => {
+      committedFailure = failure;
     },
     holdBatch: () => {
       let release!: () => void;
@@ -594,44 +601,86 @@ for (const options of [
     expect(api.batches).toEqual([]);
   });
 
-// Unknown and malformed receipts are owned by
-// isolated/openview/record-move-receipts.spec.ts, and their recovery journey by
-// openview-date-moves.spec.ts; a denied result stays here.
-test("Kanban retains unsaved moves after a denied batch result", async ({
-  page,
-}) => {
-  const api = await installKanbanApi(page);
-  await page.goto(url);
-  await openLane(page);
-  await moveTo(page, "Pump 1", "Ready");
-  const authReads = api.authReads();
-  api.failBatch(403);
-  api.changeAccess("read");
-  await page
-    .getByRole("button", { name: "Save changes (1)", exact: true })
-    .click();
-  await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: /moves|move/i })
-      .last(),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Discard", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Private failure canary", { exact: false }),
-  ).toHaveCount(0);
-  expect(api.batches).toHaveLength(1);
-  expect(api.rows.get(firstRecordId)?.data[laneFieldId]).toBe(todoId);
-  await expect.poll(api.authReads).toBeGreaterThan(authReads);
-  await expect(
-    page.getByRole("button", { name: "Move to…", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Save changes (1)", exact: true }),
-  ).toBeDisabled();
-});
+// The receipt fault matrix is owned by
+// isolated/openview/record-move-receipts.spec.ts. One committed-but-malformed
+// receipt stays here for the Kanban recovery: the grouped-read poll, the lane
+// count, and the record hidden until its lane opens.
+for (const failure of ["malformed", "denied"] as const)
+  test(`Kanban retains unsaved moves after a ${failure} batch result`, async ({
+    page,
+  }) => {
+    const api = await installKanbanApi(page);
+    await page.goto(url);
+    await openLane(page);
+    const originalRevision = api.rows.get(firstRecordId)!.updated_at;
+    await moveTo(page, "Pump 1", "Ready");
+    const authReads = api.authReads();
+    const recordReads = api.groupedReads();
+    if (failure === "denied") {
+      api.failBatch(403);
+      api.changeAccess("read");
+    } else api.commitThenFail(failure);
+    await page
+      .getByRole("button", { name: "Save changes (1)", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: /moves|move/i })
+        .last(),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Discard", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Private failure canary", { exact: false }),
+    ).toHaveCount(0);
+    expect(api.batches).toHaveLength(1);
+    if (failure === "denied") {
+      expect(api.rows.get(firstRecordId)?.data[laneFieldId]).toBe(todoId);
+      await expect.poll(api.authReads).toBeGreaterThan(authReads);
+      await expect(
+        page.getByRole("button", { name: "Move to…", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Save changes (1)", exact: true }),
+      ).toBeDisabled();
+    } else {
+      // The server committed; the failed response did not confirm that fact.
+      // A new read must reveal it without clearing or rebasing the pending move.
+      expect(api.rows.get(firstRecordId)?.data[laneFieldId]).toBe(readyId);
+      expect(api.rows.get(firstRecordId)?.updated_at).not.toBe(
+        originalRevision,
+      );
+      await expect.poll(api.groupedReads).toBeGreaterThan(recordReads);
+      await expect(
+        page.getByRole("button", { name: "Ready, 1 records", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Open record: Pump 1", exact: true }),
+      ).toHaveCount(0);
+      const save = page.getByRole("button", {
+        name: "Save changes (1)",
+        exact: true,
+      });
+      await expect(save).toBeVisible();
+      expect(api.batches).toHaveLength(1);
+      await page
+        .getByRole("button", { name: "Ready, 1 records", exact: true })
+        .click();
+      await expect(
+        page.getByRole("button", { name: "Open record: Pump 1", exact: true }),
+      ).toBeVisible();
+      expect(api.batches).toHaveLength(1);
+      await save.click();
+      await expect(
+        page.getByRole("article").filter({ hasText: "Pump 1" }),
+      ).toContainText("Changed by someone else — review");
+      expect(api.batches).toHaveLength(2);
+      expect(api.batches[1].items[0].revision).toBe(originalRevision);
+      await expect(save).toBeVisible();
+    }
+  });
 
 test("Kanban blocks a duplicate Save and preserves the submitted batch while it is pending", async ({
   page,

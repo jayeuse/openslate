@@ -919,6 +919,30 @@ test("a late held receipt cannot republish results after records-read refusal", 
   await expect(page.getByRole("main")).not.toContainText("Task 1");
 });
 
+test("Timeline shifts mixed date and datetime fields together across DST without losing wall precision", async ({
+  page,
+}) => {
+  const api = await installDates(page, {
+    start: "2026-03-07",
+    endType: "datetime",
+    end: "2026-03-07T16:20:45.123456Z",
+  });
+  await page.goto(url);
+  await stage(page, "2026-03-08");
+  await page.getByRole("button", { name: "Save changes (1)" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Saved 1 move." }),
+  ).toBeVisible();
+  expect(api.batches[0].items[0]).toEqual({
+    record_id: recordId,
+    revision,
+    changes: [
+      { field_id: startId, value: "2026-03-08" },
+      { field_id: endId, value: "2026-03-08T15:20:45.123456Z" },
+    ],
+  });
+});
+
 test.describe("touch", () => {
   test.use({
     viewport: { width: 390, height: 844 },

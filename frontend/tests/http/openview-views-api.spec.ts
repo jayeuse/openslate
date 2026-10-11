@@ -1971,7 +1971,9 @@ test("membership View filters select choices by label and submit stable IDs", as
 });
 
 for (const layout of ["kanban", "calendar", "timeline"] as const) {
-  test(`${layout} does not query incomplete filters`, async ({ page }) => {
+  test(`${layout} does not query incomplete filters and sends typed membership values`, async ({
+    page,
+  }) => {
     const api = await installViewsApi(page, { initialLayout: layout });
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
@@ -2026,6 +2028,23 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
           ),
         ),
     ).toBe(false);
+    const value = filtersRegion.getByRole("group", { name: "Value" });
+    await value.getByRole("checkbox", { name: "In service" }).check();
+    await value.getByRole("checkbox", { name: "Inspection due" }).check();
+    await expect
+      .poll(() =>
+        requests.some((request) => {
+          const definition = request.definition as QueryDefinition;
+          return definition.filters.some(
+            (filter) =>
+              filter.field_id === statusFieldId &&
+              filter.operator === "in" &&
+              JSON.stringify(filter.value) ===
+                JSON.stringify([inServiceChoiceId, inspectionDueChoiceId]),
+          );
+        }),
+      )
+      .toBe(true);
   });
 }
 

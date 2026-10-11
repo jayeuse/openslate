@@ -934,6 +934,15 @@ for (const dismissal of ["Stay", "Escape", "outside"] as const) {
   });
 }
 
+test("Queued leave positive control resumes after the same held second receipt", async ({
+  page,
+}) => {
+  const pending = await queueLeaveDuringSecondBatch(page);
+  await pending.held!.fulfill({ json: importResult(pending.submitted!) });
+  await expect(page).toHaveURL(/section=search/);
+  expect(pending.writes).toBe(2);
+});
+
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 1440, height: 900 },

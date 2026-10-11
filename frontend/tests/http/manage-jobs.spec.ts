@@ -579,6 +579,15 @@ test("backup uncertainty survives same-account section remount without an automa
     page.getByRole("button", { name: "Check retry result", exact: true }),
   ).toBeVisible();
   expect(api.posts).toHaveLength(1);
+  await page
+    .getByRole("button", { name: "Check retry result", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Backup retry request confirmed." }),
+  ).toBeVisible();
+  expect(api.posts[1].key).toBe(api.posts[0].key);
 });
 
 test("account replacement cancels a held retry and never transfers its key or late notice", async ({
