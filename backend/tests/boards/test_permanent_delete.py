@@ -6,15 +6,11 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
 from app.systems.access.policy.models import Group
 from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
@@ -34,6 +30,7 @@ from app.systems.sandbox.lifecycle.schemas import (
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.boards.provider_accounts import create_password_account
+from tests.boards.support import client as board_client
 
 pytestmark = pytest.mark.integration
 
@@ -61,14 +58,6 @@ def _actor(db: Session, *, admin: bool, password: str | None = None) -> User:
     db.add(actor)
     db.flush()
     return actor
-
-
-def _client(db: Session, actor: User) -> TestClient:
-    app = FastAPI()
-    app.include_router(lifecycle_router.router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
 
 
 def _board_graph(
@@ -182,22 +171,22 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     path = f"/api/boards/{board.id}/purge/preview"
 
     _enabled(monkeypatch, True)
-    assert _client(db, member).post(path).status_code == 403
+    assert board_client(db, member, lifecycle_router.router).post(path).status_code == 403
     _enabled(monkeypatch, False)
-    disabled = _client(db, admin).post(path)
+    disabled = board_client(db, admin, lifecycle_router.router).post(path)
     assert disabled.status_code == 403
     assert disabled.json()["detail"]["code"] == "purge_disabled"
 
     _enabled(monkeypatch, True)
     board.status = "active"
     db.commit()
-    open_board = _client(db, admin).post(path)
+    open_board = board_client(db, admin, lifecycle_router.router).post(path)
     assert open_board.status_code == 409
     assert open_board.json()["detail"]["code"] == "purge_requires_closed"
 
     board.status = "archived"
     db.commit()
-    response = _client(db, admin).post(path)
+    response = board_client(db, admin, lifecycle_router.router).post(path)
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store"
     payload = response.json()
@@ -221,13 +210,13 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     board.is_deleted = True
     board.deleted_at = None
     db.commit()
-    inconsistent_delete = _client(db, admin).post(path)
+    inconsistent_delete = board_client(db, admin, lifecycle_router.router).post(path)
     assert inconsistent_delete.status_code == 409
     assert inconsistent_delete.json()["detail"]["code"] == "purge_requires_closed"
 
     board.deleted_at = datetime.now(UTC)
     db.commit()
-    assert _client(db, admin).post(path).status_code == 200
+    assert board_client(db, admin, lifecycle_router.router).post(path).status_code == 200
 
 
 def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_audits(
@@ -242,7 +231,7 @@ def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_au
     db.add(untouched)
     db.commit()
     _enabled(monkeypatch, True)
-    client = _client(db, admin)
+    client = board_client(db, admin, lifecycle_router.router)
     path = f"/api/boards/{board.id}/purge"
     preview = client.post(f"{path}/preview")
     assert preview.status_code == 200
@@ -282,7 +271,7 @@ def test_board_purge_rejects_drift_after_password_without_partial_deletion(
     admin = _actor(db, admin=True, password=password)
     board, children, _, _ = _board_graph(db, admin)
     _enabled(monkeypatch, True)
-    client = _client(db, admin)
+    client = board_client(db, admin, lifecycle_router.router)
     path = f"/api/boards/{board.id}/purge"
     token = client.post(f"{path}/preview").json()["token"]
     event = db.get(BoardEvent, children["board_events"])
@@ -309,7 +298,7 @@ def test_board_purge_rejects_new_published_revision_after_preview(
     admin = _actor(db, admin=True, password=password)
     board, children, _, _ = _board_graph(db, admin)
     _enabled(monkeypatch, True)
-    client = _client(db, admin)
+    client = board_client(db, admin, lifecycle_router.router)
     path = f"/api/boards/{board.id}/purge"
     token = client.post(f"{path}/preview").json()["token"]
     revision = BoardPostRevision(
@@ -347,7 +336,7 @@ def test_board_purge_rejects_wrong_confirmation_and_target_bound_token(
     db.add(other)
     db.commit()
     _enabled(monkeypatch, True)
-    client = _client(db, admin)
+    client = board_client(db, admin, lifecycle_router.router)
     token = client.post(f"/api/boards/{board.id}/purge/preview").json()["token"]
     wrong_name = client.post(
         f"/api/boards/{board.id}/purge",
@@ -363,7 +352,7 @@ def test_board_purge_rejects_wrong_confirmation_and_target_bound_token(
     assert wrong_target.json()["detail"]["code"] == "challenge_binding_mismatch"
     another_admin = _actor(db, admin=True)
     db.commit()
-    wrong_actor = _client(db, another_admin).post(
+    wrong_actor = board_client(db, another_admin, lifecycle_router.router).post(
         f"/api/boards/{board.id}/purge",
         json={"token": token, "confirmation_name": board.name, "password": password},
     )
@@ -381,7 +370,7 @@ def test_board_purge_rolls_back_child_deletes_on_commit_failure(
     admin = _actor(db, admin=True, password=password)
     board, children, _, _ = _board_graph(db, admin)
     _enabled(monkeypatch, True)
-    client = _client(db, admin)
+    client = board_client(db, admin, lifecycle_router.router)
     path = f"/api/boards/{board.id}/purge"
     token = client.post(f"{path}/preview").json()["token"]
     original_verify = lifecycle_router.verify_challenge
@@ -416,7 +405,7 @@ def test_board_purge_rechecks_fresh_admin_after_password_step_up(
     board, _, _, _ = _board_graph(db, admin)
     _enabled(monkeypatch, True)
     path = f"/api/boards/{board.id}/purge"
-    token = _client(db, admin).post(f"{path}/preview").json()["token"]
+    token = board_client(db, admin, lifecycle_router.router).post(f"{path}/preview").json()["token"]
     actor_id = admin.id
     assert admin.role == "admin"
     db.expunge(admin)
@@ -425,7 +414,7 @@ def test_board_purge_rechecks_fresh_admin_after_password_step_up(
     fresh_actor.role = "member"
     db.commit()
 
-    denied = _client(db, admin).post(
+    denied = board_client(db, admin, lifecycle_router.router).post(
         path,
         json={"token": token, "confirmation_name": board.name, "password": password},
     )

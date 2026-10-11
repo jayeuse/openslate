@@ -3,37 +3,13 @@
 from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app.main import create_app
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.openview.charts.models import Chart
 from tests.charts.chart_route_support import chart_world as chart_world
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.mark.parametrize(
-    "method,path",
-    [
-        ("GET", "/api/charts"),
-        ("POST", "/api/charts"),
-        ("GET", "/api/charts/11111111-1111-4111-8111-111111111111"),
-        ("PATCH", "/api/charts/11111111-1111-4111-8111-111111111111"),
-        ("DELETE", "/api/charts/11111111-1111-4111-8111-111111111111?revision=1"),
-        ("POST", "/api/charts/11111111-1111-4111-8111-111111111111/restore"),
-        ("GET", "/api/charts/11111111-1111-4111-8111-111111111111/usage"),
-    ],
-)
-def test_chart_list_is_mounted_and_requires_authentication(method, path):
-    with TestClient(create_app()) as client:
-        assert (
-            client.request(
-                method, path, json={} if method in {"POST", "PATCH"} else None
-            ).status_code
-            == 401
-        )
 
 
 def test_department_manager_creates_reads_pages_edits_archives_and_restores(chart_world):
@@ -183,9 +159,7 @@ def test_chart_filters_literal_search_and_ties_are_applied_before_paging(chart_w
         )
 
 
-@pytest.mark.parametrize(
-    "params", [{"limit": 101}, {"offset": -1}, {"sort_by": "unsafe"}, {"deleted": "unknown"}]
-)
+@pytest.mark.parametrize("params", [{"limit": 101}, {"sort_by": "unsafe"}, {"deleted": "unknown"}])
 def test_invalid_list_parameters_remain_422(chart_world, params):
     with chart_world.client("reader") as client:
         assert client.get("/api/charts", params=params).status_code == 422

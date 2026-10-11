@@ -6,12 +6,12 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from record_queries.test_database import route_actor, setup_rows
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.router import router
+from tests.record_queries.support import route_actor, setup_rows
 
 pytestmark = pytest.mark.integration
 

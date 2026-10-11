@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 
 import pytest
-from record_queries.test_database import setup_rows
 from uuid6 import uuid7
 from views.test_access import actor
 
@@ -12,6 +11,7 @@ from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope
 from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
 from app.systems.sandbox.modules.models import Module
+from tests.record_queries.support import setup_rows
 
 
 def test_purge_dependency_inventory_tracks_saved_view_default_changes():

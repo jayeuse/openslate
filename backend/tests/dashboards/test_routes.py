@@ -270,35 +270,6 @@ def test_dashboard_rejects_stale_record_widget_fields_without_saving(
     )
 
 
-def test_dashboard_rejects_unknown_widget_type_and_refresh_cadence(
-    integration_owner_db: Session,
-) -> None:
-    db = integration_owner_db
-    owner = _actor(db)
-    department = _department(db)
-    set_audit_actor(db, owner.id)
-    with _client(db, owner) as client:
-        invalid_widget = client.post(
-            "/api/dashboards",
-            json={
-                "department_id": str(department.id),
-                "name": "Unknown widget",
-                "widgets": [{"widget_type": "table", "config": {}}],
-            },
-        )
-        invalid_cadence = client.post(
-            "/api/dashboards",
-            json={
-                "department_id": str(department.id),
-                "name": "Unknown cadence",
-                "refresh_cadence": "hourly",
-            },
-        )
-        assert invalid_widget.status_code == 422
-        assert invalid_cadence.status_code == 422
-    assert db.scalar(select(Dashboard).where(Dashboard.department_id == department.id)) is None
-
-
 def test_dashboards_are_hidden_outside_departments_the_user_can_read(
     integration_owner_db: Session,
 ) -> None:

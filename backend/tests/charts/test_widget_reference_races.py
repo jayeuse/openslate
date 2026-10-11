@@ -1,74 +1,12 @@
 """Independent runtime HTTP sessions prove source contention and reference serialization."""
 
-import threading
-import time
-
 import pytest
 from sqlalchemy import event, text
 
 from tests.charts.widget_reference_support import reference_race_world as reference_race_world
+from tests.race_support import WAIT, StatementPause, join, start, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
-_WAIT = 10.0
-
-
-class _Pause:
-    def __init__(self, engine, prefix):
-        self.ready, self.release = threading.Event(), threading.Event()
-        self.pid = 0
-        self.engine = engine
-
-        def before(_connection, cursor, statement, *_args):
-            if self.ready.is_set() or not statement.upper().lstrip().startswith(prefix.upper()):
-                return
-            self.pid = cursor.connection.info.backend_pid
-            self.ready.set()
-            assert self.release.wait(_WAIT), "the held real request was not released"
-
-        self.listener = before
-        event.listen(engine, "before_cursor_execute", before)
-
-    def close(self):
-        self.release.set()
-        event.remove(self.engine, "before_cursor_execute", self.listener)
-
-
-def _start(call):
-    results = []
-
-    def run():
-        try:
-            results.append(call())
-        except Exception as error:
-            results.append(error)
-
-    thread = threading.Thread(target=run)
-    thread.start()
-    return thread, results
-
-
-def _join(thread, results):
-    thread.join(_WAIT)
-    assert not thread.is_alive(), "the real HTTP request hung"
-    assert results and not isinstance(results[0], Exception), repr(results)
-    return results[0]
-
-
-def _blocked(observer, holder):
-    deadline = time.monotonic() + _WAIT
-    while time.monotonic() < deadline:
-        with observer.connect() as connection:
-            waiting = connection.scalar(
-                text(
-                    "SELECT pid FROM pg_locks WHERE NOT granted "
-                    "AND :holder = ANY(pg_blocking_pids(pid)) LIMIT 1"
-                ),
-                {"holder": holder},
-            )
-        if waiting is not None:
-            return waiting
-        threading.Event().wait(0.01)
-    raise AssertionError("the competing real request never blocked on the holder")
 
 
 def _archive(world, client):
@@ -78,22 +16,22 @@ def _archive(world, client):
 @pytest.mark.parametrize("kind", ["board", "dashboard"])
 def test_attachment_wins_then_archive_observes_committed_reference(reference_race_world, kind):
     world = reference_race_world
-    pause = _Pause(
+    pause = StatementPause(
         world.runtime,
         "INSERT INTO " + ("board_widgets" if kind == "board" else "dashboard_widgets"),
     )
     with world.client("member") as writer, world.client("admin") as archiver:
-        first, first_results = _start(lambda: world.attachment(writer, kind))
+        first, first_results = start(lambda: world.attachment(writer, kind))
         second = None
         try:
-            assert pause.ready.wait(_WAIT)
-            second, second_results = _start(lambda: _archive(world, archiver))
-            _blocked(world.owner, pause.pid)
+            assert pause.paused.wait(WAIT)
+            second, second_results = start(lambda: _archive(world, archiver))
+            wait_until_blocked_by(world.owner, pause.holder_pid)
         finally:
             pause.release.set()
-            attached = _join(first, first_results)
-            archived = _join(second, second_results) if second is not None else None
-            pause.close()
+            attached = join(first, first_results)
+            archived = join(second, second_results) if second is not None else None
+            pause.remove()
     assert attached.status_code == (201 if kind == "board" else 200)
     assert archived is not None and archived.status_code == 409
     assert archived.json()["detail"]["code"] == "chart_in_use"
@@ -102,19 +40,19 @@ def test_attachment_wins_then_archive_observes_committed_reference(reference_rac
 @pytest.mark.parametrize("kind", ["board", "dashboard"])
 def test_archive_wins_attachment_busy_then_committed_archive_is_invalid(reference_race_world, kind):
     world = reference_race_world
-    pause = _Pause(world.runtime, "UPDATE charts")
+    pause = StatementPause(world.runtime, "UPDATE charts")
     with world.client("admin") as archiver, world.client("member") as writer:
-        first, results = _start(lambda: _archive(world, archiver))
+        first, results = start(lambda: _archive(world, archiver))
         try:
-            assert pause.ready.wait(_WAIT)
+            assert pause.paused.wait(WAIT)
             busy = world.attachment(writer, kind)
             assert busy.status_code == 503
             assert busy.headers["cache-control"] == "private, no-store"
             assert "First" not in busy.text and "SELECT" not in busy.text
         finally:
             pause.release.set()
-            archived = _join(first, results)
-            pause.close()
+            archived = join(first, results)
+            pause.remove()
         assert archived.status_code == 204
         committed = world.attachment(writer, kind)
         assert committed.status_code == 409
@@ -214,13 +152,13 @@ def test_nowait_busy_refusal_releases_earlier_locks_without_partial_writes(
 def test_source_nowait_breaks_publication_and_board_group_reverse_edges(reference_race_world):
     world = reference_race_world
     # B2 owns Group locks, but pauses before its first Department lock.
-    pause = _Pause(world.runtime, "SELECT departments")
+    pause = StatementPause(world.runtime, "SELECT departments")
     with world.client("member") as writer, world.client("admin") as group_writer:
-        attachment, attached_results = _start(lambda: world.attachment(writer))
+        attachment, attached_results = start(lambda: world.attachment(writer))
         groups = publication = None
         try:
-            assert pause.ready.wait(_WAIT)
-            groups, groups_results = _start(
+            assert pause.paused.wait(WAIT)
+            groups, groups_results = start(
                 lambda: group_writer.put(
                     f"/api/boards/{world.board_id}/groups",
                     json={
@@ -229,7 +167,7 @@ def test_source_nowait_breaks_publication_and_board_group_reverse_edges(referenc
                     },
                 )
             )
-            group_pid = _blocked(world.owner, pause.pid)
+            group_pid = wait_until_blocked_by(world.owner, pause.holder_pid)
 
             def publication_lock_order():
                 # Literal owned fixture reproduces executor Department→Module→Field→Board.
@@ -247,19 +185,19 @@ def test_source_nowait_breaks_publication_and_board_group_reverse_edges(referenc
                         )
                 return True
 
-            publication, published_results = _start(publication_lock_order)
-            _blocked(world.owner, group_pid)
+            publication, published_results = start(publication_lock_order)
+            wait_until_blocked_by(world.owner, group_pid)
         finally:
             pause.release.set()
-            attachment.join(_WAIT)
+            attachment.join(WAIT)
             if groups is not None:
-                groups.join(_WAIT)
+                groups.join(WAIT)
             if publication is not None:
-                publication.join(_WAIT)
-            pause.close()
-        refused = _join(attachment, attached_results)
-        replaced = _join(groups, groups_results)
-        assert _join(publication, published_results) is True
+                publication.join(WAIT)
+            pause.remove()
+        refused = join(attachment, attached_results)
+        replaced = join(groups, groups_results)
+        assert join(publication, published_results) is True
     assert refused.status_code == 503 and replaced.status_code == 200
     with world.owner.connect() as observer:
         assert (
@@ -279,11 +217,11 @@ def test_source_nowait_breaks_publication_and_board_group_reverse_edges(referenc
 
 def test_module_move_after_unlocked_discovery_refuses_the_source(reference_race_world):
     world = reference_race_world
-    pause = _Pause(world.runtime, "SELECT departments")
+    pause = StatementPause(world.runtime, "SELECT departments")
     with world.client("member") as client:
-        request, results = _start(lambda: world.attachment(client))
+        request, results = start(lambda: world.attachment(client))
         try:
-            assert pause.ready.wait(_WAIT)
+            assert pause.paused.wait(WAIT)
             with world.owner.begin() as fixture:
                 fixture.execute(
                     text("UPDATE modules SET department_id = :department WHERE id = :id"),
@@ -291,9 +229,9 @@ def test_module_move_after_unlocked_discovery_refuses_the_source(reference_race_
                 )
         finally:
             pause.release.set()
-            request.join(_WAIT)
-            pause.close()
-        refused = _join(request, results)
+            request.join(WAIT)
+            pause.remove()
+        refused = join(request, results)
     assert refused.status_code == 409 and refused.json()["detail"]["code"] == "widget_invalid"
     with world.owner.connect() as observer:
         assert (

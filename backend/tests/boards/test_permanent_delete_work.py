@@ -11,7 +11,6 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.main import app as application
 from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.event_models import BoardEvent
@@ -28,10 +27,6 @@ from app.systems.platform.scheduling.models import (
 from tests.boards.provider_accounts import create_password_account
 
 pytestmark = pytest.mark.integration
-
-
-def test_board_purge_route_is_mounted_after_reminder_children_join_inventory() -> None:
-    assert "/api/boards/{board_id}/purge/preview" in application.openapi()["paths"]
 
 
 def test_board_purge_challenges_and_deletes_content_work_dependencies(

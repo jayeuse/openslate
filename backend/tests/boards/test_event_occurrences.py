@@ -97,6 +97,8 @@ def test_daily_weekly_and_monthly_recurrences_are_anchored_and_repeat_until_is_i
     daily_result = expand_board_event_occurrences(daily, date(2026, 9, 14), date(2026, 9, 17))
     weekly_result = expand_board_event_occurrences(weekly, date(2026, 9, 14), date(2026, 9, 28))
     monthly_result = expand_board_event_occurrences(monthly, date(2026, 1, 1), date(2026, 4, 30))
+    # A window that starts after the anchor and skips the short February.
+    monthly_window = expand_board_event_occurrences(monthly, date(2026, 2, 25), date(2026, 4, 5))
 
     assert [item.date for item in daily_result.occurrences] == [
         "2026-09-14",
@@ -117,6 +119,7 @@ def test_daily_weekly_and_monthly_recurrences_are_anchored_and_repeat_until_is_i
         "2026-01-31",
         "2026-03-31",
     ]
+    assert [item.date for item in monthly_window.occurrences] == ["2026-03-31"]
 
 
 def test_recurring_spans_include_earlier_anchor_days_that_overlap_the_window() -> None:

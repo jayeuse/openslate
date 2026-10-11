@@ -8,7 +8,6 @@ the holder is released once PostgreSQL shows the competitor blocked behind it
 
 import os
 import threading
-import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -16,14 +15,16 @@ from uuid import UUID
 
 import httpx
 import pytest
-from sqlalchemy import Engine, event, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.systems.boards.models import Board, BoardScope
 from app.systems.boards.post_models import BoardPost
+from tests.race_support import WAIT, StatementPause, wait_until_blocked_by
 from tests.relationships_integration.relationship_http_support import RelationshipHTTPFixture
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -33,8 +34,6 @@ pytestmark = [
 ]
 pytest_plugins = ("tests.relationships_integration.relationship_http_support",)
 
-# Upper bound for every wait; the Board lock itself has no lock timeout.
-_WAIT = 10.0
 _TITLE = "Opening notice"
 _BODY = "The office is open."
 
@@ -70,52 +69,6 @@ def world(relationship_http_fixture: RelationshipHTTPFixture) -> Iterator[_World
             connection.execute(text("DELETE FROM public.boards WHERE id = :id"), {"id": board_id})
 
 
-class _Pause:
-    """Hold the first statement that starts with ``prefix`` until the test releases it."""
-
-    def __init__(self, engine: Engine, prefix: str) -> None:
-        self.paused = threading.Event()
-        self.release = threading.Event()
-        self.holder_pid = 0
-        self._engine = engine
-        wanted = prefix.upper()
-
-        def before_cursor_execute(
-            _connection: Any, cursor: Any, statement: str, *_args: Any
-        ) -> None:
-            if self.paused.is_set() or not statement.lstrip().upper().startswith(wanted):
-                return
-            self.holder_pid = int(cursor.connection.info.backend_pid)
-            self.paused.set()
-            self.release.wait(_WAIT)
-
-        self._listener = before_cursor_execute
-        event.listen(engine, "before_cursor_execute", before_cursor_execute)
-
-    def remove(self) -> None:
-        self.release.set()
-        if event.contains(self._engine, "before_cursor_execute", self._listener):
-            event.remove(self._engine, "before_cursor_execute", self._listener)
-
-
-def _wait_until_blocked_by(observer: Engine, holder_pid: int) -> None:
-    """Poll until some backend waits for a lock that ``holder_pid`` holds."""
-
-    deadline = time.monotonic() + _WAIT
-    while time.monotonic() < deadline:
-        with observer.connect() as connection:
-            if connection.scalar(
-                text(
-                    "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted "
-                    "AND :holder = ANY (pg_blocking_pids(pid)))"
-                ),
-                {"holder": holder_pid},
-            ):
-                return
-        threading.Event().wait(0.01)
-    raise AssertionError("the competing request never waited for the holder's lock")
-
-
 def _race(
     world: _World,
     prefix: str,
@@ -137,12 +90,12 @@ def _race(
         name: threading.Thread(target=run, args=(name, call))
         for name, call in (("first", first), ("second", second))
     }
-    pause = _Pause(world.fixture.runtime_engine, prefix)
+    pause = StatementPause(world.fixture.runtime_engine, prefix)
     try:
         threads["first"].start()
-        assert pause.paused.wait(_WAIT), "the first request never reached its pause point"
+        assert pause.paused.wait(WAIT), "the first request never reached its pause point"
         threads["second"].start()
-        _wait_until_blocked_by(world.fixture.owner_engine, pause.holder_pid)
+        wait_until_blocked_by(world.fixture.owner_engine, pause.holder_pid)
         pause.release.set()
     finally:
         # Release first so a failed poll cannot hang the holder; remove the listener only
@@ -150,7 +103,7 @@ def _race(
         pause.release.set()
         for thread in threads.values():
             if thread.ident is not None:
-                thread.join(_WAIT)
+                thread.join(WAIT)
         pause.remove()
     assert not any(thread.is_alive() for thread in threads.values()), "a request hung"
     first_response, second_response = outcomes.get("first"), outcomes.get("second")

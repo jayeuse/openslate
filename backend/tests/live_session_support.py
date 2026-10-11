@@ -22,22 +22,26 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
 
 
-def with_live_session(client: TestClient, db: Session, actor: User) -> TestClient:
+def with_live_session(
+    client: TestClient, db: Session, actor: User, *, session: IdentitySession | None = None
+) -> TestClient:
     """Commit a live session for *actor* and resolve both auth dependencies to it.
 
-    The commit keeps the session row when a refused route rolls back to the
-    last savepoint; the fixture's outer transaction still discards it.
+    A test that proves the recheck passes its own *session* row instead (revoked,
+    expired or another user's). The commit keeps the session row when a refused route
+    rolls back to the last savepoint; the fixture's outer transaction still discards it.
     """
 
-    now = utc_now()
-    session = IdentitySession(
-        user_id=actor.id,
-        refresh_token_digest=uuid7().hex + uuid7().hex,
-        csrf_token_digest=uuid7().hex + uuid7().hex,
-        created_at=now,
-        refreshed_at=now,
-        expires_at=now + timedelta(hours=1),
-    )
+    if session is None:
+        now = utc_now()
+        session = IdentitySession(
+            user_id=actor.id,
+            refresh_token_digest=uuid7().hex + uuid7().hex,
+            csrf_token_digest=uuid7().hex + uuid7().hex,
+            created_at=now,
+            refreshed_at=now,
+            expires_at=now + timedelta(hours=1),
+        )
     db.add(session)
     db.commit()
     session_id = session.id

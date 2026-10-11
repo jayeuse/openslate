@@ -62,29 +62,6 @@ def test_old_non_timeline_presentation_accepts_missing_timeline_keys():
     assert presentation.timeline_progress_field_id is None
 
 
-@pytest.mark.parametrize(
-    ("start_field_id", "end_field_id"),
-    [(None, uuid7()), (uuid7(), None)],
-)
-def test_timeline_requires_both_interval_bounds(start_field_id, end_field_id):
-    presentation = ViewPresentation(
-        layout="timeline",
-        timeline_start_field_id=start_field_id,
-        timeline_end_field_id=end_field_id,
-    )
-
-    with pytest.raises(HTTPException) as error:
-        _validate_presentation(
-            _FieldSession([]),  # type: ignore[arg-type]
-            uuid7(),
-            presentation,
-            QueryDefinition(),
-        )
-
-    assert error.value.status_code == 409
-    assert error.value.detail["code"] == "view_invalid"
-
-
 def test_timeline_accepts_mixed_date_types_and_optional_deadline_progress():
     module_id = uuid7()
     fields = [
@@ -134,91 +111,162 @@ def test_timeline_bounds_are_valid_without_optional_deadline_or_progress():
     )
 
 
+_COLUMNS = "Presentation fields must be included in query columns"
+_UNAVAILABLE = "A presentation field is unavailable"
+_CALENDAR = "Calendar presentation requires a date or datetime field"
+_BOUNDS = "Timeline presentation requires start and end fields"
+_INTERVAL = "Timeline interval roles must be date or datetime fields"
+_PROGRESS = "Timeline progress must use a numeric field"
+_TIMELINE = {
+    "layout": "timeline",
+    "timeline_start_field_id": "start",
+    "timeline_end_field_id": "end",
+    "timeline_deadline_field_id": "deadline",
+    "timeline_progress_field_id": "progress",
+}
+_TIMELINE_FIELDS = {
+    "start": FieldType.DATE,
+    "end": FieldType.DATETIME,
+    "deadline": FieldType.DATE,
+    "progress": FieldType.DECIMAL,
+}
+_INTERVAL_ONLY = {
+    "layout": "timeline",
+    "timeline_start_field_id": "start",
+    "timeline_end_field_id": "end",
+}
+
+
+# Each row: the presentation (field roles by name), the module fields the session returns
+# (a type, or a type and True for a deleted field), the query columns, the refusal message,
+# and whether the check reads the module fields at all.
 @pytest.mark.parametrize(
-    ("role", "invalid_type"),
+    ("presentation", "fields", "columns", "message", "queried"),
     [
-        ("timeline_start_field_id", FieldType.TEXT),
-        ("timeline_end_field_id", FieldType.BOOLEAN),
-        ("timeline_deadline_field_id", FieldType.SELECT),
-        ("timeline_progress_field_id", FieldType.DATE),
+        pytest.param(
+            {"column_field_ids": ["primary"], "primary_field_id": "primary"},
+            {},
+            [],
+            _COLUMNS,
+            False,
+            id="primary field outside the query columns",
+        ),
+        pytest.param(
+            {"column_field_ids": ["primary"], "primary_field_id": "primary"},
+            {"primary": (FieldType.TEXT, True)},
+            ["primary"],
+            _UNAVAILABLE,
+            True,
+            id="deleted primary field",
+        ),
+        pytest.param(
+            {"column_field_ids": ["primary"], "date_field_id": "primary"},
+            {"primary": FieldType.TEXT},
+            ["primary"],
+            _CALENDAR,
+            True,
+            id="calendar on a text field",
+        ),
+        pytest.param(
+            {"layout": "timeline", "timeline_end_field_id": "end"},
+            {},
+            [],
+            _BOUNDS,
+            False,
+            id="timeline without a start",
+        ),
+        pytest.param(
+            {"layout": "timeline", "timeline_start_field_id": "start"},
+            {},
+            [],
+            _BOUNDS,
+            False,
+            id="timeline without an end",
+        ),
+        pytest.param(
+            _TIMELINE,
+            _TIMELINE_FIELDS | {"start": FieldType.TEXT},
+            list(_TIMELINE_FIELDS),
+            _INTERVAL,
+            True,
+            id="text timeline start",
+        ),
+        pytest.param(
+            _TIMELINE,
+            _TIMELINE_FIELDS | {"end": FieldType.BOOLEAN},
+            list(_TIMELINE_FIELDS),
+            _INTERVAL,
+            True,
+            id="boolean timeline end",
+        ),
+        pytest.param(
+            _TIMELINE,
+            _TIMELINE_FIELDS | {"deadline": FieldType.SELECT},
+            list(_TIMELINE_FIELDS),
+            _INTERVAL,
+            True,
+            id="select timeline deadline",
+        ),
+        pytest.param(
+            _TIMELINE,
+            _TIMELINE_FIELDS | {"progress": FieldType.DATE},
+            list(_TIMELINE_FIELDS),
+            _PROGRESS,
+            True,
+            id="date timeline progress",
+        ),
+        pytest.param(
+            _INTERVAL_ONLY,
+            {"start": FieldType.DATE, "end": FieldType.DATETIME},
+            ["start"],
+            _COLUMNS,
+            False,
+            id="timeline end outside the query columns",
+        ),
+        pytest.param(
+            _INTERVAL_ONLY,
+            {"start": (FieldType.DATE, True), "end": FieldType.DATETIME},
+            ["start", "end"],
+            _UNAVAILABLE,
+            True,
+            id="deleted timeline start",
+        ),
     ],
 )
-def test_timeline_roles_reject_incompatible_field_types(role, invalid_type):
+def test_presentation_refuses_fields_it_cannot_show(
+    presentation, fields, columns, message, queried
+):
     module_id = uuid7()
-    fields = [
-        _field(uuid7(), module_id, FieldType.DATE),
-        _field(uuid7(), module_id, FieldType.DATETIME),
-        _field(uuid7(), module_id, FieldType.DATE),
-        _field(uuid7(), module_id, FieldType.DECIMAL),
+    ids = {role: uuid7() for role in ("primary", "start", "end", "deadline", "progress")}
+    settings = {
+        name: [ids[role] for role in value] if isinstance(value, list) else ids.get(value, value)
+        for name, value in presentation.items()
+    }
+    rows = [
+        _field(ids[role], module_id, spec[0], deleted=spec[1])
+        if isinstance(spec, tuple)
+        else _field(ids[role], module_id, spec)
+        for role, spec in fields.items()
     ]
-    presentation = ViewPresentation(
-        layout="timeline",
-        timeline_start_field_id=fields[0].id,
-        timeline_end_field_id=fields[1].id,
-        timeline_deadline_field_id=fields[2].id,
-        timeline_progress_field_id=fields[3].id,
+    types = {row.id: row.type for row in rows}
+    definition = QueryDefinition(
+        columns=[
+            FieldReference(field_id=ids[role], expected_type=types[ids[role]]) for role in columns
+        ]
     )
-    role_field_id = getattr(presentation, role)
-    fields = [
-        _field(item.id, module_id, invalid_type if item.id == role_field_id else item.type)
-        for item in fields
-    ]
+    session = _FieldSession(rows)
 
     with pytest.raises(HTTPException) as error:
         _validate_presentation(
-            _FieldSession(fields),  # type: ignore[arg-type]
+            session,  # type: ignore[arg-type]  # a stub with only scalars()
             module_id,
-            presentation,
-            _definition(fields),
+            ViewPresentation(**settings),
+            definition,
         )
 
     assert error.value.status_code == 409
-    assert error.value.detail["code"] == "view_invalid"
-
-
-def test_timeline_rejects_presentation_fields_missing_from_query_columns():
-    module_id = uuid7()
-    start = _field(uuid7(), module_id, FieldType.DATE)
-    end = _field(uuid7(), module_id, FieldType.DATETIME)
-    presentation = ViewPresentation(
-        layout="timeline",
-        timeline_start_field_id=start.id,
-        timeline_end_field_id=end.id,
-    )
-
-    with pytest.raises(HTTPException) as error:
-        _validate_presentation(
-            _FieldSession([start, end]),  # type: ignore[arg-type]
-            module_id,
-            presentation,
-            _definition([start]),
-        )
-
-    assert error.value.status_code == 409
-    assert error.value.detail["code"] == "view_invalid"
-
-
-def test_timeline_rejects_a_deleted_role_field():
-    module_id = uuid7()
-    start = _field(uuid7(), module_id, FieldType.DATE, deleted=True)
-    end = _field(uuid7(), module_id, FieldType.DATETIME)
-    fields = [start, end]
-    presentation = ViewPresentation(
-        layout="timeline",
-        timeline_start_field_id=start.id,
-        timeline_end_field_id=end.id,
-    )
-
-    with pytest.raises(HTTPException) as error:
-        _validate_presentation(
-            _FieldSession(fields),  # type: ignore[arg-type]
-            module_id,
-            presentation,
-            _definition(fields),
-        )
-
-    assert error.value.status_code == 409
-    assert error.value.detail["code"] == "view_invalid"
+    assert error.value.detail == {"code": "view_invalid", "message": message}
+    assert bool(session.statements) is queried
 
 
 def test_name_only_noop_preserves_legacy_presentation_without_timeline_keys(monkeypatch):

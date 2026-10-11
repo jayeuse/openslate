@@ -225,12 +225,11 @@ def test_v3_legacy_aggregation_codecs_preserve_meaning_and_named_references(
 @pytest.mark.parametrize(
     ("aggregation", "metric_type"),
     [
+        # An explicit null fails the literal check here.
         (None, None),
+        # One measure pair proves the bundle sends its metric to the aggregate rule, which
+        # tests/record_queries/test_group_aggregate_schemas.py owns pair by pair.
         ("count", "number"),
-        ("sum", None),
-        ("min", "date"),
-        ("max", "datetime"),
-        ("distinct", None),
     ],
 )
 def test_v3_legacy_aggregation_rejects_invalid_measure_pairs(

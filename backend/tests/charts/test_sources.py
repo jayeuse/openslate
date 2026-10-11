@@ -78,29 +78,12 @@ def test_snapshot_metric_and_typed_measure_survive_create_and_reload(chart_world
         assert saved["aggregation"] == metric and saved["measure"]["field_id"] == str(measure.id)
 
 
-@pytest.mark.parametrize(
-    "defect", ["family", "module", "measure", "relationship", "extra-owner", "limit"]
-)
-def test_invalid_request_definitions_are_422_and_save_nothing(chart_world, defect):
+def test_an_invalid_request_definition_is_422_and_saves_nothing(chart_world):
+    """One HTTP case; tests/charts/test_chart_contracts.py owns every request rule."""
+
     world = chart_world
     body = world.body()
-    if defect == "family":
-        body["chart_type"] = "line"
-    elif defect == "module":
-        body["query"]["module_id"] = str(world.other_module.id)
-    elif defect == "measure":
-        body["query"].update(
-            {
-                "aggregation": "min",
-                "measure": {"field_id": str(world.date.id), "expected_type": "date"},
-            }
-        )
-    elif defect == "relationship":
-        body["query"]["dimension"]["expected_type"] = "relationship"
-    elif defect == "extra-owner":
-        body["department_id"] = str(world.other_module.department_id)
-    else:
-        body["name"] = "N" * 121
+    body["chart_type"] = "line"
     with world.client("manager") as client:
         assert client.post("/api/charts", json=body).status_code == 422
     assert world.db.scalar(select(func.count()).select_from(Chart)) == 0

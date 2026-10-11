@@ -3,13 +3,10 @@
 from decimal import Decimal
 
 import pytest
-from pydantic import ValidationError
-from record_queries.test_analytics_database import add_values, reference
-from record_queries.test_database import READER, request_for, setup_rows
-from uuid6 import uuid7
 
 from app.systems.sandbox.records.aggregation import aggregate_records
 from app.systems.sandbox.records.query_schemas import GroupedAggregateQuery
+from tests.record_queries.support import READER, add_values, reference, request_for, setup_rows
 
 pytestmark = pytest.mark.integration
 
@@ -94,28 +91,3 @@ def test_distinct_counts_typed_values_and_ignores_nulls(query_db, kind, values):
         reader=READER,
     )
     assert [(item.value, item.record_count) for item in result.items] == [(2, 4)]
-
-
-@pytest.mark.parametrize("metric", ["min", "max"])
-@pytest.mark.parametrize("kind", ["date", "datetime", "text", "boolean"])
-def test_extrema_reject_non_numeric_measures(metric, kind):
-    with pytest.raises(ValidationError):
-        GroupedAggregateQuery(
-            module_id=uuid7(),
-            definition={},
-            dimension={"field_id": uuid7(), "expected_type": "text"},
-            measure={"field_id": uuid7(), "expected_type": kind},
-            aggregation=metric,
-        )
-
-
-def test_distinct_requires_a_primitive_measure():
-    common = {
-        "module_id": uuid7(),
-        "definition": {},
-        "aggregation": "distinct",
-        "dimension": {"field_id": uuid7(), "expected_type": "text"},
-    }
-    for measure in (None, {"field_id": uuid7(), "expected_type": "relationship"}):
-        with pytest.raises(ValidationError):
-            GroupedAggregateQuery(**common, measure=measure)

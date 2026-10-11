@@ -5,18 +5,11 @@ from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
-from record_queries.test_database import READER, _option_id, request_for, route_actor, setup_rows
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from app.common.dependencies import get_current_user
 from app.core.config import get_settings
-from app.core.database import get_db
-from app.main import app
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.schemas import WorkspaceUpdate
-from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.fields.validation import validate_field_value
 from app.systems.sandbox.records.aggregation import aggregate_records, aggregate_snapshot_records
 from app.systems.sandbox.records.grouping import query_grouped_records
@@ -26,30 +19,18 @@ from app.systems.sandbox.records.query_schemas import (
     GroupedAggregateSnapshotQuery,
     GroupedRecordQuery,
 )
+from tests.record_queries.support import (
+    READER,
+    add_values,
+    option_id,
+    reference,
+    request_for,
+    route_actor,
+    route_client,
+    setup_rows,
+)
 
 pytestmark = pytest.mark.integration
-
-
-def add_values(db: Session, module, rows, name: str, kind: str, values: list[object]) -> Field:
-    field = Field(
-        module_id=module.id,
-        name=name,
-        type=kind,
-        position=1,
-        required=False,
-        config={},
-    )
-    db.add(field)
-    db.flush()
-    for row, value in zip(rows, values, strict=True):
-        if value is not ...:
-            row.data = {**row.data, str(field.id): value}
-    db.flush()
-    return field
-
-
-def reference(field: Field) -> dict[str, object]:
-    return {"field_id": field.id, "expected_type": field.type}
 
 
 def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
@@ -68,7 +49,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
 
     headers = query_grouped_records(query_db, GroupedRecordQuery(**base), reader=READER)
     assert [(group.value, group.label, group.count) for group in headers.groups] == [
-        (_option_id("B"), "B", 1),
+        (option_id("B"), "B", 1),
         (None, "Unspecified", 2),
     ]
     assert headers.items == []
@@ -81,7 +62,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
         GroupedRecordQuery(
             **base,
             limit=1,
-            selected_group={"kind": "value", "value": _option_id("B")},
+            selected_group={"kind": "value", "value": option_id("B")},
         ),
         reader=READER,
     )
@@ -89,7 +70,7 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
     assert selected.items[0].data == {}
     assert selected.selected_group is not None
     assert selected.selected_group.kind == "value"
-    assert selected.selected_group.value == _option_id("B")
+    assert selected.selected_group.value == option_id("B")
     assert selected.pagination is not None
     assert selected.pagination.total == 1
 
@@ -122,13 +103,13 @@ def test_grouped_query_paginates_only_selected_group_members(query_db) -> None:
 
     empty_choice = query_grouped_records(
         query_db,
-        GroupedRecordQuery(**base, selected_group={"kind": "value", "value": _option_id("Empty")}),
+        GroupedRecordQuery(**base, selected_group={"kind": "value", "value": option_id("Empty")}),
         reader=READER,
     )
     assert [item.id for item in empty_choice.items] == [rows[5].id]
     assert empty_choice.selected_group is not None
     assert empty_choice.selected_group.kind == "value"
-    assert empty_choice.selected_group.value == _option_id("Empty")
+    assert empty_choice.selected_group.value == option_id("Empty")
 
 
 def test_grouped_query_rejects_deleted_or_type_changed_group_field(query_db) -> None:
@@ -350,12 +331,12 @@ def test_grouped_snapshot_combines_or_filters_with_an_independent_date_window(qu
                 {
                     **reference(dimension),
                     "operator": "eq",
-                    "value": _option_id("Open"),
+                    "value": option_id("Open"),
                 },
                 {
                     **reference(dimension),
                     "operator": "eq",
-                    "value": _option_id("Closed"),
+                    "value": option_id("Closed"),
                 },
             ],
         },
@@ -424,16 +405,8 @@ def test_date_series_route_returns_the_complete_bounded_window(query_db, day_cou
         to_date=from_date + timedelta(days=day_count - 1),
     )
     actor = route_actor(query_db)
-    app.dependency_overrides[get_current_user] = lambda: actor
-    app.dependency_overrides[get_db] = lambda: query_db
-    try:
-        with TestClient(app, raise_server_exceptions=False) as client:
-            response = client.post(
-                "/api/records/aggregate-query", json=payload.model_dump(mode="json")
-            )
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
-        app.dependency_overrides.pop(get_db, None)
+    with route_client(query_db, actor, raise_server_exceptions=False) as client:
+        response = client.post("/api/records/aggregate-query", json=payload.model_dump(mode="json"))
 
     assert response.status_code == 200, response.text
     body = response.json()

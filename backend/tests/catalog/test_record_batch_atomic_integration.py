@@ -8,55 +8,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from uuid6 import uuid7
 
-from app.systems.manage.audit.models import AuditAction, AuditLog
-from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
 from app.systems.sandbox.records.models import Record
 from tests.catalog.record_batch_support import batch_world as batch_world
-from tests.catalog.record_batch_support import create, item, submit
+from tests.catalog.record_batch_support import compound, create, effects, item, submit
 from tests.catalog.record_batch_support import world as world
 from tests.rbac.support import add_department, add_module
 
 pytestmark = pytest.mark.integration
-
-
-def compound(row, *changes):
-    return {
-        "record_id": row["id"],
-        "revision": row["updated_at"],
-        "changes": [{"field_id": str(field_id), "value": value} for field_id, value in changes],
-    }
-
-
-def effects(db, row):
-    identifier = UUID(row["id"])
-    updates = list(
-        db.scalars(
-            select(AuditLog).where(
-                AuditLog.entity_type == "records",
-                AuditLog.entity_id == identifier,
-                AuditLog.action == AuditAction.UPDATE,
-            )
-        )
-    )
-    events = list(
-        db.scalars(
-            select(RecordTriggerEvent).where(
-                RecordTriggerEvent.record_id == identifier,
-                RecordTriggerEvent.event_kind == "field-changed",
-            )
-        )
-    )
-    notices = list(
-        db.scalars(
-            select(InAppNotification).where(
-                InAppNotification.kind == "record-assigned",
-                InAppNotification.subject_id == identifier,
-            )
-        )
-    )
-    return updates, events, notices
 
 
 @pytest.mark.parametrize("kind", ["date", "datetime"])
@@ -266,50 +226,13 @@ def test_compound_outer_commit_failure_confirms_nothing_and_rolls_back_all_items
         assert effects(world.db, row) == ([], [], [])
 
 
-@pytest.mark.parametrize(
-    "bad_envelope",
-    [
-        "empty",
-        "too_many",
-        "duplicate",
-        "mixed",
-        "missing_value",
-        "missing_field",
-        "extra_change",
-        "extra_item",
-        "numeric_revision",
-        "naive_revision",
-        "date_revision",
-    ],
-)
-def test_compound_invalid_envelope_is_422_before_even_valid_items_write(batch_world, bad_envelope):
+def test_compound_invalid_envelope_is_422_before_even_valid_items_write(batch_world):
+    """One HTTP case; test_record_import_rules.py owns every compound envelope rule."""
+
     world = batch_world
     row = create(world, "Keep")
     change = compound(row, (world.fields["title"].id, "Refused"))
-    if bad_envelope == "empty":
-        change["changes"] = []
-    elif bad_envelope == "too_many":
-        change["changes"] += [
-            {"field_id": str(world.fields[name].id), "value": None} for name in ("date", "datetime")
-        ]
-    elif bad_envelope == "duplicate":
-        change["changes"].append(
-            {"field_id": str(world.fields["title"].id).upper(), "value": "Duplicate"}
-        )
-    elif bad_envelope == "mixed":
-        change.update(field_id=str(world.fields["title"].id), value="Mixed")
-    elif bad_envelope in {"missing_value", "missing_field"}:
-        change["changes"][0].pop("value" if bad_envelope == "missing_value" else "field_id")
-    elif bad_envelope == "extra_change":
-        change["changes"][0]["data"] = {}
-    elif bad_envelope == "extra_item":
-        change["data"] = {}
-    else:
-        change["revision"] = {
-            "numeric_revision": 1,
-            "naive_revision": "2026-10-03T00:00:00",
-            "date_revision": "2026-10-03",
-        }[bad_envelope]
+    change.update(field_id=str(world.fields["title"].id), value="Mixed")
     response = submit(world, [item(row, world.fields["title"].id, "Also refused"), change])
     assert response.status_code == 422, response.text
     assert world.client.get(f"/api/records/{row['id']}").json() == row

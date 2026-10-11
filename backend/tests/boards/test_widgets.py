@@ -90,16 +90,12 @@ def test_legacy_widget_aggregation_preserves_missing_meaning_and_explicit_metric
 @pytest.mark.parametrize(
     ("aggregation", "metric_type"),
     [
+        # An explicit null and an unknown aggregation fail the literal check here.
         (None, None),
         ("median", "decimal"),
+        # One measure pair proves the widget sends its metric to the aggregate rule, which
+        # tests/record_queries/test_group_aggregate_schemas.py owns pair by pair.
         ("count", "number"),
-        ("sum", None),
-        ("sum", "text"),
-        ("average", "boolean"),
-        ("min", "date"),
-        ("max", "datetime"),
-        ("distinct", None),
-        ("distinct", "relationship"),
     ],
 )
 def test_legacy_widget_aggregation_rejects_invalid_measure_pairs(

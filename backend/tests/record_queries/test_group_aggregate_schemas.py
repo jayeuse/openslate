@@ -127,3 +127,70 @@ def test_grouped_snapshot_rejects_partial_or_unbounded_date_windows(changes) -> 
             aggregation="count",
             **changes,
         )
+
+
+_COUNT_HAS_NO_MEASURE = "Count does not accept a measure field"
+_DISTINCT_NEEDS_A_MEASURE = "Distinct requires a primitive measure field"
+_NUMERIC_MEASURE = "Sum, average, min and max require a numeric measure field"
+_PRIMITIVE_ONLY = "Relationship fields are managed separately"
+
+
+def _aggregate(aggregation: str, measure: str | None) -> GroupedAggregateQuery:
+    return GroupedAggregateQuery(
+        module_id=uuid7(),
+        definition={},
+        dimension={"field_id": uuid7(), "expected_type": "text"},
+        measure=None if measure is None else {"field_id": uuid7(), "expected_type": measure},
+        aggregation=aggregation,
+    )
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "measure"),
+    [
+        ("count", None),
+        ("sum", "number"),
+        ("sum", "int"),
+        ("average", "decimal"),
+        ("min", "int"),
+        ("max", "number"),
+        ("distinct", "text"),
+        ("distinct", "user"),
+        ("distinct", "date"),
+    ],
+)
+def test_aggregation_accepts_its_measure_types(aggregation: str, measure: str | None) -> None:
+    accepted = _aggregate(aggregation, measure)
+
+    assert accepted.aggregation == aggregation
+    assert (None if accepted.measure is None else accepted.measure.expected_type) == measure
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "measure", "reason"),
+    [
+        # Count never takes a measure.
+        ("count", "number", _COUNT_HAS_NO_MEASURE),
+        # Sum, average, min and max need a number, decimal or integer measure.
+        ("sum", None, _NUMERIC_MEASURE),
+        ("sum", "text", _NUMERIC_MEASURE),
+        ("average", "text", _NUMERIC_MEASURE),
+        ("average", "boolean", _NUMERIC_MEASURE),
+        ("min", "date", _NUMERIC_MEASURE),
+        ("min", "datetime", _NUMERIC_MEASURE),
+        ("min", "text", _NUMERIC_MEASURE),
+        ("min", "boolean", _NUMERIC_MEASURE),
+        ("max", "date", _NUMERIC_MEASURE),
+        ("max", "datetime", _NUMERIC_MEASURE),
+        ("max", "text", _NUMERIC_MEASURE),
+        ("max", "boolean", _NUMERIC_MEASURE),
+        # Distinct needs a measure, and no measure may be a relationship.
+        ("distinct", None, _DISTINCT_NEEDS_A_MEASURE),
+        ("distinct", "relationship", _PRIMITIVE_ONLY),
+    ],
+)
+def test_aggregation_refuses_other_measure_types(
+    aggregation: str, measure: str | None, reason: str
+) -> None:
+    with pytest.raises(ValidationError, match=reason):
+        _aggregate(aggregation, measure)

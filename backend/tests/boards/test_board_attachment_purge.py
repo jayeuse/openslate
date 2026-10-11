@@ -12,6 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
+from app.systems.boards import lifecycle_router
 from app.systems.boards.attachment_models import BoardAttachment
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
@@ -19,7 +20,8 @@ from app.systems.platform.files.board_router import router as board_file_router
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.storage import get_storage
-from tests.boards.test_permanent_delete import _actor, _client, _enabled
+from tests.boards.support import client as board_client
+from tests.boards.test_permanent_delete import _actor, _enabled
 from tests.files.test_integration import Store
 
 pytestmark = pytest.mark.integration
@@ -62,7 +64,7 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
     db.add(ownership)
     db.commit()
     _enabled(monkeypatch, True)
-    client = _client(db, admin)
+    client = board_client(db, admin, lifecycle_router.router)
     path = f"/api/boards/{board.id}/purge"
     denied = client.post(f"{path}/preview")
     assert denied.status_code == 409

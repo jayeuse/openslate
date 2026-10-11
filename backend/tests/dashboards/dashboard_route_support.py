@@ -1,6 +1,5 @@
 """Existing Dashboard route builders with real owned sessions and unchanged auth transport."""
 
-from datetime import timedelta
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -9,19 +8,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import CurrentIdentity, get_current_identity, get_current_user
-from app.core.base_model import utc_now
 from app.core.database import get_db
-from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
-from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
 from app.systems.openview.dashboards.router import router
 from app.systems.openview.dashboards.schemas import DashboardChartConfig
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from tests.live_session_support import with_live_session
 from tests.rbac.support import add_user, make_group_access
 
 _ACTORS_KEY = "dashboard_test_actors"
@@ -36,29 +32,10 @@ def _actor(db: Session, *, level: str = AccessLevel.MANAGE) -> User:
 
 
 def _client(db: Session, actor: User) -> TestClient:
-    now = utc_now()
-    session = IdentitySession(
-        user_id=actor.id,
-        refresh_token_digest=uuid7().hex + uuid7().hex,
-        csrf_token_digest=uuid7().hex + uuid7().hex,
-        created_at=now,
-        refreshed_at=now,
-        expires_at=now + timedelta(hours=1),
-    )
-    db.add(session)
-    db.commit()
-    session_id = session.id
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-
-    def identity() -> CurrentIdentity:
-        set_audit_actor(db, actor.id)
-        return CurrentIdentity(actor, session_id, False, False)
-
-    app.dependency_overrides[get_current_identity] = identity
-    return TestClient(app)
+    return with_live_session(TestClient(app), db, actor)
 
 
 def _department(db: Session, name: str = "Dashboards") -> Department:

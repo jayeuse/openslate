@@ -3,7 +3,6 @@ import io
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from record_queries.test_database import request_for, setup_rows
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -17,6 +16,7 @@ from app.systems.sandbox.records import export as exporter
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import ExportRequest
 from tests.rbac.support import add_department, add_module, add_user
+from tests.record_queries.support import request_for, setup_rows
 
 
 @pytest.mark.integration
@@ -157,9 +157,11 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
 
     from app.common.dependencies import CurrentIdentity, get_current_identity
     from app.core.database import get_db
-    from app.main import app
     from app.systems.access.users.models import User
     from app.systems.manage.audit.models import SecurityEvent
+    from tests.route_app_support import route_app
+
+    app = route_app()
 
     engine = query_db.get_bind().engine
     actor_id = uuid7()

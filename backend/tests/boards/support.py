@@ -20,12 +20,15 @@ from app.systems.sandbox.departments.models import Department
 from tests.rbac.support import add_department, add_user, make_group_access
 
 
-def client(db: Session, actor: User, *routers: APIRouter) -> TestClient:
+def client(db: Session, actor: User | None, *routers: APIRouter) -> TestClient:
+    """The given routers alone, on *db*, as *actor*; ``None`` keeps the real auth (401)."""
+
     app = FastAPI()
     for router in routers:
         app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    if actor is not None:
+        app.dependency_overrides[get_current_user] = lambda: actor
     return TestClient(app)
 
 

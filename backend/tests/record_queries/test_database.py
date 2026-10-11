@@ -1,119 +1,18 @@
 """SQL behavior tests; run only on the guarded disposable full-stack database."""
 
-import os
 from datetime import UTC, datetime
-from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from uuid6 import uuid7
 
-from app.systems.access.users.models import User
-from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
-from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import query_records
-from app.systems.sandbox.records.query_schemas import RecordQuery
-from tests.conftest import _guard_integration_database
+from tests.record_queries.support import READER, request_for, setup_rows
+from tests.record_queries.support import option_id as _option_id
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def query_db(request):
-    value = os.getenv("TEST_DATABASE_URL")
-    if not value:
-        pytest.skip("Disposable PostgreSQL not configured")
-    try:
-        _guard_integration_database(value)
-    except RuntimeError:
-        raise RuntimeError(
-            "Query tests require explicitly authorized disposable full-stack DB"
-        ) from None
-    return request.getfixturevalue("integration_owner_db")
-
-
-# An administrator reads every module, so direct query calls need no group.
-READER = User(id=uuid7(), status="active", role="admin", is_deleted=False)
-
-
-def _option_id(label: str) -> str:
-    return str(uuid5(NAMESPACE_URL, f"record-query:{label}"))
-
-
-def route_actor(db: Session, *, records_read: bool = True) -> User:
-    """Give HTTP query tests a persisted actor for Access policy evaluation."""
-
-    actor_id = uuid7()
-    if records_read:
-        role = "admin"
-        assert role is not None
-    else:
-        role = "member"
-        db.flush()
-    actor = User(
-        id=actor_id,
-        email=f"query-{actor_id.hex}@example.test",
-        username=f"query_{actor_id.hex[:16]}",
-        status="active",
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    return actor
-
-
-def setup_rows(db: Session, kind: str, values: list[object]):
-    department = Department(department_name=f"query-{uuid7()}")
-    db.add(department)
-    db.flush()
-    module = Module(department_id=department.id, module_name="Records")
-    db.add(module)
-    db.flush()
-    field = Field(
-        module_id=module.id,
-        name="Value",
-        type=kind,
-        position=0,
-        required=False,
-        config=(
-            {
-                "options": [
-                    {"id": _option_id(value), "label": value}
-                    for value in dict.fromkeys(value for value in values if isinstance(value, str))
-                ]
-            }
-            if kind == "select"
-            else {}
-        ),
-    )
-    db.add(field)
-    db.flush()
-    rows = [
-        Record(
-            module_id=module.id,
-            data=(
-                {}
-                if value is ...
-                else {
-                    str(field.id): (
-                        _option_id(value) if kind == "select" and isinstance(value, str) else value
-                    )
-                }
-            ),
-        )
-        for value in values
-    ]
-    db.add_all(rows)
-    db.flush()
-    return module, field, rows
-
-
-def request_for(module, field, **definition):
-    reference = {"field_id": field.id, "expected_type": field.type}
-    return RecordQuery(module_id=module.id, definition={"columns": [reference], **definition})
 
 
 @pytest.mark.parametrize(

@@ -417,20 +417,11 @@ def test_xlsx_theme_header_matches_the_light_css(export_world: ExportWorld, them
             db.commit()
 
 
-@pytest.mark.parametrize(
-    "options",
-    [
-        {"format": "pdf"},
-        {"title": "x" * 121},
-        {"include_record_id": "yes"},
-        {"accent": "red"},
-        {"totals": 1},
-        {"export_all": True},
-    ],
-)
-def test_export_rejects_invalid_options(
-    export_world: ExportWorld, options: dict[str, object]
-) -> None:
-    response = export_world.client.post("/api/records/export", json=export_world.payload(**options))
+def test_export_rejects_invalid_options(export_world: ExportWorld) -> None:
+    """One HTTP case; test_rules.py owns every option rule of the export request."""
+
+    response = export_world.client.post(
+        "/api/records/export", json=export_world.payload(format="pdf")
+    )
     assert response.status_code == 422
     assert export_world.events() == []

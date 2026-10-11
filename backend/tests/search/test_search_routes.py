@@ -5,57 +5,20 @@ from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies import get_current_user
-from app.core.config import get_settings
-from app.core.database import get_db
-from app.main import create_app
 from app.systems.access.policy.models import AccessLevel, GroupMember
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
-from app.systems.sandbox.fields.models import Field
-from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.records.models import Record
 from tests.boards.support import department_board, grant, project_board
 from tests.rbac.support import add_department, add_module, add_user, make_group_access, make_user
-
-
-def _client(db: Session | Mock, actor: User | None) -> TestClient:
-    app = create_app()
-    app.dependency_overrides[get_db] = lambda: db
-    if actor is not None:
-        app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app, base_url=get_settings().public_origin)
-
-
-def _search(api: TestClient, kind: str, text: str, **params: object) -> dict:
-    response = api.get("/api/search", params={"kind": kind, "search": text, **params})
-    assert response.status_code == 200, response.text
-    assert response.headers["Cache-Control"] == "private, no-store"
-    return response.json()
-
-
-def _ids(result: dict) -> set[str]:
-    return {item["id"] for item in result["items"]}
-
-
-def _module(
-    db: Session, titles: list[object], *, kind: str = "text"
-) -> tuple[Module, Field, list[Record]]:
-    module = add_module(db, add_department(db), "Search assets")
-    field = Field(module_id=module.id, name="Title", type=kind, position=0, config={})
-    db.add(field)
-    db.flush()
-    module.title_field_id = field.id
-    rows = [Record(module_id=module.id, data={str(field.id): title}) for title in titles]
-    db.add_all(rows)
-    db.flush()
-    return module, field, rows
+from tests.search.support import client as _client
+from tests.search.support import ids as _ids
+from tests.search.support import search as _search
+from tests.search.support import titled_module as _module
 
 
 def _post(
