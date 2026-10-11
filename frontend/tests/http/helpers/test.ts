@@ -226,3 +226,34 @@ export type { BrowserContext, Locator, Page, Route } from "@playwright/test";
 export function isEventStream(route: Route): boolean {
   return new URL(route.request().url()).pathname === "/api/events";
 }
+
+/**
+ * Whether the page blocks a browser exit now: dispatches a cancelable
+ * `beforeunload` and reports whether a listener prevented it.
+ */
+export function exitGuarded(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+}
+
+/**
+ * Waits `frames` animation frames, so React commits the updates and effect
+ * cleanups that already-settled promise handlers scheduled. Use it before a
+ * check that must not run ahead of those commits; it waits for no event.
+ */
+export async function settleReact(page: Page, frames = 2): Promise<void> {
+  await page.evaluate(
+    (count) =>
+      new Promise<void>((resolve) => {
+        const step = (left: number): void => {
+          if (left === 0) resolve();
+          else requestAnimationFrame(() => step(left - 1));
+        };
+        step(count);
+      }),
+    frames,
+  );
+}

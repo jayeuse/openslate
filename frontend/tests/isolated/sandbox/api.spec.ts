@@ -15,6 +15,7 @@ import {
   listSandboxTests,
   listSandboxVersions,
   loadSandboxDocument,
+  pruneSandboxVersions,
   replaceSandboxDocument,
   restoreSandboxVersion,
   publishSandbox,
@@ -451,6 +452,70 @@ test("Sandbox history rejects invalid search and kind before transport", async (
         ),
       ).rejects.toThrow();
     expect(mock.requests).toHaveLength(0);
+  } finally {
+    mock.restore();
+  }
+});
+
+// Capacity is never guessed: a page without a whole-number count or with
+// another cap is refused, and the History and checkpoint screens then show
+// "Version capacity is unavailable" (http "refused capacity is unavailable
+// rather than guessed or usable" keeps that screen).
+for (const capacity of [
+  { name: "no capacity", fields: {} },
+  { name: "a text count", fields: { mutableCount: "50", versionCap: 50 } },
+  { name: "another cap", fields: { mutableCount: 45, versionCap: 49 } },
+]) {
+  test(`a version page with ${capacity.name} is a contract error`, async () => {
+    const mock = installFetch(() =>
+      Response.json({
+        items: [version],
+        limit: 20,
+        offset: 0,
+        count: 1,
+        total: 1,
+        hasMore: false,
+        ...capacity.fields,
+      }),
+    );
+    try {
+      await expect(listSandboxVersions({ limit: 20 })).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    } finally {
+      mock.restore();
+    }
+  });
+}
+
+test("pruning old versions sends the draft revision and refuses a deleted count that is not a number", async () => {
+  const replies = [{ deletedCount: 10 }, { deletedCount: "10" }];
+  const mock = installFetch(() => Response.json(replies.shift()));
+  try {
+    await expect(
+      pruneSandboxVersions({ expectedRevision: 7 }),
+    ).resolves.toEqual({ deletedCount: 10 });
+    await expect(
+      pruneSandboxVersions({ expectedRevision: 8 }),
+    ).rejects.toBeInstanceOf(ApiContractError);
+    expect(
+      mock.requests.map(({ input, init }) => [
+        String(input),
+        init?.method,
+        init?.body,
+      ]),
+    ).toEqual([
+      [
+        "/api/sandbox/versions/prune",
+        "POST",
+        JSON.stringify({ expectedRevision: 7 }),
+      ],
+      [
+        "/api/sandbox/versions/prune",
+        "POST",
+        JSON.stringify({ expectedRevision: 8 }),
+      ],
+    ]);
   } finally {
     mock.restore();
   }

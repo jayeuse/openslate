@@ -16,8 +16,7 @@ const eslintConfig = defineConfig([
   },
   {
     // Test-quality guards from item 10 of docs/plans/test-suite-tier-2-5.md.
-    // Each rule is on with zero violations. "no-wait-for-timeout" stays off
-    // until its last site is fixed.
+    // Each rule is on with zero violations.
     files: ["tests/**/*.ts"],
     plugins: { playwright },
     rules: {
@@ -45,6 +44,7 @@ const eslintConfig = defineConfig([
       "playwright/no-useless-not": "error",
       "playwright/no-wait-for-navigation": "error",
       "playwright/no-wait-for-selector": "error",
+      "playwright/no-wait-for-timeout": "error",
       "playwright/prefer-web-first-assertions": "error",
       "playwright/valid-expect": "error",
       "playwright/valid-title": "error",

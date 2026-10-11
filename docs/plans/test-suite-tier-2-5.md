@@ -237,6 +237,7 @@ Area results (fill in during phase 6):
 |---|---|---|---|---|---|---|---|---|
 | F1 | 26,939 | 26,978 | 369 http + 105 isolated | 339 http + 150 isolated | not measured | 4.7 min http (under load) | 357 rows, one owner each | not measured |
 | F2 | 19,553 | 19,304 | 255 http + 113 isolated | 146 http + 234 isolated | not measured | 56 s http | all owners resolve, none duplicated | not measured |
+| F3 | 6,571 http + 228 shared helper | 5,497 http + 668 sandbox helper + 259 shared helper | 107 http + Sandbox isolated | 96 http, +40 isolated rows | 33.7 s http (low load) | 52-55 s http (load 4-124, not comparable) | sandbox.md, one owner each; 1440x768 History overflow is a known gap | 1 timeout in 11 runs of one test, also on base |
 
 ## 10. Exit criteria
 

@@ -6,6 +6,7 @@ import {
   SANDBOX_OLDER_FORMAT_MESSAGE,
   type SandboxDocumentV4,
 } from "../../../src/components/systems/sandbox/domain/document";
+import { parseSandboxExportDocument } from "../../../src/components/systems/sandbox/domain/document-parser";
 import { configuredSandboxDesign } from "../../helpers/sandbox-fixtures";
 
 const openOptionId = "00000000-0000-4000-8000-000000000031";
@@ -725,6 +726,55 @@ test("v4 portable history accepts the published kind emitted by the backend", ()
     document,
   });
 });
+
+function documentWithSnapshots(count: number): SandboxDocumentV4 {
+  const document = documentFixture();
+  document.versions = Array.from({ length: count }, (_, index) => ({
+    id: `version-${index + 1}`,
+    label: `Checkpoint ${index + 1}`,
+    kind: index === count - 1 ? "published" : "checkpoint",
+    published: index === count - 1,
+    date: "2026-09-20T00:00:00.000Z",
+    document: {
+      design: document.design,
+      triggers: document.triggers,
+      scenarios: document.scenarios,
+    },
+  }));
+  return document;
+}
+
+// Import admission counts every snapshot against the 50-version limit; an
+// export attachment can hold 50 checkpoints plus a publication.
+for (const row of [
+  {
+    name: "an import admits 50 snapshots",
+    parse: parseSandboxDocument,
+    count: 50,
+    refused: false,
+  },
+  {
+    name: "an import refuses 51 snapshots",
+    parse: parseSandboxDocument,
+    count: 51,
+    refused: true,
+  },
+  {
+    name: "an export attachment admits 51 snapshots",
+    parse: parseSandboxExportDocument,
+    count: 51,
+    refused: false,
+  },
+]) {
+  test(`version history limit: ${row.name}`, () => {
+    const document = documentWithSnapshots(row.count);
+    expect(row.parse(JSON.stringify(document))).toEqual(
+      row.refused
+        ? { ok: false, error: "Version limit exceeded" }
+        : { ok: true, document },
+    );
+  });
+}
 
 test("older format files are refused with one clear message and are not converted", () => {
   const versionOne = {
