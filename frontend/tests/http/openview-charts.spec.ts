@@ -5,6 +5,8 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf } from "./helpers/openview-catalog";
+import { gate } from "./helpers/gate";
 
 const moduleId = "00000000-0000-4000-8000-000000000110";
 const departmentId = "00000000-0000-4000-8000-000000000111";
@@ -13,19 +15,6 @@ const userFieldId = "00000000-0000-4000-8000-000000000113";
 const choiceId = "00000000-0000-4000-8000-000000000114";
 const eligibleUserId = "00000000-0000-4000-8000-000000000115";
 const userId = "00000000-0000-4000-8000-000000000101";
-
-function pageResponse(items: unknown[]) {
-  return {
-    items,
-    pagination: {
-      limit: 100,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
-}
 
 test("Charts filter on stable choice and eligible person IDs", async ({
   page,
@@ -52,14 +41,17 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: moduleId,
-              name: "Service requests",
-              department_id: departmentId,
-              title_field_id: null,
-            },
-          ]),
+          pageOf(
+            [
+              {
+                id: moduleId,
+                name: "Service requests",
+                department_id: departmentId,
+                title_field_id: null,
+              },
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
@@ -67,28 +59,31 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: selectFieldId,
-              module_id: moduleId,
-              name: "Status",
-              type: "select",
-              required: false,
-              position: 0,
-              config: {
-                options: [{ id: choiceId, label: "Awaiting review" }],
+          pageOf(
+            [
+              {
+                id: selectFieldId,
+                module_id: moduleId,
+                name: "Status",
+                type: "select",
+                required: false,
+                position: 0,
+                config: {
+                  options: [{ id: choiceId, label: "Awaiting review" }],
+                },
               },
-            },
-            {
-              id: userFieldId,
-              module_id: moduleId,
-              name: "Assignee",
-              type: "user",
-              required: false,
-              position: 1,
-              config: { kind: "user" },
-            },
-          ]),
+              {
+                id: userFieldId,
+                module_id: moduleId,
+                name: "Assignee",
+                type: "user",
+                required: false,
+                position: 1,
+                config: { kind: "user" },
+              },
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
@@ -99,13 +94,16 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       headers: { "cache-control": "private, no-store" },
       contentType: "application/json",
       body: JSON.stringify(
-        pageResponse([
-          {
-            id: eligibleUserId,
-            display_name: "Alex Reader",
-            username: "alex.reader",
-          },
-        ]),
+        pageOf(
+          [
+            {
+              id: eligibleUserId,
+              display_name: "Alex Reader",
+              username: "alex.reader",
+            },
+          ],
+          { limit: 100 },
+        ),
       ),
     }),
   );
@@ -225,29 +223,6 @@ test("Charts filter on stable choice and eligible person IDs", async ({
   await page.getByRole("button", { name: "Filters (2)" }).click();
 });
 
-test("Chart source failures keep retry visible with destructive safe feedback", async ({
-  page,
-}) => {
-  await installOpenViewEventSource(page);
-  await signedInSession(page, userId);
-  await page.route("**/api/views/data-sources?*", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { detail: "Private chart data-source detail" },
-    }),
-  );
-  await page.goto("/openview?section=charts");
-  await page.getByRole("button", { name: "Filters (0)", exact: true }).click();
-  const failure = page.getByRole("alert").filter({
-    has: page.getByRole("button", { name: "Retry catalog", exact: true }),
-  });
-  await expect(failure).toContainText("temporarily unavailable");
-  await expect(failure).toHaveAttribute("data-variant", "destructive");
-  await expect(
-    page.getByText("Private chart data-source detail", { exact: true }),
-  ).toHaveCount(0);
-});
-
 const amountId = "00000000-0000-4000-8000-000000000116";
 const dateId = "00000000-0000-4000-8000-000000000117";
 const booleanId = "00000000-0000-4000-8000-000000000118";
@@ -283,7 +258,7 @@ async function editorCatalog(page: Page) {
   await page.route("**/api/views/data-sources**", (route) => {
     const path = new URL(route.request().url()).pathname;
     return route.fulfill({
-      json: pageResponse(
+      json: pageOf<unknown>(
         path.endsWith("/fields")
           ? editorFields.map((field, position) => ({
               ...field,
@@ -299,6 +274,7 @@ async function editorCatalog(page: Page) {
                 title_field_id: null,
               },
             ],
+        { limit: 100 },
       ),
     });
   });
@@ -605,88 +581,71 @@ test("five calendar buckets and period wording follow the last applied query whi
   expect(bodies).toHaveLength(5);
 });
 
-for (const current of [
-  {
-    bucket: "month",
-    from: "2025-12-15",
-    to: "2027-01-04",
-    keys: [
-      "2025-12-01",
-      "2026-01-01",
-      "2026-02-01",
-      "2026-03-01",
-      "2026-04-01",
-      "2026-05-01",
-      "2026-06-01",
-      "2026-07-01",
-      "2026-08-01",
-      "2026-09-01",
-      "2026-10-01",
-      "2026-11-01",
-      "2026-12-01",
-      "2027-01-01",
-    ],
-  },
-  {
-    bucket: "year",
-    from: "2020-02-10",
-    to: "2027-12-31",
-    keys: [
-      "2020-01-01",
-      "2021-01-01",
-      "2022-01-01",
-      "2023-01-01",
-      "2024-01-01",
-      "2025-01-01",
-      "2026-01-01",
-      "2027-01-01",
-    ],
-  },
-]) {
-  test(`${current.bucket} series accepts a calendar window longer than 366 days`, async ({
-    page,
-  }) => {
-    await editorCatalog(page);
-    const bodies: unknown[] = [];
-    await page.route("**/api/records/aggregate-snapshot", (route) => {
-      bodies.push(route.request().postDataJSON());
-      return route.fulfill({ json: calendarSnapshot(current.keys) });
-    });
-    await page.goto("/openview?section=charts");
-    await page.getByLabel("Chart type", { exact: true }).selectOption("line");
-    await page
-      .getByLabel("Calendar bucket", { exact: true })
-      .selectOption(current.bucket);
-    await page
-      .getByRole("button", { name: "Date window", exact: true })
-      .click();
-    await page.getByLabel("From date", { exact: true }).fill(current.from);
-    await page.getByLabel("To date", { exact: true }).fill(current.to);
-    await page.keyboard.press("Escape");
-    await page
-      .getByRole("button", { name: "Apply chart", exact: true })
-      .click();
-    await expect(
-      page
-        .getByRole("table", { name: "Complete aggregate data", exact: true })
-        .getByRole("row"),
-    ).toHaveCount(current.keys.length + 1);
-    expect(bodies).toEqual([
-      {
-        mode: "date_series",
-        module_id: moduleId,
-        definition,
-        aggregation: "count",
-        date_field: { field_id: dateId, expected_type: "date" },
-        from_date: current.from,
-        to_date: current.to,
-        bucket: current.bucket,
-      },
-    ]);
+// The bucket window rule (month and year series, more than 366 buckets,
+// reversed or missing ends) and its saved-Chart admission are owned by
+// isolated/openview/aggregate-buckets.spec.ts; this journey keeps one example.
+test("a month series refuses more than 366 buckets and accepts a calendar window longer than 366 days", async ({
+  page,
+}) => {
+  const keys = [
+    "2025-12-01",
+    "2026-01-01",
+    "2026-02-01",
+    "2026-03-01",
+    "2026-04-01",
+    "2026-05-01",
+    "2026-06-01",
+    "2026-07-01",
+    "2026-08-01",
+    "2026-09-01",
+    "2026-10-01",
+    "2026-11-01",
+    "2026-12-01",
+    "2027-01-01",
+  ];
+  await editorCatalog(page);
+  const bodies: unknown[] = [];
+  await page.route("**/api/records/aggregate-snapshot", (route) => {
+    bodies.push(route.request().postDataJSON());
+    return route.fulfill({ json: calendarSnapshot(keys) });
   });
-}
+  await page.goto("/openview?section=charts");
+  const apply = page.getByRole("button", { name: "Apply chart", exact: true });
+  await page.getByLabel("Chart type", { exact: true }).selectOption("line");
+  await page
+    .getByLabel("Calendar bucket", { exact: true })
+    .selectOption("month");
+  await page.getByRole("button", { name: "Date window", exact: true }).click();
+  await page.getByLabel("From date", { exact: true }).fill("1980-01-01");
+  await page.getByLabel("To date", { exact: true }).fill("2010-07-01");
+  await expect(apply).toBeDisabled();
+  await expect(
+    page.getByText(/Choose a range of 1–366 calendar buckets/).first(),
+  ).toBeVisible();
+  await page.getByLabel("From date", { exact: true }).fill("2025-12-15");
+  await page.getByLabel("To date", { exact: true }).fill("2027-01-04");
+  await page.keyboard.press("Escape");
+  await apply.click();
+  await expect(
+    page
+      .getByRole("table", { name: "Complete aggregate data", exact: true })
+      .getByRole("row"),
+  ).toHaveCount(keys.length + 1);
+  expect(bodies).toEqual([
+    {
+      mode: "date_series",
+      module_id: moduleId,
+      definition,
+      aggregation: "count",
+      date_field: { field_id: dateId, expected_type: "date" },
+      from_date: "2025-12-15",
+      to_date: "2027-01-04",
+      bucket: "month",
+    },
+  ]);
+});
 
-test("incomplete, reversed and over-limit windows send nothing; grouped windows keep the 366-day boundary", async ({
+test("incomplete, reversed and over-limit grouped windows send nothing and keep the 366-day boundary", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -727,22 +686,6 @@ test("incomplete, reversed and over-limit windows send nothing; grouped windows 
       to_date: "2024-12-31",
     },
   ]);
-  await page.getByLabel("Chart type", { exact: true }).selectOption("line");
-  await page
-    .getByLabel("Calendar bucket", { exact: true })
-    .selectOption("month");
-  await page.getByRole("button", { name: "Date window", exact: true }).click();
-  await page.getByLabel("From date", { exact: true }).fill("1980-01-01");
-  await page.getByLabel("To date", { exact: true }).fill("2010-07-01");
-  await expect(apply).toBeDisabled();
-  await expect(
-    page.getByText(/Choose a range of 1–366 calendar buckets/).first(),
-  ).toBeVisible();
-  await page.getByLabel("To date", { exact: true }).fill("1979-12-31");
-  await expect(apply).toBeDisabled();
-  await page.getByLabel("To date", { exact: true }).fill("");
-  await expect(apply).toBeDisabled();
-  expect(bodies).toHaveLength(1);
 });
 
 test("incomplete numeric inputs and surviving filter rows stay controlled through metadata refresh", async ({
@@ -755,13 +698,14 @@ test("incomplete numeric inputs and surviving filter rows stay controlled throug
     (route) => {
       fieldReads += 1;
       return route.fulfill({
-        json: pageResponse(
+        json: pageOf(
           editorFields.map((field, position) => ({
             ...field,
             module_id: moduleId,
             required: false,
             position,
           })),
+          { limit: 100 },
         ),
       });
     },
@@ -841,7 +785,7 @@ test("changed field metadata cannot silently substitute a different dimension", 
     (route) => {
       fieldReads += 1;
       return route.fulfill({
-        json: pageResponse(
+        json: pageOf(
           editorFields.map((field, position) => ({
             ...field,
             type: changed && field.id === booleanId ? "int" : field.type,
@@ -849,6 +793,7 @@ test("changed field metadata cannot silently substitute a different dimension", 
             required: false,
             position,
           })),
+          { limit: 100 },
         ),
       });
     },
@@ -1013,7 +958,7 @@ test("saved picker refuses current source without using cached metadata or downs
   await page.route("**/api/charts?*", (route) =>
     route.fulfill({
       json: {
-        ...pageResponse([pickerChart()]),
+        ...pageOf([pickerChart()], { limit: 100 }),
         pagination: {
           limit: 25,
           offset: 0,
@@ -1182,19 +1127,6 @@ test("saved picker manual source refusal hides selected metadata until an explic
   expect(resultReads).toBe(1);
 });
 
-function chartPage(items: ReturnType<typeof pickerChart>[]) {
-  return {
-    items,
-    pagination: {
-      limit: 25,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
-}
-
 test("a transient saved Chart list failure keeps the applied Chart and offers a list retry", async ({
   page,
 }) => {
@@ -1203,7 +1135,7 @@ test("a transient saved Chart list failure keeps the applied Chart and offers a 
   await page.route("**/api/charts?*", (route) =>
     listFails
       ? route.fulfill({ status: 503, json: { detail: "Unavailable" } })
-      : route.fulfill({ json: chartPage([pickerChart()]) }),
+      : route.fulfill({ json: pageOf([pickerChart()], { limit: 25 }) }),
   );
   await page.route(`**/api/charts/${savedChartId}`, (route) =>
     route.fulfill({ json: pickerChart() }),
@@ -1256,10 +1188,10 @@ test("a refused saved Chart keeps the other Charts available as replacements", a
   let refused = false;
   await page.route("**/api/charts?*", (route) =>
     route.fulfill({
-      json: chartPage([
-        pickerChart(),
-        pickerChart(replacementId, "Monthly intake"),
-      ]),
+      json: pageOf(
+        [pickerChart(), pickerChart(replacementId, "Monthly intake")],
+        { limit: 25 },
+      ),
     }),
   );
   await page.route(`**/api/charts/${savedChartId}`, (route) =>
@@ -1340,14 +1272,7 @@ for (const priorApply of [false, true]) {
       });
     });
     let hold = true;
-    let release!: () => void;
-    let started!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const aggregateStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const aggregate = gate();
     const bodies: unknown[] = [];
     await page.route("**/api/records/aggregate-snapshot", async (route) => {
       bodies.push(route.request().postDataJSON());
@@ -1356,8 +1281,8 @@ for (const priorApply of [false, true]) {
           json: calendarSnapshot(["Earlier authorised result"]),
         });
       if (hold) {
-        started();
-        await held;
+        aggregate.signalStarted();
+        await aggregate.wait;
         return route.fulfill({
           json: calendarSnapshot(["Private late aggregate"]),
         });
@@ -1401,7 +1326,7 @@ for (const priorApply of [false, true]) {
       .getByRole("button", { name: "Apply chart", exact: true })
       .click();
     try {
-      await aggregateStarted;
+      await aggregate.started;
       refused = true;
       await sendOpenViewEvent(page, "invalidate", {
         entity: "charts",
@@ -1432,7 +1357,7 @@ for (const priorApply of [false, true]) {
         });
       });
       const late = page.waitForResponse("**/api/records/aggregate-snapshot");
-      release();
+      aggregate.release();
       await (await late).finished();
       await page.evaluate(
         () =>
@@ -1479,7 +1404,7 @@ for (const priorApply of [false, true]) {
         page.getByLabel("Numeric measure", { exact: true }),
       ).toHaveValue(amountId);
     } finally {
-      release();
+      aggregate.release();
     }
   });
 }

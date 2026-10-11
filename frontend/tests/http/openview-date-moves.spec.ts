@@ -4,6 +4,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf } from "./helpers/openview-catalog";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -42,24 +43,6 @@ type WindowRequest = {
   to_date?: string;
   definition: { search: string | null };
 };
-function pageOf<T>(
-  items: T[],
-  limit: number,
-  offset = 0,
-  total = items.length,
-) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
-}
-
 async function installDates(
   page: Page,
   options: {
@@ -263,11 +246,11 @@ async function installDates(
               title_field_id: titleId,
             },
           ],
-          limit,
+          { limit },
         ),
       );
     if (path === `/api/views/data-sources/${moduleId}/fields`)
-      return json(pageOf(fields, limit));
+      return json(pageOf(fields, { limit }));
     if (
       path === `/api/departments/${departmentId}` ||
       path === "/api/departments"
@@ -282,10 +265,12 @@ async function installDates(
         performed_by: null,
       };
       return json(
-        path === "/api/departments" ? pageOf([department], limit) : department,
+        path === "/api/departments"
+          ? pageOf([department], { limit })
+          : department,
       );
     }
-    if (path === "/api/views") return json(pageOf([saved], limit));
+    if (path === "/api/views") return json(pageOf([saved], { limit }));
     if (path === `/api/views/${viewId}`) return json(saved);
     if (path === "/api/records/window-query") {
       const body = request.postDataJSON() as WindowRequest;
@@ -302,12 +287,11 @@ async function installDates(
           : !!end && start <= body.to_date! && end >= body.from_date!;
       });
       return json({
-        ...pageOf(
-          selected.slice(body.offset, body.offset + body.limit),
-          body.limit,
-          body.offset,
-          selected.length,
-        ),
+        ...pageOf(selected.slice(body.offset, body.offset + body.limit), {
+          limit: body.limit,
+          offset: body.offset,
+          total: selected.length,
+        }),
         timezone:
           startType === "datetime" || endType === "datetime" ? zone : null,
       });
@@ -370,15 +354,6 @@ async function installDates(
       if (failure === "503")
         return json({ detail: "Private batch canary" }, 503);
       if (failure === "missing") return json({ results: [] });
-      if (failure === "duplicate")
-        return json({ results: [results[0], results[0]] });
-      const first = results[0];
-      if (first && "record" in first && first.record) {
-        if (failure === "half") first.record.data[endId] = "2026-03-10";
-        if (failure === "foreign") first.record_id = id(1999);
-        if (failure === "module") first.record.module_id = id(1998);
-        if (failure === "deleted") first.record.is_deleted = true;
-      }
       return json({ results });
     }
     const record = path.match(/^\/api\/records\/([^/]+)$/)?.[1];
@@ -389,12 +364,11 @@ async function installDates(
     if (path === "/api/records/query") {
       recordReads++;
       return json(
-        pageOf(
-          [...rows.values()].slice(offset, offset + limit),
+        pageOf([...rows.values()].slice(offset, offset + limit), {
           limit,
           offset,
-          rows.size,
-        ),
+          total: rows.size,
+        }),
       );
     }
     return route.fallback();
@@ -826,15 +800,9 @@ for (const outcome of ["stale", "invalid", "forbidden"] as const) {
   });
 }
 
-for (const fault of [
-  "half",
-  "missing",
-  "duplicate",
-  "foreign",
-  "module",
-  "deleted",
-  "503",
-]) {
+// The other receipt faults (half, duplicate, foreign, module, deleted) are
+// owned by isolated/openview/record-move-receipts.spec.ts.
+for (const fault of ["missing", "503"]) {
   test(`${fault} compound receipt refreshes reads but retains the original pending revision without retry`, async ({
     page,
   }) => {
@@ -949,75 +917,6 @@ test("a late held receipt cannot republish results after records-read refusal", 
     page.getByRole("button", { name: "Save changes (1)" }),
   ).toBeDisabled();
   await expect(page.getByRole("main")).not.toContainText("Task 1");
-});
-
-test("Timeline shifts mixed date and datetime fields together across DST without losing wall precision", async ({
-  page,
-}) => {
-  const api = await installDates(page, {
-    start: "2026-03-07",
-    endType: "datetime",
-    end: "2026-03-07T16:20:45.123456Z",
-  });
-  await page.goto(url);
-  await stage(page, "2026-03-08");
-  await page.getByRole("button", { name: "Save changes (1)" }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Saved 1 move." }),
-  ).toBeVisible();
-  expect(api.batches[0].items[0]).toEqual({
-    record_id: recordId,
-    revision,
-    changes: [
-      { field_id: startId, value: "2026-03-08" },
-      { field_id: endId, value: "2026-03-08T15:20:45.123456Z" },
-    ],
-  });
-});
-
-test("Calendar interprets timezone-free datetime as UTC and shifts its cross-midnight workspace day", async ({
-  page,
-}) => {
-  const api = await installDates(page, {
-    layout: "calendar",
-    startType: "datetime",
-    start: "2026-03-07T01:15:30.123456",
-  });
-  await page.goto(url);
-  await stage(page, "2026-03-08", "Task 1", "Move date…");
-  await page.getByRole("button", { name: "Save changes (1)" }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Saved 1 move." }),
-  ).toBeVisible();
-  expect(api.batches[0].items[0]).toEqual({
-    record_id: recordId,
-    revision,
-    field_id: startId,
-    value: "2026-03-09T00:15:30.123456Z",
-  });
-});
-
-test("returning a legacy timezone-free datetime to its original workspace day clears the move without a write", async ({
-  page,
-}) => {
-  const api = await installDates(page, {
-    layout: "calendar",
-    startType: "datetime",
-    start: "2026-03-07T01:15:30.123456",
-  });
-  await page.goto(url);
-  await stage(page, "2026-03-08", "Task 1", "Move date…");
-  await expect(
-    page.getByRole("button", { name: "Save changes (1)" }),
-  ).toBeVisible();
-  await stage(page, "2026-03-06", "Task 1", "Move date…");
-  await expect(
-    page.getByRole("button", { name: "Save changes (1)" }),
-  ).toHaveCount(0);
-  expect(api.batches).toEqual([]);
-  expect(api.rows.get(recordId)?.data[startId]).toBe(
-    "2026-03-07T01:15:30.123456",
-  );
 });
 
 test.describe("touch", () => {

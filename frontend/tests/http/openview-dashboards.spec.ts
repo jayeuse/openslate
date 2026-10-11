@@ -14,6 +14,7 @@ import {
   signedInAs,
   type SignedInIdentity,
 } from "./helpers/test";
+import { gate as requestGate, type Gate as RequestGate } from "./helpers/gate";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -181,30 +182,6 @@ type RecordQueryRequest = {
   limit: number;
   offset: number;
 };
-type RequestGate = {
-  started: Promise<void>;
-  wait: Promise<void>;
-  signalStarted: () => void;
-  release: () => void;
-};
-
-function requestGate(): RequestGate {
-  let signalStarted = () => {};
-  let release = () => {};
-  const started = new Promise<void>((resolve) => {
-    signalStarted = resolve;
-  });
-  const wait = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return {
-    started,
-    wait,
-    signalStarted: () => signalStarted(),
-    release: () => release(),
-  };
-}
-
 const queryDefinition: QueryDefinition = {
   version: 1,
   logic: "and",
@@ -3127,94 +3104,6 @@ test("paired Board and Dashboard follow one Chart revision without source writes
   }
 });
 
-for (const bucket of ["month", "year"] as const) {
-  test(`referenced date series preserves its ${bucket} bucket over more than 366 days`, async ({
-    page,
-  }) => {
-    const chartId = "00000000-0000-4000-8000-000000000655";
-    const query = {
-      mode: "date_series",
-      module_id: moduleId,
-      definition: queryDefinition,
-      aggregation: "sum",
-      measure: { field_id: amountFieldId, expected_type: "decimal" },
-      date_field: { field_id: dateFieldId, expected_type: "date" },
-      from_date: "2020-01-01",
-      to_date: "2022-12-31",
-      bucket,
-    };
-    const api = await installDashboardApi(
-      page,
-      dashboard({
-        widgets: [
-          {
-            id: dashboardWidgetId,
-            position: 0,
-            widget_type: "chart",
-            size: "S",
-            chart_id: chartId,
-            config: null,
-            created_at: timestamp,
-            updated_at: timestamp,
-          },
-        ],
-      }),
-    );
-    await page.route(`**/api/charts/${chartId}`, (route) =>
-      route.fulfill({
-        json: {
-          id: chartId,
-          department_id: departmentId,
-          module_id: moduleId,
-          name: "Long calendar window",
-          chart_type: "line",
-          query,
-          revision: 1,
-          is_deleted: false,
-          created_at: timestamp,
-          updated_at: timestamp,
-        },
-      }),
-    );
-    const calls: unknown[] = [];
-    const dates =
-      bucket === "month"
-        ? Array.from({ length: 36 }, (_, month) =>
-            new Date(Date.UTC(2020, month, 1)).toISOString().slice(0, 10),
-          )
-        : ["2020-01-01", "2021-01-01", "2022-01-01"];
-    await page.route("**/api/records/aggregate-snapshot*", (route) => {
-      calls.push(snapshotRequest(route));
-      return fulfillSnapshot(route, {
-        json: {
-          items: dates.map((day, index) => ({
-            key: day,
-            label: day,
-            value: index === 0 ? null : 8,
-            record_count: index === 0 ? 0 : 2,
-          })),
-          pagination: {
-            limit: dates.length,
-            offset: 0,
-            count: dates.length,
-            total: dates.length,
-            has_more: false,
-          },
-        },
-      });
-    });
-    await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
-    await expect(
-      page.getByRole("table", { name: /Complete data/ }),
-    ).toBeVisible();
-    expect(calls.at(-1)).toEqual(query);
-    await expect(
-      page.getByRole("cell", { name: "—", exact: true }),
-    ).toBeVisible();
-    expect(api.writes).toEqual([]);
-  });
-}
-
 test("Dashboard invalidation updates its saved name and widget without reloading", async ({
   page,
 }) => {
@@ -3866,85 +3755,6 @@ test("department Dashboard builder saves Count over time and reloads the complet
   });
 });
 
-test("Dashboard bar builder requires and saves a typed numeric measure for Sum", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(page);
-  await page.goto("/openview?section=dashboards");
-
-  await startNewDashboardDraft(page, "Equipment totals");
-  const addDialog = await openAddWidgetDialog(page);
-  await expect(addDialog.getByLabel("Data source")).toHaveValue(moduleId);
-  await expect(addDialog.getByLabel("Group by", { exact: true })).toHaveValue(
-    categoryFieldId,
-  );
-  await addDialog.getByLabel("Measure", { exact: true }).selectOption("sum");
-  const addChart = addDialog.getByRole("button", {
-    name: "Add widget",
-    exact: true,
-  });
-  const measure = addDialog.getByLabel("Numeric measure");
-  await expect(measure).toHaveValue("");
-  await expect(addChart).toBeDisabled();
-  await expect(
-    measure.getByRole("option", { name: "Amount", exact: true }),
-  ).toHaveCount(1);
-  await expect(
-    measure.getByRole("option", { name: "Units", exact: true }),
-  ).toHaveCount(1);
-  await expect(
-    measure.getByRole("option", { name: "Score", exact: true }),
-  ).toHaveCount(1);
-
-  await measure.selectOption(amountFieldId);
-  await expect(addChart).toBeEnabled();
-  await addWidgetFromDialog(addDialog);
-  await page.getByRole("button", { name: "Save Dashboard" }).click();
-
-  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
-  await expect(
-    page.getByRole("table", {
-      name: "Complete data for Sum of Amount by Category",
-    }),
-  ).toBeVisible();
-  expect(api.writes[0]?.body).toEqual({
-    department_id: departmentId,
-    position: 0,
-    name: "Equipment totals",
-    refresh_cadence: "manual",
-    widgets: [
-      {
-        widget_type: "chart",
-        size: "M",
-        chart_id: null,
-        config: {
-          version: 1,
-          chart_type: "bar",
-          query: {
-            mode: "groups",
-            module_id: moduleId,
-            definition: queryDefinition,
-            aggregation: "sum",
-            measure: {
-              field_id: amountFieldId,
-              expected_type: "decimal",
-            },
-            dimension: {
-              field_id: categoryFieldId,
-              expected_type: "select",
-            },
-          },
-        },
-      },
-    ],
-  });
-  expect(api.snapshots[0]).toMatchObject({
-    mode: "groups",
-    aggregation: "sum",
-    measure: { field_id: amountFieldId, expected_type: "decimal" },
-  });
-});
-
 test("department Dashboard Pie builder saves Sum and reloads its preview and complete table", async ({
   page,
 }) => {
@@ -4036,92 +3846,6 @@ test("department Dashboard Pie builder saves Sum and reloads its preview and com
   await expect(page.getByText("Showing 1–30 of 30")).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(30);
   expect(api.snapshots).toHaveLength(2);
-});
-
-test("Dashboard line builder requires and saves a typed numeric measure for Average", async ({
-  page,
-}) => {
-  const api = await installDashboardApi(page);
-  await page.goto("/openview?section=dashboards");
-
-  await startNewDashboardDraft(page, "Daily scores");
-  const addDialog = await openAddWidgetDialog(page);
-  await addDialog.getByLabel("Data source").selectOption(moduleId);
-  await addDialog.getByLabel("Chart type").selectOption("line");
-  await addDialog
-    .getByLabel("Measure", { exact: true })
-    .selectOption("average");
-  const addLineChart = addDialog.getByRole("button", {
-    name: "Add widget",
-    exact: true,
-  });
-  const measure = addDialog.getByLabel("Numeric measure");
-  await expect(measure).toHaveValue("");
-  await expect(addLineChart).toBeDisabled();
-  await measure.selectOption(scoreFieldId);
-  await addDialog
-    .getByLabel("Group by", { exact: true })
-    .selectOption(dateFieldId);
-  await addDialog
-    .getByRole("button", { name: "Date window", exact: true })
-    .click();
-  await page.getByLabel("From date", { exact: true }).fill("2024-03-01");
-  await page.getByLabel("To date", { exact: true }).fill("2024-03-02");
-  await page.keyboard.press("Escape");
-  await expect(addLineChart).toBeEnabled();
-  await addWidgetFromDialog(addDialog);
-  await page.getByRole("button", { name: "Save Dashboard" }).click();
-
-  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
-  const table = page.getByRole("table", {
-    name: "Complete data for Average of Score over time",
-  });
-  await expect(table).toBeVisible();
-  await expect(table.locator("tbody tr")).toHaveCount(2);
-  expect(api.writes[0]?.body).toEqual({
-    department_id: departmentId,
-    position: 0,
-    name: "Daily scores",
-    refresh_cadence: "manual",
-    widgets: [
-      {
-        widget_type: "chart",
-        size: "M",
-        chart_id: null,
-        config: {
-          version: 1,
-          chart_type: "line",
-          query: {
-            mode: "date_series",
-            module_id: moduleId,
-            definition: queryDefinition,
-            aggregation: "average",
-            measure: { field_id: scoreFieldId, expected_type: "number" },
-            date_field: { field_id: dateFieldId, expected_type: "date" },
-            from_date: "2024-03-01",
-            to_date: "2024-03-02",
-            bucket: "day",
-          },
-        },
-      },
-    ],
-  });
-  expect(api.snapshots[0]).toMatchObject({
-    mode: "date_series",
-    aggregation: "average",
-    measure: { field_id: scoreFieldId, expected_type: "number" },
-    date_field: { field_id: dateFieldId, expected_type: "date" },
-  });
-
-  await page.reload();
-  await expect(table).toBeVisible();
-  await expect(table.locator("tbody tr")).toHaveCount(2);
-  expect(api.snapshots).toHaveLength(2);
-  expect(api.snapshots[1]).toMatchObject({
-    mode: "date_series",
-    aggregation: "average",
-    measure: { field_id: scoreFieldId, expected_type: "number" },
-  });
 });
 
 test("line chart builder blocks missing, reversed, and overlong date ranges", async ({

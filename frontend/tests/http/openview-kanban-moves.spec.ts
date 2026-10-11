@@ -4,6 +4,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf } from "./helpers/openview-catalog";
 
 const id = (value: number) =>
   `00000000-0000-4000-8000-${value.toString().padStart(12, "0")}`;
@@ -39,19 +40,6 @@ type WireRecord = {
   is_deleted: false;
   performed_by: string;
 };
-
-function paged<T>(items: T[], limit: number, offset = 0, total = items.length) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
-}
 
 async function installKanbanApi(
   page: Page,
@@ -164,7 +152,6 @@ async function installKanbanApi(
   let authReads = 0;
   let groupedReads = 0;
   let nextBatchStatus = 200;
-  let committedFailure: "unknown" | "malformed" | null = null;
   let holdBatch: Promise<void> | null = null;
   let revision = 0;
   await page.route("**/api/**", async (route) => {
@@ -196,7 +183,7 @@ async function installKanbanApi(
     }
     if (path === "/api/views/data-sources")
       return json(
-        paged(
+        pageOf(
           [
             {
               id: moduleId,
@@ -205,11 +192,11 @@ async function installKanbanApi(
               title_field_id: nameFieldId,
             },
           ],
-          limit,
+          { limit },
         ),
       );
     if (path === `/api/views/data-sources/${moduleId}/fields`)
-      return json(paged(fields, limit));
+      return json(pageOf(fields, { limit }));
     if (path === `/api/departments/${departmentId}`)
       return json({
         id: departmentId,
@@ -222,7 +209,7 @@ async function installKanbanApi(
       });
     if (path === "/api/departments")
       return json(
-        paged(
+        pageOf(
           [
             {
               id: departmentId,
@@ -234,11 +221,11 @@ async function installKanbanApi(
               performed_by: null,
             },
           ],
-          limit,
+          { limit },
         ),
       );
     if (path === "/api/views" && request.method() === "GET")
-      return json(paged([saved], limit));
+      return json(pageOf([saved], { limit }));
     if (path === `/api/views/${viewId}`) return json(saved);
     if (path === "/api/records/grouped-query") {
       groupedReads += 1;
@@ -277,22 +264,23 @@ async function installKanbanApi(
       return json({
         items: selectedRows.slice(body.offset, body.offset + body.limit),
         pagination: selected
-          ? paged(
-              selectedRows.slice(body.offset, body.offset + body.limit),
-              body.limit,
-              body.offset,
-              selectedRows.length,
-            ).pagination
+          ? pageOf(selectedRows.slice(body.offset, body.offset + body.limit), {
+              limit: body.limit,
+              offset: body.offset,
+              total: selectedRows.length,
+            }).pagination
           : null,
         groups: groups.slice(
           body.group_offset,
           body.group_offset + body.group_limit,
         ),
-        group_pagination: paged(
+        group_pagination: pageOf(
           groups.slice(body.group_offset, body.group_offset + body.group_limit),
-          body.group_limit,
-          body.group_offset,
-          groups.length,
+          {
+            limit: body.group_limit,
+            offset: body.group_offset,
+            total: groups.length,
+          },
         ).pagination,
         selected_group: selected,
       });
@@ -345,11 +333,6 @@ async function installKanbanApi(
           record: updated,
         };
       });
-      const failure = committedFailure;
-      committedFailure = null;
-      if (failure === "unknown")
-        return json({ detail: "Private failure canary" }, 503);
-      if (failure === "malformed") return json({ results: [] });
       return json({ results });
     }
     const recordId = path.match(/^\/api\/records\/([^/]+)$/)?.[1];
@@ -357,12 +340,11 @@ async function installKanbanApi(
       return json(rows.get(recordId), rows.has(recordId) ? 200 : 404);
     if (path === "/api/records/query")
       return json(
-        paged(
-          [...rows.values()].slice(offset, offset + limit),
+        pageOf([...rows.values()].slice(offset, offset + limit), {
           limit,
           offset,
-          rows.size,
-        ),
+          total: rows.size,
+        }),
       );
     return route.fallback();
   });
@@ -376,9 +358,6 @@ async function installKanbanApi(
     },
     failBatch: (status: number) => {
       nextBatchStatus = status;
-    },
-    commitThenFail: (failure: "unknown" | "malformed") => {
-      committedFailure = failure;
     },
     holdBatch: () => {
       let release!: () => void;
@@ -615,82 +594,44 @@ for (const options of [
     expect(api.batches).toEqual([]);
   });
 
-for (const failure of ["unknown", "malformed", "denied"] as const)
-  test(`Kanban retains unsaved moves after a ${failure} batch result`, async ({
-    page,
-  }) => {
-    const api = await installKanbanApi(page);
-    await page.goto(url);
-    await openLane(page);
-    const originalRevision = api.rows.get(firstRecordId)!.updated_at;
-    await moveTo(page, "Pump 1", "Ready");
-    const authReads = api.authReads();
-    const recordReads = api.groupedReads();
-    if (failure === "denied") {
-      api.failBatch(403);
-      api.changeAccess("read");
-    } else api.commitThenFail(failure);
-    await page
-      .getByRole("button", { name: "Save changes (1)", exact: true })
-      .click();
-    await expect(
-      page
-        .getByRole("alert")
-        .filter({ hasText: /moves|move/i })
-        .last(),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Discard", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByText("Private failure canary", { exact: false }),
-    ).toHaveCount(0);
-    expect(api.batches).toHaveLength(1);
-    if (failure === "denied") {
-      expect(api.rows.get(firstRecordId)?.data[laneFieldId]).toBe(todoId);
-      await expect.poll(api.authReads).toBeGreaterThan(authReads);
-      await expect(
-        page.getByRole("button", { name: "Move to…", exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByRole("button", { name: "Save changes (1)", exact: true }),
-      ).toBeDisabled();
-    } else {
-      // The server committed; the failed response did not confirm that fact.
-      // A new read must reveal it without clearing or rebasing the pending move.
-      expect(api.rows.get(firstRecordId)?.data[laneFieldId]).toBe(readyId);
-      expect(api.rows.get(firstRecordId)?.updated_at).not.toBe(
-        originalRevision,
-      );
-      await expect.poll(api.groupedReads).toBeGreaterThan(recordReads);
-      await expect(
-        page.getByRole("button", { name: "Ready, 1 records", exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "Open record: Pump 1", exact: true }),
-      ).toHaveCount(0);
-      const save = page.getByRole("button", {
-        name: "Save changes (1)",
-        exact: true,
-      });
-      await expect(save).toBeVisible();
-      expect(api.batches).toHaveLength(1);
-      await page
-        .getByRole("button", { name: "Ready, 1 records", exact: true })
-        .click();
-      await expect(
-        page.getByRole("button", { name: "Open record: Pump 1", exact: true }),
-      ).toBeVisible();
-      expect(api.batches).toHaveLength(1);
-      await save.click();
-      await expect(
-        page.getByRole("article").filter({ hasText: "Pump 1" }),
-      ).toContainText("Changed by someone else — review");
-      expect(api.batches).toHaveLength(2);
-      expect(api.batches[1].items[0].revision).toBe(originalRevision);
-      await expect(save).toBeVisible();
-    }
-  });
+// Unknown and malformed receipts are owned by
+// isolated/openview/record-move-receipts.spec.ts, and their recovery journey by
+// openview-date-moves.spec.ts; a denied result stays here.
+test("Kanban retains unsaved moves after a denied batch result", async ({
+  page,
+}) => {
+  const api = await installKanbanApi(page);
+  await page.goto(url);
+  await openLane(page);
+  await moveTo(page, "Pump 1", "Ready");
+  const authReads = api.authReads();
+  api.failBatch(403);
+  api.changeAccess("read");
+  await page
+    .getByRole("button", { name: "Save changes (1)", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: /moves|move/i })
+      .last(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Discard", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Private failure canary", { exact: false }),
+  ).toHaveCount(0);
+  expect(api.batches).toHaveLength(1);
+  expect(api.rows.get(firstRecordId)?.data[laneFieldId]).toBe(todoId);
+  await expect.poll(api.authReads).toBeGreaterThan(authReads);
+  await expect(
+    page.getByRole("button", { name: "Move to…", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Save changes (1)", exact: true }),
+  ).toBeDisabled();
+});
 
 test("Kanban blocks a duplicate Save and preserves the submitted batch while it is pending", async ({
   page,

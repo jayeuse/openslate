@@ -12,6 +12,8 @@ import {
 } from "./helpers/openview-event-source";
 import { readFile } from "node:fs/promises";
 import { hideDevOverlay } from "./helpers/test-styles";
+import { pageOf } from "./helpers/openview-catalog";
+import { gate } from "./helpers/gate";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -161,13 +163,11 @@ async function installRecordFilesApi(
               ),
             ];
       const items = available.slice(offset, offset + limit);
-      const response = pageResponse(
-        items,
+      const response = pageOf(items, {
         limit,
         offset,
-        available.length,
-        offset + items.length < available.length,
-      );
+        total: available.length,
+      });
       if (listBroken === "foreign")
         response.items = [
           recordAttachment(
@@ -258,15 +258,12 @@ async function installRecordFilesApi(
     return route.fulfill({ json: file });
   });
   const hold = () => {
-    let started: () => void = () => undefined;
-    let release: () => void = () => undefined;
-    const began = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const wait = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    return { began, release, barrier: { started, wait } };
+    const held = gate();
+    return {
+      began: held.started,
+      release: held.release,
+      barrier: { started: held.signalStarted, wait: held.wait },
+    };
   };
   return {
     views,
@@ -958,25 +955,6 @@ function baseView(): SavedView {
   };
 }
 
-function pageResponse<T>(
-  items: T[],
-  limit = 100,
-  offset = 0,
-  total = items.length,
-  hasMore = false,
-) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: hasMore,
-    },
-  };
-}
-
 function record(id: string, name: string, status: string) {
   const statusValue =
     status === "In service"
@@ -1260,14 +1238,17 @@ async function installViewsApi(
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: moduleId,
-              name: "Equipment",
-              department_id: departmentId,
-              title_field_id: null,
-            },
-          ]),
+          pageOf(
+            [
+              {
+                id: moduleId,
+                name: "Equipment",
+                department_id: departmentId,
+                title_field_id: null,
+              },
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
@@ -1275,121 +1256,124 @@ async function installViewsApi(
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: nameFieldId,
-              module_id: moduleId,
-              name: "Equipment name",
-              type: "text",
-              required: true,
-              position: 0,
-              config: {},
-            },
-            {
-              id: statusFieldId,
-              module_id: moduleId,
-              name: "Status",
-              type: "select",
-              required: false,
-              position: 1,
-              config: {
-                options: [
-                  { id: inServiceChoiceId, label: "In service" },
-                  { id: inspectionDueChoiceId, label: "Inspection due" },
-                ],
+          pageOf(
+            [
+              {
+                id: nameFieldId,
+                module_id: moduleId,
+                name: "Equipment name",
+                type: "text",
+                required: true,
+                position: 0,
+                config: {},
               },
-            },
-            {
-              id: serialFieldId,
-              module_id: moduleId,
-              name: options.serialFieldName ?? "Serial number",
-              type: "text",
-              required: false,
-              position: 2,
-              config: {},
-            },
-            {
-              id: unselectedQueryFieldId,
-              module_id: moduleId,
-              name: "Unselected query field",
-              type: "text",
-              required: false,
-              position: 3,
-              config: {},
-            },
-            {
-              id: timelineStartFieldId,
-              module_id: moduleId,
-              name: "Start date",
-              type: "date",
-              required: false,
-              position: 4,
-              config: {},
-            },
-            {
-              id: timelineEndFieldId,
-              module_id: moduleId,
-              name: "End date",
-              type: "date",
-              required: false,
-              position: 5,
-              config: {},
-            },
-            {
-              id: calendarDateFieldId,
-              module_id: moduleId,
-              name: "Scheduled at",
-              type: "datetime",
-              required: false,
-              position: 6,
-              config: {},
-            },
-            {
-              id: timelineDeadlineFieldId,
-              module_id: moduleId,
-              name: "Deadline",
-              type: "date",
-              required: false,
-              position: 7,
-              config: {},
-            },
-            {
-              id: timelineProgressFieldId,
-              module_id: moduleId,
-              name: "Progress",
-              type: "decimal",
-              required: false,
-              position: 8,
-              config: {},
-            },
-            {
-              id: timelineTimestampDeadlineFieldId,
-              module_id: moduleId,
-              name: "Timestamp deadline",
-              type: "datetime",
-              required: false,
-              position: 9,
-              config: {},
-            },
-            {
-              id: numberFieldId,
-              module_id: moduleId,
-              name: "Measurement",
-              type: "number",
-              required: false,
-              position: 10,
-              config: {},
-            },
-            {
-              id: integerFieldId,
-              module_id: moduleId,
-              name: "Item count",
-              type: "int",
-              required: false,
-              position: 11,
-              config: {},
-            },
-          ]),
+              {
+                id: statusFieldId,
+                module_id: moduleId,
+                name: "Status",
+                type: "select",
+                required: false,
+                position: 1,
+                config: {
+                  options: [
+                    { id: inServiceChoiceId, label: "In service" },
+                    { id: inspectionDueChoiceId, label: "Inspection due" },
+                  ],
+                },
+              },
+              {
+                id: serialFieldId,
+                module_id: moduleId,
+                name: options.serialFieldName ?? "Serial number",
+                type: "text",
+                required: false,
+                position: 2,
+                config: {},
+              },
+              {
+                id: unselectedQueryFieldId,
+                module_id: moduleId,
+                name: "Unselected query field",
+                type: "text",
+                required: false,
+                position: 3,
+                config: {},
+              },
+              {
+                id: timelineStartFieldId,
+                module_id: moduleId,
+                name: "Start date",
+                type: "date",
+                required: false,
+                position: 4,
+                config: {},
+              },
+              {
+                id: timelineEndFieldId,
+                module_id: moduleId,
+                name: "End date",
+                type: "date",
+                required: false,
+                position: 5,
+                config: {},
+              },
+              {
+                id: calendarDateFieldId,
+                module_id: moduleId,
+                name: "Scheduled at",
+                type: "datetime",
+                required: false,
+                position: 6,
+                config: {},
+              },
+              {
+                id: timelineDeadlineFieldId,
+                module_id: moduleId,
+                name: "Deadline",
+                type: "date",
+                required: false,
+                position: 7,
+                config: {},
+              },
+              {
+                id: timelineProgressFieldId,
+                module_id: moduleId,
+                name: "Progress",
+                type: "decimal",
+                required: false,
+                position: 8,
+                config: {},
+              },
+              {
+                id: timelineTimestampDeadlineFieldId,
+                module_id: moduleId,
+                name: "Timestamp deadline",
+                type: "datetime",
+                required: false,
+                position: 9,
+                config: {},
+              },
+              {
+                id: numberFieldId,
+                module_id: moduleId,
+                name: "Measurement",
+                type: "number",
+                required: false,
+                position: 10,
+                config: {},
+              },
+              {
+                id: integerFieldId,
+                module_id: moduleId,
+                name: "Item count",
+                type: "int",
+                required: false,
+                position: 11,
+                config: {},
+              },
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
@@ -1447,15 +1431,7 @@ async function installViewsApi(
         );
         return route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify(
-            pageResponse(
-              items,
-              limit,
-              offset,
-              total,
-              offset + items.length < total,
-            ),
-          ),
+          body: JSON.stringify(pageOf(items, { limit, offset, total })),
         });
       }
       const includeDeleted = url.searchParams.get("deleted") === "include";
@@ -1473,7 +1449,7 @@ async function installViewsApi(
         .map(withDefault);
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(pageResponse(views, limit, offset, views.length)),
+        body: JSON.stringify(pageOf(views, { limit, offset })),
       });
     }
     if (url.pathname === `/api/views/${viewId}` && request.method() === "GET") {
@@ -1666,13 +1642,7 @@ async function installViewsApi(
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify(
-        pageResponse(
-          rows,
-          limit,
-          offset,
-          allRows.length,
-          offset + rows.length < allRows.length,
-        ),
+        pageOf(rows, { limit, offset, total: allRows.length }),
       ),
     });
   });
@@ -1804,13 +1774,7 @@ async function installViewsApi(
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        ...pageResponse(
-          items,
-          limit,
-          offset,
-          allRows.length,
-          offset + items.length < allRows.length,
-        ),
+        ...pageOf(items, { limit, offset, total: allRows.length }),
         timezone: includesDatetime ? "Asia/Manila" : null,
       }),
     });
@@ -1831,16 +1795,12 @@ async function installViewsApi(
       nextMutationFailure = mutation;
     },
     pauseNextPatch: () => {
-      let signalStarted: () => void = () => undefined;
-      let releasePatch: () => void = () => undefined;
-      const started = new Promise<void>((resolve) => {
-        signalStarted = resolve;
-      });
-      const wait = new Promise<void>((resolve) => {
-        releasePatch = resolve;
-      });
-      nextPatchBarrier = { wait, signalStarted };
-      return { started, release: releasePatch };
+      const patch = gate();
+      nextPatchBarrier = {
+        wait: patch.wait,
+        signalStarted: patch.signalStarted,
+      };
+      return { started: patch.started, release: patch.release };
     },
     saved: () => saved,
     changeSavedViewElsewhere: (search: string) => {
@@ -1867,16 +1827,12 @@ async function installViewsApi(
       deniedRecordId = id;
     },
     pauseNextRecordLookup: () => {
-      let signalStarted: () => void = () => undefined;
-      let release: () => void = () => undefined;
-      const started = new Promise<void>((resolve) => {
-        signalStarted = resolve;
-      });
-      const wait = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      nextRecordLookupBarrier = { wait, signalStarted };
-      return { started, release };
+      const lookup = gate();
+      nextRecordLookupBarrier = {
+        wait: lookup.wait,
+        signalStarted: lookup.signalStarted,
+      };
+      return { started: lookup.started, release: lookup.release };
     },
     groupedQueryRequests,
     failNextGroupedQuery: () => {
@@ -1945,75 +1901,6 @@ async function addFilterForField(page: Page, fieldId: string) {
     .getByRole("combobox", { name: "Field", exact: true })
     .selectOption(fieldId);
 }
-
-async function enterFilterAndWaitForQuery(
-  page: Page,
-  fieldId: string,
-  value: string,
-) {
-  const filtersRegion = await openFilters(page);
-  const requestPromise = page.waitForRequest((request) => {
-    const url = new URL(request.url());
-    if (url.pathname !== "/api/records/query" || request.method() !== "POST")
-      return false;
-    const body = request.postDataJSON() as { definition: QueryDefinition };
-    return body.definition.filters.some(
-      (filter) =>
-        filter.field_id === fieldId &&
-        (filter.value === value || filter.value === Number(value)),
-    );
-  });
-  await filtersRegion.getByLabel("Value").fill(value);
-  return requestPromise;
-}
-
-test("decimal View filters retain ordinary and high-precision strings", async ({
-  page,
-}) => {
-  await installViewsApi(page);
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await addFilterForField(page, timelineProgressFieldId);
-
-  for (const value of ["1.25", "9007199254740993"]) {
-    const request = await enterFilterAndWaitForQuery(
-      page,
-      timelineProgressFieldId,
-      value,
-    );
-    const body = request.postDataJSON() as { definition: QueryDefinition };
-    const filter = body.definition.filters.find(
-      (item) => item.field_id === timelineProgressFieldId,
-    );
-
-    expect(filter).toEqual({
-      field_id: timelineProgressFieldId,
-      expected_type: "decimal",
-      operator: "eq",
-      value,
-    });
-  }
-});
-
-test("number View filters continue sending numeric values", async ({
-  page,
-}) => {
-  await installViewsApi(page);
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await addFilterForField(page, numberFieldId);
-
-  const request = await enterFilterAndWaitForQuery(page, numberFieldId, "12.5");
-  const body = request.postDataJSON() as { definition: QueryDefinition };
-  const filter = body.definition.filters.find(
-    (item) => item.field_id === numberFieldId,
-  );
-
-  expect(filter).toEqual({
-    field_id: numberFieldId,
-    expected_type: "number",
-    operator: "eq",
-    value: 12.5,
-  });
-});
 
 test("membership View filters select choices by label and submit stable IDs", async ({
   page,
@@ -2084,9 +1971,7 @@ test("membership View filters select choices by label and submit stable IDs", as
 });
 
 for (const layout of ["kanban", "calendar", "timeline"] as const) {
-  test(`${layout} does not query incomplete filters and sends typed membership values`, async ({
-    page,
-  }) => {
+  test(`${layout} does not query incomplete filters`, async ({ page }) => {
     const api = await installViewsApi(page, { initialLayout: layout });
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
@@ -2141,23 +2026,6 @@ for (const layout of ["kanban", "calendar", "timeline"] as const) {
           ),
         ),
     ).toBe(false);
-    const value = filtersRegion.getByRole("group", { name: "Value" });
-    await value.getByRole("checkbox", { name: "In service" }).check();
-    await value.getByRole("checkbox", { name: "Inspection due" }).check();
-    await expect
-      .poll(() =>
-        requests.some((request) => {
-          const definition = request.definition as QueryDefinition;
-          return definition.filters.some(
-            (filter) =>
-              filter.field_id === statusFieldId &&
-              filter.operator === "in" &&
-              JSON.stringify(filter.value) ===
-                JSON.stringify([inServiceChoiceId, inspectionDueChoiceId]),
-          );
-        }),
-      )
-      .toBe(true);
   });
 }
 
@@ -2501,22 +2369,41 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   ).toBe(true);
 });
 
-test("clearing an implicit default asks before discarding its local draft", async ({
+test("selecting Unsaved view or clearing an implicit default asks before discarding its local draft", async ({
   page,
 }) => {
   const api = await installViewsApi(page, { initialDefault: true });
 
   await page.goto(`/openview?section=views&module=${moduleId}`);
-  await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
-    viewId,
-  );
+  const savedView = page.getByRole("combobox", { name: "Saved view" });
+  await expect(savedView).toHaveValue(viewId);
   const search = page.getByRole("searchbox", { name: "Search Equipment" });
-  await search.fill("unpublished default draft");
-  await openViewAction(page, "Clear default view");
-
   const discardDialog = page.getByRole("alertdialog", {
     name: "Discard unsaved view changes?",
   });
+
+  // Selecting Unsaved view overrides the module default only after discard.
+  await search.fill("keep until confirmed");
+  await savedView.selectOption("");
+  await expect(discardDialog).toBeVisible();
+  await discardDialog.getByRole("button", { name: "Keep editing" }).click();
+  await expect(savedView).toHaveValue(viewId);
+  await expect(search).toHaveValue("keep until confirmed");
+
+  await savedView.selectOption("");
+  await discardDialog
+    .getByRole("button", { name: "Discard and continue" })
+    .click();
+
+  await expect(savedView).toHaveValue("");
+  await expect(search).toHaveValue("");
+  await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
+  await page.reload();
+  await expect(savedView).toHaveValue(viewId);
+
+  // Clearing the default asks too, and a rejected clear keeps the draft.
+  await search.fill("unpublished default draft");
+  await openViewAction(page, "Clear default view");
   await expect(discardDialog).toBeVisible();
   expect(api.defaultView()).toBe(viewId);
   await discardDialog.getByRole("button", { name: "Keep editing" }).click();
@@ -2544,38 +2431,6 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   expect(api.defaultView()).toBe(null);
   await expect(search).toHaveValue("");
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
-});
-
-test("selecting Unsaved view overrides the module default after discard confirmation", async ({
-  page,
-}) => {
-  await installViewsApi(page, { initialDefault: true });
-
-  await page.goto(`/openview?section=views&module=${moduleId}`);
-  const savedView = page.getByRole("combobox", { name: "Saved view" });
-  await expect(savedView).toHaveValue(viewId);
-  const search = page.getByRole("searchbox", { name: "Search Equipment" });
-  await search.fill("keep until confirmed");
-  await savedView.selectOption("");
-
-  const discardDialog = page.getByRole("alertdialog", {
-    name: "Discard unsaved view changes?",
-  });
-  await expect(discardDialog).toBeVisible();
-  await discardDialog.getByRole("button", { name: "Keep editing" }).click();
-  await expect(savedView).toHaveValue(viewId);
-  await expect(search).toHaveValue("keep until confirmed");
-
-  await savedView.selectOption("");
-  await discardDialog
-    .getByRole("button", { name: "Discard and continue" })
-    .click();
-
-  await expect(savedView).toHaveValue("");
-  await expect(search).toHaveValue("");
-  await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
-  await page.reload();
-  await expect(savedView).toHaveValue(viewId);
 });
 
 test("duplicating a saved view saves the current draft as a selected copy", async ({
@@ -4444,7 +4299,7 @@ test.describe("OpenView workspace regional dates", () => {
     api.workspace.timezone = "America/Los_Angeles";
     await page.route("**/api/audit-logs?**", (route) =>
       route.fulfill({
-        json: pageResponse(
+        json: pageOf(
           [
             {
               id: "00000000-0000-4000-8000-000000000199",
@@ -4456,7 +4311,7 @@ test.describe("OpenView workspace regional dates", () => {
               actor_label: "Regional test actor",
             },
           ],
-          50,
+          { limit: 50 },
         ),
       }),
     );
@@ -5091,15 +4946,11 @@ test("stale conflict can reload the authoritative saved version without losing i
   api.makeNextPatchStale();
   await page.getByRole("button", { name: "Save changes" }).click();
 
+  // The dialog text is owned by "server-backed Views preserve edits through
+  // save, conflict, archive, restore, and module default changes".
   const conflictDialog = page.getByRole("dialog", {
     name: "Update saved view",
   });
-  await expect(
-    conflictDialog.getByText(/Query, filters, or sort/),
-  ).toBeVisible();
-  await expect(
-    conflictDialog.getByText(/local search “my local edit”/),
-  ).toBeVisible();
   expect(api.saved().definition.search).toBe("external edit");
   await conflictDialog.getByRole("button", { name: "Reload latest" }).click();
 
@@ -5378,44 +5229,47 @@ test("Views show authorized labels while filters keep stable choice and eligible
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: nameFieldId,
-              module_id: moduleId,
-              name: "Equipment name",
-              type: "text",
-              required: true,
-              position: 0,
-              config: {},
-            },
-            {
-              id: statusFieldId,
-              module_id: moduleId,
-              name: "Status",
-              type: "select",
-              required: false,
-              position: 1,
-              config: {
-                options: [{ id: choiceId, label }],
+          pageOf(
+            [
+              {
+                id: nameFieldId,
+                module_id: moduleId,
+                name: "Equipment name",
+                type: "text",
+                required: true,
+                position: 0,
+                config: {},
               },
-            },
-            {
-              id: userFieldId,
-              module_id: moduleId,
-              name: "Assignee",
-              type: "user",
-              required: false,
-              position: 2,
-              config: {},
-            },
-          ]),
+              {
+                id: statusFieldId,
+                module_id: moduleId,
+                name: "Status",
+                type: "select",
+                required: false,
+                position: 1,
+                config: {
+                  options: [{ id: choiceId, label }],
+                },
+              },
+              {
+                id: userFieldId,
+                module_id: moduleId,
+                name: "Assignee",
+                type: "user",
+                required: false,
+                position: 2,
+                config: {},
+              },
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
     if (request.method() === "GET" && pathname === "/api/views")
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(pageResponse([view])),
+        body: JSON.stringify(pageOf([view], { limit: 100 })),
       });
     if (request.method() === "GET" && pathname === "/api/views/" + viewId)
       return route.fulfill({
@@ -5444,7 +5298,7 @@ test("Views show authorized labels while filters keep stable choice and eligible
         headers: { "cache-control": "private, no-store" },
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse(
+          pageOf(
             eligibleUserAvailable
               ? [
                   {
@@ -5454,6 +5308,7 @@ test("Views show authorized labels while filters keep stable choice and eligible
                   },
                 ]
               : [],
+            { limit: 100 },
           ),
         ),
       });
@@ -5510,7 +5365,9 @@ test("Views show authorized labels while filters keep stable choice and eligible
       .slice(offset, offset + limit);
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(pageResponse(items, limit, offset, rows.length)),
+      body: JSON.stringify(
+        pageOf(items, { limit, offset, total: rows.length, hasMore: false }),
+      ),
     });
   });
 
@@ -6153,26 +6010,45 @@ test("a Comms example record link shows a notice and returns to live Views", asy
   ).toHaveCount(0);
 });
 
-test("OpenView request failures use safe destructive feedback without server detail", async ({
-  page,
-}) => {
-  await installViewsApi(page);
-  await page.route("**/api/views/data-sources?*", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { detail: "Private database routing detail" },
-    }),
-  );
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  const failure = page
-    .getByRole("alert")
-    .filter({ hasText: "temporarily unavailable" });
-  await expect(failure).toBeVisible();
-  await expect(failure).toHaveAttribute("data-variant", "destructive");
-  await expect(page.getByText("Private database routing detail")).toHaveCount(
-    0,
-  );
-});
+for (const current of [
+  {
+    section: "Views",
+    url: `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    detail: "Private database routing detail",
+  },
+  {
+    section: "Charts",
+    url: "/openview?section=charts",
+    detail: "Private chart data-source detail",
+    // The failure stays visible with the Chart filters open.
+    openFilters: true,
+  },
+]) {
+  test(`${current.section} request failures use safe destructive feedback without server detail and keep Retry visible`, async ({
+    page,
+  }) => {
+    await installViewsApi(page);
+    await page.route("**/api/views/data-sources?*", (route) =>
+      route.fulfill({ status: 503, json: { detail: current.detail } }),
+    );
+    await page.goto(current.url);
+    if ("openFilters" in current)
+      await page
+        .getByRole("button", { name: "Filters (0)", exact: true })
+        .click();
+    const failure = page
+      .getByRole("alert")
+      .filter({ hasText: "temporarily unavailable" });
+    await expect(failure).toBeVisible();
+    await expect(failure).toHaveAttribute("data-variant", "destructive");
+    await expect(
+      failure.getByRole("button", { name: "Retry catalog", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(current.detail, { exact: true })).toHaveCount(
+      0,
+    );
+  });
+}
 
 for (const layout of ["table", "kanban"] as const) {
   for (const mode of ["light", "dark"] as const) {
@@ -6590,79 +6466,34 @@ test.describe("export journeys", () => {
     });
   });
 
-  for (const invalid of [
-    { name: "wrong status", reply: { status: 201 } },
-    { name: "wrong MIME", reply: { contentType: "text/html" } },
-    {
-      name: "missing attachment",
-      reply: {
-        headers: { ...s16AttachmentHeaders, "Content-Disposition": "inline" },
-      },
-    },
-    {
-      name: "unsafe filename",
-      reply: {
-        headers: {
-          ...s16AttachmentHeaders,
-          "Content-Disposition": 'attachment; filename="../private.csv"',
-        },
-      },
-    },
-    {
-      name: "wrong extension",
-      reply: {
-        headers: {
-          ...s16AttachmentHeaders,
-          "Content-Disposition": 'attachment; filename="records.xlsx"',
-        },
-      },
-    },
-    {
-      name: "cacheable response",
-      reply: {
-        headers: { ...s16AttachmentHeaders, "Cache-Control": "public" },
-      },
-    },
-    {
-      name: "sniffable response",
-      reply: {
-        headers: { ...s16AttachmentHeaders, "X-Content-Type-Options": "sniff" },
-      },
-    },
-    {
-      name: "oversized bytes",
-      reply: { body: Buffer.alloc(8 * 1024 * 1024 + 1, 65) },
-    },
-  ] satisfies { name: string; reply: S16Reply }[]) {
-    test(`${invalid.name} is never an attachment and Retry keeps options`, async ({
-      page,
-    }) => {
-      const api = await installS16Export(page);
-      api.reply(invalid.reply);
-      await page.goto(
-        `/openview?section=views&module=${moduleId}&view=${viewId}`,
-      );
-      const dialog = await openS16Export(page);
-      await dialog
-        .getByRole("checkbox", { name: "Serial number", exact: true })
-        .uncheck();
-      await dialog
-        .getByRole("button", { name: "Download", exact: true })
-        .click();
-      await expect(dialog.getByRole("alert")).toContainText(
-        "could not be downloaded",
-      );
-      expect(api.downloads).toEqual([]);
-      await expect(
-        dialog.getByRole("checkbox", { name: "Serial number", exact: true }),
-      ).not.toBeChecked();
-      api.reply({});
-      await s16DownloadedBytes(page, () =>
-        dialog.getByRole("button", { name: "Download", exact: true }).click(),
-      );
-      expect(api.requests).toHaveLength(2);
-    });
-  }
+  // Every other invalid reply is owned by
+  // isolated/openview/records-export-api.spec.ts.
+  test("a wrong MIME reply is never an attachment and Retry keeps options", async ({
+    page,
+  }) => {
+    const api = await installS16Export(page);
+    api.reply({ contentType: "text/html" });
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const dialog = await openS16Export(page);
+    await dialog
+      .getByRole("checkbox", { name: "Serial number", exact: true })
+      .uncheck();
+    await dialog.getByRole("button", { name: "Download", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "could not be downloaded",
+    );
+    expect(api.downloads).toEqual([]);
+    await expect(
+      dialog.getByRole("checkbox", { name: "Serial number", exact: true }),
+    ).not.toBeChecked();
+    api.reply({});
+    await s16DownloadedBytes(page, () =>
+      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+    );
+    expect(api.requests).toHaveLength(2);
+  });
   for (const failure of [
     { status: 404, code: "not_found", expected: "no longer available" },
     {

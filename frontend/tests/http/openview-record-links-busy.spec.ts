@@ -12,6 +12,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf } from "./helpers/openview-catalog";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -67,19 +68,6 @@ type HarnessOptions = {
   offPageSavedField?: boolean;
   temporaryFieldOffPage?: boolean;
 };
-
-function pageResponse<T>(items: T[]) {
-  return {
-    items,
-    pagination: {
-      limit: 100,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
-}
 
 function record(id: string, moduleId: string, name: string) {
   const fieldId =
@@ -271,7 +259,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       });
     if (url.pathname === "/api/departments")
       return route.fulfill({
-        json: pageResponse(
+        json: pageOf(
           [
             [departmentId, "Field service"],
             ...(!options.otherDepartmentOffPage
@@ -286,6 +274,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
             is_deleted: false,
             performed_by: userId,
           })),
+          { limit: 100 },
         ),
       });
     if (url.pathname === `/api/departments/${otherDepartmentId}`)
@@ -355,30 +344,33 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
     }
     if (url.pathname === "/api/views/data-sources")
       return route.fulfill({
-        json: pageResponse([
-          ...(!options.homeSourceOffPage
-            ? [
-                {
-                  id: sourceModuleId,
-                  name: "Service requests",
-                  department_id: departmentId,
-                  title_field_id: sourceNameFieldId,
-                },
-              ]
-            : []),
-          ...(options.targetUnreadable || options.targetSourceOffPage
-            ? []
-            : [
-                {
-                  id: targetModuleId,
-                  name: "Service visits",
-                  department_id: options.targetInOtherDepartment
-                    ? otherDepartmentId
-                    : departmentId,
-                  title_field_id: targetNameFieldId,
-                },
-              ]),
-        ]),
+        json: pageOf(
+          [
+            ...(!options.homeSourceOffPage
+              ? [
+                  {
+                    id: sourceModuleId,
+                    name: "Service requests",
+                    department_id: departmentId,
+                    title_field_id: sourceNameFieldId,
+                  },
+                ]
+              : []),
+            ...(options.targetUnreadable || options.targetSourceOffPage
+              ? []
+              : [
+                  {
+                    id: targetModuleId,
+                    name: "Service visits",
+                    department_id: options.targetInOtherDepartment
+                      ? otherDepartmentId
+                      : departmentId,
+                    title_field_id: targetNameFieldId,
+                  },
+                ]),
+          ],
+          { limit: 100 },
+        ),
       });
     if (
       url.pathname.startsWith("/api/views/data-sources/") &&
@@ -430,17 +422,20 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
         });
       }
       return route.fulfill({
-        json: pageResponse([
-          {
-            id: isSource ? sourceNameFieldId : targetNameFieldId,
-            module_id: moduleId,
-            name: isSource ? "Request title" : "Visit title",
-            type: "text",
-            required: true,
-            position: 0,
-            config: {},
-          },
-        ]),
+        json: pageOf(
+          [
+            {
+              id: isSource ? sourceNameFieldId : targetNameFieldId,
+              module_id: moduleId,
+              name: isSource ? "Request title" : "Visit title",
+              type: "text",
+              required: true,
+              position: 0,
+              config: {},
+            },
+          ],
+          { limit: 100 },
+        ),
       });
     }
     const selectedView = savedView();
@@ -452,39 +447,42 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       selectedView.presentation.column_field_ids.push(incomingFieldId);
     }
     if (url.pathname === "/api/views" && method === "GET")
-      return route.fulfill({ json: pageResponse([selectedView]) });
+      return route.fulfill({ json: pageOf([selectedView], { limit: 100 }) });
     if (url.pathname === `/api/views/${viewId}` && method === "GET")
       return route.fulfill({ json: selectedView });
     if (url.pathname === "/api/fields")
       return route.fulfill({
-        json: pageResponse([
-          {
-            id: relationshipFieldId,
-            module_id: sourceModuleId,
-            name: "Follow-up visit",
-            type: "relationship",
-            is_deleted: false,
-            position: 1,
-            relationship_target_module_id: targetModuleId,
-            relationship_multiple_targets: true,
-            relationship_multiple_sources: !options.singleSource,
-          },
-          ...(options.handoverLink
-            ? [
-                {
-                  id: handoverFieldId,
-                  module_id: sourceModuleId,
-                  name: "Handover visit",
-                  type: "relationship",
-                  is_deleted: false,
-                  position: 2,
-                  relationship_target_module_id: targetModuleId,
-                  relationship_multiple_targets: true,
-                  relationship_multiple_sources: true,
-                },
-              ]
-            : []),
-        ]),
+        json: pageOf(
+          [
+            {
+              id: relationshipFieldId,
+              module_id: sourceModuleId,
+              name: "Follow-up visit",
+              type: "relationship",
+              is_deleted: false,
+              position: 1,
+              relationship_target_module_id: targetModuleId,
+              relationship_multiple_targets: true,
+              relationship_multiple_sources: !options.singleSource,
+            },
+            ...(options.handoverLink
+              ? [
+                  {
+                    id: handoverFieldId,
+                    module_id: sourceModuleId,
+                    name: "Handover visit",
+                    type: "relationship",
+                    is_deleted: false,
+                    position: 2,
+                    relationship_target_module_id: targetModuleId,
+                    relationship_multiple_targets: true,
+                    relationship_multiple_sources: true,
+                  },
+                ]
+              : []),
+          ],
+          { limit: 100 },
+        ),
       });
     if (url.pathname === "/api/relationships" && method === "GET") {
       state.relationshipReads += 1;
@@ -613,11 +611,14 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
         });
       }
       return route.fulfill({
-        json: pageResponse([
-          body.module_id === targetModuleId
-            ? targetRecord
-            : currentSourceRecord,
-        ]),
+        json: pageOf(
+          [
+            body.module_id === targetModuleId
+              ? targetRecord
+              : currentSourceRecord,
+          ],
+          { limit: 100 },
+        ),
       });
     }
     if (url.pathname === `/api/records/${targetRecordId}` && method === "GET")
