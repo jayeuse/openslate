@@ -138,9 +138,13 @@ def test_jobs_faults_stop_without_selecting_another_job_or_replaying_writes(
     fault,
 ):
     dataset, wire, context, actions = _journey(tmp_path, monkeypatch, fault=fault)
-    with context.clients["admin"], pytest.raises(SamplePhaseActionError) as caught:
+
+    def run_controls() -> None:
         for action in actions:
             execute_control_action(action, dataset, context)
+
+    with context.clients["admin"], pytest.raises(SamplePhaseActionError) as caught:
+        run_controls()
     assert caught.value.step != "control:jobs_prepare", "Failure must reach the injected boundary"
     assert wire.retry_calls <= 1 and wire.purge_calls <= 1
     if fault not in {"retained_report"}:

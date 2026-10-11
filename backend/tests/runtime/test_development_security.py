@@ -297,5 +297,5 @@ def test_real_proxy_middleware_does_not_turn_malformed_input_into_a_valid_ip(
         "/", headers={"X-Forwarded-For": forwarded}
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not appear to be an IPv4 or IPv6 address"):
         ip_address(response.json()["client"])

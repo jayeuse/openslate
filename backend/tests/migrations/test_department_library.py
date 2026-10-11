@@ -49,25 +49,28 @@ def test_library_owns_exactly_one_department_and_parent_delete_is_restricted(int
         ("board_attachment", {"department_id": department.id, "board_id": board.id}),
         ("workspace_logo", {"department_id": department.id}),
     ):
+        savepoint = db.begin_nested()
+        db.add(inventory(purpose, **parents))
         with pytest.raises(IntegrityError) as rejected:
-            with db.begin_nested():
-                db.add(inventory(purpose, **parents))
-                db.flush()
-        assert rejected.value.orig.diag.constraint_name == "ck_files_purpose_parent"
-    with pytest.raises(IntegrityError) as missing:
-        with db.begin_nested():
-            db.add(inventory(department_id=uuid7()))
             db.flush()
+        savepoint.rollback()
+        assert rejected.value.orig.diag.constraint_name == "ck_files_purpose_parent"
+    savepoint = db.begin_nested()
+    db.add(inventory(department_id=uuid7()))
+    with pytest.raises(IntegrityError) as missing:
+        db.flush()
+    savepoint.rollback()
     assert missing.value.orig.diag.constraint_name == "fk_files_department_id_departments"
     # Remove the record/module so this rejection is specifically the File FK.
     db.delete(record)
     db.flush()
     db.delete(module)
     db.flush()
+    savepoint = db.begin_nested()
+    db.delete(department)
     with pytest.raises(IntegrityError) as restricted:
-        with db.begin_nested():
-            db.delete(department)
-            db.flush()
+        db.flush()
+    savepoint.rollback()
     assert restricted.value.orig.diag.constraint_name == "fk_files_department_id_departments"
     assert (
         db.connection().scalar(

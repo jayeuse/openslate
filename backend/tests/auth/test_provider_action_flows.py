@@ -1,6 +1,7 @@
 """Verified provider email actions never admit an unbound application profile."""
 
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -299,25 +300,28 @@ def test_password_policy_rejects_before_consuming_action_or_mutating_provider(
         provider_actions, "load_workspace_policy", lambda _db: policy, raising=False
     )
 
+    if kind == "change":
+        attempt = partial(
+            provider_actions.change_password,
+            db,
+            user,
+            sessions[0].id,
+            "current-access",
+            "old password",
+            password,
+            client,
+            enforce_rate_limit=False,
+        )
+    else:
+        action = (
+            provider_actions.complete_invitation
+            if kind == "invite"
+            else provider_actions.complete_recovery
+        )
+        attempt = partial(action, db, "a" * 56, password, client)
+
     with pytest.raises(ValueError, match=message):
-        if kind == "change":
-            provider_actions.change_password(
-                db,
-                user,
-                sessions[0].id,
-                "current-access",
-                "old password",
-                password,
-                client,
-                enforce_rate_limit=False,
-            )
-        else:
-            action = (
-                provider_actions.complete_invitation
-                if kind == "invite"
-                else provider_actions.complete_recovery
-            )
-            action(db, "a" * 56, password, client)
+        attempt()
 
     client.verify_email_action.assert_not_called()
     client.password_grant.assert_not_called()

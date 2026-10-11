@@ -451,8 +451,10 @@ def test_report_run_eligible_users_reject_duplicate_and_orphan_links(
         (uuid7(), recipient.id),
         (run.id, uuid7()),
     ):
-        with pytest.raises(IntegrityError), db.begin_nested():
-            db.add(ReportRunEligibleUser(run_id=run_id, user_id=user_id))
+        savepoint = db.begin_nested()
+        db.add(ReportRunEligibleUser(run_id=run_id, user_id=user_id))
+        with pytest.raises(IntegrityError):
             db.flush()
+        savepoint.rollback()
 
     assert db.get(ReportRunEligibleUser, (run.id, recipient.id)) is not None

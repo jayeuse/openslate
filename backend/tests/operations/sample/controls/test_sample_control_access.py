@@ -349,9 +349,13 @@ def test_access_controls_call_ui_routes_and_restore_the_planned_state(
             if fault in {"unknown", "cleanup_unknown"}
             else SamplePhaseActionError
         )
-        with pytest.raises(error):
+
+        def run_controls() -> None:
             for action in actions:
                 execute_access_control(action, dataset, context)
+
+        with pytest.raises(error):
+            run_controls()
         assert fault_hit, "The actual failing transport boundary must be reached"
         assert invitation_writes.count("reconcile") <= 1
         assert invitation_writes.count("revoke") <= 2

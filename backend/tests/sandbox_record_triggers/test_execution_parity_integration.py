@@ -248,10 +248,11 @@ def test_execution_position_defaults_to_zero_and_rejects_negative_values(
         workspace_timezone=template.workspace_timezone,
         condition_operator="all",
     )
+    savepoint = integration_owner_db.begin_nested()
+    integration_owner_db.add(invalid)
     with pytest.raises(IntegrityError):
-        with integration_owner_db.begin_nested():
-            integration_owner_db.add(invalid)
-            integration_owner_db.flush()
+        integration_owner_db.flush()
+    savepoint.rollback()
 
 
 def _definition(

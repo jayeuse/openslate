@@ -14,9 +14,9 @@ from tests.catalog.field_record_support import _make_validation_client, make_fie
 
 
 def test_field_config_rejects_invalid_select_options() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Select fields require a non-empty options list"):
         field_config(FieldType.SELECT, {})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Select options need IDs and labels"):
         field_config(FieldType.SELECT, {"options": ["open", "open"]})
 
 
@@ -29,13 +29,14 @@ def test_select_option_ids_are_stable_values_and_duplicate_labels_are_rejected()
     config = field_config(FieldType.SELECT, {"options": options, "defaultValue": first_id})
     field = make_field(uuid7(), FieldType.SELECT, config=config)
     assert validate_field_value(field, first_id) == first_id
-    with pytest.raises(ValueError):
+    not_an_option = f"Field {field.id} must be one of the configured options"
+    with pytest.raises(ValueError, match=not_an_option):
         validate_field_value(field, "Open")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=not_an_option):
         validate_field_value(field, str(uuid7()))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Select option IDs and labels must be unique"):
         field_config(FieldType.SELECT, {"options": [{"id": first_id, "label": "Open"}] * 2})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Select option IDs and labels must be unique"):
         field_config(
             FieldType.SELECT,
             {"options": [{"id": first_id, "label": "Open"}, {"id": second_id, "label": "Open"}]},
@@ -43,23 +44,55 @@ def test_select_option_ids_are_stable_values_and_duplicate_labels_are_rejected()
 
 
 @pytest.mark.parametrize(
-    ("field_type", "config"),
+    ("field_type", "config", "message"),
     [
-        (FieldType.TEXT, {"options": ["open"]}),
-        (FieldType.NUMBER, {"minLength": 1}),
-        (FieldType.DECIMAL, {"options": ["open"]}),
-        (FieldType.INTEGER, {"minLength": 1}),
-        (FieldType.BOOLEAN, {"minimum": 0}),
-        (FieldType.DATE, {"minLength": 1}),
-        (FieldType.DATETIME, {"options": ["open"]}),
-        (FieldType.SELECT, {"minimum": 0}),
-        (FieldType.RELATIONSHIP, {"options": ["open"]}),
+        (
+            FieldType.TEXT,
+            {"options": ["open"]},
+            "Text fields only support minLength, maxLength, and defaultValue configuration",
+        ),
+        (
+            FieldType.NUMBER,
+            {"minLength": 1},
+            "Numeric fields only support minimum, maximum, step, and defaultValue configuration",
+        ),
+        (
+            FieldType.DECIMAL,
+            {"options": ["open"]},
+            "Decimal fields only support minimum and maximum configuration",
+        ),
+        (
+            FieldType.INTEGER,
+            {"minLength": 1},
+            "Numeric fields only support minimum, maximum, step, and defaultValue configuration",
+        ),
+        (
+            FieldType.BOOLEAN,
+            {"minimum": 0},
+            "Boolean fields only support defaultValue configuration",
+        ),
+        (
+            FieldType.DATE,
+            {"minLength": 1},
+            "Date fields only support earliest, latest, and defaultValue configuration",
+        ),
+        (
+            FieldType.DATETIME,
+            {"options": ["open"]},
+            "Date fields only support earliest, latest, and defaultValue configuration",
+        ),
+        (FieldType.SELECT, {"minimum": 0}, "Select fields require a non-empty options list"),
+        (
+            FieldType.RELATIONSHIP,
+            {"options": ["open"]},
+            "This field type does not support configuration",
+        ),
     ],
 )
 def test_field_config_rejects_cross_type_configuration(
-    field_type: FieldType, config: dict[str, object]
+    field_type: FieldType, config: dict[str, object], message: str
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=f"^{message}$"):
         field_config(field_type, config)
 
 
@@ -96,19 +129,19 @@ def test_module_schema_validator_checks_active_field_structure() -> None:
     validate_module_schema([first, second])
 
     second.position = 3
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Field positions must be contiguous and zero-based"):
         validate_module_schema([first, second])
 
     second.position = 1
     second.name = "  "
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Field names must be non-blank"):
         validate_module_schema([first, second])
 
     second.name = first.name
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Field names must be unique"):
         validate_module_schema([first, second])
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Module schemas require at least one active field"):
         validate_module_schema([])
 
 
@@ -122,11 +155,11 @@ def test_module_schema_validator_reuses_field_config_and_relationship_metadata()
     validate_module_schema([field])
 
     field.config = {"options": []}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Select fields require a non-empty options list"):
         validate_module_schema([field])
 
     field = make_field(module_id, FieldType.RELATIONSHIP)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Relationship fields have invalid relationship metadata"):
         validate_module_schema([field])
     field.relationship_target_module_id = uuid7()
     field.relationship_multiple_targets = False

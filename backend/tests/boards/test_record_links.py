@@ -286,10 +286,11 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
         )
     )
     assert snapshot is not None
+    savepoint = db.begin_nested()
+    snapshot.is_deleted = True
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            snapshot.is_deleted = True
-            db.flush()
+        db.flush()
+    savepoint.rollback()
     db.refresh(snapshot)
     with _client(db, owner) as client:
         removed = client.request(
@@ -447,17 +448,18 @@ def test_record_link_cap_and_database_parent_guards(integration_owner_db: Sessio
     )
     db.add(event)
     db.flush()
+    savepoint = db.begin_nested()
+    db.add(
+        BoardRecordLink(
+            board_id=wrong_board.id,
+            event_id=event.id,
+            record_id=record.id,
+            module_id=module.id,
+        )
+    )
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.add(
-                BoardRecordLink(
-                    board_id=wrong_board.id,
-                    event_id=event.id,
-                    record_id=record.id,
-                    module_id=module.id,
-                )
-            )
-            db.flush()
+        db.flush()
+    savepoint.rollback()
     for index in range(20):
         source = Record(module_id=module.id, data={"index": index})
         db.add(source)

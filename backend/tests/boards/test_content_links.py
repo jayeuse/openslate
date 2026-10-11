@@ -108,10 +108,11 @@ def test_event_links_persist_and_are_redacted_in_audit(integration_owner_db: Ses
     assert event_audit.after["links"] == "[REDACTED]"
     stored_event = db.get(BoardEvent, UUID(event_id))
     assert stored_event is not None
+    savepoint = db.begin_nested()
+    stored_event.links = [link] * 21
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            stored_event.links = [link] * 21
-            db.flush()
+        db.flush()
+    savepoint.rollback()
     assert client(db, reader, event_router).get(f"{root}/{event_id}").json()["links"] == [link]
     replacement = {"label": "Agenda", "url": "https://example.org/private-agenda-v2"}
     db.refresh(board)

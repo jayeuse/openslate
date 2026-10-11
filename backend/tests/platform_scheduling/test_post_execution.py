@@ -288,11 +288,14 @@ def test_rolled_back_publication_leaves_no_result_and_can_retry(integration_owne
     db = integration_owner_db
     _actor, _role, board, item, work = _subject(db)
     claim = claim_due_post_work(db, now=NOW)[0]
-    with pytest.raises(RuntimeError, match="controlled failure"):
-        with db.begin_nested():
-            assert finalize_post_claim(db, claim, now=NOW) is not None
-            db.flush()
-            raise RuntimeError("controlled failure")
+
+    def publish_then_fail() -> None:
+        assert finalize_post_claim(db, claim, now=NOW) is not None
+        db.flush()
+        raise RuntimeError("controlled failure")
+
+    with pytest.raises(RuntimeError, match="controlled failure"), db.begin_nested():
+        publish_then_fail()
     db.refresh(work)
     db.refresh(item)
     db.refresh(board)

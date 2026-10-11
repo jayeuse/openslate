@@ -481,9 +481,12 @@ def test_widget_patch_and_duplicate_use_frontend_revision_bodies(
 
     try:
         if corrupt is not None:
-            with pytest.raises(SamplePhaseActionError, match="did not match"):
+            failing_action = patch_action
+            if corrupt.startswith("duplicate"):
                 execute_board_control(patch_action, dataset, context)
-                execute_board_control(duplicate_action, dataset, context)
+                failing_action = duplicate_action
+            with pytest.raises(SamplePhaseActionError, match="did not match"):
+                execute_board_control(failing_action, dataset, context)
             assert len([item for item in seen if item.method == "POST"]) == int(
                 corrupt.startswith("duplicate")
             )

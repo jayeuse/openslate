@@ -126,20 +126,24 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
         "recipient_id": str(owner.id),
         "read_at": None,
     }
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(
-            InAppNotification(
-                work_id=work.id,
-                recipient_id=owner.id,
-                kind="report-run",
-                subject_type="report_run",
-                subject_id=run.id,
-            )
+    savepoint = db.begin_nested()
+    db.add(
+        InAppNotification(
+            work_id=work.id,
+            recipient_id=owner.id,
+            kind="report-run",
+            subject_type="report_run",
+            subject_id=run.id,
         )
+    )
+    with pytest.raises(IntegrityError):
         db.flush()
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.delete(work)
+    savepoint.rollback()
+    savepoint = db.begin_nested()
+    db.delete(work)
+    with pytest.raises(IntegrityError):
         db.flush()
+    savepoint.rollback()
     other_role = "member"
     other = User(
         email=f"report-other-{uuid7().hex}@example.test",
@@ -207,14 +211,14 @@ def test_report_occurrence_refuses_an_archived_report_or_a_closed_module(integra
     module.is_deleted = True
     module.deleted_at = now
     db.flush()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Report is unavailable for scheduling"):
         queue_report_occurrence(db, report.id, scheduled_for=now)
     module.is_deleted = False
     module.deleted_at = None
     report.is_deleted = True
     report.deleted_at = now
     db.flush()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Report is unavailable for scheduling"):
         queue_report_occurrence(db, report.id, scheduled_for=now)
 
 

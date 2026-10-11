@@ -75,10 +75,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "PT"]
-# PT006/PT007/PT018 are layout preferences. PT011/PT012 are real test-quality
-# findings deferred to item 10 of the Tier 2.5 plan (docs/plans/test-suite-tier-2-5.md);
-# remove them from this list once their existing sites are fixed.
-ignore = ["PT006", "PT007", "PT011", "PT012", "PT018"]
+# PT006/PT007/PT018 are layout preferences. PT011/PT012 are enforced since item 10
+# of the Tier 2.5 plan (docs/plans/test-suite-tier-2-5.md): give pytest.raises a
+# specific exception or `match=`, and keep only the raising statement in its block.
+ignore = ["PT006", "PT007", "PT018"]
 
 [tool.ruff.lint.per-file-ignores]
 # Repository tooling tests use unittest on purpose (stdlib-only runner).

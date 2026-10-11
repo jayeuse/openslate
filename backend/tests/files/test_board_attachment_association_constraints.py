@@ -53,10 +53,11 @@ def test_board_content_owner_cannot_change_after_first_attachment(guarded_db, ac
     db.add(owner)
     db.flush()
 
+    savepoint = db.begin_nested()
+    owner.event_id = second.id
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            owner.event_id = second.id
-            db.flush()
+        db.flush()
+    savepoint.rollback()
 
     assert owner.event_id == first.id
 
@@ -88,9 +89,10 @@ def test_board_content_link_rejects_file_and_event_from_different_boards(guarded
     )
     db.add_all((event, file))
     db.flush()
+    savepoint = db.begin_nested()
+    db.add(
+        BoardAttachment(board_id=file_board.id, file_id=file.id, event_id=event.id)
+    )
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.add(
-                BoardAttachment(board_id=file_board.id, file_id=file.id, event_id=event.id)
-            )
-            db.flush()
+        db.flush()
+    savepoint.rollback()

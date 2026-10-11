@@ -52,19 +52,22 @@ def test_board_file_requires_exactly_one_board_parent_and_restricts_board_delete
     db.flush()
     assert valid.board_id == board.id
 
+    savepoint = db.begin_nested()
+    db.add(_file(actor, purpose="board_attachment"))
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.add(_file(actor, purpose="board_attachment"))
-            db.flush()
+        db.flush()
+    savepoint.rollback()
+    savepoint = db.begin_nested()
+    db.add(_file(actor, purpose="library_document", board_id=board.id))
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.add(_file(actor, purpose="library_document", board_id=board.id))
-            db.flush()
+        db.flush()
+    savepoint.rollback()
 
+    savepoint = db.begin_nested()
+    db.delete(board)
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.delete(board)
-            db.flush()
+        db.flush()
+    savepoint.rollback()
 
 
 def test_board_file_cannot_move_to_another_board(guarded_db, actor):
@@ -77,10 +80,11 @@ def test_board_file_cannot_move_to_another_board(guarded_db, actor):
     db.add(item)
     db.flush()
 
+    savepoint = db.begin_nested()
+    item.board_id = other.id
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            item.board_id = other.id
-            db.flush()
+        db.flush()
+    savepoint.rollback()
 
 
 def test_board_file_purpose_is_not_granted_by_generic_file_authorization(guarded_db, actor):

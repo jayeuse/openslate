@@ -162,10 +162,14 @@ def test_sandbox_controls_use_ui_shapes_and_recreate_exact_test_vectors(
                 "purge_draft_remains": "read_after_purge_field",
                 "board_page_types": "read_lifecycle_department_board",
             }
-            with pytest.raises((SamplePhaseActionError, SampleWriteOutcomeUnknown)) as raised:
+
+            def run_controls() -> None:
                 for action in actions:
                     wire.begin_action(action)
                     execute_sandbox_control(action, dataset, context)
+
+            with pytest.raises((SamplePhaseActionError, SampleWriteOutcomeUnknown)) as raised:
+                run_controls()
             if fault.startswith("history_export_"):
                 assert raised.value.step == (
                     "export_document_with_history"

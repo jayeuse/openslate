@@ -70,7 +70,7 @@ def test_weekly_anchor_and_monthly_absent_dates_skip():
 
 
 def test_unknown_timezone_and_non_utc_instant_fail_closed():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Schedule requires an IANA timezone"):
         next_due_after(
             cadence="daily",
             timezone_name="No/Such_Zone",
@@ -79,7 +79,7 @@ def test_unknown_timezone_and_non_utc_instant_fail_closed():
             month_day=None,
             after=datetime(2026, 1, 1, tzinfo=UTC),
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Schedule cursor requires a UTC instant"):
         next_due_after(
             cadence="daily",
             timezone_name="UTC",
@@ -244,18 +244,20 @@ def test_schedule_edits_replace_due_cursor_and_one_policy_is_enforced(integratio
     db = integration_owner_db
     old_due = datetime(2026, 1, 1, 9, tzinfo=UTC)
     _owner, report, schedule, _role, _module, _department = _subject(db, old_due)
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(
-            ReportSchedule(
-                report_id=report.id,
-                enabled=False,
-                cadence="daily",
-                timezone_name="UTC",
-                local_time=time(9),
-                next_due_at=old_due,
-            )
+    savepoint = db.begin_nested()
+    db.add(
+        ReportSchedule(
+            report_id=report.id,
+            enabled=False,
+            cadence="daily",
+            timezone_name="UTC",
+            local_time=time(9),
+            next_due_at=old_due,
         )
+    )
+    with pytest.raises(IntegrityError):
         db.flush()
+    savepoint.rollback()
     schedule.cadence = "weekly"
     schedule.weekday = 0
     schedule.next_due_at = next_due_after(

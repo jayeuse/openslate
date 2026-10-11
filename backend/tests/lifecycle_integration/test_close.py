@@ -265,9 +265,11 @@ def test_close_provenance_constraint_rejects_a_marker_on_an_active_row(
     assert actual == name
     row = _item(lifecycle_graph, key)
     assert not row.is_deleted  # type: ignore[attr-defined]
-    with pytest.raises(IntegrityError) as rejected, integration_db.begin_nested():
-        row.lifecycle_close_operation_id = uuid7()  # type: ignore[attr-defined]
+    savepoint = integration_db.begin_nested()
+    row.lifecycle_close_operation_id = uuid7()  # type: ignore[attr-defined]
+    with pytest.raises(IntegrityError) as rejected:
         integration_db.flush()
+    savepoint.rollback()
     assert rejected.value.orig.diag.constraint_name == name  # type: ignore[attr-defined]
 
 

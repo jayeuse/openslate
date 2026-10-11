@@ -62,7 +62,7 @@ The slowest frontend files are `sandbox-relationship-mappings` (432 worker-secon
 |---|---|
 | Skills | `tdd-workflow` (admission rules, consolidation rules D1 to D6, case matrix as a menu), `verification-loop` (parity checks, flaky-test classification, rule zero), `playwright-e2e-testing` (shared fixtures and mocks, `page.clock`, ARIA snapshots, behavior titles). These files are in `.agents/`, which Git ignores. |
 | Guides | `frontend/AGENTS.md` puts each behavior at the lowest faithful layer. `backend/AGENTS.md` treats 500 lines as a review signal for test files and allows shared test helpers. |
-| Backend guards | Ruff `PT` rules are on. `PT011` and `PT012` stay off until item 10. |
+| Backend guards | Ruff `PT` rules are on, including `PT011` and `PT012` since item 10. |
 | Frontend guards | `eslint-plugin-playwright` with 15 rules that have no current violations. |
 | Mutation testing | `mutmut`, configured in `backend/pyproject.toml`. It is not part of the push gate. |
 | Parity | Node 26 from `.node-version` for local, CI, and the server image. uv 0.12.x in CI. Playwright pins `timezoneId` and `locale`, and keeps a trace for each failure on both sides. |
@@ -113,7 +113,9 @@ The slowest frontend files are `sandbox-relationship-mappings` (432 worker-secon
 
 - **9. Remove scaffolding.** Rename slice-ID titles to behavior names. Remove design-review capture calls (`captureOpenViewReview`, `S26_CAPTURE_THEME`) from retained tests. Merge the duplicate Access contract spec (`isolated/access/contracts.spec.ts` into `isolated/contracts/access-contract.spec.ts`). Review the tombstone tests ("route is gone", "cutover", "retired") under rule D1. Metric: no behavior loses its owner.
 - **10. Turn on the deferred guards.** Fix, then enable, Ruff `PT011` (47 sites) and `PT012` (50 sites). Fix, then enable, the ESLint rules `prefer-web-first-assertions` (7), `no-force-option` (3), `no-wait-for-timeout` (1), `no-useless-not` (23), `valid-title` (4), `expect-expect` (1), `no-standalone-expect` (1), and `no-skipped-test` (5). Add a manual random-order backend run with `pytest-randomly`. Metric: each rule is on with zero violations.
+   - Result (2026-10-11): done except `no-wait-for-timeout` (one negative-timing site in `sandbox-relationship-mappings`) and the random-order run. Ruff `PT011` (47 sites) and `PT012` (50 sites) are fixed by meaning (real `match=` messages, narrower exception types, one statement per `raises` block) and enforced. Seven ESLint rules are fixed and enforced.
 - **17. Resolve the open suspects.** Each suspect ends fixed at its cause or removed under D1. None stays as it is.
+   - Progress (2026-10-11): all five `test.skip` sites and the `test.fixme` are gone (they were screenshot-capture tests; behavior checks that only they ran moved into running tests), and so is the 90 s `person-card` timeout. Open: the other four long timeouts, one `waitForTimeout`, and the backend sleeps.
     - `test.skip`: `auth-email-change.spec.ts:526`, `help-panel.spec.ts:666`, `person-card.spec.ts:557`, `profile.spec.ts:861`, `sandbox-relationship-mappings.spec.ts:3201`.
     - `test.fixme`: `isolated/contracts/openapi-contract.ts:404`.
     - `test.setTimeout`: `person-card.spec.ts:556` (90 s), `openview-kanban-moves.spec.ts:809` (120 s), `fullstack/sandbox-workspace.spec.ts:1459` (360 s), `fullstack/access-controls.spec.ts:614` (90 s), `isolated/runtime/next-launcher-transport.spec.ts:86` (120 s).

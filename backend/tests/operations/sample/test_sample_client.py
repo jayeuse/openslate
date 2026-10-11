@@ -466,11 +466,13 @@ def test_transport_failure_on_write_records_unknown_outcome_without_secrets(
 def test_only_explicit_safe_identifier_mappings_enter_the_journal(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         client.record_mapping("record", "customer:001", "019c6e27-e55b-73d1-87d8-4e01f1f75043")
-        with pytest.raises(ValueError):
+        with pytest.raises(
+            ValueError, match="Sample journal mappings accept identifier values only"
+        ):
             client.record_mapping(
                 "person", "jane@example.test", "019c6e27-e55b-73d1-87d8-4e01f1f75044"
             )
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Sample journal server mappings require a UUID"):
             client.record_mapping("person", "jane-001", "provider-secret")
 
     journal = (tmp_path / "private" / "requests.jsonl").read_text()

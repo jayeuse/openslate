@@ -77,9 +77,9 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         "minLength": 1,
         "maxLength": 4,
     }
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Text field minLength must be a nonnegative integer"):
         field_config(FieldType.TEXT, {"minLength": True})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Text field minLength cannot exceed maxLength"):
         field_config(FieldType.TEXT, {"minLength": 5, "maxLength": 4})
 
     assert field_config(
@@ -109,12 +109,12 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         )
         == "999.99"
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Decimal maximum has too many integer digits"):
         field_config(FieldType.DECIMAL, {"maximum": "1" * 39})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Decimal maximum has too many fractional digits"):
         field_config(FieldType.DECIMAL, {"maximum": "1." + "1" * 19})
     assert field_config(FieldType.DECIMAL, {"minimum": "0.00"}) == {"minimum": "0"}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Decimal minimum must be a valid decimal string"):
         field_config(FieldType.DECIMAL, {"minimum": 1.0})
     numeric_bound = 10**500
     assert field_config(FieldType.INTEGER, {"minimum": numeric_bound}) == {"minimum": numeric_bound}
@@ -131,9 +131,11 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         FieldType.TEXT,
         config={"minLength": 2, "maxLength": 4},
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=f"Field {text_field.id} is shorter than its minimum length"
+    ):
         validate_field_value(text_field, "x")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=f"Field {text_field.id} exceeds its maximum length"):
         validate_field_value(text_field, "12345")
 
 
@@ -229,23 +231,25 @@ def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
         validate_field_value(make_field(module_id, FieldType.DECIMAL), maximum_precision_value)
         == maximum_precision_value
     )
-    with pytest.raises(ValueError):
+    not_decimal = "Decimal value must be a valid decimal string"
+    too_precise = "Decimal value has too many fractional digits"
+    with pytest.raises(ValueError, match=not_decimal):
         validate_field_value(field, "1e0")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=not_decimal):
         validate_field_value(field, " 1")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=too_precise):
         validate_field_value(field, "1.5000000000000000001")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=f"Field {field.id} exceeds its maximum$"):
         validate_field_value(field, "2")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=too_precise):
         validate_field_value(field, "-0.0000000000000000001")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Decimal value has too many integer digits"):
         validate_field_value(field, "1" * 39)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=too_precise):
         validate_field_value(field, "1." + "1" * 19)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=not_decimal):
         validate_field_value(field, "+1")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=not_decimal):
         validate_field_value(field, "01")
 
 
@@ -339,6 +343,20 @@ def test_record_mutation_caps_deterministic_errors() -> None:
     ]
 
 
+# The message each field type raises for the shared fixture's "invalid" value.
+INVALID_VALUE_MESSAGES = {
+    FieldType.TEXT: "^Field {id} must be text$",
+    FieldType.NUMBER: "^Field {id} must be a number$",
+    FieldType.DECIMAL: "^Decimal value must be a valid decimal string$",
+    FieldType.INTEGER: "^Field {id} must be an integer$",
+    FieldType.BOOLEAN: "^Field {id} must be boolean$",
+    FieldType.DATE: "^Field {id} must be an ISO date$",
+    FieldType.DATETIME: "^Field {id} must be an ISO datetime$",
+    FieldType.SELECT: "^Field {id} must be one of the configured options$",
+    FieldType.RELATIONSHIP: "^Relationship field {id} is managed separately$",
+}
+
+
 @pytest.mark.parametrize(
     "case",
     RECORD_FIELD_VALIDATION_CASES,
@@ -355,10 +373,12 @@ def test_shared_record_field_validation_cases(case: dict[str, Any]) -> None:
     if case["validAccepted"] is True:
         assert validate_field_value(field, case["valid"]) == case["normalized"]
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(
+            ValueError, match=f"Relationship field {field.id} is managed separately"
+        ):
             validate_field_value(field, case["valid"])
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=INVALID_VALUE_MESSAGES[field_type].format(id=field.id)):
         validate_field_value(field, case["invalid"])
 
 

@@ -168,7 +168,16 @@ def test_secure_email_change_refuses_malformed_or_ambiguous_confirmation(payload
 def test_secure_email_change_keeps_denial_distinct_from_uncertain_provider_result(
     status, exception
 ):
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
+    from app.core.integrations.supabase_auth import (
+        InvalidProviderCredentials,
+        SupabaseAuthClient,
+        SupabaseAuthUnavailable,
+    )
+
+    expected = {
+        "InvalidProviderCredentials": InvalidProviderCredentials,
+        "SupabaseAuthUnavailable": SupabaseAuthUnavailable,
+    }[exception]
 
     client = SupabaseAuthClient(
         _settings(),
@@ -180,7 +189,7 @@ def test_secure_email_change_keeps_denial_distinct_from_uncertain_provider_resul
         lambda: client.verify_email_change("a" * 56),
         lambda: client.request_email_change("current", "new@example.test"),
     ):
-        with pytest.raises(Exception) as caught:
+        with pytest.raises(expected) as caught:
             action()
         assert type(caught.value).__name__ == exception
         assert "private-provider-detail" not in str(caught.value)
@@ -226,13 +235,17 @@ def test_admin_reconciliation_filters_exact_email_and_operation_marker() -> None
 
 
 def test_admin_user_404_is_distinct_from_other_provider_failures() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
+    from app.core.integrations.supabase_auth import (
+        ProviderUserNotFound,
+        SupabaseAuthClient,
+        SupabaseAuthUnavailable,
+    )
 
     provider_id = uuid4()
     missing = SupabaseAuthClient(
         _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(404))
     )
-    with pytest.raises(Exception) as absent:
+    with pytest.raises(ProviderUserNotFound) as absent:
         missing.get_admin_user(provider_id)
     assert type(absent.value).__name__ == "ProviderUserNotFound"
 
@@ -456,8 +469,17 @@ def test_user_totp_protocol_enrolls_challenges_verifies_and_unenrolls() -> None:
     ],
 )
 def test_user_totp_failure_keeps_provider_denial_distinct_from_outage(status, exception):
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
+    from app.core.integrations.supabase_auth import (
+        InvalidProviderCredentials,
+        SupabaseAuthClient,
+        SupabaseAuthUnavailable,
+    )
     from app.core.integrations.supabase_mfa import SupabaseMfaClient
+
+    expected = {
+        "InvalidProviderCredentials": InvalidProviderCredentials,
+        "SupabaseAuthUnavailable": SupabaseAuthUnavailable,
+    }[exception]
 
     client = SupabaseMfaClient(
         SupabaseAuthClient(
@@ -469,7 +491,7 @@ def test_user_totp_failure_keeps_provider_denial_distinct_from_outage(status, ex
         lambda: client.challenge_and_verify("user-access", uuid4(), "123456"),
         lambda: client.unenroll("user-access", uuid4()),
     ):
-        with pytest.raises(Exception) as caught:
+        with pytest.raises(expected) as caught:
             action()
         assert type(caught.value).__name__ == exception
 

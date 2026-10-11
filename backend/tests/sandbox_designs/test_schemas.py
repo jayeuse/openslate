@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from app.systems.sandbox.designs.schemas import DesignField, SandboxDocument
 from tests.sandbox_designs.fixtures import sample_document
@@ -74,7 +75,10 @@ def test_document_typed_values_reject_non_finite_json_numbers() -> None:
     ]
     raw = json.dumps(payload).replace('"NON_FINITE"', "1e400")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValidationError,
+        match=r"sample-field-requests-priority\.float\n  Input should be a finite number",
+    ):
         SandboxDocument.model_validate_json(raw)
 
 
