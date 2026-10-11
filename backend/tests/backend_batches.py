@@ -34,6 +34,8 @@ def parse_batch(arguments, backend):
     parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--layer", choices=("all", "integration"), default="all")
     parser.add_argument("--match")
+    # Record per-test coverage contexts for a consolidation review (plan item 4).
+    parser.add_argument("--contexts", action="store_true")
     parser.add_argument("targets", nargs="+")
     batch = vars(parser.parse_args(arguments[1:]))
     try:
@@ -89,13 +91,27 @@ def run_backend_batches(run, backend, private, environment, run_id, batch):
         filters = ["-m", "integration"] if batch.get("layer") == "integration" else []
         if batch.get("match"):
             filters += ["-k", batch["match"]]
+        coverage = ["--no-cov"]
+        run_env = env
+        if batch.get("contexts"):
+            contexts = backend / "test-results/contexts" / f"{run_id}.data"
+            contexts.parent.mkdir(parents=True, exist_ok=True)
+            coverage = [
+                "--cov=app",
+                "--cov-branch",
+                "--cov-context=test",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            # sys.monitoring cannot record contexts; the C tracer can.
+            run_env = {**env, "COVERAGE_CORE": "ctrace", "COVERAGE_FILE": str(contexts)}
         try:
             run(
                 [
                     sys.executable,
                     "-m",
                     "pytest",
-                    "--no-cov",
+                    *coverage,
                     "-v",
                     "-x",
                     f"--junitxml={junit}",
@@ -103,7 +119,7 @@ def run_backend_batches(run, backend, private, environment, run_id, batch):
                     *targets,
                 ],
                 backend,
-                env,
+                run_env,
             )
         except subprocess.CalledProcessError as error:
             exit_code = error.returncode
@@ -135,6 +151,12 @@ def run_backend_batches(run, backend, private, environment, run_id, batch):
                 {"run_id": run_id, "coverage": "not collected", "batches": history}, indent=2
             )
         )
+        if batch.get("contexts"):
+            run(
+                [sys.executable, "tests/coverage_contexts.py", str(contexts)],
+                backend,
+                env,
+            )
         print(
             f"Backend batch {'PASS' if passed else 'FAIL'}: {counts}; "
             f"{history[-1]['seconds']}s. Details: {report}",
