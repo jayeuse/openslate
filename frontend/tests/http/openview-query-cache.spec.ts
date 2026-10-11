@@ -427,7 +427,6 @@ type CatalogDenialCase = {
   invalidation: Record<string, string>;
   denial: string;
   loading: string;
-  clearsDenialAfterRetry: boolean;
 };
 
 // Module-scoped changes carry their module (D10); the notice still applies.
@@ -439,7 +438,6 @@ const catalogDenialCases: CatalogDenialCase[] = [
     denial:
       "OpenView data is unavailable. Sign in or ask for access, then retry.",
     loading: "Loading OpenView catalog",
-    clearsDenialAfterRetry: true,
   },
   {
     name: "Charts",
@@ -447,7 +445,6 @@ const catalogDenialCases: CatalogDenialCase[] = [
     invalidation: { entity: "modules" },
     denial: "Chart data is unavailable. Sign in or ask for access, then retry.",
     loading: "Loading the authorized data-source catalog…",
-    clearsDenialAfterRetry: false,
   },
 ];
 
@@ -482,7 +479,7 @@ for (const current of catalogDenialCases) {
 
     release();
     await expect(source).toHaveCount(1);
-    if (current.clearsDenialAfterRetry) await expect(denial).toHaveCount(0);
+    await expect(denial).toHaveCount(0);
   });
 }
 
