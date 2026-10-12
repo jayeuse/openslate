@@ -81,10 +81,36 @@ def test_update_steps_come_after_creation_and_in_order() -> None:
 
 
 def test_some_records_are_reassigned_back_to_their_final_owner() -> None:
-    histories = plan_history(_dataset("standard"))
-    reassigned = [item for item in histories.values() if item.initial_assignee is not None]
+    dataset = _dataset("standard")
+    owner = {record.logical_id: record.assignee_key for record in dataset.records}
+    histories = plan_history(dataset)
+    reassigned = {
+        logical_id: item
+        for logical_id, item in histories.items()
+        if item.initial_assignee is not None
+    }
     assert len(reassigned) >= len(histories) // 5
-    assert all(isinstance(item, RecordHistory) for item in reassigned)
+    assert all(isinstance(item, RecordHistory) for item in reassigned.values())
+    # The record starts with someone else and is handed back to its final owner.
+    assert all(item.initial_assignee != owner[key] for key, item in reassigned.items())
+
+
+def test_a_field_path_record_starts_at_its_first_values_and_keeps_its_status_path() -> None:
+    dataset = sample_dataset("small", pack="school")
+    records = {record.logical_id: record for record in dataset.records}
+    rules = dataset.organization.history
+    histories = plan_history(dataset)
+    assert rules.field_paths
+    for logical_id, values in rules.field_paths.items():
+        record = records[logical_id]
+        final = _status_label(dataset, record.module_key, record.data)
+        path = rules.status_paths.get(record.module_key, {}).get(final, (final,))
+        history = histories[logical_id]
+        assert history.initial_values == {key: steps[0] for key, steps in values.items()}
+        assert history.initial_status == path[0]
+        statuses = [step.status for step in history.steps]
+        assert statuses[: len(path)] == [*path[1:], final], logical_id
+        assert set(statuses[len(path) :]) <= {final}, logical_id
 
 
 def test_every_planned_status_is_a_real_option_of_its_module() -> None:

@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from datetime import date
-from functools import cache
+
+import pytest
 
 from operations.sample.blueprint import edge_child_ids
-from operations.sample.episodes import SampleSession, plan_sessions, record_parents
+from operations.sample.episodes import (
+    SampleSession,
+    _short_batches,
+    plan_sessions,
+    record_parents,
+)
 from operations.sample.scenario import SampleDataset, build_dataset
 from tests.operations.sample.sample_datasets import sample_dataset
 
@@ -15,8 +21,9 @@ def _dataset(profile: str) -> SampleDataset:
     return sample_dataset(profile)
 
 
-@cache
 def _plan(profile: str) -> tuple[SampleSession, ...]:
+    # Not cached: mutation testing runs only the tests it saw call the planner, and a
+    # cached plan hid every test after the first (16 planner mutants on 2026-10-13).
     return plan_sessions(_dataset(profile))
 
 
@@ -44,6 +51,21 @@ def test_links_and_references_only_point_to_records_that_already_exist() -> None
     for edge, child in zip(dataset.edges, edge_child_ids(dataset), strict=True):
         parent = edge.target_record_id if child == edge.source_record_id else edge.source_record_id
         assert position[parent] < position[child]
+
+
+@pytest.mark.parametrize("count", [1, 5, 6, 7, 12, 13, 25])
+def test_a_run_of_records_splits_into_short_sessions_in_order(count: int) -> None:
+    records = tuple(f"requests:{index:06d}" for index in range(1, count + 1))
+    batches = _short_batches(records)
+    assert all(1 <= len(batch) <= 6 for batch in batches)
+    assert tuple(record for batch in batches for record in batch) == records
+
+
+def test_updates_start_while_records_are_still_being_created() -> None:
+    plan = _plan("small")
+    creates = [index for index, session in enumerate(plan) if session.kind == "create"]
+    first_update = next(index for index, session in enumerate(plan) if session.kind == "update")
+    assert first_update < creates[len(creates) // 2]
 
 
 def test_sessions_belong_to_one_person_and_one_module() -> None:
