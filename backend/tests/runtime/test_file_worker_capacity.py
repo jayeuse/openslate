@@ -1,6 +1,7 @@
 """A response deadline must not release a still-running synchronous file worker."""
 
 import asyncio
+import json
 from threading import Event, Lock
 from types import SimpleNamespace
 
@@ -8,9 +9,10 @@ import pytest
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.core.middleware.file_transfers import FileTransferPolicy
+from app.core.middleware.file_transfers import FileDispatchMiddleware, FileTransferPolicy
 from app.main import create_app
 from app.systems.platform.files import service
+from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.storage import get_storage
 
 
@@ -186,3 +188,27 @@ def test_disconnected_response_releases_transfer_capacity(monkeypatch, disconnec
         assert await request(False) == [200]
 
     asyncio.run(scenario())
+
+
+def test_a_route_dispatched_after_its_admission_closed_answers_files_busy_and_never_runs() -> None:
+    # The request middleware closes admission when the request times out or is cancelled.
+    with transfer_slot() as lease:
+        pass
+    routed: list[bool] = []
+    messages: list[dict[str, object]] = []
+
+    async def route(_scope, _receive, _send) -> None:
+        routed.append(True)
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    scope = {"type": "http", "state": {"file_transfer_lease": lease}}
+    asyncio.run(FileDispatchMiddleware(route)(scope, receive, send))
+
+    assert routed == []
+    assert messages[0]["status"] == 503
+    assert json.loads(messages[1]["body"])["detail"]["code"] == "files_busy"
