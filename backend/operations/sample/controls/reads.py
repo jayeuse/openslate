@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Mapping
 
 from operations.sample.blueprint import SampleDataset
@@ -27,7 +28,18 @@ CONTROL_ROUTES = frozenset(
 )
 
 
+# The MFA, people-security and notification planners and plan_controls each ask for this
+# target to keep it out of their own, and finding it replans every session. A dataset is
+# frozen and a changed one is a new instance (dataclasses.replace or a deep copy), so the
+# last answer is reused only for that same live instance.
+_last_session_target: tuple[weakref.ref[SampleDataset], str] | None = None
+
+
 def _session_target(dataset: SampleDataset) -> str:
+    global _last_session_target
+    last = _last_session_target
+    if last is not None and last[0]() is dataset:
+        return last[1]
     people = {person.key: person for person in dataset.organization.actors.people}
     phase_keys = {
         key
@@ -48,6 +60,7 @@ def _session_target(dataset: SampleDataset) -> str:
     )
     if not candidates:
         raise ValueError("Read controls require a separate active member with completed work")
+    _last_session_target = (weakref.ref(dataset), candidates[0])
     return candidates[0]
 
 

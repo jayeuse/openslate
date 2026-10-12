@@ -79,6 +79,26 @@ def test_read_control_plan_is_empty_without_pack_lifecycle_anchors() -> None:
     assert plan_read_controls(without_phases) == ()
 
 
+def test_read_control_target_follows_a_changed_dataset_not_the_last_answer() -> None:
+    from dataclasses import replace
+
+    dataset = _dataset("harbor")
+    assert plan_read_controls(dataset)[0].target_key == "internal_field_02"
+    actors = dataset.organization.actors
+    people = tuple(
+        replace(person, status="disabled") if person.key == "internal_field_02" else person
+        for person in actors.people
+    )
+    changed = replace(
+        dataset,
+        organization=replace(dataset.organization, actors=replace(actors, people=people)),
+    )
+
+    # The first target is no longer an active member, so the next sorted candidate is.
+    assert plan_read_controls(changed)[0].target_key == "internal_field_03"
+    assert plan_read_controls(dataset)[0].target_key == "internal_field_02"
+
+
 def _client(tmp_path: Path, handler) -> SampleClient:
     client = SampleClient(
         "http://sample.test",
