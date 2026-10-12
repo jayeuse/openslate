@@ -44,6 +44,7 @@ import {
   SANDBOX_WORKBENCH_DEFAULT_WIDTH,
   clearSandboxViewPreferences,
 } from "./helpers/view-preferences";
+import { sandboxWorkInProgress } from "./helpers/work-in-progress";
 import { Designer } from "./components/designer";
 import type {
   SandboxCommandFailure,
@@ -551,13 +552,15 @@ export default function SandboxPage() {
         : "Build";
       if (
         !bypassPending &&
-        (commandBusy ||
-          publicationPending ||
-          testPending ||
-          conflict !== null ||
-          triggerDraft.dirty ||
-          triggerDraft.pending ||
-          designerDraftDirty)
+        sandboxWorkInProgress({
+          commandBusy,
+          publicationPending,
+          testPending,
+          conflict: conflict !== null,
+          triggerDraftDirty: triggerDraft.dirty,
+          triggerDraftPending: triggerDraft.pending,
+          designerDraftDirty,
+        })
       )
         return;
       const href = sectionHref(next, new URLSearchParams(search.toString()));
@@ -579,13 +582,15 @@ export default function SandboxPage() {
   useWorkspaceNavigationGuard(
     useCallback(
       () =>
-        !commandBusy &&
-        !publicationPending &&
-        !testPending &&
-        !conflict &&
-        !triggerDraft.dirty &&
-        !triggerDraft.pending &&
-        !designerDraftDirty,
+        !sandboxWorkInProgress({
+          commandBusy,
+          publicationPending,
+          testPending,
+          conflict: conflict !== null,
+          triggerDraftDirty: triggerDraft.dirty,
+          triggerDraftPending: triggerDraft.pending,
+          designerDraftDirty,
+        }),
       [
         triggerDraft.dirty,
         triggerDraft.pending,
@@ -599,13 +604,15 @@ export default function SandboxPage() {
   );
   useEffect(() => {
     if (
-      !commandBusy &&
-      !publicationPending &&
-      !testPending &&
-      !conflict &&
-      !triggerDraft.dirty &&
-      !triggerDraft.pending &&
-      !designerDraftDirty
+      !sandboxWorkInProgress({
+        commandBusy,
+        publicationPending,
+        testPending,
+        conflict: conflict !== null,
+        triggerDraftDirty: triggerDraft.dirty,
+        triggerDraftPending: triggerDraft.pending,
+        designerDraftDirty,
+      })
     )
       return;
     const guardBrowserExit = (event: BeforeUnloadEvent) => {
