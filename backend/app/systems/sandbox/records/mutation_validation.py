@@ -107,9 +107,6 @@ def validate_record_mutation(
     # are conflicts. Relationship values are never accepted, but a changed
     # closed relationship is represented by one closed mutation issue.
     for key, raw_value in submitted_items:
-        if not isinstance(key, str):
-            continue
-
         field = fields_by_id.get(key)
         if field is None or not field.is_deleted:
             continue
@@ -150,8 +147,6 @@ def validate_record_mutation(
     # Phase 2: known active values are validated and normalized. Relationship
     # values are rejected before the type registry is consulted.
     for key, raw_value in submitted_items:
-        if not isinstance(key, str):
-            continue
         field = fields_by_id.get(key)
         if field is None or field.is_deleted:
             continue
@@ -179,9 +174,6 @@ def validate_record_mutation(
 
     # Phase 3: malformed and unknown keys are reported after known values.
     for key, _raw_value in submitted_items:
-        if not isinstance(key, str):
-            add_issue("invalid_field_key", None, "Field key is invalid")
-            continue
         if key in fields_by_id:
             continue
         try:
