@@ -4,7 +4,9 @@
 ``reject_mixed_credentials`` refuses a request that carries an Authorization header together
 with a browser session cookie (webapp-security-review rule 12). The literal rows stay as
 examples; the route-level owners are ``test_local_identity.py`` and
-``test_auth_recovery_contracts.py``.
+``test_auth_recovery_contracts.py``. ``source`` gives the peer address that the rate limits,
+the IP allowlist and security failure records key on; ``require_completed_identity`` refuses a
+setup-only (MFA enrolment) session with the uniform 401 body.
 """
 
 import pytest
@@ -12,8 +14,16 @@ from fastapi import HTTPException
 from hypothesis import example, given
 from hypothesis import strategies as st
 from starlette.requests import Request
+from uuid6 import uuid7
 
-from app.systems.access.auth.request_security import bearer_credentials, reject_mixed_credentials
+from app.common.dependencies import CurrentIdentity
+from app.systems.access.auth.request_security import (
+    bearer_credentials,
+    reject_mixed_credentials,
+    require_completed_identity,
+    source,
+)
+from app.systems.access.users.models import User
 from tests.property_support import PROPERTY
 
 # Header text a client can send: printable ASCII, spaces included.
@@ -99,3 +109,27 @@ def test_an_authorization_header_with_only_the_csrf_cookie_is_not_mixed(
 ) -> None:
     request = _request(authorization=authorization, cookies={"openslate_csrf": value})
     assert reject_mixed_credentials(request) is None
+
+
+@pytest.mark.parametrize(
+    ("client", "expected"),
+    [(("203.0.113.7", 50123), "203.0.113.7"), (None, None)],
+    ids=["peer address", "no peer"],
+)
+def test_source_is_the_peer_address_or_none(
+    client: tuple[str, int] | None, expected: str | None
+) -> None:
+    scope = {"type": "http", "method": "POST", "path": "/api/auth/login", "headers": []}
+    request = Request({**scope, "client": client})
+    assert source(request) == expected
+
+
+def test_a_setup_only_session_is_refused_and_a_completed_session_passes() -> None:
+    user = User(email="person@example.test")
+    completed = CurrentIdentity(user, uuid7(), True, False)
+    assert require_completed_identity(completed) is completed
+
+    with pytest.raises(HTTPException) as refused:
+        require_completed_identity(CurrentIdentity(user, uuid7(), True, True))
+    assert refused.value.status_code == 401
+    assert refused.value.detail == "Invalid authentication credentials"
