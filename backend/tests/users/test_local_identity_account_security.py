@@ -17,7 +17,7 @@ from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.access.users.schemas import UserUpdate
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.users.test_local_identity_users import _user
+from tests.users.user_support import local_user
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
 
@@ -26,8 +26,8 @@ pytestmark = pytest.mark.usefixtures("local_identity_security_events")
 def test_account_security_state_changes_revoke_provider_backed_sessions(
     monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
-    actor = _user(UserRole.ADMIN)
-    member = _user()
+    actor = local_user(UserRole.ADMIN)
+    member = local_user()
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, member]
     db.scalars.return_value = []
@@ -47,8 +47,8 @@ def test_account_security_state_changes_revoke_provider_backed_sessions(
 def test_resend_rejects_non_pending_or_deleted_profiles(
     monkeypatch: pytest.MonkeyPatch, deleted: bool
 ) -> None:
-    admin = _user(UserRole.ADMIN)
-    active = _user(deleted=deleted)
+    admin = local_user(UserRole.ADMIN)
+    active = local_user(deleted=deleted)
     db = Mock(spec=Session)
     db.scalar.side_effect = [admin, active]
     provider = Mock()
@@ -83,8 +83,8 @@ def test_provider_rejected_invitation_cannot_change_account_or_password(
 
 
 def test_pending_user_cannot_be_enabled_or_disabled_by_administrator() -> None:
-    admin = _user(UserRole.ADMIN)
-    pending = _user(status=UserStatus.PENDING)
+    admin = local_user(UserRole.ADMIN)
+    pending = local_user(status=UserStatus.PENDING)
     for requested in (UserStatus.ACTIVE, UserStatus.DISABLED):
         db = Mock(spec=Session)
         db.scalar.side_effect = [admin, pending]
@@ -94,8 +94,8 @@ def test_pending_user_cannot_be_enabled_or_disabled_by_administrator() -> None:
 
 
 def test_last_active_admin_cannot_be_deleted() -> None:
-    actor = _user(UserRole.ADMIN)
-    target = _user(UserRole.ADMIN)
+    actor = local_user(UserRole.ADMIN)
+    target = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1]
 
@@ -108,8 +108,8 @@ def test_last_active_admin_cannot_be_deleted() -> None:
 
 @pytest.mark.parametrize("expiry_offset", [-timedelta(days=1), timedelta(days=1)])
 def test_last_administrator_cannot_be_given_an_expiry(expiry_offset: timedelta) -> None:
-    actor = _user(UserRole.ADMIN)
-    target = _user(UserRole.ADMIN)
+    actor = local_user(UserRole.ADMIN)
+    target = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1, 1]
 
@@ -129,8 +129,8 @@ def test_last_administrator_cannot_be_given_an_expiry(expiry_offset: timedelta) 
 def test_only_durable_administrator_cannot_be_disabled_when_another_will_expire(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = _user(UserRole.ADMIN)
-    target = _user(UserRole.ADMIN)
+    actor = local_user(UserRole.ADMIN)
+    target = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 2, 1]
     db.scalars.return_value = []
@@ -147,8 +147,8 @@ def test_only_durable_administrator_cannot_be_disabled_when_another_will_expire(
 def test_only_durable_administrator_cannot_be_deleted_when_another_will_expire(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = _user(UserRole.ADMIN)
-    target = _user(UserRole.ADMIN)
+    actor = local_user(UserRole.ADMIN)
+    target = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 2, 1]
     db.scalars.return_value = []
@@ -165,8 +165,8 @@ def test_only_durable_administrator_cannot_be_deleted_when_another_will_expire(
 def test_disabled_user_is_locally_revoked_without_provider_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = _user(UserRole.ADMIN)
-    member = _user()
+    actor = local_user(UserRole.ADMIN)
+    member = local_user()
     events = Mock()
     monkeypatch.setattr(account_operations, "_record_security_event", events)
     db = Mock(spec=Session)
@@ -189,8 +189,8 @@ def test_disabled_user_is_locally_revoked_without_provider_call(
 def test_deleted_established_member_can_be_restored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = _user(UserRole.ADMIN)
-    target = _user(deleted=True)
+    actor = local_user(UserRole.ADMIN)
+    target = local_user(deleted=True)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target]
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
@@ -214,7 +214,7 @@ def test_empty_user_patch_is_rejected_before_database_work() -> None:
 
 
 def test_user_cannot_delete_their_own_account() -> None:
-    admin = _user(UserRole.ADMIN)
+    admin = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [admin, admin]
 
@@ -226,8 +226,8 @@ def test_user_cannot_delete_their_own_account() -> None:
 
 
 def test_removing_last_admin_role_assignment_is_rejected() -> None:
-    actor = _user(UserRole.ADMIN)
-    target = _user(UserRole.ADMIN)
+    actor = local_user(UserRole.ADMIN)
+    target = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1]
 
@@ -247,8 +247,8 @@ def test_local_disable_commit_failure_records_attempt_and_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 
-    actor = _user(UserRole.ADMIN)
-    target = _user()
+    actor = local_user(UserRole.ADMIN)
+    target = local_user()
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, target.id]
     db.scalars.return_value = []

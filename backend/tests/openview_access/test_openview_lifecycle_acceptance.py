@@ -5,17 +5,14 @@ or a restore of an active item must send the current revision to reach the
 ``*_archived`` or ``*_not_archived`` conflict.
 """
 
-from dataclasses import dataclass
 from uuid import UUID
 
 import pytest
-from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import set_audit_actor
@@ -24,67 +21,27 @@ from app.systems.openview.dashboards.router import router as dashboards_router
 from app.systems.openview.reports.router import router as reports_router
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.router import router as views_router
-from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.fields.models import Field, FieldType
-from app.systems.sandbox.modules.models import Module
-from tests.live_session_support import with_live_session
-from tests.rbac.support import add_department, add_module, add_user, make_group_access
+from tests.openview_access.support import Area, new_area, route_client, view_payload
+from tests.rbac.support import add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
 
-@dataclass(frozen=True)
-class _Area:
-    department: Department
-    module: Module
-    field: Field
-
-
-def _area(db: Session) -> _Area:
-    department = add_department(db)
-    module = add_module(db, department)
-    field = Field(
-        module_id=module.id,
-        name="Status",
-        type=FieldType.TEXT,
-        required=False,
-        position=0,
-        config={},
-    )
-    db.add(field)
+def _area(db: Session) -> Area:
+    created = new_area(db)
     db.commit()  # Routes may roll back to the last savepoint on refusal.
-    return _Area(department, module, field)
+    return created
 
 
-def _member(db: Session, area: _Area, level: str) -> User:
+def _member(db: Session, area: Area, level: str) -> User:
     member = add_user(db, f"ov-life-{level}", role=UserRole.MEMBER)
     make_group_access(db, [member], area.department, level=level)
     db.commit()
     return member
 
 
-def _client(db: Session, actor: User, *routers: APIRouter) -> TestClient:
-    app = FastAPI()
-    for router in routers:
-        app.include_router(router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    return with_live_session(TestClient(app), db, actor)
-
-
-def _view_payload(area: _Area, name: str, *, is_default: bool = False) -> dict[str, object]:
-    return {
-        "module_id": str(area.module.id),
-        "name": name,
-        "definition": {
-            "version": 1,
-            "columns": [{"field_id": str(area.field.id), "expected_type": "text"}],
-        },
-        "is_default": is_default,
-    }
-
-
-def _create_view(client: TestClient, area: _Area, *, is_default: bool = False) -> dict[str, object]:
-    created = client.post("/api/views", json=_view_payload(area, "All", is_default=is_default))
+def _create_view(client: TestClient, area: Area, *, is_default: bool = False) -> dict[str, object]:
+    created = client.post("/api/views", json=view_payload(area, "All", is_default=is_default))
     assert created.status_code == 201, created.text
     body: dict[str, object] = created.json()
     assert body["revision"] == 1
@@ -104,7 +61,7 @@ def test_manager_archives_default_view_and_restores_it_as_non_default(
     area = _area(db)
     manager = _member(db, area, AccessLevel.MANAGE)
     set_audit_actor(db, manager.id)
-    client = _client(db, manager, views_router)
+    client = route_client(db, manager, views_router)
     view = _create_view(client, area, is_default=True)
     assert view["is_default"] is True
     view_id = UUID(str(view["id"]))
@@ -155,7 +112,7 @@ def test_view_archive_and_restore_reject_repeat_and_stale_revisions(
 ) -> None:
     db = integration_owner_db
     area = _area(db)
-    client = _client(db, _member(db, area, AccessLevel.MANAGE), views_router)
+    client = route_client(db, _member(db, area, AccessLevel.MANAGE), views_router)
     view_id = _create_view(client, area)["id"]
     path = f"/api/views/{view_id}"
 
@@ -182,7 +139,7 @@ def test_dashboard_rejects_repeat_archive_and_restore_of_active_dashboard(
 ) -> None:
     db = integration_owner_db
     area = _area(db)
-    client = _client(db, _member(db, area, AccessLevel.MANAGE), dashboards_router)
+    client = route_client(db, _member(db, area, AccessLevel.MANAGE), dashboards_router)
     created = client.post(
         "/api/dashboards",
         json={"department_id": str(area.department.id), "name": "Stock Overview"},
@@ -208,7 +165,7 @@ def test_report_rejects_restore_of_active_report_and_repeat_archive(
 ) -> None:
     db = integration_owner_db
     area = _area(db)
-    client = _client(db, _member(db, area, AccessLevel.MANAGE), reports_router)
+    client = route_client(db, _member(db, area, AccessLevel.MANAGE), reports_router)
     created = client.post(
         "/api/reports",
         json={
@@ -239,10 +196,10 @@ def test_report_rejects_restore_of_active_report_and_repeat_archive(
 def test_module_reader_cannot_restore_an_archived_view(integration_owner_db: Session) -> None:
     db = integration_owner_db
     area = _area(db)
-    manager = _client(db, _member(db, area, AccessLevel.MANAGE), views_router)
+    manager = route_client(db, _member(db, area, AccessLevel.MANAGE), views_router)
     view_id = _create_view(manager, area)["id"]
     assert manager.delete(f"/api/views/{view_id}", params={"revision": 1}).status_code == 204
-    reader = _client(db, _member(db, area, AccessLevel.READ), views_router)
+    reader = route_client(db, _member(db, area, AccessLevel.READ), views_router)
 
     denied = reader.post(f"/api/views/{view_id}/restore", json={"revision": 2})
 

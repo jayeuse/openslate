@@ -17,7 +17,7 @@ from app.core.integrations.supabase_auth import ProviderTokens, SupabaseAuthClie
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
-from tests.auth.test_supabase_auth_core import _session_database, _settings, _signed_access
+from tests.auth.provider_jwt_support import provider_settings, session_database, signed_access
 
 PARTIAL = {
     "code": "200",
@@ -46,7 +46,7 @@ def email_boundary(monkeypatch, unit_workspace_policy):
     key = ec.generate_private_key(ec.SECP256R1())
     jwk = ECAlgorithm.to_jwk(key.public_key(), as_dict=True)
     jwk.update({"kid": "test-key", "alg": "ES256", "use": "sig"})
-    access = _signed_access(
+    access = signed_access(
         key,
         user_id=str(provider_id),
         session_id=str(provider_session_id),
@@ -71,7 +71,7 @@ def email_boundary(monkeypatch, unit_workspace_policy):
         refreshed_at=now,
         expires_at=now + timedelta(hours=1),
     )
-    db = _session_database(user, old_session)
+    db = session_database(user, old_session)
     state = {
         "provider_email": "old@example.test",
         "confirmation": PARTIAL.copy(),
@@ -100,7 +100,7 @@ def email_boundary(monkeypatch, unit_workspace_policy):
         if path.endswith("/token"):
             if state["password_denied"]:
                 return httpx.Response(400, json={"error": "private-password-error"})
-            temporary = _signed_access(key, user_id=str(provider_id), session_id=str(uuid4()))
+            temporary = signed_access(key, user_id=str(provider_id), session_id=str(uuid4()))
             return httpx.Response(
                 200,
                 json={
@@ -124,7 +124,7 @@ def email_boundary(monkeypatch, unit_workspace_policy):
             )
         return httpx.Response(404)
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     monkeypatch.setattr(supabase_auth, "get_supabase_auth_client", lambda: client)
     monkeypatch.setattr(dependencies, "get_supabase_auth_client", lambda: client)
     monkeypatch.setattr(provider_actions, "anonymous_rate_limits_enabled", lambda: False)

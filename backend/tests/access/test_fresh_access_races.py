@@ -8,14 +8,13 @@ commits first and the check fails.
 
 import os
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from threading import Event
 from uuid import UUID
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import delete
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -27,11 +26,13 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.checks import require_fresh_module_access
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.access.access_race_support import add_race_user, group_etag_of, run_action
 from tests.conftest import guarded_create_engine
+from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = [
     pytest.mark.integration,
@@ -53,18 +54,6 @@ class _Seed:
     group: UUID
 
 
-def _user(db: Session, role: str) -> UUID:
-    user = User(
-        email=f"fresh-{uuid7().hex}@example.com",
-        username=f"fresh_{uuid7().hex[:20]}",
-        role=role,
-        status=UserStatus.ACTIVE.value,
-    )
-    db.add(user)
-    db.flush()
-    return user.id
-
-
 @pytest.fixture
 def seed() -> Iterator[tuple[_Seed, Engine]]:
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
@@ -78,7 +67,7 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
         group = Group(name=f"Fresh {uuid7().hex}")
         db.add_all([module, group])
         db.flush()
-        reader = _user(db, UserRole.MEMBER.value)
+        reader = add_race_user(db, "fresh", UserRole.MEMBER.value)
         session = IdentitySession(
             user_id=reader,
             refresh_token_digest=uuid7().hex * 2,
@@ -95,7 +84,7 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
             inventory=inventory.id,
             finance=finance.id,
             module=module.id,
-            admin=_user(db, UserRole.ADMIN.value),
+            admin=add_race_user(db, "fresh", UserRole.ADMIN.value),
             reader=reader,
             session=session.id,
             group=group.id,
@@ -120,23 +109,6 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
             db.commit()
         runtime.dispose()
         owner.dispose()
-
-
-def _run(engine: Engine, action: Callable[[Session], object]) -> int:
-    with Session(engine) as db:
-        try:
-            action(db)
-        except HTTPException as error:
-            db.rollback()
-            return error.status_code
-        return 200
-
-
-def _etag(engine: Engine, group_id: UUID) -> str:
-    with Session(engine) as db:
-        group = db.get(Group, group_id)
-        assert group is not None
-        return policy_service.group_etag(group)
 
 
 def _move_access_to_finance(data: _Seed, etag: str) -> Callable[[Session], object]:
@@ -174,12 +146,14 @@ def test_revocation_waits_until_the_fresh_checked_output_commits(
     seed: tuple[_Seed, Engine], revoke: _Revoke
 ) -> None:
     data, engine = seed
-    etag = _etag(engine, data.group)
+    etag = group_etag_of(engine, data.group)
     checked, release_output = Event(), Event()
+    holder: list[int] = []
     check = _fresh_check(data)
 
     def check_then_commit_output(db: Session) -> object:
         check(db)
+        holder.append(backend_pid(db))
         checked.set()
         assert release_output.wait(timeout=5)
         db.commit()
@@ -187,18 +161,19 @@ def test_revocation_waits_until_the_fresh_checked_output_commits(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            output = executor.submit(_run, engine, check_then_commit_output)
+            output = executor.submit(run_action, engine, check_then_commit_output)
             assert checked.wait(timeout=5)
-            admin = executor.submit(_run, engine, revoke(data, etag))
+            admin = executor.submit(run_action, engine, revoke(data, etag))
             try:
-                assert not wait([admin], timeout=0.5).done
+                wait_until_blocked_by(engine, holder[0])
+                assert not admin.done()
             finally:
                 release_output.set()
             assert output.result(timeout=5) == 200
             assert admin.result(timeout=5) == 200
     finally:
         release_output.set()
-    assert _run(engine, _fresh_check(data)) == 403
+    assert run_action(engine, _fresh_check(data)) == 403
 
 
 @pytest.mark.parametrize(
@@ -216,12 +191,14 @@ def test_fresh_check_waits_for_a_pending_revocation_and_is_then_refused(
     message: str,
 ) -> None:
     data, engine = seed
-    etag = _etag(engine, data.group)
+    etag = group_etag_of(engine, data.group)
     admin_at_commit, release_admin = Event(), Event()
+    holder: list[int] = []
     original_commit = policy_service.commit
 
     def pause_commit(db: Session, text: str) -> None:
         if text == message:
+            holder.append(backend_pid(db))
             admin_at_commit.set()
             assert release_admin.wait(timeout=5)
         original_commit(db, text)
@@ -230,11 +207,12 @@ def test_fresh_check_waits_for_a_pending_revocation_and_is_then_refused(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            admin = executor.submit(_run, engine, revoke(data, etag))
+            admin = executor.submit(run_action, engine, revoke(data, etag))
             assert admin_at_commit.wait(timeout=5)
-            output = executor.submit(_run, engine, _fresh_check(data))
+            output = executor.submit(run_action, engine, _fresh_check(data))
             try:
-                assert not wait([output], timeout=0.5).done
+                wait_until_blocked_by(engine, holder[0])
+                assert not output.done()
             finally:
                 release_admin.set()
             assert admin.result(timeout=5) == 200

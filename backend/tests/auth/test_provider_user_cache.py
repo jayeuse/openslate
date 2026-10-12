@@ -16,7 +16,7 @@ from app.systems.access.identity import provider_sessions, provider_user_cache
 from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User, UserRole, UserStatus
-from tests.auth.test_supabase_auth_core import _session_database
+from tests.auth.provider_jwt_support import session_database
 
 
 def _subject(*, assurance: str = "aal1"):
@@ -46,7 +46,7 @@ def _subject(*, assurance: str = "aal1"):
     )
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(provider_user_id, None)
-    return now, _session_database(user, session), claims, client
+    return now, session_database(user, session), claims, client
 
 
 def test_recent_provider_account_admits_without_another_provider_read() -> None:

@@ -9,7 +9,7 @@ from uuid6 import uuid7
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.router import router as users_router
 from app.systems.sandbox.modules.models import Module
-from tests.access.test_group_delegation_integration import world as world
+from tests.access.group_delegation_support import world as world
 from tests.rbac.support import add_module, add_user
 
 pytestmark = pytest.mark.integration
@@ -206,15 +206,12 @@ def test_candidate_ids_keep_the_manager_boundary_and_report_recorded_expiry(pagi
     assert denied.status_code == 403
 
 
+# The other refused lookups (malformed and empty ids) are rows of the stack-free table in
+# tests/access/test_list_request_schemas.py; each route keeps the over-limit HTTP 422.
 @pytest.mark.parametrize("path", ["/api/users", "/api/access/member-candidates"])
-@pytest.mark.parametrize("kind", ["over_limit", "malformed", "empty"])
-def test_ids_validation_rejects_unbounded_or_invalid_lookup(paging_world, path, kind):
+def test_ids_validation_rejects_unbounded_or_invalid_lookup(paging_world, path):
     world = paging_world
-    values = (
-        [str(world.plain.id)] * 101
-        if kind == "over_limit"
-        else ["invalid" if kind == "malformed" else ""]
-    )
+    values = [str(world.plain.id)] * 101
     response = world.client(world.admin).get(path, params=[("ids", value) for value in values])
     assert response.status_code == 422, response.text
 
@@ -345,9 +342,10 @@ def test_group_member_lookup_preserves_manager_scope_and_role_denials(paging_wor
         assert world.client(actor).get("/api/access/groups", params=params).status_code == 403
 
 
-@pytest.mark.parametrize("member_id", ["invalid", ""])
-def test_group_member_lookup_rejects_invalid_uuid(paging_world, member_id):
+# The other refused member ids are rows of the stack-free table in
+# tests/access/test_list_request_schemas.py; this route case owns the HTTP 422.
+def test_group_member_lookup_rejects_invalid_uuid(paging_world):
     response = paging_world.client(paging_world.admin).get(
-        "/api/access/groups", params={"member_id": member_id}
+        "/api/access/groups", params={"member_id": "invalid"}
     )
     assert response.status_code == 422, response.text

@@ -6,13 +6,12 @@ waits for it, so the manager's decision and the concurrent change serialize.
 
 import os
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Event
 from uuid import UUID
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -22,10 +21,12 @@ import app.systems.access.policy.delegation as delegation
 import app.systems.access.policy.service as policy_service
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserRole
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
+from tests.access.access_race_support import add_race_user, group_etag_of, run_action
 from tests.conftest import guarded_create_engine
+from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = [
     pytest.mark.integration,
@@ -47,18 +48,6 @@ class _Seed:
     target: UUID
 
 
-def _user(db: Session, role: str) -> UUID:
-    user = User(
-        email=f"race-{uuid7().hex}@example.com",
-        username=f"race_{uuid7().hex[:20]}",
-        role=role,
-        status=UserStatus.ACTIVE.value,
-    )
-    db.add(user)
-    db.flush()
-    return user.id
-
-
 def _group(db: Session, department_id: UUID, level: AccessLevel, member_id: UUID) -> UUID:
     group = Group(name=f"Race {uuid7().hex}")
     db.add(group)
@@ -78,12 +67,12 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
         finance = Department(department_name=f"Race finance {uuid7().hex}")
         db.add_all([inventory, finance])
         db.flush()
-        manager = _user(db, UserRole.MEMBER.value)
-        member = _user(db, UserRole.MEMBER.value)
+        manager = add_race_user(db, "race", UserRole.MEMBER.value)
+        member = add_race_user(db, "race", UserRole.MEMBER.value)
         data = _Seed(
             inventory=inventory.id,
             finance=finance.id,
-            admin=_user(db, UserRole.ADMIN.value),
+            admin=add_race_user(db, "race", UserRole.ADMIN.value),
             manager=manager,
             member=member,
             manager_group=_group(db, inventory.id, AccessLevel.MANAGE, manager),
@@ -114,23 +103,6 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
         owner.dispose()
 
 
-def _run(engine: Engine, action: Callable[[Session], object]) -> int:
-    with Session(engine) as db:
-        try:
-            action(db)
-        except HTTPException as error:
-            db.rollback()
-            return error.status_code
-        return 200
-
-
-def _etag(engine: Engine, group_id: UUID) -> str:
-    with Session(engine) as db:
-        group = db.get(Group, group_id)
-        assert group is not None
-        return policy_service.group_etag(group)
-
-
 def _replace_as(user_id: UUID, group_id: UUID, member_ids: list[UUID], etag: str):
     def action(db: Session) -> object:
         actor = db.get(User, user_id)
@@ -151,12 +123,14 @@ def test_manager_waits_for_a_widening_of_the_group_and_is_then_refused(
     seed: tuple[_Seed, Engine], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     data, engine = seed
-    etag = _etag(engine, data.target)
+    etag = group_etag_of(engine, data.target)
     admin_at_commit, release_admin = Event(), Event()
+    holder: list[int] = []
     original_commit = policy_service.commit
 
     def pause_access_commit(db: Session, message: str) -> None:
         if message == "Unable to change group access":
+            holder.append(backend_pid(db))
             admin_at_commit.set()
             assert release_admin.wait(timeout=5)
         original_commit(db, message)
@@ -170,7 +144,7 @@ def test_manager_waits_for_a_widening_of_the_group_and_is_then_refused(
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
             admin = executor.submit(
-                _run,
+                run_action,
                 engine,
                 lambda db: policy_service.replace_group_access(
                     db, data.target, widened, etag, data.admin
@@ -178,10 +152,11 @@ def test_manager_waits_for_a_widening_of_the_group_and_is_then_refused(
             )
             assert admin_at_commit.wait(timeout=5)
             manager = executor.submit(
-                _run, engine, _replace_as(data.manager, data.target, [], etag)
+                run_action, engine, _replace_as(data.manager, data.target, [], etag)
             )
             try:
-                assert not wait([manager], timeout=0.5).done
+                wait_until_blocked_by(engine, holder[0])
+                assert not manager.done()
             finally:
                 release_admin.set()
             assert admin.result(timeout=5) == 200
@@ -209,13 +184,15 @@ def test_revoking_the_managers_authority_waits_for_the_managers_change(
     revoke: Callable[[_Seed, str], Callable[[Session], object]],
 ) -> None:
     data, engine = seed
-    target_etag = _etag(engine, data.target)
-    manager_group_etag = _etag(engine, data.manager_group)
+    target_etag = group_etag_of(engine, data.target)
+    manager_group_etag = group_etag_of(engine, data.manager_group)
     manager_decided, release_manager = Event(), Event()
+    holder: list[int] = []
     original_replace = delegation.replace_group_members
 
     def pause_after_decision(db: Session, row: Group, member_ids: list, actor_id: UUID) -> bool:
         if actor_id == data.manager:
+            holder.append(backend_pid(db))
             manager_decided.set()
             assert release_manager.wait(timeout=5)
         return original_replace(db, row, member_ids, actor_id)
@@ -225,14 +202,15 @@ def test_revoking_the_managers_authority_waits_for_the_managers_change(
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
             manager = executor.submit(
-                _run,
+                run_action,
                 engine,
                 _replace_as(data.manager, data.target, [data.member, data.manager], target_etag),
             )
             assert manager_decided.wait(timeout=5)
-            admin = executor.submit(_run, engine, revoke(data, manager_group_etag))
+            admin = executor.submit(run_action, engine, revoke(data, manager_group_etag))
             try:
-                assert not wait([admin], timeout=0.5).done
+                wait_until_blocked_by(engine, holder[0])
+                assert not admin.done()
             finally:
                 release_manager.set()
             assert manager.result(timeout=5) == 200

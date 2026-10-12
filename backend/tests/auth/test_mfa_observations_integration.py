@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.systems.access.identity.models import IdentityMfaObservation
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
+from tests.access.user_security_support import open_security_world
 
 pytest_plugins = ("tests.auth.session_policy_support",)
 pytestmark = pytest.mark.integration
@@ -273,9 +274,7 @@ def provider_account(monkeypatch, request):
 
 @pytest.fixture
 def security_world(provider_account, monkeypatch):
-    from tests.access.test_user_security_http_integration import world as original
-
-    yield from original.__wrapped__(provider_account, monkeypatch)
+    yield from open_security_world(provider_account, monkeypatch)
 
 
 def test_admin_status_and_complete_reset_record_current_bound_observation(security_world):

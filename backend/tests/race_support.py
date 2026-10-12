@@ -4,8 +4,9 @@ Race tests run two real HTTP requests on their own connections. ``StatementPause
 the first statement that starts with a prefix until the test releases it; the test then
 starts the competing request and ``wait_until_blocked_by`` waits for PostgreSQL to show
 it waiting on a lock that the held connection owns; ``wait_until_waiting`` watches one
-known waiter instead. ``WAIT`` is a hang guard, far above loaded-machine latency; no test
-asserts on elapsed time.
+known waiter instead. A hold paused in Python code (a wrapped service function) names its
+holder with ``backend_pid``. ``WAIT`` is a hang guard, far above loaded-machine latency;
+no test asserts on elapsed time.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any
 
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 WAIT = 10.0
 
@@ -70,6 +72,12 @@ def join(thread: threading.Thread, results: list[Any]) -> Any:
     assert not thread.is_alive(), "the real HTTP request hung"
     assert results and not isinstance(results[0], Exception), repr(results)
     return results[0]
+
+
+def backend_pid(db: Session) -> int:
+    """Return the backend of ``db``'s open transaction, for a hold paused in Python code."""
+
+    return int(db.connection().connection.driver_connection.info.backend_pid)
 
 
 def wait_until_blocked_by(observer: Engine, holder_pid: int) -> int:

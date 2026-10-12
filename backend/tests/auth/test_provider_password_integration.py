@@ -13,7 +13,7 @@ from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
 
 

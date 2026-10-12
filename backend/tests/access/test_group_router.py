@@ -27,6 +27,14 @@ def _admin() -> User:
     )
 
 
+def _fresh_admin(database: Mock) -> User:
+    """The real fresh administrator check reloads this administrator from the database."""
+
+    admin = _admin()
+    database.scalar.return_value = admin
+    return admin
+
+
 def _group() -> Group:
     now = datetime.now(UTC)
     return Group(
@@ -48,7 +56,7 @@ def test_group_list_serializes_members_pagination_and_private_cache_headers(
     group = _group()
     member_id = uuid7()
     database = Mock(spec=Session)
-    monkeypatch.setattr(policy_router, "_exact_admin", lambda *_args: None)
+    admin = _fresh_admin(database)
     monkeypatch.setattr(
         policy_router,
         "execute_standard_list",
@@ -79,7 +87,7 @@ def test_group_list_serializes_members_pagination_and_private_cache_headers(
     )
     response = Response()
 
-    result = policy_router.list_groups(_admin(), database, response, schemas.GroupListRequest())
+    result = policy_router.list_groups(admin, database, response, schemas.GroupListRequest())
 
     assert result.items[0].member_ids == [member_id]
     assert [
@@ -93,7 +101,7 @@ def test_group_list_database_failure_returns_route_local_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = Mock(spec=Session)
-    monkeypatch.setattr(policy_router, "_exact_admin", lambda *_args: None)
+    admin = _fresh_admin(database)
     monkeypatch.setattr(
         policy_router,
         "execute_standard_list",
@@ -102,7 +110,7 @@ def test_group_list_database_failure_returns_route_local_unavailable(
     response = Response()
 
     with pytest.raises(HTTPException) as error:
-        policy_router.list_groups(_admin(), database, response, schemas.GroupListRequest())
+        policy_router.list_groups(admin, database, response, schemas.GroupListRequest())
 
     assert error.value.status_code == 503
     assert error.value.detail == "Database unavailable"
@@ -115,13 +123,13 @@ def test_group_detail_and_update_routes_return_etags_and_private_headers(
 ) -> None:
     group = _group()
     database = Mock(spec=Session)
-    monkeypatch.setattr(policy_router, "_exact_admin", lambda *_args: None)
+    admin = _fresh_admin(database)
     monkeypatch.setattr(policy_router, "get_group", lambda *_args: group)
     monkeypatch.setattr(policy_router, "group_member_map", lambda *_args: {})
     monkeypatch.setattr(policy_router, "group_access_map", lambda *_args: {})
     detail_response = Response()
 
-    detail = policy_router.get_group_route(group.id, _admin(), database, detail_response)
+    detail = policy_router.get_group_route(group.id, admin, database, detail_response)
 
     assert detail.id == group.id
     assert detail_response.headers["ETag"] == policy_router.group_etag(group)
@@ -132,7 +140,7 @@ def test_group_detail_and_update_routes_return_etags_and_private_headers(
     updated = policy_router.update_group_route(
         group.id,
         schemas.GroupUpdate(name=group.name),
-        _admin(),
+        admin,
         database,
         update_response,
         policy_router.group_etag(group),
@@ -147,8 +155,7 @@ def test_group_delete_route_returns_empty_private_response(monkeypatch: pytest.M
     group = _group()
     database = Mock(spec=Session)
     delete = Mock()
-    admin = _admin()
-    monkeypatch.setattr(policy_router, "_exact_admin", lambda *_args: None)
+    admin = _fresh_admin(database)
     monkeypatch.setattr(policy_router, "delete_group", delete)
 
     response = policy_router.delete_group_route(
@@ -168,10 +175,9 @@ def test_group_access_replacement_route_passes_the_precondition_and_returns_the_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     group = _group()
-    admin = _admin()
     database = Mock(spec=Session)
+    admin = _fresh_admin(database)
     replaced: list[object] = []
-    monkeypatch.setattr(policy_router, "_exact_admin", lambda *_args: None)
     monkeypatch.setattr(policy_router, "group_member_map", lambda *_args: {})
     monkeypatch.setattr(policy_router, "group_access_map", lambda *_args: {})
 

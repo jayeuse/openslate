@@ -114,33 +114,17 @@ def test_policy_patch_preserves_independent_roles_zero_false_and_off_limits(poli
     assert "mfa_policy" not in cleared.json()
 
 
-@pytest.mark.parametrize(
-    "patch",
-    [
-        {},
-        {"mfa_policy": "everyone"},
-        {"mfa_require_member": 1},
-        {"mfa_require_admin": None},
-        {"mfa_grace_days": None},
-        {"mfa_grace_days": "1"},
-        {"mfa_grace_days": -1},
-        {"mfa_grace_days": 31},
-        {"session_absolute_lifetime_minutes": 0},
-        {"session_absolute_lifetime_minutes": 43201},
-        {"session_concurrent_limit": 101},
-        {"session_concurrent_limit": True},
-        {"login_failed_attempt_threshold": 0},
-        {"login_window_minutes": 1441},
-        {"login_cooldown_minutes": "3"},
-        {"unknown": False},
-    ],
-)
-def test_policy_rejects_invalid_partial_input_without_revision_change(policy_world, patch):
+def test_policy_rejects_invalid_partial_input_without_revision_change(policy_world):
+    # The other refused bodies are rows of the stack-free WorkspaceSecurityUpdate table in
+    # tests/workspace/test_workspace_security_schema.py; this route case owns the 422 status
+    # and the unchanged revision.
     world = policy_world
     with Session(world.owner) as db:
         revision = db.query(WorkspaceProfile).one().revision
     result = world.client.patch(
-        "/api/workspace/security", headers=world.headers(), json={"revision": revision, **patch}
+        "/api/workspace/security",
+        headers=world.headers(),
+        json={"revision": revision, "mfa_policy": "everyone"},
     )
     assert result.status_code == 422
     with Session(world.owner) as db:
@@ -422,7 +406,7 @@ def test_invitation_completion_starts_current_role_episode_and_replay_preserves_
 
     from app.core.config import get_settings
     from app.systems.access.users.acceptance import accept_verified_invitation
-    from tests.auth.test_supabase_auth_core import _signed_access
+    from tests.auth.provider_jwt_support import signed_access
 
     world = policy_world
     world.policy(mfa_require_member=True, mfa_grace_days=1)
@@ -435,7 +419,7 @@ def test_invitation_completion_starts_current_role_episode_and_replay_preserves_
         provider_id, email = target.supabase_user_id, target.email
         db.commit()
     settings = get_settings()
-    token = _signed_access(
+    token = signed_access(
         world.key,
         user_id=str(provider_id),
         session_id=str(uuid4()),

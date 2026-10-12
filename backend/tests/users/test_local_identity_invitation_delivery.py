@@ -41,14 +41,15 @@ def _resend(monkeypatch):
     client.get_admin_user.return_value = provider_user
     client.admin_send_invitation.return_value = provider_user
     monkeypatch.setattr(user_service, "require_fresh_exact_admin", lambda *_args: None)
-    monkeypatch.setattr(user_service, "_lock_profile", lambda *_args: profile)
-    monkeypatch.setattr(user_service, "get_user", lambda *_args: profile)
+    # The profile lock and the reload after commit both read the profile.
+    db = Mock(spec=Session)
+    db.scalar.return_value = profile
     events = []
     monkeypatch.setattr(user_service, "_security_event", lambda **event: events.append(event))
     monkeypatch.setattr(
         user_service, "append_security_event", lambda _db, event: events.append(event.model_dump())
     )
-    return Mock(spec=Session), actor_id, profile, client, events
+    return db, actor_id, profile, client, events
 
 
 def test_email_resend_records_attempt_and_commits_correlated_success(monkeypatch):

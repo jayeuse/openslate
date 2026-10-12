@@ -10,6 +10,7 @@ from fastapi import Request
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+import app.systems.access.auth.request_security as request_security
 import app.systems.access.auth.router as auth_router
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
@@ -23,8 +24,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.schemas import RecoveryRequest
 from app.systems.access.users.coordination import InvitationError
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.auth.test_auth_router_contracts import _user
-from tests.auth.test_mfa import mfa_context  # noqa: F401
+from tests.auth.local_identity_support import contract_user
 
 
 @pytest.fixture(autouse=True)
@@ -34,13 +34,16 @@ def event_writers(monkeypatch):
     monkeypatch.setattr(provider_actions.audit_service, "append_security_event", Mock())
 
 
-def _request() -> Request:
+ORIGIN = "https://app.example.test"
+
+
+def _request(origin: str | None = None) -> Request:
     return Request(
         {
             "type": "http",
             "method": "POST",
             "path": "/api/auth/recovery/request",
-            "headers": [],
+            "headers": [] if origin is None else [(b"origin", origin.encode())],
             "client": ("127.0.0.1", 50000),
             "scheme": "https",
             "server": ("app.example.test", 443),
@@ -107,14 +110,17 @@ def test_recovery_request_has_the_same_provider_path_for_unknown_email(
     db = Mock(spec=Session)
     provider = Mock()
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: provider)
-    monkeypatch.setattr(auth_router, "_require_browser_origin", lambda _request: None)
+    # The real origin check runs against the configured public origin.
+    monkeypatch.setattr(
+        request_security, "get_settings", lambda: SimpleNamespace(public_origin=ORIGIN)
+    )
     monkeypatch.setattr(
         provider_actions.rate_limits, "recovery_request_permitted", lambda *_a, **_kw: True
     )
     payload = RecoveryRequest(email="person@example.test")
 
-    first = auth_router.request_recovery(payload, _request(), db)
-    second = auth_router.request_recovery(payload, _request(), db)
+    first = auth_router.request_recovery(payload, _request(ORIGIN), db)
+    second = auth_router.request_recovery(payload, _request(ORIGIN), db)
 
     assert first.status_code == second.status_code == 204
     assert provider.request_recovery.call_count == 2
@@ -144,7 +150,7 @@ def test_password_change_stops_before_provider_grant_when_backend_budget_blocked
 
 
 def _password_update_failure_case(failure: str):
-    user = _user()
+    user = contract_user()
     user.supabase_user_id = uuid7()
     user.tokens_valid_after = datetime(2026, 10, 1, tzinfo=UTC)
     sessions = [
@@ -331,7 +337,7 @@ def test_password_policy_rejects_before_consuming_action_or_mutating_provider(
 
 
 def test_mfa_policy_read_failure_after_rotation_revokes_instead_of_losing_pair(
-    mfa_context,  # noqa: F811
+    mfa_context,
     monkeypatch,
 ):
     from app.core.integrations.supabase_auth import SupabaseAuthUnavailable
@@ -353,7 +359,7 @@ def test_mfa_policy_read_failure_after_rotation_revokes_instead_of_losing_pair(
     c.auth.sign_out.assert_called_once_with("new-access")
 
 
-def test_verified_mfa_removal_commit_failure_attempts_durable_revocation(mfa_context):  # noqa: F811
+def test_verified_mfa_removal_commit_failure_attempts_durable_revocation(mfa_context):
     from sqlalchemy.exc import SQLAlchemyError
 
     from app.core.integrations.supabase_auth import (

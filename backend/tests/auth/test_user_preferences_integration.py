@@ -1,8 +1,10 @@
 """Partial preferences through signed sessions (fake provider), CSRF, runtime PostgreSQL, audit."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,8 +17,8 @@ from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
-from tests.fake_provider_support import fake_provider, fake_provider_account  # noqa: F401
 
+pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
 DEFAULT_APPEARANCE = {"motion": "system", "keyboard_shortcuts": True}
 REGIONAL_DEFAULTS = {
@@ -48,7 +50,7 @@ def _login(account):
 
 
 @pytest.fixture
-def preferences_client(fake_provider_account):  # noqa: F811
+def preferences_client(fake_provider_account):
     _, _, provider_id, local_id, owner = fake_provider_account
     with Session(owner) as db:
         user = db.get(User, local_id)
@@ -160,25 +162,10 @@ def test_empty_and_same_value_preferences_do_not_write(preferences_client):
         assert _state(account) == before
 
 
-@pytest.mark.parametrize(
-    "invalid",
-    [
-        {"theme": None},
-        {"theme": "sepia"},
-        {"appearance": None},
-        {"appearance": []},
-        {"appearance": {"motion": None}},
-        {"appearance": {"motion": "normal"}},
-        {"appearance": {"keyboard_shortcuts": None}},
-        {"appearance": {"keyboard_shortcuts": "false"}},
-        {"appearance": {"keyboard_shortcuts": "true"}},
-        {"appearance": {"keyboard_shortcuts": 0}},
-        {"appearance": {"keyboard_shortcuts": 1}},
-        {"appearance": {"density": "compact"}},
-        {"theme": "dark", "role": "admin"},
-        {"text_size": 125},
-    ],
-)
+# The other refused bodies are rows of the stack-free UserPreferencesUpdate table in
+# tests/users/test_user_request_schemas.py; these route cases own the 422 status and the
+# absence of writes.
+@pytest.mark.parametrize("invalid", [{"theme": "sepia"}, {"theme": "dark", "role": "admin"}])
 def test_invalid_preferences_are_rejected_without_persistence(preferences_client, invalid):
     client, account, path = preferences_client
     before = _state(account)
@@ -234,6 +221,71 @@ def test_nested_merge_uses_fresh_locked_values_after_authentication(preferences_
         {"motion": "reduce", "keyboard_shortcuts": False},
     )
     assert len(_state(account)[3]) == 1
+
+
+@pytest.mark.parametrize("role", ["admin", "member", "guest"])
+def test_same_theme_uses_fresh_locked_value_after_authentication(
+    fake_provider_account,
+    role,
+):
+    _, _, provider_id, local_id, owner = fake_provider_account
+    with Session(owner) as db:
+        sponsor = User(
+            email=f"theme-sponsor-{uuid4().hex}@example.test",
+            username=f"theme-sponsor-{uuid4().hex[:16]}",
+            status="active",
+            role="member",
+        )
+        db.add(sponsor)
+        db.flush()
+        sponsor_id = sponsor.id
+        user = db.get(User, local_id)
+        assert user is not None
+        user.supabase_user_id = provider_id
+        user.role = role
+        user.sponsor_user_id = sponsor_id if role == "guest" else None
+        user.expires_at = datetime.now(UTC) + timedelta(days=30) if role == "guest" else None
+        db.commit()
+    client = _login(fake_provider_account)
+    path = f"/api/users/{local_id}/preferences"
+    raced = []
+
+    def change_after_auth_read(_db, instance):
+        if isinstance(instance, User) and instance.id == local_id and not raced:
+            raced.append(True)
+            with Session(owner) as concurrent:
+                changed = concurrent.get(User, local_id)
+                assert changed is not None
+                changed.theme_preference = "light"
+                concurrent.commit()
+
+    try:
+        assert client.patch(path, json={"theme": "dark"}).status_code == 200
+        # A separate connection commits after auth loaded its User. Same-value
+        # detection must use fresh locked state, not report an unpersisted theme.
+        event.listen(AuditSession, "loaded_as_persistent", change_after_auth_read)
+        try:
+            accepted = client.patch(path, json={"theme": "dark"})
+            assert raced and accepted.status_code == 200
+            assert accepted.json() == {
+                "user_id": str(local_id),
+                "theme": "dark",
+                "appearance": {**DEFAULT_APPEARANCE, **REGIONAL_DEFAULTS},
+            }
+        finally:
+            event.remove(AuditSession, "loaded_as_persistent", change_after_auth_read)
+        state = _state(fake_provider_account)
+        assert state[0] == "dark"
+        assert len(state[3]) == 2
+    finally:
+        client.close()
+        with Session(owner) as db:
+            user = db.get(User, local_id)
+            if user is not None:
+                user.role, user.sponsor_user_id, user.expires_at = "member", None, None
+                db.flush()
+            db.delete(db.get(User, sponsor_id))
+            db.commit()
 
 
 def test_concurrent_sessions_preserve_disjoint_nested_updates(preferences_client, monkeypatch):
@@ -300,20 +352,10 @@ def test_personal_regional_preferences_merge_and_do_not_change_workspace_semanti
         assert (workspace.timezone, workspace.week_start, workspace.revision) == before
 
 
-@pytest.mark.parametrize(
-    "key,value",
-    [
-        ("timezone", "Not/AZone"),
-        ("timezone", 1),
-        ("date_format", "locale"),
-        ("time_format", "iso"),
-        ("week_start", "tuesday"),
-        ("start_page", "profile"),
-        ("start_page", None),
-    ],
-)
-def test_personal_preferences_refuse_invalid_regional_values(preferences_client, key, value):
+def test_personal_preferences_refuse_invalid_regional_values(preferences_client):
+    # The other regional values are rows of the stack-free UserPreferencesUpdate table in
+    # tests/users/test_user_request_schemas.py.
     client, account, path = preferences_client
     before = _state(account)
-    assert client.patch(path, json={"appearance": {key: value}}).status_code == 422
+    assert client.patch(path, json={"appearance": {"timezone": "Not/AZone"}}).status_code == 422
     assert _state(account) == before

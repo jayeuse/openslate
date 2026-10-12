@@ -1,188 +1,24 @@
 """Person security actions through signed Auth, PostgreSQL and provider HTTP boundaries."""
 
-import json
-from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
 import pytest
-from cryptography.hazmat.primitives.asymmetric import ec
-from fastapi.testclient import TestClient
-from jwt.algorithms import ECAlgorithm
-from sqlalchemy import select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.integrations.supabase_auth import get_supabase_auth_client
-from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
-from app.systems.manage.audit.models import SecurityEvent
-from tests.auth.test_supabase_auth_core import _signed_access
-from tests.fake_provider_support import fake_provider, fake_provider_account  # noqa: F401
+from tests.access.user_security_support import open_security_world
 
+pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
 
 
-@dataclass
-class SecurityWorld:
-    owner: Engine
-    actor_id: UUID
-    target_id: UUID
-    provider_id: UUID
-    target_provider_id: UUID
-    session_id: UUID
-    provider_session_id: UUID
-    key: ec.EllipticCurvePrivateKey
-    client: TestClient
-    factors: list[dict[str, str]]
-    calls: list[tuple[str, str]] = field(default_factory=list)
-    hook: Callable[[httpx.Request], httpx.Response | None] | None = None
-
-    def headers(self, aal: str = "aal1", **claims: object) -> dict[str, str]:
-        token = _signed_access(
-            self.key,
-            user_id=str(self.provider_id),
-            session_id=str(self.provider_session_id),
-            issuer=get_settings().supabase_auth_issuer,
-            audience=get_settings().supabase_auth_audience,
-            extra={"aal": aal, **claims},
-        )
-        return {"Authorization": f"Bearer {token}"}
-
-    def sessions(self) -> list[IdentitySession]:
-        with Session(self.owner) as db:
-            return list(
-                db.scalars(select(IdentitySession).where(IdentitySession.user_id == self.target_id))
-            )
-
-    def events(self) -> list[SecurityEvent]:
-        with Session(self.owner) as db:
-            return list(
-                db.scalars(
-                    select(SecurityEvent)
-                    .where(SecurityEvent.subject_id == self.target_id)
-                    .order_by(SecurityEvent.occurred_at, SecurityEvent.id)
-                )
-            )
-
-
 @pytest.fixture
-def world(fake_provider_account, monkeypatch):  # noqa: F811
-    email, password, provider_id, actor_id, owner = fake_provider_account
-    settings = get_settings()
-    with Session(owner) as db:
-        actor = db.get(User, actor_id)
-        actor.supabase_user_id = provider_id
-        actor.role = "admin"
-        target = User(
-            username=f"security-target-{uuid4().hex[:16]}",
-            email=f"security-target-{uuid4().hex}@example.test",
-            status="active",
-            role="member",
-            supabase_user_id=uuid4(),
-        )
-        db.add(target)
-        db.commit()
-        target_id, target_provider_id, target_email = (
-            target.id,
-            target.supabase_user_id,
-            target.email,
-        )
-        db.add(
-            IdentitySession(
-                user_id=target_id,
-                provider_user_id=target_provider_id,
-                provider_session_id=uuid4(),
-                refresh_token_digest=uuid4().hex * 2,
-                csrf_token_digest=uuid4().hex * 2,
-                expires_at=datetime.now(UTC) + timedelta(days=1),
-            )
-        )
-        db.commit()
-    # The real login route admits a real auth.sessions row through the fake provider.
-    # No get_current_identity/user override or fabricated auth.sessions admission.
-    client = TestClient(create_app(), base_url=settings.public_origin)
-    client.headers["Origin"] = settings.public_origin
-    try:
-        login = client.post("/api/auth/login", json={"email": email, "password": password})
-        assert login.status_code == 200
-        with Session(owner) as db:
-            session = db.scalar(select(IdentitySession).where(IdentitySession.user_id == actor_id))
-            session_id, provider_session_id = session.id, session.provider_session_id
-        client.cookies.clear()
-        key = ec.generate_private_key(ec.SECP256R1())
-        jwk = ECAlgorithm.to_jwk(key.public_key(), as_dict=True)
-        jwk.update({"kid": "test-key", "alg": "ES256", "use": "sig"})
-        state = SecurityWorld(
-            owner,
-            actor_id,
-            target_id,
-            provider_id,
-            target_provider_id,
-            session_id,
-            provider_session_id,
-            key,
-            client,
-            [{"id": str(uuid4()), "factor_type": "totp", "status": "verified"}],
-        )
-
-        def provider(request: httpx.Request) -> httpx.Response:
-            path = request.url.path
-            state.calls.append((request.method, path))
-            if state.hook:
-                response = state.hook(request)
-                if response is not None:
-                    return response
-            if path.endswith("/.well-known/jwks.json"):
-                return httpx.Response(200, json={"keys": [jwk]})
-            if path == f"/auth/v1/admin/users/{provider_id}":
-                return httpx.Response(
-                    200, json={"id": str(provider_id), "email": email, "factors": []}
-                )
-            if path == f"/auth/v1/admin/users/{target_provider_id}":
-                return httpx.Response(
-                    200,
-                    json={
-                        "id": str(target_provider_id),
-                        "email": target_email,
-                        "factors": state.factors,
-                    },
-                )
-            if path == f"/auth/v1/admin/users/{target_provider_id}/factors":
-                return httpx.Response(200, json=state.factors)
-            if path.startswith(f"/auth/v1/admin/users/{target_provider_id}/factors/"):
-                factor_id = path.rsplit("/", 1)[-1]
-                state.factors[:] = [f for f in state.factors if f["id"] != factor_id]
-                return httpx.Response(200, json={"id": factor_id})
-            if path == "/auth/v1/recover":
-                assert json.loads(request.content) == {"email": target_email}
-                return httpx.Response(200, json={})
-            raise AssertionError(f"Unadmitted provider request {request.method} {path}")
-
-        provider_client = get_supabase_auth_client()
-        monkeypatch.setattr(provider_client, "_transport", httpx.MockTransport(provider))
-        monkeypatch.setattr(provider_client, "_jwks", {})
-        monkeypatch.setattr(provider_client, "_jwks_expires_at", 0)
-        monkeypatch.setattr(provider_client, "_next_jwks_fetch_at", 0)
-        monkeypatch.setattr(settings, "smtp_host", "smtp.example.test")
-        monkeypatch.setattr(settings, "smtp_port", 2525)
-        monkeypatch.setattr(settings, "smtp_admin_email", "operator@example.test")
-        yield state
-    finally:
-        client.close()
-        with Session(owner) as db:
-            for session in db.scalars(
-                select(IdentitySession).where(IdentitySession.user_id == target_id)
-            ):
-                db.delete(session)
-            target = db.get(User, target_id)
-            if target is not None:
-                db.delete(target)
-            db.commit()
+def world(fake_provider_account, monkeypatch):
+    yield from open_security_world(fake_provider_account, monkeypatch)
 
 
 def test_live_status_requires_real_auth_and_reports_current_enrollment(world):
@@ -214,7 +50,10 @@ def test_status_requires_current_actor_authority(world, field, value, expected):
         actor = db.get(User, world.actor_id)
         setattr(actor, field, datetime.now(UTC) + value if isinstance(value, timedelta) else value)
         db.commit()
-    response = world.client.get(f"/api/users/{world.target_id}/security", headers=world.headers())
+    response = world.client.get(
+        f"/api/users/{world.target_id}/security",
+        headers=world.headers(),
+    )
     assert response.status_code == expected
     assert not any(path.endswith(str(world.target_provider_id)) for _, path in world.calls)
 
@@ -228,7 +67,10 @@ def test_bound_inactive_status_is_readable_but_not_action_eligible(world, state)
         else:
             target.status = state
         db.commit()
-    response = world.client.get(f"/api/users/{world.target_id}/security", headers=world.headers())
+    response = world.client.get(
+        f"/api/users/{world.target_id}/security",
+        headers=world.headers(),
+    )
     assert response.status_code == 200, response.text
     assert response.json()["verified_factor_count"] == 1
     assert response.json()["target_eligible"] is False
@@ -265,7 +107,10 @@ def test_provider_status_failure_never_reports_false_mfa_off(world, failure):
         return httpx.Response(200, json={"id": str(uuid4()), "email": "foreign@example.test"})
 
     world.hook = provider
-    response = world.client.get(f"/api/users/{world.target_id}/security", headers=world.headers())
+    response = world.client.get(
+        f"/api/users/{world.target_id}/security",
+        headers=world.headers(),
+    )
     assert response.status_code == (409 if failure == "wrong_binding" else 503)
     assert "verified_factor_count" not in response.json()
     assert "Private provider routing detail" not in response.text
@@ -275,7 +120,10 @@ def test_provider_status_failure_never_reports_false_mfa_off(world, failure):
 def test_status_reports_empty_factors_and_absent_smtp_truthfully(world, monkeypatch):
     world.factors.clear()
     monkeypatch.setattr(get_settings(), "smtp_host", None)
-    response = world.client.get(f"/api/users/{world.target_id}/security", headers=world.headers())
+    response = world.client.get(
+        f"/api/users/{world.target_id}/security",
+        headers=world.headers(),
+    )
     assert response.status_code == 200, response.text
     assert response.json()["verified_factor_count"] == 0
     assert response.json()["smtp_configured"] is False
@@ -299,7 +147,10 @@ def test_status_discards_provider_facts_after_authority_or_binding_changes(world
         return None
 
     world.hook = during_provider
-    response = world.client.get(f"/api/users/{world.target_id}/security", headers=world.headers())
+    response = world.client.get(
+        f"/api/users/{world.target_id}/security",
+        headers=world.headers(),
+    )
     assert changed
     assert response.status_code == expected
     assert "verified_factor_count" not in response.json()
@@ -316,7 +167,9 @@ def test_status_discards_provider_facts_after_authority_or_binding_changes(world
 )
 def test_recovery_rejects_unknown_null_and_coerced_input(world, body):
     response = world.client.post(
-        f"/api/users/{world.target_id}/recovery", headers=world.headers(), json=body
+        f"/api/users/{world.target_id}/recovery",
+        headers=world.headers(),
+        json=body,
     )
     assert response.status_code == 422
     assert not any(path.endswith("/recover") for _, path in world.calls)
@@ -334,7 +187,9 @@ def test_email_only_recovery_is_correlated_acceptance_without_revocation(world):
 
     world.hook = during_mail
     response = world.client.post(
-        f"/api/users/{world.target_id}/recovery", headers=world.headers(), json={}
+        f"/api/users/{world.target_id}/recovery",
+        headers=world.headers(),
+        json={},
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -380,7 +235,9 @@ def test_recovery_timeout_is_unconfirmed_and_never_replayed(world):
 
     world.hook = timeout
     response = world.client.post(
-        f"/api/users/{world.target_id}/recovery", headers=world.headers(), json={}
+        f"/api/users/{world.target_id}/recovery",
+        headers=world.headers(),
+        json={},
     )
     assert response.status_code == 503
     detail = response.json()["detail"]
@@ -395,7 +252,9 @@ def test_recovery_timeout_is_unconfirmed_and_never_replayed(world):
 @pytest.mark.parametrize("body", [{"factor_id": str(uuid4())}, {"confirm": True}])
 def test_reset_rejects_client_selected_effects(world, body):
     response = world.client.post(
-        f"/api/users/{world.target_id}/mfa/reset", headers=world.headers("aal2"), json=body
+        f"/api/users/{world.target_id}/mfa/reset",
+        headers=world.headers("aal2"),
+        json=body,
     )
     assert response.status_code == 422
     assert not any(method == "DELETE" for method, _ in world.calls)
@@ -410,7 +269,9 @@ def test_reset_requires_presented_aal2_even_if_local_session_is_newer(world):
         session.provider_access_token_encrypted = _cipher().encrypt(access.encode()).decode()
         db.commit()
     response = world.client.post(
-        f"/api/users/{world.target_id}/mfa/reset", headers=world.headers(), json={}
+        f"/api/users/{world.target_id}/mfa/reset",
+        headers=world.headers(),
+        json={},
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "security_aal2_required"
@@ -434,7 +295,9 @@ def test_reset_clears_factors_before_local_revocation_and_handles_zero_factors(w
 
     world.hook = during_delete
     response = world.client.post(
-        f"/api/users/{world.target_id}/mfa/reset", headers=world.headers("aal2"), json={}
+        f"/api/users/{world.target_id}/mfa/reset",
+        headers=world.headers("aal2"),
+        json={},
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -451,7 +314,9 @@ def test_reset_refuses_oversize_inventory_without_truncation_or_effect(world):
         {"id": str(uuid4()), "factor_type": "totp", "status": "verified"} for _ in range(33)
     ]
     response = world.client.post(
-        f"/api/users/{world.target_id}/mfa/reset", headers=world.headers("aal2"), json={}
+        f"/api/users/{world.target_id}/mfa/reset",
+        headers=world.headers("aal2"),
+        json={},
     )
     assert response.status_code == 503
     assert not any(method == "DELETE" for method, _ in world.calls)

@@ -29,12 +29,29 @@ from tests.auth.test_provider_email_integration import _email_action
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
 
 
-def test_invitation_revocation_route_exists_and_requires_authentication() -> None:
+def _admin() -> User:
+    return User(
+        id=uuid7(),
+        email="admin@example.test",
+        username="admin",
+        status=UserStatus.ACTIVE.value,
+        role="admin",
+    )
+
+
+def _client(db: Session, identity: CurrentIdentity | None = None) -> TestClient:
+    """The real access router; ``identity`` replaces authentication when given."""
+
     app = FastAPI()
     app.include_router(access_router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: Mock(spec=Session)
+    app.dependency_overrides[get_db] = lambda: db
+    if identity is not None:
+        app.dependency_overrides[get_current_identity] = lambda: identity
+    return TestClient(app)
 
-    response = TestClient(app).delete(f"/api/auth/invitations/{uuid7()}")
+
+def test_invitation_revocation_route_exists_and_requires_authentication() -> None:
+    response = _client(Mock(spec=Session)).delete(f"/api/auth/invitations/{uuid7()}")
 
     assert response.status_code == 401
 
@@ -42,24 +59,11 @@ def test_invitation_revocation_route_exists_and_requires_authentication() -> Non
 def test_invitation_revocation_rejects_setup_only_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    role = "admin"
-    admin = User(
-        id=uuid7(),
-        email="admin@example.test",
-        username="admin",
-        status=UserStatus.ACTIVE.value,
-        role=role,
-    )
-    app = FastAPI()
-    app.include_router(access_router, prefix="/api")
-    app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
-        admin, uuid7(), True, True
-    )
-    app.dependency_overrides[get_db] = lambda: Mock(spec=Session)
+    identity = CurrentIdentity(_admin(), uuid7(), True, True)
     revoke = Mock()
     monkeypatch.setattr(invitations_router, "revoke_invitation", revoke)
 
-    response = TestClient(app).delete(f"/api/auth/invitations/{uuid7()}")
+    response = _client(Mock(spec=Session), identity).delete(f"/api/auth/invitations/{uuid7()}")
 
     assert response.status_code == 401
     revoke.assert_not_called()
@@ -68,25 +72,15 @@ def test_invitation_revocation_rejects_setup_only_identity(
 def test_authorized_invitation_revocation_returns_empty_204(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    role = "admin"
-    admin = User(
-        id=uuid7(),
-        email="admin@example.test",
-        username="admin",
-        status=UserStatus.ACTIVE.value,
-        role=role,
-    )
-    identity = CurrentIdentity(admin, uuid7(), True, False)
+    admin = _admin()
     db = Mock(spec=Session)
     user_id = uuid7()
-    app = FastAPI()
-    app.include_router(access_router, prefix="/api")
-    app.dependency_overrides[get_current_identity] = lambda: identity
-    app.dependency_overrides[get_db] = lambda: db
     revoke = Mock()
     monkeypatch.setattr(invitations_router, "revoke_invitation", revoke)
 
-    response = TestClient(app).delete(f"/api/auth/invitations/{user_id}")
+    response = _client(db, CurrentIdentity(admin, uuid7(), True, False)).delete(
+        f"/api/auth/invitations/{user_id}"
+    )
 
     assert response.status_code == 204
     assert response.content == b""
@@ -106,23 +100,10 @@ def test_invitation_revocation_maps_missing_and_closed_states(
     expected_status: int,
     expected_detail: str,
 ) -> None:
-    role = "admin"
-    admin = User(
-        id=uuid7(),
-        email="admin@example.test",
-        username="admin",
-        status=UserStatus.ACTIVE.value,
-        role=role,
-    )
-    app = FastAPI()
-    app.include_router(access_router, prefix="/api")
-    app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
-        admin, uuid7(), True, False
-    )
-    app.dependency_overrides[get_db] = lambda: Mock(spec=Session)
+    identity = CurrentIdentity(_admin(), uuid7(), True, False)
     monkeypatch.setattr(invitations_router, "revoke_invitation", Mock(side_effect=error))
 
-    response = TestClient(app).delete(f"/api/auth/invitations/{uuid7()}")
+    response = _client(Mock(spec=Session), identity).delete(f"/api/auth/invitations/{uuid7()}")
 
     assert response.status_code == expected_status
     assert response.json() == {"detail": expected_detail}

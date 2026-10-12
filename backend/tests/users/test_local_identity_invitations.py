@@ -1,6 +1,5 @@
 """Behavior coverage for user administration after local Identity cutover."""
 
-from datetime import UTC, datetime
 from unittest.mock import Mock
 
 import pytest
@@ -11,23 +10,9 @@ from uuid6 import uuid7
 import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser, SupabaseAuthUnavailable
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import User, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
-
-
-def _user(*, status: UserStatus = UserStatus.ACTIVE, deleted: bool = False) -> User:
-    now = datetime.now(UTC)
-    return User(
-        id=uuid7(),
-        email=f"{uuid7().hex}@example.com",
-        username=f"user_{uuid7().hex[-12:]}",
-        role=UserRole.MEMBER.value,
-        status=status.value,
-        created_at=now,
-        updated_at=now,
-        is_deleted=deleted,
-        deleted_at=now if deleted else None,
-    )
+from tests.users.user_support import local_user
 
 
 def _invitation() -> InvitationCreate:
@@ -44,7 +29,7 @@ def test_invitation_requires_actor_outside_bootstrap() -> None:
 
 def test_invitation_rejects_duplicate_email_or_username() -> None:
     db = Mock(spec=Session)
-    db.scalar.side_effect = [_user()]
+    db.scalar.side_effect = [local_user()]
 
     with pytest.raises(InvitationConflict):
         user_service.invite_user(db, _invitation(), bootstrap=True)
@@ -56,7 +41,7 @@ def test_invitation_keeps_duplicate_conflict_when_failure_audit_cannot_persist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    db.scalar.side_effect = [_user()]
+    db.scalar.side_effect = [local_user()]
     monkeypatch.setattr(
         user_service,
         "_security_event",

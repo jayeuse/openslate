@@ -15,30 +15,7 @@ from app.systems.access.policy.models import GroupMember
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate, UserCreate, UserResponse, UserUpdate
-
-
-def _user(
-    role: UserRole = UserRole.MEMBER,
-    *,
-    status: UserStatus = UserStatus.ACTIVE,
-    deleted: bool = False,
-) -> User:
-    now = datetime.now(UTC)
-    guest = role is UserRole.GUEST
-    return User(
-        id=uuid7(),
-        email=f"{uuid7().hex}@example.com",
-        username=f"user_{uuid7().hex[-12:]}",
-        role=role.value,
-        status=status.value,
-        sponsor_user_id=uuid7() if guest else None,
-        expires_at=now + timedelta(days=30) if guest else None,
-        created_at=now,
-        updated_at=now,
-        is_deleted=deleted,
-        deleted_at=now if deleted else None,
-    )
-
+from tests.users.user_support import local_user
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
 
@@ -55,7 +32,7 @@ def test_profile_create_defaults_to_a_member_without_groups() -> None:
 
 
 def test_user_response_exposes_the_role_and_no_department_membership() -> None:
-    user = _user(UserRole.GUEST)
+    user = local_user(UserRole.GUEST)
     user.display_name = "Guest"
     invitation_sent_at = datetime.now(UTC)
     user.invitation_sent_at = invitation_sent_at
@@ -86,8 +63,8 @@ def test_guest_invitation_rejects_missing_sponsor_before_creating_credentials() 
 
 
 def test_guest_cannot_receive_administrator_role_during_profile_update() -> None:
-    actor = _user(UserRole.ADMIN)
-    guest = _user(UserRole.GUEST)
+    actor = local_user(UserRole.ADMIN)
+    guest = local_user(UserRole.GUEST)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, guest]
     # A promotion first reads the groups to lock; a guest is in none here.
@@ -104,8 +81,8 @@ def test_guest_cannot_receive_administrator_role_during_profile_update() -> None
 @pytest.mark.parametrize(
     "sponsor",
     [
-        lambda: _user(status=UserStatus.DISABLED),
-        lambda: _user(UserRole.GUEST),
+        lambda: local_user(status=UserStatus.DISABLED),
+        lambda: local_user(UserRole.GUEST),
     ],
     ids=["inactive", "guest"],
 )
@@ -177,7 +154,7 @@ def _capture_profile(db: Mock, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guest_invitation_gets_the_configured_guest_duration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sponsor = _user()
+    sponsor = local_user()
     payload = InvitationCreate(
         email="guest@example.com",
         username="guest",
@@ -201,7 +178,7 @@ def test_guest_invitation_gets_the_configured_guest_duration(
 def test_guest_invitation_persists_profile_and_deduplicated_group_memberships(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sponsor = _user()
+    sponsor = local_user()
     group_a = uuid7()
     group_b = uuid7()
     payload = InvitationCreate(
@@ -236,7 +213,7 @@ def test_guest_invitation_persists_profile_and_deduplicated_group_memberships(
 
 def test_expired_member_cannot_sponsor_a_guest(monkeypatch: pytest.MonkeyPatch) -> None:
     now = datetime(2026, 9, 22, tzinfo=UTC)
-    sponsor = _user()
+    sponsor = local_user()
     sponsor.expires_at = now
     db = Mock(spec=Session)
     db.scalar.side_effect = [sponsor]

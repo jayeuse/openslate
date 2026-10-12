@@ -18,7 +18,7 @@ from app.systems.access.identity import provider_sessions
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.auth.test_supabase_auth_core import _client_for_key, _signed_access
+from tests.auth.provider_jwt_support import client_for_key, signed_access
 
 
 def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -63,7 +63,7 @@ def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypat
         if denial == "mfa_required"
         else []
     )
-    provider = _client_for_key(key, user_id=provider_id, factors=factors)
+    provider = client_for_key(key, user_id=provider_id, factors=factors)
     user = User(
         id=local_id,
         supabase_user_id=provider_id,
@@ -106,7 +106,7 @@ def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypat
         yield db
 
     monkeypatch.setattr(events_router, "AuditSession", database)
-    token = _signed_access(key, user_id=str(provider_id), session_id=str(provider_session))
+    token = signed_access(key, user_id=str(provider_id), session_id=str(provider_session))
     principal = SimpleNamespace(access_token=token, client_ip="203.0.113.8")
     with pytest.raises(HTTPException) as caught:
         events_router._reauthorize_in_database(principal)

@@ -20,20 +20,21 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users import sessions_router
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
-from tests.access.test_user_admin_http_integration import _add_session, _World
-from tests.access.test_user_admin_http_integration import world as world
+from tests.access.user_admin_support import UserAdminWorld, add_session
+from tests.access.user_admin_support import world as world
 from tests.conftest import guarded_create_engine
+from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
 
 
 def test_cross_user_session_collection_pages_and_filters_the_same_public_client_labels(
-    world: _World,
+    world: UserAdminWorld,
 ) -> None:
     timestamp = datetime.now(UTC)
     current, mobile = world.sessions[world.admin.id], world.sessions[world.member.id]
-    tablet = _add_session(world.db, world.colleague)
-    expired, revoked = (_add_session(world.db, world.member) for _ in range(2))
+    tablet = add_session(world.db, world.colleague)
+    expired, revoked = (add_session(world.db, world.member) for _ in range(2))
     expired.expires_at = timestamp - timedelta(seconds=1)
     revoked.revoked_at = timestamp - timedelta(seconds=1)
     world.admin.display_name, world.member.display_name = "Session Alpha", "session Beta"
@@ -90,12 +91,12 @@ def test_cross_user_session_collection_pages_and_filters_the_same_public_client_
 
 
 def test_bulk_session_end_rolls_back_then_preserves_current_and_records_events_once(
-    world: _World, monkeypatch: pytest.MonkeyPatch
+    world: UserAdminWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     timestamp = datetime.now(UTC)
     current, member = world.sessions[world.admin.id], world.sessions[world.member.id]
-    other_admin = _add_session(world.db, world.admin)
-    expired, revoked = (_add_session(world.db, world.member) for _ in range(2))
+    other_admin = add_session(world.db, world.admin)
+    expired, revoked = (add_session(world.db, world.member) for _ in range(2))
     expired.expires_at = timestamp - timedelta(seconds=1)
     revoked.revoked_at = timestamp - timedelta(seconds=1)
     world.db.commit()
@@ -172,10 +173,12 @@ def test_concurrent_bulk_session_end_records_each_target_only_once(
     first_paused, release_first, second_query_started, second_query_finished = (
         Event() for _ in range(4)
     )
+    holder: list[int] = []
     original_append, original_scalars = sessions_router.append_security_event, AuditSession.scalars
 
     def paused_append(db, payload):
         if db.info.get("session_test_client") == "first":
+            holder.append(backend_pid(db))
             first_paused.set()
             assert release_first.wait(timeout=5)
         return original_append(db, payload)
@@ -218,7 +221,8 @@ def test_concurrent_bulk_session_end_records_each_target_only_once(
             second = executor.submit(end_sessions, "second")
             try:
                 assert second_query_started.wait(timeout=5)
-                assert not second_query_finished.wait(timeout=0.25)
+                wait_until_blocked_by(owner, holder[0])
+                assert not second_query_finished.is_set()
             finally:
                 release_first.set()
             assert first.result(timeout=5) == second.result(timeout=5) == 204

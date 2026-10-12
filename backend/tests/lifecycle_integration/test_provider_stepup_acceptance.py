@@ -17,7 +17,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
 
 
@@ -194,9 +194,7 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
             "Provider password verification must not admit another application session"
         )
 
-        reopened = client.post(
-            f"/api/modules/{module_id_path}/reopen", json={"confirmed": True}
-        )
+        reopened = client.post(f"/api/modules/{module_id_path}/reopen", json={"confirmed": True})
         assert reopened.status_code == 200
         after_reopen = client.get(f"/api/modules/{module_id_path}")
         assert after_reopen.status_code == 200
