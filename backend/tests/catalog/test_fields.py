@@ -209,6 +209,11 @@ OTHER_OPTION_ID = "0192f0c4-6b1e-7c3a-9d2e-4f5a6b7c8d9f"
         (FieldType.NUMBER, {"step": "half"}, "Numeric field step must be a finite number"),
         (
             FieldType.NUMBER,
+            {"defaultValue": float("inf")},
+            "Numeric field defaultValue must be a finite number",
+        ),
+        (
+            FieldType.NUMBER,
             {"minimum": 2, "maximum": 1},
             "Numeric field minimum cannot exceed maximum",
         ),
