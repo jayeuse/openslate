@@ -148,6 +148,10 @@ The slowest frontend files are `sandbox-relationship-mappings` (432 worker-secon
    - **When the code is the problem.** If the mutant's behavior is the correct one, the code has a bug: fix it with a failing test first, as a separate product fix. If a line can never change behavior because an earlier check already guarantees it, it is dead code: list it for the owner's approval, and do not delete product code inside this item.
    - **Rules.** Section 1 applies in full: no weakened or removed assertion, no proxy fix, no suppression. A module's score must not drop. `assertion_guard.py` does not measure mutation scores; each module's before and after runs are the check. Run one module at a time in the backend lane, never beside another heavy lane.
    - **Metric.** Per module: killed and total before and after, the number of survivors killed, and the number recorded as equivalent or not worth killing (with the reason). Done when no survivor in the "matters" classes is left without a kill or a recorded reason.
+- **25. Approved product changes.** Approved by the owner on 2026-10-12. Each change lets a lower-layer test own a rule that only a browser test, or no test, owns today, or it removes code that nothing calls. Each change gets a failing test first where it adds behavior coverage, its own commit, and the section 1 rules.
+   - Backend, before item 24 (so item 24 scores the final code): memoize `plan_sessions` in `operations/sample` (7 calls per `admit_dataset`); delete the dead `getattr(profile, ..., None)` defaults in `users/service.py`; split the access fold in `app/systems/access/policy/scope.py` from its SQL read so a stack-free policy table owns it (security-critical: a `review` and a `deep_review` pass).
+   - Frontend, after item 24: export the Import and Search `failureMessage` (the `mfa_required`, `ip_not_allowed`, 401 and 404 branches have no test today); delete the Access helpers and Manage activity code that no production code calls, with their tests; export `securityEventSentence`; extract `loginFailureMessage` and `emailChangeFailureMessage`; export `reconcileSelectOptions`; extract the Sandbox work-in-progress check; extract the person-security outcome copy; extract the Platform notification-kind switch, CSV import rules and section parser. Then, as its own change, one shared `useRefusalLatch` for the three copied refusal latches.
+   - Optional: the Platform account helpers, the remaining Manage extractions, and the `rate_limit_fingerprint` separator. Not done: the Platform upload state machine refactor.
 - **23. Documents.** Update `docs/architecture/16-testing-architecture.md`, `frontend/README.md`, and the scoped `AGENTS.md` files to the final shape. Mark the test parts of older plans in `docs/plans/` as replaced.
 
 ## 5. Phases
@@ -160,7 +164,7 @@ The slowest frontend files are `sandbox-relationship-mappings` (432 worker-secon
 | 3. Evidence tools | 4, 5, 19 | Area work needs unique coverage and mutation scores. |
 | 4. Shared setup | 8, 20 | Area work moves tests onto shared fixtures, so the fixtures come first. |
 | 5. Sweeps | 9, 10, 17 | Mechanical and low risk; they shrink the areas before review. |
-| 6. Areas | 13, 24, 16 | One work package per change, in the order of section 6. Survivor triage (24) runs after the backend areas and before the full stack and smoke work (16), so item 16 measures the strengthened suite. |
+| 6. Areas | 13, 25, 24, 16 | One work package per change, in the order of section 6. The backend part of item 25 runs after the backend areas, then survivor triage (24), then the frontend part of item 25, then the full stack and smoke work (16), so item 16 measures the strengthened suite. |
 | 7. Finish | 21, 23 | Final CI shape, the parity proof, and documents. |
 
 ## 6. Work packages for item 13
