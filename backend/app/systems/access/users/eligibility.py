@@ -21,9 +21,9 @@ def is_established_user(user: User, *, status_value: str | None = None) -> bool:
     status = user.status if status_value is None else status_value
     if status == UserStatus.PENDING.value:
         return False
-    if getattr(user, "invitation_accepted_at", None) is not None:
+    if user.invitation_accepted_at is not None:
         return True
-    return getattr(user, "invitation_sent_at", None) is None
+    return user.invitation_sent_at is None
 
 
 def established_user_clause() -> ColumnElement[bool]:
