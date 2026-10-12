@@ -349,3 +349,18 @@ def test_group_member_lookup_rejects_invalid_uuid(paging_world):
         "/api/access/groups", params={"member_id": "invalid"}
     )
     assert response.status_code == 422, response.text
+
+
+def test_a_group_whose_access_rows_are_all_deleted_is_hidden_from_a_manager(group_page):
+    world, marker, groups, _module = group_page
+
+    response = world.client(world.manager).get(
+        "/api/access/groups", params={"search": marker, "limit": 100}
+    )
+
+    # Only groups with live rows inside Inventory; "removed" has one deleted Inventory row.
+    assert response.status_code == 200, response.text
+    assert {row["id"] for row in response.json()["items"]} == {
+        str(groups["access"].id),
+        str(groups["both"].id),
+    }

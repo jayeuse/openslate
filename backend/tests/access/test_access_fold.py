@@ -2,17 +2,31 @@
 
 The SQL reads (live rows of live groups and memberships, and each reachable module's
 department) and the account check (rule 2) stay in ``scope._resolve``; the stack tests
-in ``test_scope_integration.py`` own them.
+in ``test_scope_integration.py`` own them. The level order, the answers that
+``EffectiveAccess`` derives from its levels, and the instant of the account check
+need no database either, so they are owned here too.
 """
 
+from datetime import UTC, datetime
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from sqlalchemy.orm import Session
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.policy.scope import AccessRow, _fold_access, rank
+from app.systems.access.policy.scope import (
+    AccessRow,
+    EffectiveAccess,
+    _fold_access,
+    allowed_module_ids,
+    effective_levels,
+    includes,
+    rank,
+)
+from app.systems.access.users.models import User, UserRole, UserStatus
 from tests.property_support import PROPERTY
 
 READ, WRITE, MANAGE = AccessLevel.READ, AccessLevel.WRITE, AccessLevel.MANAGE
@@ -70,6 +84,22 @@ FOLD_CASES = [
         {D1: MANAGE},
         {M1: D1, M2: D1},
         id="highest-department-row-across-groups-first-low",
+    ),
+    pytest.param(
+        "member",
+        [(G1, D1, None, "read"), (G2, D1, M2, "write")],
+        {M1: READ, M2: WRITE},
+        {D1: READ},
+        {M1: D1, M2: D1},
+        id="module-row-of-another-group-raises-one-module-above-the-department",
+    ),
+    pytest.param(
+        "member",
+        [(G1, D1, None, "read"), (G2, D1, None, "manage"), (G3, D1, M1, "write")],
+        {M1: MANAGE, M2: MANAGE},
+        {D1: MANAGE},
+        {M1: D1, M2: D1},
+        id="highest-of-three-groups-wins-over-a-lower-module-row",
     ),
     pytest.param(
         "member",
@@ -169,3 +199,75 @@ def test_an_administrator_is_unrestricted_whatever_the_rows(rows: list[AccessRow
     assert access.unrestricted is True
     assert access.module_ids(READ) is None
     assert access.managed_department_ids() is None
+
+
+@pytest.mark.parametrize(
+    ("granted", "required", "expected"),
+    [
+        pytest.param(None, READ, False, id="no-level-includes-nothing"),
+        pytest.param(READ, READ, True, id="a-level-includes-itself"),
+        pytest.param(WRITE, MANAGE, False, id="a-lower-level-misses-a-higher-one"),
+        pytest.param(MANAGE, READ, True, id="a-higher-level-includes-a-lower-one"),
+    ],
+)
+def test_a_level_includes_only_itself_and_lower_levels(
+    granted: AccessLevel | None, required: AccessLevel, expected: bool
+) -> None:
+    assert includes(granted, required) is expected
+
+
+def test_effective_access_derives_modules_departments_and_managed_departments() -> None:
+    # M3 is reachable only through a module row, so D2 has no department row.
+    reader = EffectiveAccess(
+        modules={M1: READ, M2: WRITE, M3: MANAGE},
+        module_departments={M1: D1, M2: D1, M3: D2},
+        departments={D1: READ},
+    )
+    manager = EffectiveAccess(departments={D1: MANAGE, D2: WRITE})
+
+    assert reader.module_ids(WRITE) == frozenset({M2, M3})
+    assert reader.department_ids() == frozenset({D1, D2})
+    assert reader.managed_department_ids() == frozenset()
+    assert manager.managed_department_ids() == frozenset({D1})
+
+
+@pytest.mark.parametrize(
+    ("access", "reach", "expected"),
+    [
+        pytest.param(EffectiveAccess(unrestricted=True), {D1, D2}, True, id="administrator"),
+        pytest.param(EffectiveAccess(departments={D1: MANAGE}), {D1}, True, id="whole-reach"),
+        pytest.param(
+            EffectiveAccess(departments={D1: MANAGE, D2: WRITE}), {D1, D2}, False, id="part-of-it"
+        ),
+        pytest.param(
+            EffectiveAccess(departments={D1: MANAGE}), set(), False, id="group-without-rows"
+        ),
+    ],
+)
+def test_only_a_manager_of_every_department_a_group_reaches_may_change_its_members(
+    access: EffectiveAccess, reach: set[UUID], expected: bool
+) -> None:
+    assert access.manages_all(frozenset(reach)) is expected
+
+
+@pytest.mark.parametrize(
+    ("instant", "unrestricted"),
+    [
+        pytest.param(datetime(2020, 1, 1, 11, 59, tzinfo=UTC), True, id="before-the-expiry"),
+        pytest.param(datetime(2020, 1, 1, 12, 0, tzinfo=UTC), False, id="at-the-expiry"),
+    ],
+)
+def test_the_account_check_uses_the_given_instant(instant: datetime, unrestricted: bool) -> None:
+    # An administrator reaches everything without a read, so no database is needed.
+    administrator = User(
+        role=UserRole.ADMIN.value,
+        status=UserStatus.ACTIVE.value,
+        is_deleted=False,
+        expires_at=datetime(2020, 1, 1, 12, 0, tzinfo=UTC),
+    )
+    db = Mock(spec=Session)
+
+    assert effective_levels(db, administrator, now=instant).unrestricted is unrestricted
+    assert allowed_module_ids(db, administrator, READ, now=instant) == (
+        None if unrestricted else frozenset()
+    )
