@@ -59,7 +59,10 @@ def _numeric_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, 
         raise ValueError(
             "Numeric fields only support minimum, maximum, step, and defaultValue configuration"
         )
-    for key in set(config).intersection(allowed):
+    # A fixed order keeps the message the same in every process when several keys fail.
+    for key in ("minimum", "maximum", "step", "defaultValue"):
+        if key not in config:
+            continue
         if key == "defaultValue" and config[key] is None:
             continue
         if not _finite_numeric(config[key]):

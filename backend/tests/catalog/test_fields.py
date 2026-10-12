@@ -206,6 +206,7 @@ OTHER_OPTION_ID = "0192f0c4-6b1e-7c3a-9d2e-4f5a6b7c8d9f"
         # Numeric bounds, steps, and defaults.
         (FieldType.NUMBER, {"minimum": "zero"}, "Numeric field minimum must be a finite number"),
         (FieldType.NUMBER, {"maximum": True}, "Numeric field maximum must be a finite number"),
+        (FieldType.NUMBER, {"step": "half"}, "Numeric field step must be a finite number"),
         (
             FieldType.NUMBER,
             {"minimum": 2, "maximum": 1},
@@ -335,6 +336,15 @@ def test_field_config_refuses_invalid_configuration(
 ) -> None:
     with pytest.raises(ValueError, match=f"^{message}$"):
         field_config(field_type, config)
+
+
+def test_numeric_configuration_names_the_first_invalid_key_in_a_fixed_order() -> None:
+    # The publish review shows this message as sent, so it must not depend on the
+    # process hash seed when several keys are invalid.
+    config = {"defaultValue": "d", "step": "s", "maximum": "x", "minimum": "n"}
+
+    with pytest.raises(ValueError, match="^Numeric field minimum must be a finite number$"):
+        field_config(FieldType.NUMBER, config)
 
 
 @pytest.mark.parametrize(
