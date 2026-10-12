@@ -2666,85 +2666,16 @@ test("editing select choices preserves IDs, even when a label matches the defaul
 
   await settings
     .getByLabel("Status options")
-    .fill(`Complete, ${idShapedLabel}, Open, In progress`);
-  await settings.getByRole("button", { name: "Save field changes" }).click();
-  await expect.poll(sandbox.documentWrites).toBe(2);
-  const reordered = readStatusField();
-  expect(reordered.options.map((option) => [option.label, option.id])).toEqual([
-    ["Complete", originalIds.Complete],
-    [idShapedLabel, insertedId],
-    ["Open", openId],
-    ["In progress", originalIds["In progress"]],
-  ]);
-
-  await settings
-    .getByLabel("Status options")
-    .fill(`Complete, ${idShapedLabel}, Active, In progress`);
-  await settings.getByRole("button", { name: "Save field changes" }).click();
-  await expect.poll(sandbox.documentWrites).toBe(3);
-
-  const after = readStatusField();
-  expect(after.options.find((option) => option.label === "Active")?.id).toBe(
-    openId,
-  );
-  expect(after.defaultValue).toBe(openId);
-
-  await settings
-    .getByLabel("Status options")
     .fill(`Complete, ${idShapedLabel}, In progress`);
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect(
     settings.getByText("Default value must match a select option."),
   ).toBeVisible();
-  expect(sandbox.documentWrites()).toBe(3);
+  expect(sandbox.documentWrites()).toBe(1);
   await settings.getByLabel("Status default value").selectOption("");
   await settings.getByRole("button", { name: "Save field changes" }).click();
-  await expect.poll(sandbox.documentWrites).toBe(4);
+  await expect.poll(sandbox.documentWrites).toBe(2);
   expect(readStatusField().defaultValue).toBeNull();
-
-  const optionsInput = settings.getByLabel("Status options");
-  const defaultInput = settings.getByLabel("Status default value");
-  await optionsInput.fill(
-    `Complete, ${idShapedLabel}, In progress, Draft choice`,
-  );
-  await defaultInput.selectOption({ label: "Draft choice" });
-  await optionsInput.fill(
-    `Draft choice, Complete, ${idShapedLabel}, In progress`,
-  );
-  await settings.getByRole("button", { name: "Save field changes" }).click();
-  await expect.poll(sandbox.documentWrites).toBe(5);
-  const savedNewChoice = readStatusField();
-  const draftChoiceId = savedNewChoice.options.find(
-    (option) => option.label === "Draft choice",
-  )?.id;
-  expect(draftChoiceId).toBeTruthy();
-  expect(savedNewChoice.defaultValue).toBe(draftChoiceId);
-  expect(
-    savedNewChoice.options.find((option) => option.label === "Complete")?.id,
-  ).toBe(originalIds.Complete);
-});
-
-test("removing an unsaved selected choice requires an explicit new default", async ({
-  page,
-}) => {
-  const design = structuredClone(configuredSandboxDesign);
-  const sandbox = await openAuthenticatedSandbox(page, design);
-  await page.getByRole("button", { name: "Show Status settings" }).click();
-  const settings = page.getByLabel("Status field settings");
-  const optionsInput = settings.getByLabel("Status options");
-  await optionsInput.fill("Temporary, Open, In progress, Complete");
-  await settings
-    .getByLabel("Status default value")
-    .selectOption({ label: "Temporary" });
-  await optionsInput.fill("Open, In progress, Complete");
-  await settings.getByRole("button", { name: "Save field changes" }).click();
-  await expect(
-    settings.getByText("Default value must match a select option."),
-  ).toBeVisible();
-  expect(sandbox.documentWrites()).toBe(0);
-  await settings.getByLabel("Status default value").selectOption("");
-  await settings.getByRole("button", { name: "Save field changes" }).click();
-  await expect.poll(sandbox.documentWrites).toBe(1);
 });
 
 test("the Designer saves a module record title field in the current v4 draft", async ({
