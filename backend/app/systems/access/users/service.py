@@ -104,8 +104,6 @@ def _lock_profile(db: Session, user_id: UUID) -> User | None:
         .execution_options(populate_existing=True)
         .with_for_update(of=User)
     )
-    if profile is not None and not isinstance(profile, User):
-        raise InvitationError("Unable to lock invitation profile")
     return profile
 
 
