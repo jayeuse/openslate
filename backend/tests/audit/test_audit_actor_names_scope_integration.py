@@ -163,7 +163,10 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
         null_search_fields_log,
     ]
     # This route test seeds immutable history via the audit writer's internal marker.
+    # One request id (a filter, not a search field) scopes the action search to these rows.
+    seeded_request_id = uuid7()
     for row in seeded_logs:
+        row.request_id = seeded_request_id
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(seeded_logs)
     integration_db.flush()
@@ -207,7 +210,9 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
         ).json()
         assert [item["id"] for item in old_path_match["items"]] == [str(request_path_log.id)]
 
-        action_match_response = client.get("/api/audit-logs", params={"search": "Update"})
+        action_match_response = client.get(
+            "/api/audit-logs", params={"search": "Update", "request_id": str(seeded_request_id)}
+        )
         assert action_match_response.status_code == 200
         action_match = action_match_response.json()
         assert action_match["pagination"]["total"] == len(seeded_logs)
