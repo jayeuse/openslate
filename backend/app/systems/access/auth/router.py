@@ -364,7 +364,11 @@ def change_password(
         raise HTTPException(status_code=403, detail="Password cannot be changed") from error
     except IdentityRateLimited as error:
         db.rollback()
-        raise HTTPException(status_code=429, detail="Password cannot be changed") from error
+        raise HTTPException(
+            status_code=429,
+            detail="Password cannot be changed",
+            headers={"Retry-After": str(error.retry_after)},
+        ) from error
     except (SupabaseAuthUnavailable, SQLAlchemyError, SecurityEventPersistenceError) as error:
         db.rollback()
         raise HTTPException(status_code=503, detail="Password service unavailable") from error

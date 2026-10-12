@@ -386,3 +386,10 @@ def test_change_password_maps_safe_provider_errors_and_preserves_current_session
         assert rejected.value.status_code == expected
         assert "private" not in str(rejected.value.detail)
     assert db.rollback.call_count == 3
+
+    # A spent sign-in budget reports its remaining wait, as the sign-in routes do.
+    change.side_effect = IdentityRateLimited("private rate detail", retry_after=180)
+    with pytest.raises(HTTPException) as throttled:
+        auth_router.change_password(payload, identity, request, Response(), db)
+    assert throttled.value.status_code == 429
+    assert throttled.value.headers == {"Retry-After": "180"}
