@@ -48,8 +48,7 @@ def try_commit_login_denial(db: Session) -> bool:
 
 def anonymous_rate_limits_enabled() -> bool:
     settings = get_settings()
-    seeding = getattr(settings, "e2e_seeding_without_anonymous_limits", False)
-    return not (is_relaxed_development(settings) or seeding)
+    return not (is_relaxed_development(settings) or settings.e2e_seeding_without_anonymous_limits)
 
 
 def _verified_action(
