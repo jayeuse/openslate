@@ -59,3 +59,21 @@ Do not add `pragma: no mutate`. It hides a mutant instead of explaining it.
 - `creation_schema_digest`, the `str(item.id)` tie-break changed to `str(None)`: 1 mutant — unreachable default: the partial unique index `uq_fields_module_position_active` gives active fields distinct positions, and closed and relationship fields are left out.
 - `_converted_cell`, `int(cell.strip(), 10)` without the base: 1 mutant — equivalent: `int` uses base 10 by default.
 - `create_import_records` (the `Field` read, `Record` insert, flush, outbox event and assignment notification): 26 mutants — stack-owned: `tests/catalog/test_record_import_integration.py::test_import_preview_then_mixed_batch_creates_audited_records_and_events` and `::test_import_real_persistence_failure_rolls_back_records_audit_and_events`, and `tests/catalog/test_record_assignment_notifications.py::test_csv_import_notifies_only_valid_created_assignments_and_not_preview` and `::test_failed_csv_batch_rolls_back_first_assignment_notification`.
+
+## app/systems/sandbox/designs/validation.py
+
+- `_value_matches_field`, the non-scalar branch `return False` changed to `return True` (lines 444 and 445): 1 mutant — unreachable default: `validate_document` parses a dictionary with `SandboxDocument`, and both callers (`designs/service.py` and `publications/planner.py`) pass a document that Pydantic already validated, whose `TypedValue` admits only `str`, `int`, `float`, `bool` and `None`, so no scenario or literal value reaches this branch. Dead code, listed for the owner.
+
+## app/systems/sandbox/designs/field_validation.py
+
+- `validate_value` and `_validate_numeric_value`, the `DocumentValueError` texts (closed field, required null, required empty string, maxLength, minimum, maximum, step): 7 mutants — internal wording: every caller (`validation._value_matches_field`, `mapping_validation.fields_compatible`, and `_mapping_is_compatible` and `_value_is_valid` in `test_runs/relationships.py`) catches the error and drops its text.
+- `validate_value`, the two `valid = False` assignments in the `user` branch changed to `None`: 2 mutants — equivalent: `not valid` is true for both values.
+- `validate_value`, `isinstance(value, (int, float)) and not isinstance(value, bool)` changed to `or`: 1 mutant — equivalent: the only extra values that then reach `_validate_numeric_value` are strings of a text, date, select or user field and booleans of a checkbox field; `field_metadata` gives those fields no minimum, maximum or step, so the check does nothing.
+- `validate_mapping`, `"text"` and `"long-text"` in the same-kind set (two spellings each): 4 mutants — equivalent: the next clause accepts a text or long-text source into a text or long-text target with the same `_length_fits` test.
+- `_numeric_fits`, `source_step is None or target.step <= 0` changed to `and`: 1 mutant — equivalent: with no source step, `numeric_matches_step(None, 0, step)` returns `False` (`Decimal("None")` raises `InvalidOperation`, which it catches), and the schema gives every target step a value above 0.
+- `_numeric_fits` and `_validate_numeric_value`, `step <= 0` changed to `step < 0`: 2 mutants — unreachable default: `NumberFieldConfig.step` has `gt=0`, and `numeric_matches_step` refuses a step of 0 in any case.
+- `_validate_numeric_value`, the default step of 1 for an integer field (`or True`, `and False`, two spellings of `"integer"`): 4 mutants — equivalent: an integer field admits only `int` values, and `NumberFieldConfig` requires a whole minimum for an integer field, so every value is on a step of 1 from the minimum.
+
+## app/systems/sandbox/designs/mapping_validation.py
+
+- `fields_compatible`, the `"relationship"` label passed to `validate_mapping` (`None` and two spellings): 3 mutants — internal wording: the label appears only in the `DocumentValueError` text, which `fields_compatible` discards.

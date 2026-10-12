@@ -245,6 +245,8 @@ def test_relationship_helper_compatibility_and_value_types_are_bounded() -> None
     assert _mapping_is_compatible(_field("a", "integer"), _field("b", "number"))
     assert _mapping_is_compatible(_field("a", "email"), _field("b", "text"))
     assert not _mapping_is_compatible(_field("a", "number"), _field("b", "text"))
+    # A test run never projects a value through a closed field.
+    assert not _mapping_is_compatible({**_field("a", "text"), "closed": True}, _field("b", "text"))
     assert not _mapping_is_compatible(
         _field("a", "number", min=0, max=100),
         _field("b", "number", min=0, max=10),
