@@ -36,7 +36,7 @@ def test_untrusted_notification_payloads_fail_closed_without_fanout() -> None:
 
         assert subscription.queue.empty()
         await hub.publish_notification('{"entity":"resync"}')
-        assert await subscription.queue.get() is None
+        assert await asyncio.wait_for(subscription.queue.get(), timeout=5) is None
         await hub.unsubscribe(subscription)
 
     asyncio.run(exercise())

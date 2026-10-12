@@ -98,6 +98,14 @@ def _rows() -> list[object]:
         pytest.param({"entity": "dashboards", extra: ROW}, id=f"dashboard-{extra}")
         for extra in ["entity_id", "module_id", "recipient_id", "board_id"]
     ]
+    # A key the entity may not carry refuses the payload even when its value is null.
+    rows += [
+        pytest.param({"entity": "dashboards", "entity_id": None}, id="dashboard-null-entity_id"),
+        pytest.param(
+            {"entity": "records", "module_id": READABLE_MODULE, "board_id": None},
+            id="records-null-board_id",
+        ),
+    ]
     rows += [
         pytest.param(
             {"entity": "charts", "module_id": CHART_MODULE, extra: ROW}, id=f"chart-{extra}"
@@ -144,6 +152,14 @@ def test_untrusted_notification_payloads_fail_closed(payload: object) -> None:
         pytest.param("board_posts", {"board_id": uuid7(), "module_id": uuid7()}, id="board-module"),
         pytest.param(
             "board_posts", {"board_id": uuid7(), "recipient_id": uuid7()}, id="board-recipient"
+        ),
+        pytest.param(
+            "board_posts", {"board_id": uuid7(), "administrators_only": True}, id="board-admins"
+        ),
+        pytest.param(
+            "in_app_notifications",
+            {"recipient_id": uuid7(), "administrators_only": True},
+            id="notification-admins",
         ),
         pytest.param("dashboards", {"entity_id": uuid7()}, id="dashboard-row"),
         pytest.param("dashboards", {"module_id": uuid7()}, id="dashboard-module"),

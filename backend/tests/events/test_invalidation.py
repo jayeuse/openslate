@@ -80,7 +80,8 @@ def test_listener_fanout_filters_by_readable_module_and_discards_slow_consumers(
         event = InvalidationEvent(entity="records", module_id=inventory)
         await hub.publish(event)
 
-        assert await allowed_subscription.queue.get() == event
+        # Every queue read below has a hang guard: a broken dispatch fails, never hangs.
+        assert await asyncio.wait_for(allowed_subscription.queue.get(), timeout=5) == event
         assert denied_subscription.queue.empty()
 
         await hub.publish(event)
@@ -103,7 +104,7 @@ def test_listener_delivers_a_cross_process_notification_to_local_subscribers() -
 
         await hub.publish_notification(event.to_json())
 
-        assert await subscription.queue.get() == event
+        assert await asyncio.wait_for(subscription.queue.get(), timeout=5) == event
         await hub.unsubscribe(subscription)
 
     asyncio.run(exercise())
@@ -116,7 +117,7 @@ def test_listener_reconnect_resyncs_existing_subscribers() -> None:
 
         await hub.publish_resync()
 
-        assert await subscription.queue.get() is None
+        assert await asyncio.wait_for(subscription.queue.get(), timeout=5) is None
         await hub.unsubscribe(subscription)
 
     asyncio.run(exercise())
@@ -135,6 +136,30 @@ def test_subscriber_admission_limits_are_deterministic_and_release_on_disconnect
         await hub.unsubscribe(first)
         second = await hub.subscribe(second_user)
         await hub.unsubscribe(second)
+
+    asyncio.run(exercise())
+
+
+def test_each_user_holds_at_most_the_per_user_streams_and_a_closed_one_frees_one_slot() -> None:
+    async def exercise() -> None:
+        hub = EventHub(max_subscribers=10, max_subscribers_per_user=2)
+        user_id = uuid7()
+        streams = [await hub.subscribe(_viewer(user_id=user_id)) for _ in range(2)]
+        with pytest.raises(SubscriberLimitReached):
+            await hub.subscribe(_viewer(user_id=user_id))
+        other = await hub.subscribe(_viewer())
+
+        await hub.unsubscribe(streams.pop())
+        streams.append(await hub.subscribe(_viewer(user_id=user_id)))
+        with pytest.raises(SubscriberLimitReached):
+            await hub.subscribe(_viewer(user_id=user_id))
+
+        for stream in streams:
+            await hub.unsubscribe(stream)
+        streams = [await hub.subscribe(_viewer(user_id=user_id)) for _ in range(2)]
+        assert hub.subscriber_count == 3
+        for stream in (*streams, other):
+            await hub.unsubscribe(stream)
 
     asyncio.run(exercise())
 
