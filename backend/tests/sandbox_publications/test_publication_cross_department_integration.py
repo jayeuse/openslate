@@ -368,6 +368,18 @@ def test_publication_moves_module_access_rows_with_their_module(integration_owne
         level=AccessLevel.READ,
         group=db.get(Group, earlier.group_id),
     )
+    # The older row was edited last, so it wins even though its id is lower.
+    rewritten = make_group_access(db, [], destination, moved, level=AccessLevel.READ)
+    make_group_access(
+        db,
+        [],
+        origin,
+        moved,
+        level=AccessLevel.MANAGE,
+        group=db.get(Group, rewritten.group_id),
+    )
+    rewritten.level = AccessLevel.WRITE
+    db.flush()
     moving = document.model_copy(deep=True)
     _module(moving, "sample-requests").department_id = "sample-commercial"
     set_audit_actor(db, publisher.id)
@@ -381,6 +393,7 @@ def test_publication_moves_module_access_rows_with_their_module(integration_owne
         (origin.id, unmoved.id, "write"),
     }
     assert _live_rows(db, earlier.group_id) == {(destination.id, moved.id, "read")}
+    assert _live_rows(db, rewritten.group_id) == {(destination.id, moved.id, "write")}
     assert level_for(db, member, destination.id, moved.id) == AccessLevel.WRITE
     assert member.id in module_reader_ids(db, moved.id)
     assert member.id in department_reader_ids(db, destination.id)

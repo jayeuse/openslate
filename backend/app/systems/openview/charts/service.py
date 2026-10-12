@@ -75,7 +75,8 @@ def locked_source(
     user = get_current_user(identity)
     require_module_access(db, user, module_id, AccessLevel.READ)
     # Group/access/user/session locks must precede source locks: access writers
-    # lock group then department/module, and publication locks department/module.
+    # lock group then department/module, and publication locks group, then module
+    # access rows, then department/module.
     actor = require_fresh_module_access(
         db,
         actor_id=user.id,

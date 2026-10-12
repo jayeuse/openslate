@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Event
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -19,14 +20,17 @@ from uuid6 import uuid7
 
 import app.systems.access.policy.delegation as delegation
 import app.systems.access.policy.service as policy_service
+import app.systems.access.users.service as user_service
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
+from app.systems.access.users.coordination import InvitationConflict
 from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.schemas import InvitationCreate
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.access.access_race_support import add_race_user, group_etag_of, run_action
 from tests.conftest import guarded_create_engine
-from tests.race_support import backend_pid, wait_until_blocked_by
+from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 
 pytestmark = [
     pytest.mark.integration,
@@ -218,3 +222,56 @@ def test_revoking_the_managers_authority_waits_for_the_managers_change(
     finally:
         release_manager.set()
     assert _members(engine, data.target) == {data.member, data.manager}
+
+
+# A Sandbox publish holds its administrator's row FOR SHARE while it waits for the
+# groups. A group write that held a group FOR UPDATE and then waited for that row
+# would deadlock with it, so these refusals must not lock the administrator's row.
+
+
+def test_adding_an_administrator_is_refused_without_waiting_for_their_row(
+    seed: tuple[_Seed, Engine],
+) -> None:
+    data, engine = seed
+    etag = group_etag_of(engine, data.target)
+    with Session(engine) as publisher, ThreadPoolExecutor(max_workers=1) as executor:
+        publisher.scalar(select(User.id).where(User.id == data.admin).with_for_update(read=True))
+        refused = executor.submit(
+            run_action,
+            engine,
+            _replace_as(data.manager, data.target, [data.member, data.admin], etag),
+        )
+        try:
+            assert refused.result(timeout=WAIT) == 409
+        finally:
+            publisher.rollback()
+    assert _members(engine, data.target) == {data.member}
+
+
+def test_an_invitation_that_reuses_an_administrators_email_does_not_wait_for_them(
+    seed: tuple[_Seed, Engine],
+) -> None:
+    data, engine = seed
+    with Session(engine) as setup:
+        admin = setup.get(User, data.admin)
+        assert admin is not None
+        email = admin.email
+    payload = InvitationCreate(
+        email=email, username=f"invite_{uuid7().hex[:20]}", group_ids=[data.target]
+    )
+
+    def invite() -> type[Exception] | None:
+        with Session(engine) as db:
+            try:
+                user_service.invite_user(db, payload, actor_id=data.admin, client=Mock())
+            except InvitationConflict:
+                return InvitationConflict
+        return None
+
+    with Session(engine) as publisher, ThreadPoolExecutor(max_workers=1) as executor:
+        publisher.scalar(select(User.id).where(User.id == data.admin).with_for_update(read=True))
+        refused = executor.submit(invite)
+        try:
+            assert refused.result(timeout=WAIT) is InvitationConflict
+        finally:
+            publisher.rollback()

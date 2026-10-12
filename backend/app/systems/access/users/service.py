@@ -181,10 +181,11 @@ def invite_user(
                 "Administrators have access everywhere and are not group members"
             )
         group_ids = _lock_active_groups(db, payload.group_ids)
+        # No row lock: a match is always refused, and a lock on it could wait for a
+        # Sandbox publish that holds its administrator's row while waiting for a group
+        # locked above. The unique indexes still refuse a concurrent duplicate.
         existing = db.scalar(
-            select(User)
-            .where(or_(User.email == payload.email, User.username == payload.username))
-            .with_for_update(of=User)
+            select(User).where(or_(User.email == payload.email, User.username == payload.username))
         )
         if existing is not None:
             raise InvitationConflict("Email or username is already in use")

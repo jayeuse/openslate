@@ -12,7 +12,7 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import Engine, create_engine, select
+from sqlalchemy import Engine, create_engine, delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -22,10 +22,13 @@ from app.common.dependencies.auth import CurrentIdentity
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.policy.checks import _lock_authority
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.designs.service import read_document, replace_document
+from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.executor import (
     PublicationError,
     replay_or_conflict,
@@ -36,8 +39,9 @@ from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.schemas import PublicationRequest
 from app.systems.sandbox.publications.tokens import issue_preview_token
 from tests.postgres_runtime import assert_runner_database_url
+from tests.race_support import WAIT, wait_until_blocked_by
 from tests.sandbox_designs.fixtures import sample_document
-from tests.sandbox_publications.support import publish_saved
+from tests.sandbox_publications.support import bound_module, publish_saved
 from tests.sandbox_record_triggers.support import (
     DocumentBaseline,
     cleanup_committed_trigger,
@@ -214,6 +218,81 @@ def test_publication_retry_rechecks_session_after_integrity_rollback(
             db, actor, session_id, prepared, preview_token, "rollback-before-replay"
         )
     _assert_nothing_published(engine, actor_id)
+
+
+def test_publication_waits_for_a_member_access_check_without_deadlock(
+    committed_publisher: Callable[..., Publisher],
+) -> None:
+    publisher = committed_publisher(pool_size=4)
+    engine, actor_id = publisher.engine, publisher.actor_id
+    _publish_once(engine, _prepare(engine, actor_id, "structure-before-access-check"))
+    member_id, group_id, module_id = _commit_module_grant(engine, actor_id)
+    try:
+        prepared = _prepare(engine, actor_id, "publish-beside-access-check")
+        with Session(engine) as member, ThreadPoolExecutor(max_workers=1) as pool:
+            # A member write starts with this lock (require_fresh_module_access), then
+            # locks the department or module it changes.
+            _lock_authority(member, member_id)
+            member_pid = int(member.scalar(text("SELECT pg_backend_pid()")))
+            published = pool.submit(_publish_once, engine, prepared)
+            wait_until_blocked_by(engine, member_pid)
+            locked = member.scalar(
+                select(Module.id).where(Module.id == module_id).with_for_update(read=True)
+            )
+            member.commit()
+            assert locked == module_id
+            assert published.result(timeout=WAIT) is not None
+    finally:
+        _remove_module_grant(engine, member_id, group_id)
+
+
+def _publish_once(engine: Engine, prepared: Prepared) -> UUID:
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, prepared.actor_id)
+        return publish_saved(
+            db,
+            prepared.actor_id,
+            prepared,
+            prepared,
+            token_digest=prepared.token_digest,
+            idempotency_key=f"publish-{uuid7()}",
+        ).id
+
+
+def _commit_module_grant(engine: Engine, actor_id: UUID) -> tuple[UUID, UUID, UUID]:
+    with AuditSession(bind=engine) as db:
+        _set_audit_context(db, actor_id)
+        module = bound_module(db, "sample-requests")
+        member = User(
+            email=f"access-check-{uuid7()}@example.test",
+            username=f"access-check-{uuid7().hex[-12:]}",
+            status=UserStatus.ACTIVE.value,
+            role="member",
+        )
+        group = Group(name=f"Access check {uuid7()}")
+        db.add_all([member, group])
+        db.flush()
+        db.add_all(
+            [
+                GroupMember(group_id=group.id, user_id=member.id),
+                GroupAccess(
+                    group_id=group.id,
+                    department_id=module.department_id,
+                    module_id=module.id,
+                    level="write",
+                ),
+            ]
+        )
+        db.commit()
+        return member.id, group.id, module.id
+
+
+def _remove_module_grant(engine: Engine, member_id: UUID, group_id: UUID) -> None:
+    with engine.begin() as connection:
+        connection.execute(delete(GroupAccess).where(GroupAccess.group_id == group_id))
+        connection.execute(delete(GroupMember).where(GroupMember.group_id == group_id))
+        connection.execute(delete(Group).where(Group.id == group_id))
+        connection.execute(delete(User).where(User.id == member_id))
 
 
 @contextmanager

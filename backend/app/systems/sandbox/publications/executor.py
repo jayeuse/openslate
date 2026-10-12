@@ -41,6 +41,7 @@ from app.systems.sandbox.publications.rules import (
 from app.systems.sandbox.publications.schemas import PublicationResponse, PublicationVersion
 from app.systems.sandbox.publications.structure_mutations import (
     close_removed_structure,
+    lock_module_access,
     stage_bound_names_and_positions,
     sync_department_boards,
     sync_module_access_departments,
@@ -158,7 +159,7 @@ def apply_publication(
     departments = _apply_departments(db, document, bindings, actor_id)
     modules = _apply_modules(db, document, bindings, departments, actor_id)
     sync_module_chart_departments(db, modules, actor_id)
-    sync_module_access_departments(db, modules, actor_id)
+    sync_module_access_departments(db, actor_id)
     fields = _apply_fields(db, document, bindings, modules, actor_id)
     _apply_title_fields(document, modules, fields, actor_id)
     _apply_relationships(db, document, bindings, modules, actor_id, lifecycle_closed)
@@ -241,8 +242,9 @@ def apply_publication(
 
 
 def _lock_operational_rows(db: Session) -> None:
-    """Use canonical class order before blocker inspection and mutation."""
+    """Use canonical class order, after group and access rows, before inspection and mutation."""
 
+    lock_module_access(db)
     for model in (
         WorkspaceProfile,
         SandboxBinding,
