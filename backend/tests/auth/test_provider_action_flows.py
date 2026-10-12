@@ -176,7 +176,9 @@ def _password_update_failure_case(failure: str):
     tokens = ProviderTokens("temporary-action", "temporary-refresh", user.supabase_user_id, 600)
     client.password_grant.return_value = client.verify_email_action.return_value = tokens
     client.get_user.return_value = ProviderUser(user.supabase_user_id, None, user.email)
-    if failure == "wrong_subject":
+    if failure == "none":
+        client.update_password.return_value = ProviderUser(user.supabase_user_id, None, user.email)
+    elif failure == "wrong_subject":
         client.update_password.return_value = ProviderUser(uuid7(), None, user.email)
     else:
         client.update_password.side_effect = (
@@ -185,6 +187,45 @@ def _password_update_failure_case(failure: str):
             else SupabaseAuthUnavailable("provider unavailable")
         )
     return user, sessions, db, client
+
+
+def _bind_invitation(user, client) -> None:
+    """A pending profile whose provider user carries this profile's invitation binding."""
+    user.status = "pending"
+    user.invitation_sent_at = datetime.now(UTC)
+    user.provider_invitation_operation_id = uuid7()
+    client.get_user.return_value = ProviderUser(
+        user.supabase_user_id,
+        None,
+        user.email,
+        app_metadata={
+            "openslate_user_id": str(user.id),
+            "openslate_invitation_operation_id": str(user.provider_invitation_operation_id),
+        },
+    )
+
+
+# The terminal row of a password update that the provider may have applied.
+TERMINAL = {"rejected": "failure", "unavailable": "partial", "wrong_subject": "partial"}
+
+
+def _written():
+    """Events committed on their own, and events written in the action's own transaction."""
+    committed = provider_actions.audit_service.append_committed_security_event.call_args_list
+    local = provider_actions.audit_service.append_security_event.call_args_list
+    return [call.args[0] for call in committed], [call.args[1] for call in local]
+
+
+def _phases(events) -> list[tuple[str, str, str | None, str | None]]:
+    # The security events screen labels the event, its outcome, its stage and its reason.
+    return [(e.event_type, e.outcome, e.metadata.get("stage"), e.reason) for e in events]
+
+
+def _assert_one_operation(events, person_id, address) -> None:
+    assert {(e.actor_id, e.subject_id, e.metadata["ip_address"], e.source) for e in events} == {
+        (person_id, person_id, address, "identity.provider_action")
+    }
+    assert len({e.operation_id for e in events}) == 1
 
 
 def _assert_password_failure_preserves_local_state(user, sessions, db) -> None:
@@ -220,11 +261,19 @@ def test_password_change_preserves_sessions_when_provider_update_fails(failure: 
             "New secure password",
             client,
             enforce_rate_limit=False,
+            source="203.0.113.7",
         )
 
     client.update_password.assert_called_once_with("current-access", "New secure password")
     _assert_password_failure_preserves_local_state(user, sessions, db)
     client.sign_out.assert_called_once_with("temporary-action", scope="local")
+    committed, local = _written()
+    assert _phases(committed) == [
+        ("identity.password_change", "attempt", "provider_update", None),
+        ("identity.password_change", TERMINAL[failure], "provider_update", None),
+    ]
+    assert local == []
+    _assert_one_operation(committed, user.id, "203.0.113.7")
 
 
 @pytest.mark.parametrize("failure", ("rejected", "unavailable", "wrong_subject"))
@@ -237,11 +286,20 @@ def test_recovery_preserves_sessions_when_provider_update_fails(failure: str) ->
     }[failure]
 
     with pytest.raises(expected):
-        provider_actions.complete_recovery(db, "a" * 56, "New secure password", client)
+        provider_actions.complete_recovery(
+            db, "a" * 56, "New secure password", client, source="203.0.113.7"
+        )
 
     client.update_password.assert_called_once_with("temporary-action", "New secure password")
     _assert_password_failure_preserves_local_state(user, sessions, db)
     client.sign_out.assert_called_once_with("temporary-action", scope="local")
+    committed, local = _written()
+    assert _phases(committed) == [
+        ("identity.recovery_complete", "attempt", "provider_update", None),
+        ("identity.recovery_complete", TERMINAL[failure], "provider_update", None),
+    ]
+    assert local == []
+    _assert_one_operation(committed, user.id, "203.0.113.7")
 
 
 @pytest.mark.parametrize("password", ["Password1234!", " Password1234 ", "xPassword1234x"])
@@ -285,18 +343,7 @@ def test_password_policy_rejects_before_consuming_action_or_mutating_provider(
 ) -> None:
     user, sessions, db, client = _password_update_failure_case("rejected")
     if kind == "invite":
-        user.status = "pending"
-        user.invitation_sent_at = datetime.now(UTC)
-        user.provider_invitation_operation_id = uuid7()
-        client.get_user.return_value = ProviderUser(
-            user.supabase_user_id,
-            None,
-            user.email,
-            app_metadata={
-                "openslate_user_id": str(user.id),
-                "openslate_invitation_operation_id": str(user.provider_invitation_operation_id),
-            },
-        )
+        _bind_invitation(user, client)
     policy = WorkspaceProfile(
         password_min_length=minimum,
         password_require_mixed_case=mixed,
@@ -389,3 +436,263 @@ def test_verified_mfa_removal_commit_failure_attempts_durable_revocation(mfa_con
         c.service.unenroll_factor(c.db, c.user.id, c.session.id, c.factor_id, "old-access", c.auth)
     assert persisted and persisted[0] is not None
     c.auth.sign_out.assert_called_once_with("old-access", scope="global")
+
+
+@pytest.mark.parametrize("provider_fails", [False, True])
+def test_recovery_request_events_show_whether_the_provider_accepted(
+    monkeypatch: pytest.MonkeyPatch, provider_fails: bool
+) -> None:
+    db = Mock(spec=Session)
+    client = Mock()
+    budget = Mock(return_value=True)
+    monkeypatch.setattr(provider_actions.rate_limits, "recovery_request_permitted", budget)
+    if provider_fails:
+        client.request_recovery.side_effect = SupabaseAuthUnavailable("provider unavailable")
+    request = partial(
+        provider_actions.request_recovery,
+        db,
+        "person@example.test",
+        client,
+        source="203.0.113.7",
+        enforce_rate_limit=True,
+    )
+
+    if provider_fails:
+        with pytest.raises(SupabaseAuthUnavailable):
+            request()
+    else:
+        request()
+
+    budget.assert_called_once_with(db, "person@example.test", source="203.0.113.7")
+    client.request_recovery.assert_called_once_with("person@example.test")
+    committed, _local = _written()
+    terminal = (
+        ("identity.recovery_request", "partial", "provider_request_unconfirmed", None)
+        if provider_fails
+        else ("identity.recovery_request", "success", "provider_accepted", "request_accepted")
+    )
+    assert _phases(committed) == [
+        ("identity.recovery_request", "attempt", "provider_request", None),
+        terminal,
+    ]
+    # The requester is anonymous: no person is named, only the address.
+    _assert_one_operation(committed, None, "203.0.113.7")
+
+
+@pytest.mark.parametrize(("enforce", "sent"), [(True, False), (False, True)])
+def test_the_recovery_budget_applies_only_while_anonymous_limits_are_on(
+    monkeypatch: pytest.MonkeyPatch, enforce: bool, sent: bool
+) -> None:
+    client = Mock()
+    exhausted = Mock(return_value=False)
+    monkeypatch.setattr(provider_actions.rate_limits, "recovery_request_permitted", exhausted)
+
+    provider_actions.request_recovery(
+        Mock(spec=Session), "person@example.test", client, source=None, enforce_rate_limit=enforce
+    )
+
+    if sent:
+        exhausted.assert_not_called()
+        client.request_recovery.assert_called_once_with("person@example.test")
+    else:
+        client.request_recovery.assert_not_called()
+        assert _written() == ([], [])
+
+
+@pytest.mark.parametrize("kind", ["recovery", "change"])
+def test_a_completed_password_update_revokes_sessions_in_the_recorded_local_commit(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    user, sessions, db, client = _password_update_failure_case("none")
+    bucket = Mock()
+    for name, value in {
+        "cleanup_expired_buckets": Mock(return_value=0),
+        "login_fingerprint": Mock(return_value="fingerprint"),
+        "lock_bucket": Mock(return_value=bucket),
+        "login_retry_after": Mock(return_value=None),
+    }.items():
+        monkeypatch.setattr(provider_actions.rate_limits, name, value)
+
+    if kind == "change":
+        provider_actions.change_password(
+            db,
+            user,
+            sessions[0].id,
+            "current-access",
+            "old password",
+            "New secure password",
+            client,
+            source="203.0.113.7",
+        )
+        client.password_grant.assert_called_once_with(user.email, "old password")
+        client.update_password.assert_called_once_with("current-access", "New secure password")
+        # The session that changed the password stays; every other session ends.
+        assert sessions[0].revoked_at is None and sessions[1].revoked_at is not None
+        # A successful change clears the login budget of the person.
+        db.delete.assert_called_once_with(bucket)
+        client.sign_out.assert_called_once_with("temporary-action", scope="local")
+    else:
+        provider_actions.complete_recovery(
+            db, "a" * 56, "New secure password", client, source="203.0.113.7"
+        )
+        client.update_password.assert_called_once_with("temporary-action", "New secure password")
+        assert all(session.revoked_at is not None for session in sessions)
+        client.sign_out.assert_called_once_with("temporary-action", scope="global")
+
+    client.get_user.assert_called_once_with("temporary-action")
+    db.commit.assert_called_once_with()
+    event = f"identity.{'password_change' if kind == 'change' else 'recovery_complete'}"
+    committed, local = _written()
+    assert _phases(committed) == [(event, "attempt", "provider_update", None)]
+    assert _phases(local) == [(event, "success", "local_commit", None)]
+    _assert_one_operation(committed + local, user.id, "203.0.113.7")
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        "wrong_password",
+        "other_identity",
+        "provider_email",
+        "provider_banned",
+        "local_rebound",
+        "local_disabled",
+        "local_expired",
+    ],
+)
+def test_each_refused_password_change_spends_the_person_login_budget(
+    monkeypatch: pytest.MonkeyPatch, unit_workspace_policy, refusal: str
+) -> None:
+    user, sessions, db, client = _password_update_failure_case("none")
+    now = datetime(2026, 10, 12, 9, 30, tzinfo=UTC)
+    monkeypatch.setattr(provider_actions, "utc_now", lambda: now)
+    bucket = Mock()
+    fingerprint = Mock(return_value="fingerprint")
+    retry_after = Mock(return_value=None)
+    record = Mock()
+    for name, value in {
+        "cleanup_expired_buckets": Mock(return_value=0),
+        "login_fingerprint": fingerprint,
+        "lock_bucket": Mock(return_value=bucket),
+        "login_retry_after": retry_after,
+        "record_attempt": record,
+    }.items():
+        monkeypatch.setattr(provider_actions.rate_limits, name, value)
+    locked = SimpleNamespace(
+        supabase_user_id=user.supabase_user_id, status="active", is_deleted=False, expires_at=None
+    )
+    db.get.return_value = locked
+    if refusal == "wrong_password":
+        client.password_grant.side_effect = InvalidProviderCredentials("wrong")
+    elif refusal == "other_identity":
+        client.password_grant.return_value = ProviderTokens("temporary-action", "r", uuid7(), 600)
+    elif refusal == "provider_email":
+        client.get_user.return_value = ProviderUser(user.supabase_user_id, None, "o@example.test")
+    elif refusal == "provider_banned":
+        client.get_user.return_value = ProviderUser(
+            user.supabase_user_id, datetime(2999, 1, 1, tzinfo=UTC), user.email
+        )
+    elif refusal == "local_rebound":
+        locked.supabase_user_id = uuid7()
+    elif refusal == "local_disabled":
+        locked.status = "disabled"
+    else:
+        locked.expires_at = datetime(2020, 1, 1, tzinfo=UTC)
+
+    with pytest.raises(InvalidCredentials):
+        provider_actions.change_password(
+            db,
+            user,
+            sessions[0].id,
+            "current-access",
+            "old password",
+            "New secure password",
+            client,
+            source="203.0.113.7",
+        )
+
+    # A password change shares the sign-in budget of the account, whatever the address.
+    fingerprint.assert_called_once_with(user.email, None)
+    retry_after.assert_called_once_with(
+        db, bucket, now, unit_workspace_policy, source="203.0.113.7", actor_id=user.id
+    )
+    record.assert_called_once_with(
+        db,
+        "fingerprint",
+        bucket,
+        now,
+        policy=unit_workspace_policy,
+        login=True,
+        source="203.0.113.7",
+        actor_id=user.id,
+    )
+    db.commit.assert_called_once_with()
+    client.update_password.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["email", "status", "never_sent", "no_operation", "other_profile", "other_operation"],
+)
+def test_an_invitation_completes_only_for_the_exactly_bound_pending_profile(
+    mismatch: str,
+) -> None:
+    user, _sessions, db, client = _password_update_failure_case("none")
+    _bind_invitation(user, client)
+    provider = client.get_user.return_value
+    if mismatch == "email":
+        user.email = "someone-else@example.test"
+    elif mismatch == "status":
+        user.status = "active"
+    elif mismatch == "never_sent":
+        user.invitation_sent_at = None
+    elif mismatch == "no_operation":
+        user.provider_invitation_operation_id = None
+    elif mismatch == "other_profile":
+        provider.app_metadata["openslate_user_id"] = str(uuid7())
+    else:
+        provider.app_metadata["openslate_invitation_operation_id"] = str(uuid7())
+
+    with pytest.raises(InvitationError):
+        provider_actions.complete_invitation(db, "a" * 56, "New secure password", client)
+
+    client.update_password.assert_not_called()
+
+
+def test_a_bound_invitation_sets_the_password_on_the_invited_provider_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, _sessions, db, client = _password_update_failure_case("none")
+    _bind_invitation(user, client)
+    accept = Mock()
+    monkeypatch.setattr(provider_actions, "accept_verified_invitation", accept)
+
+    provider_actions.complete_invitation(db, "a" * 56, "New secure password", client)
+
+    client.update_password.assert_called_once_with("temporary-action", "New secure password")
+    accept.assert_called_once_with(
+        db, user.id, verified_email=user.email, verified_identity=user.id
+    )
+    client.sign_out.assert_called_once_with("temporary-action", scope="global")
+
+
+def test_an_email_action_for_another_provider_user_is_refused() -> None:
+    user, _sessions, db, client = _password_update_failure_case("none")
+    client.get_user.return_value = ProviderUser(uuid7(), None, user.email)
+
+    with pytest.raises(ActionTokenInvalid):
+        provider_actions.complete_recovery(db, "a" * 56, "New secure password", client)
+
+    client.update_password.assert_not_called()
+
+
+def test_a_login_denial_whose_budget_cannot_commit_is_reported() -> None:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    db = Mock(spec=Session)
+    assert provider_actions.try_commit_login_denial(db) is True
+
+    db.commit.side_effect = SQLAlchemyError("write unavailable")
+    # The route then answers 503, not a plain credential refusal.
+    assert provider_actions.try_commit_login_denial(db) is False
+    db.rollback.assert_called_once_with()

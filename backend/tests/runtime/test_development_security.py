@@ -299,3 +299,13 @@ def test_real_proxy_middleware_does_not_turn_malformed_input_into_a_valid_ip(
 
     with pytest.raises(ValueError, match="does not appear to be an IPv4 or IPv6 address"):
         ip_address(response.json()["client"])
+
+
+def test_loopback_development_turns_off_anonymous_identity_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.systems.access.identity import provider_actions
+
+    monkeypatch.setattr(provider_actions, "get_settings", _development_settings)
+
+    assert provider_actions.anonymous_rate_limits_enabled() is False
