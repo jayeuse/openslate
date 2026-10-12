@@ -1,6 +1,7 @@
 """Readiness keeps completed required results when a provider probe stalls."""
 
 from threading import Event
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -64,6 +65,53 @@ def test_blocked_storage_probe_preserves_completed_core_and_one_shared_probe(
         assert recovered.status_code == 200
         assert recovered.json()["components"]["storage"] == component("ready")
         assert storage_calls == 2
+    finally:
+        release.set()
+        reset_readiness_state()
+
+
+def test_a_caller_past_its_deadline_keeps_the_storage_result_while_the_client_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_readiness_state()
+    closing = Event()
+    release = Event()
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request)
+
+    class Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._client = httpx.Client(*args, transport=httpx.MockTransport(provider), **kwargs)
+
+        def __enter__(self) -> httpx.Client:
+            return self._client.__enter__()
+
+        def __exit__(self, *details: object) -> None:
+            closing.set()
+            assert release.wait(2), "the stalled client close was never released"
+            self._client.__exit__(*details)
+
+    # Probe deadlines never lapse here; only the caller's own wait uses real time.
+    monkeypatch.setattr(readiness, "monotonic", lambda: 0.0)
+    install_readiness_settings(
+        monkeypatch, readiness_settings(readiness_caller_timeout_seconds=0.1)
+    )
+    monkeypatch.setattr(
+        readiness, "httpx", SimpleNamespace(Client=Client, HTTPError=httpx.HTTPError)
+    )
+
+    try:
+        readiness._get_or_start_snapshot()
+        assert closing.wait(5), "the provider probes never reached the client close"
+        snapshot = readiness.get_readiness_snapshot()
+        # Auth and storage finished before the deadline; only the client close stalled.
+        assert snapshot["components"] == {
+            "database": component("ready"),
+            "auth": component("ready"),
+            "storage": component("ready"),
+            "smtp": component("ready"),
+        }
     finally:
         release.set()
         reset_readiness_state()
