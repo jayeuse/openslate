@@ -1,6 +1,5 @@
 """Locked user coordination used by account and invitation routes."""
 
-from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
@@ -31,23 +30,11 @@ class ProfileValidationError(InvitationError):
     """An identity profile cannot be assigned safely."""
 
 
-@dataclass(frozen=True, slots=True)
-class UserState:
-    role: str
-    status: str
-    is_deleted: bool
-    deleted_at: datetime | None
-    username: str
-    invitation_sent_at: datetime | None
-    invitation_accepted_at: datetime | None
-    tokens_valid_after: datetime | None
-
-
 def conflict(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
 
 
-def forbidden(message: str = "Forbidden") -> HTTPException:
+def forbidden(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=message)
 
 
@@ -123,13 +110,13 @@ def active_admin_count(db: Session, *, durable: bool = False) -> int:
         raise unavailable("Unable to evaluate administrator membership") from error
 
 
-def is_active_admin(user: User, role: str | None = None, status_value: str | None = None) -> bool:
+def is_active_admin(user: User) -> bool:
     return bool(
         not user.is_deleted
-        and (status_value or user.status) == UserStatus.ACTIVE.value
+        and user.status == UserStatus.ACTIVE.value
         and is_identity_eligible(user)
-        and is_established_user(user, status_value=status_value)
-        and (role or user.role) == UserRole.ADMIN.value
+        and is_established_user(user)
+        and user.role == UserRole.ADMIN.value
     )
 
 
@@ -143,19 +130,6 @@ def advance_token_cutoff(user: User) -> None:
     now = token_cutoff(utc_now())
     if user.tokens_valid_after is None or user.tokens_valid_after < now:
         user.tokens_valid_after = now
-
-
-def user_state(user: User) -> UserState:
-    return UserState(
-        role=user.role,
-        status=user.status,
-        is_deleted=user.is_deleted,
-        deleted_at=user.deleted_at,
-        username=user.username,
-        invitation_sent_at=user.invitation_sent_at,
-        invitation_accepted_at=user.invitation_accepted_at,
-        tokens_valid_after=user.tokens_valid_after,
-    )
 
 
 def ensure_projected_admin_remains(
