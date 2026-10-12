@@ -10,7 +10,8 @@ from uuid6 import uuid7
 
 import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser
-from app.systems.access.users.coordination import InvitationError
+from app.systems.access.policy.models import Group, GroupMember
+from app.systems.access.users.coordination import InvitationError, ProfileValidationError
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -129,3 +130,33 @@ def test_guest_invitation_naming_an_unusable_sponsor_creates_no_profile(
 
     assert db.scalar(select(User.id).where(User.email == payload.email)) is None
     provider.admin_create_invitation_user.assert_not_called()
+
+
+@pytest.mark.usefixtures("quiet_invitation_events")
+def test_an_invitation_joins_only_active_groups(integration_owner_db: Session) -> None:
+    db = integration_owner_db
+    admin = add_user(db, role=UserRole.ADMIN)
+    active = Group(name=f"Active {uuid7().hex}")
+    # Another active group that nobody asks for.
+    other = Group(name=f"Other {uuid7().hex}")
+    deleted = Group(name=f"Deleted {uuid7().hex}", is_deleted=True, deleted_at=datetime.now(UTC))
+    db.add_all([active, other, deleted])
+    db.flush()
+    label = uuid7().hex[-12:]
+    joined = InvitationCreate(
+        email=f"member-{label}@example.com", username=f"member-{label}", group_ids=[active.id]
+    )
+    refused = InvitationCreate(
+        email=f"other-{label}@example.com",
+        username=f"other-{label}",
+        group_ids=[active.id, deleted.id],
+    )
+
+    member = user_service.invite_user(db, joined, actor_id=admin.id, client=_provider())
+    with pytest.raises(ProfileValidationError, match="^Group is not active$"):
+        user_service.invite_user(db, refused, actor_id=admin.id, client=_provider())
+
+    assert db.scalars(
+        select(GroupMember.group_id).where(GroupMember.user_id == member.id)
+    ).all() == [active.id]
+    assert db.scalar(select(User.id).where(User.email == refused.email)) is None

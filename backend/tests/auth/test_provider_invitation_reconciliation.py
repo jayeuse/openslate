@@ -19,6 +19,8 @@ from app.core.integrations.supabase_auth import (
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import User, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
+from app.systems.manage.audit.models import SecurityEvent, SecurityEventOutcome
+from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 
 
 @pytest.fixture
@@ -28,7 +30,7 @@ def fresh_admin(monkeypatch: pytest.MonkeyPatch) -> None:
     The bootstrap test runs without it: bootstrap has no actor and never runs the check.
     """
 
-    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda *_args: None)
+    monkeypatch.setattr(service, "require_fresh_exact_admin", lambda _db, _actor_id: None)
 
 
 def _pending_profile(local_id: UUID, operation_id: UUID, **values: Any) -> User:
@@ -87,6 +89,13 @@ def test_reconciliation_binds_only_owned_provider_user() -> None:
     assert profile.supabase_user_id == provider_id
     assert profile.invitation_sent_at is not None
     db.commit.assert_called_once()
+    client.admin_send_invitation.assert_called_once_with("person@example.test")
+    assert [
+        (row.event_type, row.outcome, row.operation_id, row.actor_id, row.subject_id)
+        for row in _added(db, SecurityEvent)
+    ] == [
+        ("user.invitation_resend", SecurityEventOutcome.SUCCESS, operation_id, actor_id, local_id)
+    ]
 
 
 @pytest.mark.usefixtures("fresh_admin")
@@ -272,6 +281,7 @@ def test_resend_replaces_owned_confirmed_identity_after_revoked_link(
 
     assert result.supabase_user_id == new_id
     assert result.invitation_sent_at is not None
+    client.admin_send_invitation.assert_called_once_with("person@example.test")
     client.admin_delete_user.assert_called_once_with(old_id)
     client.admin_create_invitation_user.assert_called_once_with(
         profile.email, local_id, operation_id
@@ -391,3 +401,134 @@ def test_reconcile_never_rebinds_deleted_old_identity_from_stale_search() -> Non
     client.admin_delete_user.assert_called_once_with(replacement_id)
     client.admin_send_invitation.assert_not_called()
     db.commit.assert_not_called()
+
+
+def _added(db: Mock, kind: type) -> list:
+    return [call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], kind)]
+
+
+def _committed_events(monkeypatch: pytest.MonkeyPatch) -> list[SecurityEventIngestRequest]:
+    """Keep the attempt and failure events that commit on their own session."""
+
+    events: list[SecurityEventIngestRequest] = []
+    monkeypatch.setattr(service, "append_committed_security_event", events.append)
+    return events
+
+
+def _resend_events(events: list[SecurityEventIngestRequest]) -> list[tuple]:
+    return [(event.event_type, event.outcome, event.actor_id, event.subject_id) for event in events]
+
+
+@pytest.mark.usefixtures("fresh_admin")
+@pytest.mark.parametrize(
+    "state",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param({"is_deleted": True}, id="deleted"),
+        pytest.param({"status": UserStatus.DISABLED.value}, id="no-longer-pending"),
+        pytest.param({"invitation_accepted_at": datetime.now(UTC)}, id="accepted"),
+        pytest.param({"supabase_user_id": None}, id="never-bound-to-a-provider-identity"),
+        pytest.param({"provider_invitation_operation_id": None}, id="no-invitation-operation"),
+    ],
+)
+def test_a_resend_refuses_a_profile_that_is_not_a_bound_pending_invitation(
+    monkeypatch: pytest.MonkeyPatch, state: dict[str, Any] | None
+) -> None:
+    events = _committed_events(monkeypatch)
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id = uuid7(), uuid7(), uuid7()
+    db.scalar.return_value = (
+        None
+        if state is None
+        else _pending_profile(local_id, operation_id, **{"supabase_user_id": uuid7(), **state})
+    )
+    client = Mock()
+
+    with pytest.raises(InvitationError):
+        service.resend_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert client.mock_calls == []
+    db.commit.assert_not_called()
+    assert _resend_events(events) == [
+        ("user.invitation_resend", SecurityEventOutcome.ATTEMPT, actor_id, local_id),
+        ("user.invitation_resend", SecurityEventOutcome.FAILURE, actor_id, local_id),
+    ]
+    assert events[0].operation_id == events[1].operation_id
+
+
+@pytest.mark.usefixtures("fresh_admin")
+def test_a_resend_the_provider_cannot_complete_records_its_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _committed_events(monkeypatch)
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id = uuid7(), uuid7(), uuid7()
+    db.scalar.return_value = _pending_profile(local_id, operation_id, supabase_user_id=uuid7())
+    client = Mock()
+    client.get_admin_user.side_effect = SupabaseAuthUnavailable("provider unavailable")
+
+    with pytest.raises(InvitationError):
+        service.resend_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert _resend_events(events) == [
+        ("user.invitation_resend", SecurityEventOutcome.ATTEMPT, actor_id, local_id),
+        ("user.invitation_resend", SecurityEventOutcome.FAILURE, actor_id, local_id),
+    ]
+    assert events[0].operation_id == events[1].operation_id
+
+
+@pytest.mark.usefixtures("fresh_admin")
+@pytest.mark.parametrize(
+    "state", [pytest.param(None, id="missing"), pytest.param({"is_deleted": True}, id="deleted")]
+)
+def test_a_reconcile_refuses_a_missing_or_deleted_invitation(state: dict[str, Any] | None) -> None:
+    db = Mock(spec=Session)
+    actor_id, local_id, operation_id = uuid7(), uuid7(), uuid7()
+    db.scalar.return_value = (
+        None if state is None else _pending_profile(local_id, operation_id, **state)
+    )
+    client = Mock()
+
+    with pytest.raises(InvitationError):
+        service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
+
+    assert client.mock_calls == []
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("role", "reconciled"),
+    [
+        pytest.param("admin", True, id="sole-pending-administrator"),
+        pytest.param("member", False, id="pending-member"),
+    ],
+)
+def test_bootstrap_reconciles_only_the_sole_pending_administrator(
+    role: str, reconciled: bool
+) -> None:
+    db = Mock(spec=Session)
+    local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7()
+    profile = _pending_profile(
+        local_id, operation_id, email="admin@example.test", supabase_user_id=None, role=role
+    )
+    # The profile lock, the count of other administrators, then the profile read back.
+    db.scalar.side_effect = [profile, 0, profile]
+    client = Mock()
+    client.find_invitation_user.return_value = ProviderUser(
+        provider_id,
+        None,
+        "admin@example.test",
+        {
+            "openslate_user_id": str(local_id),
+            "openslate_invitation_operation_id": str(operation_id),
+        },
+    )
+    client.admin_send_invitation.return_value = ProviderUser(provider_id, None)
+
+    if reconciled:
+        service.reconcile_invitation(db, local_id, actor_id=None, bootstrap=True, client=client)
+    else:
+        with pytest.raises(InvitationError):
+            service.reconcile_invitation(db, local_id, actor_id=None, bootstrap=True, client=client)
+
+    assert profile.supabase_user_id == (provider_id if reconciled else None)
