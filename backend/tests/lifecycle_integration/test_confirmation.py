@@ -1,12 +1,16 @@
 """Confirmation persistence contracts using the disposable lifecycle API actor."""
 
+import re
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -39,6 +43,7 @@ from app.systems.sandbox.lifecycle.service import (
 pytestmark = pytest.mark.integration
 pytest_plugins = ("tests.lifecycle_integration.test_lifecycle_api_integration",)
 NOW = datetime(2026, 9, 10, tzinfo=UTC)
+_USER_LOCK = re.compile(r"\bFROM users\b.*\bFOR UPDATE\b", re.DOTALL)
 
 
 def _issue(db, actor_id, *, now=NOW):
@@ -78,6 +83,30 @@ def _verify(db, issued, provider, *, now=NOW):
 
 def _count(db, model, actor_id):
     return db.scalar(select(func.count()).select_from(model).where(model.actor_id == actor_id))
+
+
+@contextmanager
+def _commit_before_actor_lock(engine: Engine, change: Callable[[], None]) -> Iterator[list[bool]]:
+    """Run ``change`` once, just before the first ``FOR UPDATE`` read of a user row.
+
+    ``change`` commits on its own connection before the lock is sent, so nothing is
+    locked yet and, under READ COMMITTED, the locking read sees the commit. The list
+    gets one ``True`` when ``change`` ran, so a pass cannot be vacuous.
+    """
+
+    fired: list[bool] = []
+
+    def before_cursor_execute(_connection, _cursor, statement, *_args):
+        if fired or not _USER_LOCK.search(statement):
+            return
+        fired.append(True)
+        change()
+
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        yield fired
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
 
 
 def test_wrong_password_can_retry_same_token_and_then_consume_once(lifecycle_api_client):
@@ -281,6 +310,40 @@ def test_stale_lease_and_replay_cannot_complete_another_verification(lifecycle_a
         db.refresh(issued.challenge)
         assert issued.challenge.consumed_at == NOW
         assert issued.challenge.failed_attempts == 0
+
+
+def test_a_reservation_behind_another_for_the_same_token_refuses_the_leased_challenge(
+    lifecycle_api_client,
+):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        challenge_id, target_id = issued.challenge.id, issued.challenge.target_id
+    leases = []
+
+    def reserve(db):
+        return begin_verification(
+            db, issued.token, client.actor.id, "close", "module", target_id, "impact", now=NOW
+        )
+
+    def reserve_elsewhere():
+        # A double submit: the other request leases the challenge and commits while
+        # this one has read the token but not yet taken the actor lock.
+        with Session(client.engine) as other:
+            leases.append(reserve(other))
+
+    with (
+        Session(client.engine) as db,
+        _commit_before_actor_lock(client.engine, reserve_elsewhere) as raced,
+        pytest.raises(LifecycleVerificationInProgress),
+    ):
+        reserve(db)
+    assert raced == [True]
+    with Session(client.engine) as db:
+        stored = db.get(Challenge, challenge_id)
+        assert stored is not None
+        assert stored.status == Status.VERIFYING
+        assert stored.verification_lease_id == leases[0].lease_id
 
 
 def test_invalidate_and_expire_preserve_terminal_consumed_state(lifecycle_api_client):
