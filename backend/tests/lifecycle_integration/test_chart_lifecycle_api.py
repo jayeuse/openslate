@@ -40,6 +40,13 @@ def test_retained_chart_filter_reference_blocks_field_purge(chart_world, monkeyp
         assert {item["entity_id"] for item in blockers} == {chart["id"]}
         assert blockers[0]["field_id"] == str(field.id)
         assert blockers[0]["module_id"] == str(world.module.id)
+        # The blocker names the Chart and the Field it conflicts with, and where they live.
+        assert blockers[0]["entity_type"] == "charts"
+        assert blockers[0]["conflicting_entity_type"] == "fields"
+        assert blockers[0]["conflicting_entity_id"] == str(field.id)
+        assert blockers[0]["field_name"] == field.name
+        assert blockers[0]["module_name"] == world.module.module_name
+        assert blockers[0]["department_id"] == str(world.module.department_id)
         assert any(
             row["entity_type"] == "charts" and row["entity_id"] == chart["id"]
             for row in impact["rows"]

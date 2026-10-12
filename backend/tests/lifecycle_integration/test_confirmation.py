@@ -1,5 +1,6 @@
 """Confirmation persistence contracts using the disposable lifecycle API actor."""
 
+import os
 import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -39,6 +40,7 @@ from app.systems.sandbox.lifecycle.service import (
     record_success,
     verify_challenge,
 )
+from tests.api_integration_support import create_owned_admin, delete_owned_admin
 
 pytestmark = pytest.mark.integration
 pytest_plugins = ("tests.lifecycle_integration.test_lifecycle_api_integration",)
@@ -107,6 +109,24 @@ def _commit_before_actor_lock(engine: Engine, change: Callable[[], None]) -> Ite
         yield fired
     finally:
         event.remove(engine, "before_cursor_execute", before_cursor_execute)
+
+
+@pytest.fixture
+def other_actor(lifecycle_api_client):
+    """A second administrator; requesting the lifecycle client first keeps its guards."""
+
+    owner_url = os.environ["MIGRATION_DATABASE_URL"]
+    actor = create_owned_admin(os.environ["TEST_DATABASE_URL"], owner_url, "lifecycle-other")
+    try:
+        yield actor
+    finally:
+        delete_owned_admin(owner_url, actor.id)
+
+
+def _wrong_passwords():
+    provider = Mock()
+    provider.verify_password.side_effect = LifecycleInvalidCredentials("Invalid credentials")
+    return provider
 
 
 def test_wrong_password_can_retry_same_token_and_then_consume_once(lifecycle_api_client):
@@ -216,6 +236,84 @@ def test_preview_cap_displaces_oldest_pending_but_never_inflight(lifecycle_api_c
         assert _count(db, Challenge, client.actor.id) == 1
 
 
+def test_a_block_holds_its_full_time_after_the_oldest_failure_leaves_the_window(
+    lifecycle_api_client,
+):
+    client = lifecycle_api_client()
+    provider = _wrong_passwords()
+    with Session(client.engine) as db:
+        fifth = NOW + timedelta(minutes=14)
+        for minute in (0, 4, 8, 12):
+            issued = _issue(db, client.actor.id, now=NOW + timedelta(minutes=minute))
+            with pytest.raises(LifecycleInvalidCredentials):
+                _verify(db, issued, provider, now=NOW + timedelta(minutes=minute))
+        waiting = _issue(db, client.actor.id, now=fifth - timedelta(minutes=1))
+        last = _issue(db, client.actor.id, now=fifth)
+        with pytest.raises(LifecycleInvalidCredentials):
+            _verify(db, last, provider, now=fifth)
+        # Two minutes later the minute-0 failure is out of the window; the block still holds.
+        with pytest.raises(LifecycleActorBlocked):
+            _reserve(db, waiting, now=fifth + timedelta(minutes=2))
+        db.rollback()
+        db.refresh(waiting.challenge)
+        assert waiting.challenge.status == Status.PENDING
+        assert waiting.challenge.verification_lease_id is None
+
+
+def test_one_actors_confirmations_never_reach_or_change_another_actors(
+    lifecycle_api_client, other_actor
+):
+    client = lifecycle_api_client()
+    provider = _wrong_passwords()
+    with Session(client.engine) as db:
+        kept = _issue(db, other_actor.id)
+        spent = _issue(db, other_actor.id, now=NOW + timedelta(seconds=1))
+        for attempt in range(5):
+            with pytest.raises(LifecycleInvalidCredentials):
+                _verify(db, spent, provider, now=NOW + timedelta(seconds=2 + attempt))
+        # The other actor is blocked and holds a pending challenge, an exhausted one and
+        # five failures. None of it may block, count against, or be cleaned up by this actor.
+        issued = [
+            _issue(db, client.actor.id, now=NOW + timedelta(seconds=10 + index))
+            for index in range(3)
+        ]
+        lease = _reserve(db, issued[-1], now=NOW + timedelta(seconds=13))
+        assert lease.actor_id == client.actor.id
+        db.refresh(kept.challenge)
+        db.refresh(spent.challenge)
+        assert kept.challenge.status == Status.PENDING
+        assert spent.challenge.status == Status.EXHAUSTED
+        assert _count(db, LifecycleRateLimitFailure, other_actor.id) == 5
+        with pytest.raises(LifecycleActorBlocked):
+            _issue(db, other_actor.id, now=NOW + timedelta(seconds=14))
+
+
+def test_in_flight_verifications_count_against_their_own_actor_only(
+    lifecycle_api_client, other_actor
+):
+    client = lifecycle_api_client()
+    provider = _wrong_passwords()
+    with Session(client.engine) as db:
+        for index in range(2):
+            other = _issue(db, other_actor.id, now=NOW + timedelta(seconds=index))
+            _reserve(db, other, now=NOW + timedelta(seconds=index))
+        failing = _issue(db, client.actor.id, now=NOW + timedelta(seconds=2))
+        for attempt in range(3):
+            with pytest.raises(LifecycleInvalidCredentials):
+                _verify(db, failing, provider, now=NOW + timedelta(seconds=3 + attempt))
+        second = _issue(db, client.actor.id, now=NOW + timedelta(seconds=6))
+        third = _issue(db, client.actor.id, now=NOW + timedelta(seconds=7))
+        # Three failures plus this actor's own verifications; the other actor's two
+        # in-flight verifications never count here.
+        _reserve(db, second, now=NOW + timedelta(seconds=8))
+        _reserve(db, failing, now=NOW + timedelta(seconds=9))
+        with pytest.raises(LifecycleActorBlocked):
+            _reserve(db, third, now=NOW + timedelta(seconds=10))
+        db.rollback()
+        db.refresh(third.challenge)
+        assert third.challenge.status == Status.PENDING
+
+
 @pytest.mark.parametrize("binding", ["operation", "target_type", "target_id", "impact_digest"])
 def test_wrong_binding_does_not_reserve_confirmation(lifecycle_api_client, binding):
     client = lifecycle_api_client()
@@ -310,6 +408,40 @@ def test_stale_lease_and_replay_cannot_complete_another_verification(lifecycle_a
         db.refresh(issued.challenge)
         assert issued.challenge.consumed_at == NOW
         assert issued.challenge.failed_attempts == 0
+
+
+def test_a_lease_from_an_earlier_reservation_cannot_complete_the_next_one(
+    lifecycle_api_client,
+):
+    client = lifecycle_api_client()
+    with Session(client.engine) as db:
+        issued = _issue(db, client.actor.id)
+        earlier = _reserve(db, issued)
+        record_failure(db, earlier, now=NOW)
+        current = _reserve(db, issued, now=NOW + timedelta(seconds=1))
+        with pytest.raises(LifecycleVerificationInProgress):
+            record_success(db, earlier, now=NOW + timedelta(seconds=2))
+        db.rollback()
+        assert record_success(db, current, now=NOW + timedelta(seconds=2)).status == (
+            Status.CONSUMED
+        )
+
+
+def test_a_failure_stops_counting_fifteen_minutes_after_it_happened(lifecycle_api_client):
+    client = lifecycle_api_client()
+    provider = _wrong_passwords()
+    with Session(client.engine) as db:
+        first = _issue(db, client.actor.id)
+        for minute in range(4):
+            with pytest.raises(LifecycleInvalidCredentials):
+                _verify(db, first, provider, now=NOW + timedelta(minutes=minute))
+        reserved = _issue(db, client.actor.id, now=NOW + timedelta(minutes=14))
+        waiting = _issue(db, client.actor.id, now=NOW + timedelta(minutes=14, seconds=1))
+        _reserve(db, reserved, now=NOW + timedelta(minutes=15, seconds=30))
+        # At minute 16 the minute-0 failure no longer counts: three failures and one
+        # verification in flight stay under the budget of five.
+        lease = _reserve(db, waiting, now=NOW + timedelta(minutes=16))
+        assert lease.challenge_id == waiting.challenge_id
 
 
 def test_a_reservation_behind_another_for_the_same_token_refuses_the_leased_challenge(
