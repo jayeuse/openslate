@@ -19,8 +19,12 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
 )
 from app.systems.access.identity import provider_actions
-from app.systems.access.identity.contracts import ActionTokenInvalid, InvalidCredentials
-from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.contracts import (
+    ActionTokenInvalid,
+    IdentityRateLimited,
+    InvalidCredentials,
+)
+from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 from app.systems.access.identity.schemas import RecoveryRequest
 from app.systems.access.users.coordination import InvitationError
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -564,20 +568,28 @@ def test_each_refused_password_change_spends_the_person_login_budget(
     monkeypatch: pytest.MonkeyPatch, unit_workspace_policy, refusal: str
 ) -> None:
     user, sessions, db, client = _password_update_failure_case("none")
-    now = datetime(2026, 10, 12, 9, 30, tzinfo=UTC)
-    monkeypatch.setattr(provider_actions, "utc_now", lambda: now)
-    bucket = Mock()
-    fingerprint = Mock(return_value="fingerprint")
-    retry_after = Mock(return_value=None)
-    record = Mock()
-    for name, value in {
-        "cleanup_expired_buckets": Mock(return_value=0),
-        "login_fingerprint": fingerprint,
-        "lock_bucket": Mock(return_value=bucket),
-        "login_retry_after": retry_after,
-        "record_attempt": record,
-    }.items():
-        monkeypatch.setattr(provider_actions.rate_limits, name, value)
+    clock = [datetime(2026, 10, 12, 9, 30, tzinfo=UTC)]
+    monkeypatch.setattr(provider_actions, "utc_now", lambda: clock[0])
+    # A budget unlike the built-in default (5 attempts, 15 minutes) shows that the
+    # workspace sign-in policy is the one spent.
+    unit_workspace_policy.login_failed_attempt_threshold = 3
+    unit_workspace_policy.login_window_minutes = 30
+    unit_workspace_policy.login_cooldown_minutes = 7
+    # The stored buckets by key; only the PostgreSQL lock and cleanup are faked.
+    stored: dict[str, IdentityRateLimitBucket] = {}
+    monkeypatch.setattr(
+        provider_actions.rate_limits, "cleanup_expired_buckets", Mock(return_value=0)
+    )
+    monkeypatch.setattr(
+        provider_actions.rate_limits, "lock_bucket", lambda _db, key: stored.get(key)
+    )
+    db.add.side_effect = lambda row: (
+        stored.setdefault(row.fingerprint, row)
+        if isinstance(row, IdentityRateLimitBucket)
+        else None
+    )
+    lockouts = Mock()
+    monkeypatch.setattr(provider_actions.rate_limits, "append_security_event", lockouts)
     locked = SimpleNamespace(
         supabase_user_id=user.supabase_user_id, status="active", is_deleted=False, expires_at=None
     )
@@ -599,10 +611,69 @@ def test_each_refused_password_change_spends_the_person_login_budget(
     else:
         locked.expires_at = datetime(2020, 1, 1, tzinfo=UTC)
 
+    change = partial(
+        provider_actions.change_password,
+        db,
+        user,
+        sessions[0].id,
+        "current-access",
+        "old password",
+        "New secure password",
+        client,
+    )
+
+    def lockout_events():
+        return [
+            (e.event_type, e.reason, e.actor_id, e.subject_id, e.metadata["ip_address"])
+            for e in (call.args[1] for call in lockouts.call_args_list)
+        ]
+
+    # Each refusal spends one attempt of the person's budget, whatever the address.
+    with pytest.raises(InvalidCredentials):
+        change(source="198.51.100.4")
+    # The spent attempt is committed with the refusal.
+    db.commit.assert_called_once_with()
+    with pytest.raises(InvalidCredentials):
+        change(source=None)
+    assert [bucket.attempt_count for bucket in stored.values()] == [2]
+    assert lockout_events() == []
+    # The third refusal reaches the threshold: a 7-minute cooldown and one lockout event
+    # that names the person and the address of that attempt.
+    with pytest.raises(InvalidCredentials):
+        change(source="203.0.113.7")
+    [bucket] = stored.values()
+    assert bucket.attempt_count == 3
+    assert bucket.blocked_until == datetime(2026, 10, 12, 9, 37, tzinfo=UTC)
+    lockout = ("identity.lockout", "failed_attempt_limit", user.id, user.id, "203.0.113.7")
+    assert lockout_events() == [lockout]
+
+    # During the cooldown the next attempt is refused with the remaining wait, before
+    # the provider sees the password.
+    client.password_grant.reset_mock()
+    clock[0] = datetime(2026, 10, 12, 9, 31, tzinfo=UTC)
+    with pytest.raises(IdentityRateLimited) as cooling:
+        change(source="203.0.113.7")
+    assert cooling.value.retry_after == 360
+    client.password_grant.assert_not_called()
+
+    # After the cooldown, a window that still holds three refusals locks again at once.
+    clock[0] = datetime(2026, 10, 12, 9, 40, tzinfo=UTC)
+    with pytest.raises(IdentityRateLimited) as relocked:
+        change(source="192.0.2.8")
+    assert relocked.value.retry_after == 420
+    assert bucket.blocked_until == datetime(2026, 10, 12, 9, 47, tzinfo=UTC)
+    assert lockout_events() == [lockout, lockout[:4] + ("192.0.2.8",)]
+    client.password_grant.assert_not_called()
+    client.update_password.assert_not_called()
+
+    # Another person keeps a budget of their own.
+    other = contract_user()
+    other.email = "another-person@example.test"
+    other.supabase_user_id = uuid7()
     with pytest.raises(InvalidCredentials):
         provider_actions.change_password(
             db,
-            user,
+            other,
             sessions[0].id,
             "current-access",
             "old password",
@@ -610,24 +681,7 @@ def test_each_refused_password_change_spends_the_person_login_budget(
             client,
             source="203.0.113.7",
         )
-
-    # A password change shares the sign-in budget of the account, whatever the address.
-    fingerprint.assert_called_once_with(user.email, None)
-    retry_after.assert_called_once_with(
-        db, bucket, now, unit_workspace_policy, source="203.0.113.7", actor_id=user.id
-    )
-    record.assert_called_once_with(
-        db,
-        "fingerprint",
-        bucket,
-        now,
-        policy=unit_workspace_policy,
-        login=True,
-        source="203.0.113.7",
-        actor_id=user.id,
-    )
-    db.commit.assert_called_once_with()
-    client.update_password.assert_not_called()
+    assert sorted(item.attempt_count for item in stored.values()) == [1, 3]
 
 
 @pytest.mark.parametrize(
