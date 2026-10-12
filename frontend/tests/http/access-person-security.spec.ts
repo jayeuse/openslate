@@ -645,14 +645,9 @@ test("large-text phone panel keeps security actions and confirmation reachable",
 });
 
 // Recovery feedback follows the submitted command, including confirmed facts
-// from an overall partial result.
+// from an overall partial result: one sent and one failed outcome. Every
+// partial combination is a row of isolated/access/person-security-outcome.spec.ts.
 for (const state of [
-  {
-    name: "recovery committed accepted",
-    revoke: true,
-    email: "accepted",
-    local: "committed",
-  },
   {
     name: "recovery committed not_attempted",
     revoke: true,
@@ -664,12 +659,6 @@ for (const state of [
     revoke: false,
     email: "accepted",
     local: "not_requested",
-  },
-  {
-    name: "recovery unconfirmed revocation not_attempted",
-    revoke: true,
-    email: "not_attempted",
-    local: "unconfirmed",
   },
 ] as const) {
   test(`partial feedback: ${state.name}`, async ({ page }) => {
@@ -721,11 +710,6 @@ for (const state of [
       );
     if (state.local === "committed")
       expect(observed).toMatch(/^Signed out everywhere\./);
-    else if (state.local === "not_requested")
-      expect(observed).not.toMatch(/signed out/i);
-    else {
-      expect(observed).toMatch(/may be only partly saved/i);
-      expect(observed).not.toMatch(/signed out everywhere/i);
-    }
+    else expect(observed).not.toMatch(/signed out/i);
   });
 }
