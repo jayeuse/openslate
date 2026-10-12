@@ -1,7 +1,9 @@
-"""Response and conditional-header contracts for Access group routes."""
+"""Response, conditional-header and visibility contracts for Access group routes."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException, Response
@@ -13,6 +15,7 @@ import app.systems.access.policy.configuration_router as policy_router
 import app.systems.access.policy.schemas as schemas
 from app.common.listing import ListQueryResult, PaginationMetadata
 from app.systems.access.policy.models import AccessLevel, Group
+from app.systems.access.policy.scope import EffectiveAccess
 from app.systems.access.users.models import User, UserRole, UserStatus
 
 
@@ -48,6 +51,38 @@ def _group() -> Group:
         is_deleted=False,
         performed_by=None,
     )
+
+
+def _stored_groups(*groups: Group) -> Callable[[type, UUID], Group | None]:
+    """``Session.get`` over the stored groups, as ``get_group`` reads them."""
+
+    stored = {group.id: group for group in groups}
+    return lambda model, key: stored.get(key) if model is Group else None
+
+
+def _group_contents(
+    monkeypatch: pytest.MonkeyPatch, group: Group
+) -> tuple[UUID, schemas.GroupAccessResponse]:
+    """One stored member and one access row of ``group``; the maps answer for the IDs asked."""
+
+    member_id = uuid7()
+    access = schemas.GroupAccessResponse(
+        department_id=uuid7(),
+        department_name="Operations",
+        module_name=None,
+        level=AccessLevel.READ,
+    )
+    monkeypatch.setattr(
+        policy_router,
+        "group_member_map",
+        lambda _db, ids: {key: [member_id] for key in ids if key == group.id},
+    )
+    monkeypatch.setattr(
+        policy_router,
+        "group_access_map",
+        lambda _db, ids: {key: [access] for key in ids if key == group.id},
+    )
+    return member_id, access
 
 
 def test_group_list_serializes_members_pagination_and_private_cache_headers(
@@ -124,14 +159,15 @@ def test_group_detail_and_update_routes_return_etags_and_private_headers(
     group = _group()
     database = Mock(spec=Session)
     admin = _fresh_admin(database)
-    monkeypatch.setattr(policy_router, "get_group", lambda *_args: group)
-    monkeypatch.setattr(policy_router, "group_member_map", lambda *_args: {})
-    monkeypatch.setattr(policy_router, "group_access_map", lambda *_args: {})
+    database.get.side_effect = _stored_groups(group)
+    member_id, access = _group_contents(monkeypatch, group)
     detail_response = Response()
 
     detail = policy_router.get_group_route(group.id, admin, database, detail_response)
 
     assert detail.id == group.id
+    assert detail.member_ids == [member_id]
+    assert detail.access == [access]
     assert detail_response.headers["ETag"] == policy_router.group_etag(group)
     assert detail_response.headers["Cache-Control"] == "private, no-store"
 
@@ -147,6 +183,8 @@ def test_group_detail_and_update_routes_return_etags_and_private_headers(
     )
 
     assert updated.id == group.id
+    assert updated.member_ids == [member_id]
+    assert updated.access == [access]
     assert update_response.headers["ETag"] == policy_router.group_etag(group)
     assert update_response.headers["Cache-Control"] == "private, no-store"
 
@@ -201,3 +239,113 @@ def test_group_access_replacement_route_passes_the_precondition_and_returns_the_
     assert result.revision == 3
     assert response.headers["ETag"] == policy_router.group_etag(group)
     assert response.headers["Cache-Control"] == "private, no-store"
+
+
+INVENTORY, FINANCE = uuid7(), uuid7()
+FORBIDDEN = (403, "Forbidden")
+# The same answer as for a group that does not exist, so a refusal reveals nothing.
+NOT_FOUND = (404, "Group not found")
+
+
+@pytest.mark.parametrize(
+    ("departments", "reach", "expected"),
+    [
+        pytest.param(
+            {INVENTORY: AccessLevel.WRITE},
+            {INVENTORY},
+            [FORBIDDEN, FORBIDDEN, FORBIDDEN],
+            id="no-managed-department-is-refused",
+        ),
+        pytest.param(
+            {INVENTORY: AccessLevel.MANAGE},
+            {INVENTORY},
+            [200, 200, NOT_FOUND],
+            id="manager-of-the-whole-reach-sees-the-group",
+        ),
+        pytest.param(
+            {INVENTORY: AccessLevel.MANAGE},
+            {INVENTORY, FINANCE},
+            [200, NOT_FOUND, NOT_FOUND],
+            id="manager-of-part-of-the-reach-gets-not-found",
+        ),
+    ],
+)
+def test_a_non_administrator_reads_only_groups_inside_departments_they_manage(
+    monkeypatch: pytest.MonkeyPatch,
+    departments: dict[UUID, AccessLevel],
+    reach: set[UUID],
+    expected: list[object],
+) -> None:
+    group = _group()
+    user = User(
+        id=uuid7(), role=UserRole.MEMBER.value, status=UserStatus.ACTIVE.value, is_deleted=False
+    )
+    database = Mock(spec=Session)
+    database.get.side_effect = _stored_groups(group)
+    levels = {user.id: EffectiveAccess(departments=departments)}
+    reaches = {group.id: frozenset(reach)}
+    monkeypatch.setattr(policy_router, "effective_levels", lambda _db, person: levels[person.id])
+    monkeypatch.setattr(policy_router, "group_reach", lambda _db, group_id: reaches[group_id])
+    monkeypatch.setattr(
+        policy_router,
+        "execute_standard_list",
+        lambda *_args: ListQueryResult(
+            items=[group],
+            pagination=PaginationMetadata(limit=25, offset=0, count=1, total=1, has_more=False),
+        ),
+    )
+    _group_contents(monkeypatch, group)
+    reads: list[Callable[[], object]] = [
+        lambda: policy_router.list_groups(user, database, Response(), schemas.GroupListRequest()),
+        lambda: policy_router.get_group_route(group.id, user, database, Response()),
+        lambda: policy_router.get_group_route(uuid7(), user, database, Response()),
+    ]
+
+    outcomes: list[object] = []
+    for read in reads:
+        try:
+            read()
+        except HTTPException as error:
+            outcomes.append((error.status_code, error.detail))
+        else:
+            outcomes.append(200)
+
+    assert outcomes == expected
+
+
+@pytest.mark.parametrize(
+    ("failing", "read"),
+    [
+        pytest.param("effective_levels", "list", id="levels-for-the-list"),
+        pytest.param("effective_levels", "detail", id="levels-for-one-group"),
+        pytest.param("group_reach", "detail", id="reach-of-one-group"),
+    ],
+)
+def test_a_database_failure_while_deciding_a_managers_visibility_answers_503(
+    monkeypatch: pytest.MonkeyPatch, failing: str, read: str
+) -> None:
+    group = _group()
+    user = User(
+        id=uuid7(), role=UserRole.MEMBER.value, status=UserStatus.ACTIVE.value, is_deleted=False
+    )
+    database = Mock(spec=Session)
+    database.get.side_effect = _stored_groups(group)
+    monkeypatch.setattr(
+        policy_router,
+        "effective_levels",
+        lambda _db, _person: EffectiveAccess(departments={INVENTORY: AccessLevel.MANAGE}),
+    )
+    monkeypatch.setattr(policy_router, "group_reach", lambda _db, _group_id: frozenset({INVENTORY}))
+    monkeypatch.setattr(policy_router, failing, Mock(side_effect=SQLAlchemyError("read failed")))
+
+    reads = {
+        "list": lambda: policy_router.list_groups(
+            user, database, Response(), schemas.GroupListRequest()
+        ),
+        "detail": lambda: policy_router.get_group_route(group.id, user, database, Response()),
+    }
+
+    with pytest.raises(HTTPException) as error:
+        reads[read]()
+
+    assert (error.value.status_code, error.value.detail) == (503, "Database unavailable")
