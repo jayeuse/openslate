@@ -13,6 +13,7 @@ from uuid import UUID
 import httpx
 import jwt
 from jwt import InvalidTokenError
+from jwt.exceptions import InvalidKeyError
 from pydantic import SecretStr
 
 from app.core.config import get_settings
@@ -372,7 +373,7 @@ class SupabaseAuthClient:
                 continue
             try:
                 keys[kid] = jwt.PyJWK.from_dict(item, algorithm="ES256").key
-            except (InvalidTokenError, TypeError, ValueError):
+            except (InvalidKeyError, InvalidTokenError, TypeError, ValueError):
                 continue
         return keys
 

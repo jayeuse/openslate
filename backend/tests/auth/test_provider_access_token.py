@@ -188,6 +188,16 @@ def test_unusable_entries_are_skipped_and_later_keys_still_verify() -> None:
     assert _client(keys).verify_access_token(_token(key)).assurance_level == "aal1"
 
 
+def test_a_key_with_malformed_curve_coordinates_is_skipped() -> None:
+    # PyJWT refuses a P-256 coordinate of the wrong length with InvalidKeyError, which
+    # is not an InvalidTokenError; one such provider key must not break every token.
+    key = ec.generate_private_key(ec.SECP256R1())
+    foreign = ec.generate_private_key(ec.SECP256R1())
+    keys: list[object] = [_jwk(foreign, kid="broken", x="AA"), _jwk(key)]
+
+    assert _client(keys).verify_access_token(_token(key)).assurance_level == "aal1"
+
+
 def test_the_key_set_holds_at_most_16_entries() -> None:
     key = ec.generate_private_key(ec.SECP256R1())
     sixteen: list[object] = [*range(15), _jwk(key)]
