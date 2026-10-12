@@ -5,25 +5,17 @@ import { useRouter } from "next/navigation";
 import { MailCheck } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api";
 import { consumeActionToken } from "@/lib/action-token";
 import {
   completeEmailChange,
   probeEmailConfirmationSession,
   signOut,
 } from "@/lib/auth-api";
+import { emailChangeFailure } from "@/lib/email-change-failure";
 
 type Context = "checking" | "signed-out" | "occupied" | "unavailable";
 const invalidLink =
   "This email confirmation link is missing or invalid. Open the link from your email again.";
-function errorCode(error: unknown): unknown {
-  return error instanceof ApiError &&
-    typeof error.details === "object" &&
-    error.details !== null &&
-    "code" in error.details
-    ? error.details.code
-    : null;
-}
 
 export default function EmailChangePage() {
   const router = useRouter();
@@ -106,21 +98,15 @@ export default function EmailChangePage() {
       else router.replace("/profile#security");
     } catch (failure: unknown) {
       if (current !== version.current || controller.signal.aborted) return;
-      if (errorCode(failure) === "signed_out_required") {
+      const outcome = emailChangeFailure(failure);
+      if (outcome.signOutRequired) {
         setContext("occupied");
-        setError("Sign out explicitly before confirming this email change.");
+        setError(outcome.message);
       } else {
         // A failed/unknown one-time command is never replayed, including after 401.
         proof.current = null;
         setValid(false);
-        setError(
-          errorCode(failure) === "email_change_incomplete"
-            ? "Email confirmation may have completed at the provider, but application completion is incomplete. Sign in again after any address conflict is resolved."
-            : failure instanceof ApiError &&
-                (failure.status === 400 || failure.status === 401)
-              ? "This confirmation link is invalid, expired, or already used. Open a valid link from your email."
-              : "The confirmation outcome could not be established. It may have completed at the provider. Sign in again or open the other email link; this request will not be retried.",
-        );
+        setError(outcome.message);
       }
     } finally {
       if (current === version.current && !controller.signal.aborted)

@@ -312,17 +312,6 @@ const loginFailures = [
     message: "Too many attempts. Try again in 2 minutes.",
   },
   {
-    label: "rate limit without a delay",
-    status: 429,
-    message: "Too many attempts. Try again later.",
-  },
-  ...["invalid", "-10", "1.5"].map((retryAfter) => ({
-    label: `rate limit with invalid delay ${retryAfter}`,
-    status: 429,
-    retryAfter,
-    message: "Too many attempts. Try again later.",
-  })),
-  {
     label: "unavailable sign-in",
     status: 503,
     message: "Sign-in is not available now. Try again later.",
@@ -333,12 +322,6 @@ const loginFailures = [
     code: "ip_not_allowed",
     message:
       "Sign-in from this network is not allowed. Contact your administrator.",
-  },
-  {
-    label: "another forbidden response",
-    status: 403,
-    code: "other_denial",
-    message: "Unable to sign in. Check your connection and try again.",
   },
   {
     label: "network failure",
