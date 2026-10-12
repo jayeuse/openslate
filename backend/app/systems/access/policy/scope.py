@@ -17,7 +17,7 @@ Every read path takes its filter from :func:`allowed_module_ids` or
 :func:`level_for`, so one rule decides who sees which records.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -135,6 +135,8 @@ NO_ACCESS = EffectiveAccess()
 
 
 _GroupLevels = dict[UUID, dict[UUID, AccessLevel]]
+# One live ``group_access`` row: group, department, module (None for a department row), level.
+AccessRow = tuple[UUID, UUID, UUID | None, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,38 +156,34 @@ def effective_levels(db: Session, user: User, *, now: datetime | None = None) ->
 
 
 def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
+    """Rule 2 and the reads; :func:`_fold_access` applies the other rules."""
+
     if not is_active_account(user, now=now):
         return _Resolution(NO_ACCESS)
     if user.role == UserRole.ADMIN.value:
-        return _Resolution(EffectiveAccess(unrestricted=True))
-    rows = db.execute(
-        select(
-            GroupAccess.group_id,
-            GroupAccess.department_id,
-            GroupAccess.module_id,
-            GroupAccess.level,
-        )
-        .join(GroupMember, GroupMember.group_id == GroupAccess.group_id)
-        .join(Group, Group.id == GroupAccess.group_id)
-        .where(
-            GroupMember.user_id == user.id,
-            GroupMember.is_deleted.is_(False),
-            Group.is_deleted.is_(False),
-            GroupAccess.is_deleted.is_(False),
-        )
-    ).tuples()
-    department_rows: _GroupLevels = {}
-    module_rows: _GroupLevels = {}
-    for group_id, department_id, module_id, raw_level in rows:
-        level = AccessLevel(raw_level)
-        if module_id is None:
-            department_rows.setdefault(group_id, {})[department_id] = level
-        else:
-            module_rows.setdefault(group_id, {})[module_id] = level
-    department_ids = {item for levels in department_rows.values() for item in levels}
-    module_ids = {item for levels in module_rows.values() for item in levels}
-    if not department_ids and not module_ids:
+        return _fold_access(user.role, (), {})
+    rows: list[AccessRow] = list(
+        db.execute(
+            select(
+                GroupAccess.group_id,
+                GroupAccess.department_id,
+                GroupAccess.module_id,
+                GroupAccess.level,
+            )
+            .join(GroupMember, GroupMember.group_id == GroupAccess.group_id)
+            .join(Group, Group.id == GroupAccess.group_id)
+            .where(
+                GroupMember.user_id == user.id,
+                GroupMember.is_deleted.is_(False),
+                Group.is_deleted.is_(False),
+                GroupAccess.is_deleted.is_(False),
+            )
+        ).tuples()
+    )
+    if not rows:
         return _Resolution(NO_ACCESS)
+    department_ids = {row[1] for row in rows if row[2] is None}
+    module_ids = {row[2] for row in rows if row[2] is not None}
     module_departments = {
         module_id: department_id
         for module_id, department_id in db.execute(
@@ -194,8 +192,30 @@ def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
             )
         ).tuples()
     }
+    return _fold_access(user.role, rows, module_departments)
 
-    guest = user.role == UserRole.GUEST.value
+
+def _fold_access(
+    role: str, rows: Iterable[AccessRow], module_departments: Mapping[UUID, UUID]
+) -> _Resolution:
+    """Apply rules 1 and 3 to 6 to an active account's live rows, with no database.
+
+    ``module_departments`` maps every module that the rows reach (each module of a
+    department row, and each module row's module) to its current department. This is
+    not an access check: it skips rule 2, so only :func:`_resolve` calls it.
+    """
+
+    if role == UserRole.ADMIN.value:
+        return _Resolution(EffectiveAccess(unrestricted=True))
+    department_rows: _GroupLevels = {}
+    module_rows: _GroupLevels = {}
+    for group_id, department_id, module_id, raw_level in rows:
+        level = AccessLevel(raw_level)
+        if module_id is None:
+            department_rows.setdefault(group_id, {})[department_id] = level
+        else:
+            module_rows.setdefault(group_id, {})[module_id] = level
+    guest = role == UserRole.GUEST.value
     modules: dict[UUID, AccessLevel] = {}
     for group_id in department_rows.keys() | module_rows.keys():
         group_departments = department_rows.get(group_id, {})
