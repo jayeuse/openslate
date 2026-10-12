@@ -468,6 +468,12 @@ _TITLE_INVALID = (
             [_TITLE_INVALID],
             id="title-closed-field-in-open-module",
         ),
+        pytest.param(
+            # The Sandbox page refuses a closed title field even in a closed module.
+            _both(_closed(2), _title("Text", {"kind": "text", "defaultValue": ""}, closed=True)),
+            [_TITLE_INVALID],
+            id="title-closed-field-in-closed-module",
+        ),
     ),
 )
 def test_validation_reports_each_reference_defect_with_its_exact_issue(

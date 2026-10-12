@@ -20,7 +20,7 @@ def title_field_issue(module: ModuleDocument) -> ValidationIssue | None:
     selected = next((field for field in module.fields if field.id == module.title_field_id), None)
     if selected is not None and selected.type in {
         "Text", "Long text", "Email", "URL", "Integer", "Number", "Select"
-    } and (not selected.closed or module.closed):
+    } and not selected.closed:
         return None
     return ValidationIssue(
         code="module.title_field_invalid",
