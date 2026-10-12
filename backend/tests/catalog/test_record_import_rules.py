@@ -13,8 +13,15 @@ from uuid6 import uuid7
 
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.import_router import RecordImportRequest
-from app.systems.sandbox.records.importing import _converted_cell
+from app.systems.sandbox.records.importing import (
+    _converted_cell,
+    creation_schema_digest,
+    prepare_import_rows,
+    selected_import_fields,
+)
 from app.systems.sandbox.records.schemas import RecordBatchUpdate
+from tests.catalog.field_record_support import OUTSIDER_ID, READER_ID, make_field
+from tests.catalog.field_record_support import module_readers as module_readers
 
 _OPTION = "0190f2c4-0000-7000-8000-000000000001"
 _USER = "0190F2C4-0000-7000-8000-0000000000AB"
@@ -63,11 +70,16 @@ def test_import_cells_convert_to_the_field_type(kind, config, cell, expected) ->
     ("kind", "config", "cell", "message"),
     [
         (FieldType.INTEGER, None, "2.1", "Integer must be a whole base-10 number"),
+        # Past Python's 4,300-digit conversion limit; a cell has no length limit.
+        (FieldType.INTEGER, None, "9" * 4301, "Integer must be a whole base-10 number"),
         (FieldType.USER, None, "Alex Reader", "User must be a UUID"),
         (FieldType.BOOLEAN, None, "yes", "Boolean must be true or false"),
         (FieldType.NUMBER, None, "NaN", "Number must be finite"),
         (FieldType.NUMBER, None, "Infinity", "Number must be finite"),
+        (FieldType.NUMBER, None, "twelve", "Number must be finite"),
         (FieldType.SELECT, _SELECT, "Unknown", "Select must match an option ID or label"),
+        (FieldType.SELECT, {}, "Open", "Select must match an option ID or label"),
+        (FieldType.SELECT, {"options": "Open"}, "Open", "Select has invalid options"),
         (
             FieldType.SELECT,
             {"options": [{"id": "a", "label": "Open"}, {"id": "b", "label": "Open"}]},
@@ -77,8 +89,171 @@ def test_import_cells_convert_to_the_field_type(kind, config, cell, expected) ->
     ],
 )
 def test_malformed_import_cells_are_refused_with_their_reason(kind, config, cell, message) -> None:
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=f"^{message}$"):
         _converted_cell(_field(kind, config), cell)
+
+
+_NOT_ACTIVE = "Mapping and defaults must use active primitive fields in this module"
+
+
+def _module_fields() -> dict[str, Field]:
+    module_id = uuid7()
+    return {
+        "title": make_field(module_id),
+        "quantity": make_field(module_id, FieldType.INTEGER),
+        "closed": make_field(module_id, deleted=True),
+        "link": make_field(module_id, FieldType.RELATIONSHIP),
+    }
+
+
+@pytest.mark.parametrize(
+    ("mapped", "default"),
+    [("closed", None), ("link", None), ("unknown", None), (None, "closed"), (None, "link")],
+)
+def test_import_mapping_and_defaults_must_name_active_primitive_fields(
+    mapped: str | None, default: str | None
+) -> None:
+    fields = _module_fields()
+    ids = {name: field.id for name, field in fields.items()} | {"unknown": uuid7()}
+    mapping = [(0, ids["title"])] + ([(1, ids[mapped])] if mapped else [])
+    defaults = {str(ids[default]): "default"} if default else {}
+
+    with pytest.raises(ValueError, match=f"^{_NOT_ACTIVE}$"):
+        selected_import_fields(list(fields.values()), mapping, defaults)
+
+
+def test_import_mapping_selects_each_column_field() -> None:
+    fields = _module_fields()
+
+    assert selected_import_fields(
+        list(fields.values()),
+        [(2, fields["quantity"].id), (0, fields["title"].id)],
+        {str(fields["title"].id): "default"},
+    ) == {2: fields["quantity"], 0: fields["title"]}
+
+
+def test_import_schema_digest_follows_only_the_active_primitive_fields() -> None:
+    fields = _module_fields()
+    fields["quantity"].position = 1
+    fields["title"].config = {"maxLength": 10, "minLength": 2}
+    baseline = creation_schema_digest(list(fields.values()))
+
+    assert creation_schema_digest(list(reversed(fields.values()))) == baseline
+    assert creation_schema_digest([fields["title"], fields["quantity"]]) == baseline
+    fields["title"].config = {"minLength": 2, "maxLength": 10}
+    assert creation_schema_digest(list(fields.values())) == baseline
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value"),
+    [
+        ("id", uuid7()),
+        ("name", "Renamed"),
+        ("type", FieldType.LONG_TEXT),
+        ("required", True),
+        ("position", 2),
+        ("config", {"maxLength": 10}),
+    ],
+)
+def test_import_schema_digest_changes_with_each_active_field_attribute(
+    attribute: str, value: object
+) -> None:
+    fields = _module_fields()
+    fields["quantity"].position = 1
+    baseline = creation_schema_digest(list(fields.values()))
+
+    setattr(fields["title"], attribute, value)
+
+    assert creation_schema_digest(list(fields.values())) != baseline
+
+
+_TWIN_A = "0190f2c4-0000-7000-8000-000000000002"
+_TWIN_B = "0190f2c4-0000-7000-8000-000000000003"
+
+
+def test_import_rows_convert_then_validate_like_record_creation(module_readers) -> None:
+    db, module_id = module_readers
+    title = make_field(module_id, required=True)
+    quantity = make_field(module_id, FieldType.INTEGER)
+    choice = make_field(
+        module_id,
+        FieldType.SELECT,
+        config={
+            "options": [
+                {"id": _OPTION, "label": "Open"},
+                {"id": _TWIN_A, "label": "Twin"},
+                {"id": _TWIN_B, "label": "Twin"},
+            ]
+        },
+    )
+    owner = make_field(module_id, FieldType.USER)
+    note = make_field(module_id)
+    fields = [title, quantity, choice, owner, note]
+    rows = [
+        (3, ["Bad", "1.5", "Twin", ""]),
+        (2, ["Valid", "12", "Open", READER_ID]),
+        (4, ["", "1", "Open", ""]),
+        (5, ["Outsider", "1", "Open", OUTSIDER_ID]),
+    ]
+
+    prepared = prepare_import_rows(
+        db,
+        module_id,
+        fields,
+        {0: title, 1: quantity, 2: choice, 3: owner},
+        rows,
+        {str(note.id): "request default"},
+    )
+
+    assert [
+        (
+            row.row_number,
+            row.data,
+            [(issue.code, issue.field_id, issue.message) for issue in row.issues],
+            row.record_id,
+        )
+        for row in prepared
+    ] == [
+        (
+            3,
+            {},
+            [
+                ("invalid_field_value", quantity.id, "Integer must be a whole base-10 number"),
+                ("ambiguous_select", choice.id, "Select label is ambiguous"),
+            ],
+            None,
+        ),
+        (
+            2,
+            {
+                str(title.id): "Valid",
+                str(quantity.id): 12,
+                str(choice.id): _OPTION,
+                str(owner.id): READER_ID,
+                str(note.id): "request default",
+            },
+            [],
+            None,
+        ),
+        (4, {}, [("required_field", title.id, "Field is required")], None),
+        (
+            5,
+            {},
+            [("invalid_field_value", owner.id, "User must be an active reader of this module")],
+            None,
+        ),
+    ]
+
+
+def test_import_row_conversion_issues_are_capped_at_twenty(module_readers) -> None:
+    db, module_id = module_readers
+    columns = {column: make_field(module_id, FieldType.INTEGER) for column in range(21)}
+
+    [row] = prepare_import_rows(
+        db, module_id, list(columns.values()), columns, [(2, ["x"] * 21)], {}
+    )
+
+    assert len(row.issues) == 20
 
 
 def _import_payload() -> dict[str, Any]:

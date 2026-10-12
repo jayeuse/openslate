@@ -3,13 +3,14 @@ from datetime import UTC, datetime
 from secrets import token_urlsafe
 from typing import Any
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.sandbox.fields.models import FieldType
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import (
     field_config,
     parse_field_key,
@@ -20,11 +21,19 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
+    prepare_record_creation,
+    validate_live_user_assignments,
     validate_record_mutation,
 )
 from app.systems.sandbox.records.router import update_record
 from app.systems.sandbox.records.schemas import RecordUpdate
-from tests.catalog.field_record_support import make_field, make_module
+from tests.catalog.field_record_support import (
+    OUTSIDER_ID,
+    READER_ID,
+    make_field,
+    make_module,
+)
+from tests.catalog.field_record_support import module_readers as module_readers
 from tests.rbac.support import make_user
 from tests.repository import REPOSITORY_ROOT
 
@@ -366,6 +375,225 @@ def test_record_mutation_caps_deterministic_errors() -> None:
     assert [str(issue.field_id) for issue in first.value.issues] == [
         str(issue.field_id) for issue in raised.value.issues
     ]
+
+
+def _issues(error: RecordValidationError) -> list[tuple[str, UUID | None, str]]:
+    return [(issue.code, issue.field_id, issue.message) for issue in error.issues]
+
+
+def _relationship(module_id: UUID, *, required: bool = False, deleted: bool = False) -> Field:
+    field = make_field(module_id, FieldType.RELATIONSHIP, required=required, deleted=deleted)
+    field.relationship_target_module_id = uuid7()
+    field.relationship_multiple_targets = False
+    field.relationship_multiple_sources = False
+    return field
+
+
+def test_record_mutation_reports_each_issue_with_its_field_and_message() -> None:
+    # Field IDs are UUIDv7, so creation order is the sorted key order the phases walk.
+    module_id = uuid7()
+    closed_link_kept = _relationship(module_id, deleted=True)
+    closed_link_added = _relationship(module_id, deleted=True)
+    closed_link_retyped = _relationship(module_id, deleted=True)
+    closed_link_changed = _relationship(module_id, deleted=True)
+    closed_text = make_field(module_id, deleted=True)
+    closed_required = make_field(module_id, required=True, deleted=True)
+    active_link = _relationship(module_id)
+    required_link = _relationship(module_id, required=True)
+    optional_integer = make_field(module_id, FieldType.INTEGER)
+    required_text = make_field(module_id, required=True)
+    required_omitted = make_field(module_id, required=True)
+    for position, field in enumerate([active_link, required_link, optional_integer, required_text]):
+        field.position = position
+    required_omitted.position = 4
+    unknown_key = str(uuid7())
+    fields = [
+        required_omitted,
+        required_text,
+        optional_integer,
+        required_link,
+        active_link,
+        closed_required,
+        closed_text,
+        closed_link_changed,
+        closed_link_retyped,
+        closed_link_added,
+        closed_link_kept,
+    ]
+    current = {
+        str(closed_link_kept.id): "kept",
+        str(closed_link_retyped.id): 1,
+        str(closed_link_changed.id): "before",
+        str(closed_text.id): "legacy",
+    }
+    requested = {
+        "not-a-field-id": "do not echo",
+        unknown_key: "extra",
+        str(required_text.id): None,
+        str(optional_integer.id): "",
+        str(active_link.id): "linked",
+        str(closed_text.id): "changed",
+        str(closed_link_changed.id): "after",
+        str(closed_link_retyped.id): True,
+        str(closed_link_added.id): "added",
+        str(closed_link_kept.id): "kept",
+    }
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation(requested, current, fields)
+
+    closed = "Closed field values cannot be changed"
+    separate = "Relationship fields are managed separately"
+    assert _issues(raised.value) == [
+        ("relationship_field", closed_link_kept.id, separate),
+        ("closed_field_mutation", closed_link_added.id, closed),
+        ("closed_field_mutation", closed_link_retyped.id, closed),
+        ("closed_field_mutation", closed_link_changed.id, closed),
+        ("closed_field_mutation", closed_text.id, closed),
+        ("relationship_field", active_link.id, separate),
+        (
+            "invalid_field_value",
+            optional_integer.id,
+            f"Field {optional_integer.id} must be an integer",
+        ),
+        ("required_field", required_text.id, "Field is required"),
+        ("unknown_field", UUID(unknown_key), "Unknown or inactive field"),
+        ("invalid_field_key", None, "Field key is invalid"),
+        ("required_field", required_omitted.id, "Field is required"),
+    ]
+    assert raised.value.truncated is False
+    assert raised.value.has_closed_field_mutation is True
+
+
+@pytest.mark.parametrize(
+    ("submitted", "code", "message", "conflict"),
+    [
+        ("kept", "relationship_field", "Relationship fields are managed separately", False),
+        ("changed", "closed_field_mutation", "Closed field values cannot be changed", True),
+    ],
+)
+def test_a_closed_relationship_value_conflicts_only_when_it_changes(
+    submitted: str, code: str, message: str, conflict: bool
+) -> None:
+    module_id = uuid7()
+    closed_link = _relationship(module_id, deleted=True)
+    text = make_field(module_id)
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation(
+            {str(closed_link.id): submitted, str(text.id): "value"},
+            {str(closed_link.id): "kept"},
+            [closed_link, text],
+        )
+
+    assert _issues(raised.value) == [(code, closed_link.id, message)]
+    assert raised.value.truncated is False
+    assert raised.value.has_closed_field_mutation is conflict
+
+
+def test_a_closed_value_change_past_the_issue_cap_still_conflicts() -> None:
+    module_id = uuid7()
+    kept_links = [_relationship(module_id, deleted=True) for _ in range(20)]
+    closed_text = make_field(module_id, deleted=True)
+    current = {str(field.id): "kept" for field in kept_links} | {str(closed_text.id): "old"}
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation(
+            current | {str(closed_text.id): "new"}, current, [*kept_links, closed_text]
+        )
+
+    assert {issue.code for issue in raised.value.issues} == {"relationship_field"}
+    assert len(raised.value.issues) == 20
+    assert raised.value.truncated is True
+    assert raised.value.has_closed_field_mutation is True
+
+
+def test_record_mutation_orders_issues_by_key_whatever_the_values() -> None:
+    first = "0190f2c4-0000-7000-8000-00000000000a"
+    second = "0190f2c4-0000-7000-8000-00000000000b"
+    third = "0190f2c4-0000-7000-8000-00000000000c"
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation({third: "same", second: "same", first: "same"}, {}, [])
+
+    assert [str(issue.field_id) for issue in raised.value.issues] == [first, second, third]
+
+
+NOT_A_READER = "User must be an active reader of this module"
+
+
+def test_only_explicit_active_user_values_must_be_module_readers(module_readers) -> None:
+    db, module_id = module_readers
+    reader = make_field(module_id, FieldType.USER)
+    closed_user = make_field(module_id, FieldType.USER, deleted=True)
+    text = make_field(module_id)
+    omitted = make_field(module_id, FieldType.USER)
+    cleared = make_field(module_id, FieldType.USER)
+    number = make_field(module_id, FieldType.USER)
+    malformed = make_field(module_id, FieldType.USER)
+    outsider = make_field(module_id, FieldType.USER)
+    data = {
+        str(reader.id): READER_ID,
+        str(closed_user.id): OUTSIDER_ID,
+        str(text.id): OUTSIDER_ID,
+        str(cleared.id): None,
+        str(number.id): 5,
+        str(malformed.id): "not-a-user",
+        str(outsider.id): OUTSIDER_ID,
+    }
+    fields = [reader, closed_user, text, omitted, cleared, number, malformed, outsider]
+
+    validate_live_user_assignments(db, module_id, {str(reader.id): READER_ID}, fields)
+    with pytest.raises(RecordValidationError) as raised:
+        validate_live_user_assignments(db, module_id, data, fields)
+
+    assert _issues(raised.value) == [
+        ("invalid_field_value", number.id, NOT_A_READER),
+        ("invalid_field_value", malformed.id, NOT_A_READER),
+        ("invalid_field_value", outsider.id, NOT_A_READER),
+    ]
+    assert raised.value.truncated is False
+    assert raised.value.has_closed_field_mutation is False
+
+
+@pytest.mark.parametrize(("assigned", "reported", "truncated"), [(20, 20, False), (21, 20, True)])
+def test_user_value_issues_are_capped_at_twenty(
+    module_readers, assigned: int, reported: int, truncated: bool
+) -> None:
+    db, module_id = module_readers
+    fields = [make_field(module_id, FieldType.USER) for _ in range(assigned)]
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_live_user_assignments(
+            db, module_id, {str(field.id): OUTSIDER_ID for field in fields}, fields
+        )
+
+    assert len(raised.value.issues) == reported
+    assert raised.value.truncated is truncated
+
+
+def test_record_creation_applies_published_defaults_to_omitted_primitive_values(
+    module_readers,
+) -> None:
+    db, module_id = module_readers
+    closed = make_field(module_id, deleted=True, config={"defaultValue": "closed default"})
+    link = _relationship(module_id)
+    link.config = {"defaultValue": "link default"}
+    submitted = make_field(module_id, config={"defaultValue": "default"})
+    applied = make_field(module_id, required=True, config={"defaultValue": "applied default"})
+    no_default = make_field(module_id, FieldType.INTEGER)
+    assignee = make_field(module_id, FieldType.USER)
+
+    assert prepare_record_creation(
+        db,
+        module_id,
+        {str(submitted.id): "mine", str(assignee.id): READER_ID},
+        [closed, link, submitted, applied, no_default, assignee],
+    ) == {
+        str(submitted.id): "mine",
+        str(applied.id): "applied default",
+        str(assignee.id): READER_ID,
+    }
 
 
 USER_ID = "0192f0c4-6b1e-7c3a-9d2e-4f5a6b7c8d9e"
