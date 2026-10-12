@@ -1,6 +1,7 @@
 """Real-provider HTTP acceptance for password change and local session policy."""
 
 from secrets import token_urlsafe
+from threading import Event
 from uuid import UUID
 
 import pytest
@@ -10,10 +11,13 @@ from sqlalchemy.orm import Session
 
 import app.systems.access.auth.router as auth_router
 from app.core.config import get_settings
+from app.core.database.session import get_engine
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.users.coordination import lock_user
 from app.systems.access.users.models import User, UserStatus
+from tests.race_support import WAIT, StatementPause, join, start, wait_until_blocked_by
 
 pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
@@ -205,6 +209,85 @@ def test_an_account_disabled_after_the_provider_grant_keeps_its_password(
         assert changed.json() == {"detail": "Password cannot be changed"}
         # The provider still holds the old password.
         tokens = real.password_grant(email, old_password)
+        real.sign_out(tokens.access_token, scope="local")
+    finally:
+        browser.close()
+
+
+def test_a_disable_after_the_password_change_locks_the_profile_waits_for_the_change(
+    provider_account, monkeypatch: pytest.MonkeyPatch
+):
+    email, old_password, provider_id, local_user_id, owner = provider_account
+    with Session(owner) as db:
+        user = db.get(User, local_user_id)
+        assert user is not None
+        user.supabase_user_id = provider_id
+        db.commit()
+    browser = _browser_client(str(get_settings().public_origin))
+    real = get_supabase_auth_client()
+    holds: list[StatementPause] = []
+    held = Event()
+
+    class HoldAfterProviderUpdate:
+        """The real provider client. Once the provider has the new password, the change's
+        next statement (its session revocation) is held while the change keeps its lock."""
+
+        def __getattr__(self, name: str):
+            return getattr(real, name)
+
+        def update_password(self, access_token: str, password: str):
+            changed = real.update_password(access_token, password)
+            holds.append(StatementPause(get_engine(), "SELECT"))
+            held.set()
+            return changed
+
+    def disable() -> None:
+        # The lock and the status change of an administrator's disable.
+        with Session(owner) as db:
+            lock_user(db, local_user_id).status = UserStatus.DISABLED.value
+            db.commit()
+
+    new_password = token_urlsafe(32)
+    try:
+        login = browser.post("/api/auth/login", json={"email": email, "password": old_password})
+        assert login.status_code == 200, login.text
+        csrf = browser.cookies.get("openslate_csrf")
+        assert csrf is not None
+        monkeypatch.setattr(auth_router, "get_supabase_auth_client", HoldAfterProviderUpdate)
+        change_thread, change_result = start(
+            lambda: browser.post(
+                "/api/auth/password/change",
+                json={"current_password": old_password, "password": new_password},
+                headers={"X-CSRF-Token": csrf},
+            )
+        )
+        disable_thread, disable_result = None, []
+        try:
+            assert held.wait(WAIT) and holds[0].paused.wait(WAIT)
+            disable_thread, disable_result = start(disable)
+            wait_until_blocked_by(owner, holds[0].holder_pid)
+            assert disable_thread.is_alive()
+        finally:
+            # Release first; remove the listener only after both requests finished,
+            # because removal mutates the engine's listener list.
+            for hold in holds:
+                hold.release.set()
+            change_thread.join(WAIT)
+            if disable_thread is not None:
+                disable_thread.join(WAIT)
+            for hold in holds:
+                hold.remove()
+        assert disable_thread is not None
+        changed = join(change_thread, change_result)
+        join(disable_thread, disable_result)
+
+        assert changed.status_code == 200, changed.text
+        with Session(owner) as db:
+            disabled = db.get(User, local_user_id)
+            assert disabled is not None
+            assert disabled.status == UserStatus.DISABLED.value
+        # The change committed first: the provider holds the new password.
+        tokens = real.password_grant(email, new_password)
         real.sign_out(tokens.access_token, scope="local")
     finally:
         browser.close()

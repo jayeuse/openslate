@@ -50,6 +50,8 @@ class _Seed:
     member: UUID
     manager_group: UUID
     target: UUID
+    # A member of no group, for a manager to add.
+    outsider: UUID
 
 
 def _group(db: Session, department_id: UUID, level: AccessLevel, member_id: UUID) -> UUID:
@@ -81,6 +83,7 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
             member=member,
             manager_group=_group(db, inventory.id, AccessLevel.MANAGE, manager),
             target=_group(db, inventory.id, AccessLevel.READ, member),
+            outsider=add_race_user(db, "race", UserRole.MEMBER.value),
         )
         db.commit()
     try:
@@ -88,7 +91,7 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
     finally:
         with Session(owner) as db:
             groups = (data.manager_group, data.target)
-            users = (data.admin, data.manager, data.member)
+            users = (data.admin, data.manager, data.member, data.outsider)
             db.execute(delete(GroupMember).where(GroupMember.group_id.in_(groups)))
             db.execute(delete(GroupAccess).where(GroupAccess.group_id.in_(groups)))
             db.execute(delete(Group).where(Group.id.in_(groups)))
@@ -275,3 +278,43 @@ def test_an_invitation_that_reuses_an_administrators_email_does_not_wait_for_the
             assert refused.result(timeout=WAIT) is InvitationConflict
         finally:
             publisher.rollback()
+
+
+def test_a_user_promoted_between_the_two_administrator_checks_is_not_added(
+    seed: tuple[_Seed, Engine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first check reads the new members before any user lock; the second, after the
+    locks, refuses a promotion that committed in between."""
+
+    data, engine = seed
+    etag = group_etag_of(engine, data.target)
+    first_check_done, release_manager = Event(), Event()
+    original_refuse = policy_service._refuse_administrators
+
+    def pause_after_first_check(db: Session, user_ids: set[UUID]) -> None:
+        original_refuse(db, user_ids)
+        if not first_check_done.is_set():
+            first_check_done.set()
+            assert release_manager.wait(timeout=WAIT)
+
+    monkeypatch.setattr(policy_service, "_refuse_administrators", pause_after_first_check)
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            manager = executor.submit(
+                run_action,
+                engine,
+                _replace_as(data.manager, data.target, [data.member, data.outsider], etag),
+            )
+            assert first_check_done.wait(timeout=WAIT)
+            # No user row is locked yet, so the promotion commits without waiting.
+            with Session(engine) as db:
+                outsider = db.get(User, data.outsider)
+                assert outsider is not None
+                outsider.role = UserRole.ADMIN.value
+                db.commit()
+            release_manager.set()
+            assert manager.result(timeout=WAIT) == 409
+    finally:
+        release_manager.set()
+    assert _members(engine, data.target) == {data.member}
