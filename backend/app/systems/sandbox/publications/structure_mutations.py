@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.access.policy.models import GroupAccess
 from app.systems.boards.department_boards import sync_department_board
 from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.departments.models import Department
@@ -36,6 +37,41 @@ def sync_module_chart_departments(
             chart.department_id = department_id
             chart.revision += 1
             chart.performed_by = actor_id
+
+
+def sync_module_access_departments(
+    db: Session, modules: Mapping[str, Module], actor_id: UUID
+) -> None:
+    """Move each live module access row to its module's department without committing.
+
+    A move before grants followed their module could leave a second row of the
+    same group and module in another department. The most recently written row
+    is the administrator's latest intent: it stays, and the older rows go.
+    """
+    departments: dict[UUID | None, UUID] = {
+        module.id: module.department_id for module in modules.values()
+    }
+    if not departments:
+        return
+    grants = db.scalars(
+        select(GroupAccess)
+        .where(GroupAccess.module_id.in_(departments), GroupAccess.is_deleted.is_(False))
+        .order_by(GroupAccess.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    latest: dict[tuple[UUID, UUID | None], GroupAccess] = {}
+    for grant in sorted(grants, key=lambda row: (row.updated_at, row.id)):
+        latest[(grant.group_id, grant.module_id)] = grant
+    for grant in grants:
+        if latest[(grant.group_id, grant.module_id)] is not grant:
+            db.delete(grant)
+    db.flush()
+    for grant in latest.values():
+        department_id = departments[grant.module_id]
+        if grant.department_id != department_id:
+            grant.department_id = department_id
+            grant.performed_by = actor_id
 
 
 def stage_bound_names_and_positions(

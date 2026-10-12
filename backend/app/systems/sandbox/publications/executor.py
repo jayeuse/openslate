@@ -43,6 +43,7 @@ from app.systems.sandbox.publications.structure_mutations import (
     close_removed_structure,
     stage_bound_names_and_positions,
     sync_department_boards,
+    sync_module_access_departments,
     sync_module_chart_departments,
 )
 from app.systems.sandbox.publications.trigger_mutations import apply_record_triggers
@@ -157,6 +158,7 @@ def apply_publication(
     departments = _apply_departments(db, document, bindings, actor_id)
     modules = _apply_modules(db, document, bindings, departments, actor_id)
     sync_module_chart_departments(db, modules, actor_id)
+    sync_module_access_departments(db, modules, actor_id)
     fields = _apply_fields(db, document, bindings, modules, actor_id)
     _apply_title_fields(document, modules, fields, actor_id)
     _apply_relationships(db, document, bindings, modules, actor_id, lifecycle_closed)
