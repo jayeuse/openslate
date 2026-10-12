@@ -133,6 +133,17 @@ def test_v3_structure_resolves_exact_active_names_types_without_mutating() -> No
     ]
     assert len(statements) == 3
     assert all("FOR UPDATE" in statement for statement in statements)
+    # A contended source refuses at once, rows lock in id order, and each locked row is
+    # read again after the lock.
+    assert all("FOR UPDATE NOWAIT" in statement for statement in statements)
+    assert all(
+        call.args[0].get_execution_options().get("populate_existing") is True
+        for call in db.scalars.call_args_list
+    )
+    for statement, table in zip(statements, ("departments", "modules", "fields"), strict=True):
+        assert f"{table}.is_deleted IS false" in statement
+        assert f"{table}.deleted_at IS NULL" in statement
+        assert f"ORDER BY {table}.id" in statement
     assert "departments.department_name" in statements[0]
     assert "modules.module_name" in statements[1]
     assert "fields.name" in statements[2]
@@ -222,6 +233,39 @@ def test_v3_legacy_aggregation_codecs_preserve_meaning_and_named_references(
     db.commit.assert_not_called()
 
 
+@pytest.mark.parametrize(("size", "stored"), [("half", "M"), ("full", "L"), ("S", "S")])
+def test_v3_legacy_sizes_map_to_widget_sizes(size: str, stored: str) -> None:
+    department, module, fields = _catalog()
+    bundle = _bundle()
+    bundle["configuration"]["widgets"][0]["config"]["size"] = size
+
+    resolved = resolve_portable_board(
+        _database([department], [module], fields), parse_portable_board(_bytes(bundle))
+    )
+
+    assert resolved.widgets[0].size == stored
+
+
+def test_v3_normalized_records_query_resolves_named_columns_to_live_fields() -> None:
+    department, module, fields = _catalog()
+    bundle = _bundle()
+    bundle["configuration"]["widgets"][0]["config"] = {
+        "version": 1,
+        "size": "M",
+        "refresh": "manual",
+        "pinned": False,
+        "query": {"definition": {"columns": [{"name": "Label", "expected_type": "text"}]}},
+    }
+
+    resolved = resolve_portable_board(
+        _database([department], [module], fields), parse_portable_board(_bytes(bundle))
+    )
+
+    query = resolved.widgets[0].config.query
+    assert query.module_id == module.id
+    assert [column.field_id for column in query.definition.columns] == [fields[0].id]
+
+
 @pytest.mark.parametrize(
     ("aggregation", "metric_type"),
     [
@@ -288,6 +332,22 @@ def test_v3_bundle_rejects_oversize_unknown_version_and_duplicate_keys() -> None
         parse_portable_board(_bytes(_bundle()).replace(b'"value": "Open"', b'"value": NaN'))
     assert non_json_number.value.code == "board_bundle_invalid"
 
+    # A complete bundle that repeats one key is refused, not read with the last value.
+    repeated = _bytes(_bundle()).replace(
+        b'"name": "Operations"', b'"name": "Operations", "name": "Operations"'
+    )
+    with pytest.raises(PortabilityError) as repeated_key:
+        parse_portable_board(repeated)
+    assert repeated_key.value.code == "board_bundle_invalid"
+
+
+def test_v3_bundle_of_exactly_the_size_limit_is_accepted() -> None:
+    raw = _bytes(_bundle())
+    padded = raw + b" " * (1024 * 1024 - len(raw))
+
+    assert len(padded) == 1024 * 1024
+    assert parse_portable_board(padded).configuration.name == "Operations"
+
 
 @pytest.mark.parametrize(
     ("section", "count"),
@@ -319,6 +379,7 @@ def test_v3_resolution_rejects_missing_or_ambiguous_source_without_writes() -> N
         _database([], [module], fields),
         _database([department, department], [module], fields),
         _database([department], [], fields),
+        _database([department], [module, module], fields),
         _database([department], [module], [fields[0]]),
         _database([department], [module], [fields[0], fields[1], fields[1]]),
     ):
@@ -346,6 +407,17 @@ def test_v3_resolution_rejects_type_or_filter_value_mismatch() -> None:
             _database([department], [module], fields), parse_portable_board(_bytes(bundle))
         )
     assert invalid_filter.value.code == "board_source_unavailable"
+
+
+def test_v3_resolution_rejects_closed_department() -> None:
+    department, module, fields = _catalog()
+    department.is_deleted = True
+
+    with pytest.raises(PortabilityError) as error:
+        resolve_portable_board(
+            _database([department], [module], fields), parse_portable_board(_bytes(_bundle()))
+        )
+    assert error.value.code == "board_source_unavailable"
 
 
 def test_v3_resolution_rejects_closed_module_and_soft_deleted_field() -> None:
