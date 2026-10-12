@@ -27,6 +27,7 @@ from app.systems.platform.scheduling.service import (
 )
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.grant_support import assert_runtime_only_grants
 from tests.rbac.support import make_group_access
 
 pytestmark = pytest.mark.integration
@@ -300,16 +301,4 @@ def test_typed_work_constraints_fks_and_runtime_privileges_are_installed(integra
         )
     )
     assert default == "'report-run'::character varying"
-    for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-        assert connection.scalar(
-            text("SELECT has_table_privilege('openslate_runtime', 'scheduled_work', :privilege)"),
-            {"privilege": privilege},
-        ) is True
-        for role in ("anon", "authenticated", "service_role"):
-            assert (
-                connection.scalar(
-                    text("SELECT has_table_privilege(:role, 'scheduled_work', :privilege)"),
-                    {"role": role, "privilege": privilege},
-                )
-                is False
-            )
+    assert_runtime_only_grants(connection, "scheduled_work")

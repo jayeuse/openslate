@@ -12,7 +12,6 @@ from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.backups import downloads, exports
 from app.systems.manage.backups.models import BackupExportOperation
 
-pytest_plugins = ("tests.backups.test_backup_export_downloads_integration",)
 pytestmark = pytest.mark.integration
 
 

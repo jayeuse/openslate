@@ -9,7 +9,7 @@ from unittest.mock import patch
 from uuid import UUID
 
 import pytest
-from sqlalchemy import bindparam, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -29,6 +29,7 @@ from app.systems.sandbox.lifecycle.service import execute_lifecycle
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import _guard_integration_database
 from tests.conftest import guarded_create_engine as create_engine
+from tests.lifecycle_integration.lifecycle_integration_support import delete_committed_scope
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = [
@@ -130,19 +131,9 @@ def _cleanup(ids: set[UUID]) -> None:
     engine = create_engine(_owner_url())
     try:
         with engine.begin() as connection:
-            connection.execute(
-                text(
-                    "DELETE FROM public.audit_logs WHERE entity_id IN :ids"
-                ).bindparams(bindparam("ids", expanding=True)),
-                {"ids": list(ids)},
+            delete_committed_scope(
+                connection, audit_entity_ids=ids, module_ids=ids, department_ids=ids
             )
-            for table in ("modules", "departments"):
-                connection.execute(
-                    text(f"DELETE FROM public.{table} WHERE id IN :ids").bindparams(
-                        bindparam("ids", expanding=True)
-                    ),
-                    {"ids": list(ids)},
-                )
     finally:
         engine.dispose()
 
@@ -249,9 +240,9 @@ def test_competing_lifecycle_closes_serialize_and_rollback_audit_atomically(
         try:
             with observer_engine.connect() as connection:
                 state = connection.execute(
-                    select(Department.is_deleted, Module.is_deleted).join(
-                        Module, Module.department_id == Department.id
-                    ).where(Department.id == fixture.department_id)
+                    select(Department.is_deleted, Module.is_deleted)
+                    .join(Module, Module.department_id == Department.id)
+                    .where(Department.id == fixture.department_id)
                 ).one()
                 audit_rows = list(
                     connection.execute(
@@ -321,14 +312,14 @@ def test_lifecycle_commit_failure_rolls_back_rows_and_audit_for_observer(
         try:
             with observer_engine.connect() as connection:
                 state = connection.execute(
-                    select(Department.is_deleted, Module.is_deleted).join(
-                        Module, Module.department_id == Department.id
-                    ).where(Department.id == fixture.department_id)
+                    select(Department.is_deleted, Module.is_deleted)
+                    .join(Module, Module.department_id == Department.id)
+                    .where(Department.id == fixture.department_id)
                 ).one()
                 audit_count = connection.scalar(
-                    select(func.count()).select_from(AuditLog).where(
-                        AuditLog.request_id == request_id
-                    )
+                    select(func.count())
+                    .select_from(AuditLog)
+                    .where(AuditLog.request_id == request_id)
                 )
                 connection.rollback()
         finally:

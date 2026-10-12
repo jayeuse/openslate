@@ -4,7 +4,6 @@ import json
 import subprocess
 import sys
 from datetime import timedelta
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,22 +11,21 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from sqlalchemy import event, func, inspect, select, text, update
+from sqlalchemy import event, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
-from app.systems.manage.audit.models import AuditLog, SecurityEvent
+from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.backups import exports, service
-from app.systems.manage.backups.models import BackupExportOperation, BackupPolicy, BackupRun
+from app.systems.manage.backups.models import BackupExportOperation, BackupRun
 from app.systems.manage.backups.schemas import ExportOutcomeCommand
+from tests.backups.export_support import SECRET
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
-pytest_plugins = ("tests.auth.session_policy_support",)
 pytestmark = pytest.mark.integration
-SECRET = "Example export 🌿 passphrase"
 PUBLIC_FIELDS = {
     "id",
     "backup_run_id",
@@ -39,90 +37,6 @@ PUBLIC_FIELDS = {
     "sha256",
     "failure_code",
 }
-
-
-@pytest.fixture
-def export_world(policy_world):
-    world = policy_world
-    with Session(world.owner) as db:
-        saved_policy = db.execute(select(BackupPolicy.__table__)).mappings().one_or_none()
-        instance = db.scalar(select(func.current_setting("cluster_name")))
-        now = db.scalar(select(func.clock_timestamp()))
-        source_id = uuid4()
-        db.add(
-            BackupRun(
-                id=source_id,
-                installation_id=instance,
-                name="Owned export source",
-                provenance="manual",
-                requester_id=world.actor_id,
-                idempotency_hash=uuid4().hex * 2,
-                schedule="disabled",
-                retention_days=30,
-                requested_at=now - timedelta(hours=3),
-                state="succeeded",
-                claim_id=uuid4(),
-                claimed_schedule="disabled",
-                claimed_retention_days=30,
-                started_at=now - timedelta(hours=2),
-                finished_at=now - timedelta(hours=1),
-                reconciled_at=now - timedelta(minutes=59),
-                verified_at=now - timedelta(minutes=61),
-                snapshot_id="a" * 64,
-                manifest_sha256="b" * 64,
-            )
-        )
-        db.commit()
-    ids = []
-    source_ids = [source_id]
-
-    def create(key=None, **body):
-        response = world.client.post(
-            "/api/backups/exports",
-            headers={**world.headers(), "Idempotency-Key": key or uuid4().hex},
-            json={"backup_run_id": str(source_id), "passphrase": SECRET, **body},
-        )
-        if response.status_code == 201:
-            ids.append(UUID(response.json()["id"]))
-        return response
-
-    yield SimpleNamespace(
-        auth=world,
-        source_id=source_id,
-        instance=instance,
-        runtime=get_engine(),
-        create=create,
-        ids=ids,
-        source_ids=source_ids,
-    )
-    with Session(world.owner) as db:
-        if ids:
-            for event in db.scalars(select(SecurityEvent).where(SecurityEvent.subject_id.in_(ids))):
-                db.delete(event)
-            for audit in db.scalars(
-                select(AuditLog).where(AuditLog.entity_id.in_(ids + source_ids))
-            ):
-                db.delete(audit)
-            for row in db.scalars(
-                select(BackupExportOperation).where(
-                    BackupExportOperation.backup_run_id == source_id
-                )
-            ):
-                db.delete(row)
-            db.flush()
-        for source in db.scalars(select(BackupRun).where(BackupRun.id.in_(source_ids))):
-            db.delete(source)
-        policy = db.scalar(select(BackupPolicy))
-        if saved_policy is None:
-            if policy is not None:
-                assert policy.installation_id == instance
-                db.delete(policy)
-        else:
-            assert policy is not None and policy.id == saved_policy["id"]
-            db.execute(
-                update(BackupPolicy).where(BackupPolicy.id == policy.id).values(**saved_policy)
-            )
-        db.commit()
 
 
 @pytest.mark.parametrize("retention_failed", [False, True])
@@ -398,15 +312,11 @@ def test_export_terminal_identity_replay_and_source_retention_preserve_ready_lif
     assert response.json()["expires_at"] == expires_at.isoformat().replace("+00:00", "Z")
 
 
-@pytest.mark.parametrize(
-    "invalid",
-    [15, 129, " leading valid passphrase", "valid passphrase\n", True, None, {"nested": SECRET}],
-)
-def test_export_secret_validation_keeps_all_input_and_unknown_keys_private(export_world, invalid):
+def test_export_secret_validation_keeps_all_input_and_unknown_keys_private(export_world):
+    # The passphrase rules are rows of test_backup_export_contracts.py; this request
+    # proves that the 422 body keeps the nested secret and the unknown key private.
     world = export_world
-    payload = {"backup_run_id": str(world.source_id), "passphrase": invalid}
-    if invalid in (15, 129):
-        payload["passphrase"] = "x" * invalid
+    payload = {"backup_run_id": str(world.source_id), "passphrase": {"nested": SECRET}}
     response = world.auth.client.post(
         "/api/backups/exports",
         headers={**world.auth.headers(), "Idempotency-Key": uuid4().hex},

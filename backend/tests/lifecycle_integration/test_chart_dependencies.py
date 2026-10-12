@@ -15,8 +15,11 @@ from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from tests.charts.chart_route_support import chart_world as chart_world
 from tests.charts.widget_reference_support import managed_board
-from tests.lifecycle_integration.lifecycle_integration_support import _close_rows
-from tests.lifecycle_integration.test_chart_lifecycle_api import _close, _password_boundary
+from tests.lifecycle_integration.lifecycle_integration_support import (
+    close_field,
+    close_rows,
+    patch_password_boundary,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -61,7 +64,7 @@ def _consumers(world, client, chart_id, kind):
 @pytest.mark.parametrize("state", ["active", "archived_parent", "deleted_widget"])
 def test_saved_consumers_block_field_purge_with_null_config(chart_world, monkeypatch, kind, state):
     world = chart_world
-    _password_boundary(world, monkeypatch)
+    patch_password_boundary(monkeypatch, lambda: world.users["admin"].id, purge_enabled=True)
     with world.client("admin") as client:
         created = client.post("/api/charts", json=world.body())
         assert created.status_code == 201, created.text
@@ -71,11 +74,11 @@ def test_saved_consumers_block_field_purge_with_null_config(chart_world, monkeyp
             if kind == "board":
                 parent.status = BoardStatus.ARCHIVED
             else:
-                _close_rows(parent)
+                close_rows(parent)
         elif state == "deleted_widget":
-            _close_rows(widget)
+            close_rows(widget)
         world.db.commit()
-        _close(client, world.label)
+        close_field(client, world.label)
         response = client.post(f"/api/fields/{world.label.id}/purge/preview")
         assert response.status_code == 200, response.text
         impact = response.json()["impact"]
@@ -104,7 +107,7 @@ def test_parent_scope_inventories_all_charts_and_retained_foreign_consumers(char
         dashboard.is_deleted = True
         dashboard.deleted_at = datetime.now(UTC)
         board.status = BoardStatus.ARCHIVED
-        _close_rows(
+        close_rows(
             board_widget,
             dashboard_widget,
             world.module,
@@ -118,7 +121,7 @@ def test_parent_scope_inventories_all_charts_and_retained_foreign_consumers(char
         if target == "department":
             from app.systems.sandbox.departments.models import Department
 
-            _close_rows(world.db.get(Department, target_id))
+            close_rows(world.db.get(Department, target_id))
             world.db.commit()
         plan = plan_lifecycle(world.db, target, target_id, "purge", world.users["admin"].id)
         assert set(plan.scope_ids["charts"]) == {UUID(chart_id), UUID(archived["id"])}
@@ -158,7 +161,7 @@ def test_saved_source_and_presentation_fingerprints_reject_old_preview(chart_wor
         _, board_widget = _consumers(world, client, first["id"], "board")
         _, dashboard_widget = _consumers(world, client, first["id"], "dashboard")
         chart = world.db.get(Chart, UUID(first["id"]))
-        _close_rows(world.module, world.label, world.amount, world.date, world.person)
+        close_rows(world.module, world.label, world.amount, world.date, world.person)
         world.db.commit()
         old = plan_lifecycle(world.db, "module", world.module.id, "purge", world.users["admin"].id)
         row = {"chart": chart, "board": board_widget, "dashboard": dashboard_widget}[entity]

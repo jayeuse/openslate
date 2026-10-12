@@ -10,9 +10,8 @@ from sqlalchemy.orm import Session
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 from app.systems.access.identity.rate_limits import login_fingerprint
 from app.systems.access.users.models import User
-from tests.backups.test_backup_export_downloads_integration import _stored
+from tests.backups.export_support import stored_export
 
-pytest_plugins = ("tests.backups.test_backup_export_downloads_integration",)
 pytestmark = pytest.mark.integration
 
 
@@ -60,7 +59,7 @@ def test_download_admission_rechecks_after_provider_commit_and_preserves_failure
         }[case]
     )
     assert world.auth.password not in response.text
-    assert _stored(world)[0].admission_digest is None
+    assert stored_export(world)[0].admission_digest is None
 
 
 def test_current_password_budget_refuses_before_provider_or_admission_write(ready_export):
@@ -84,7 +83,7 @@ def test_current_password_budget_refuses_before_provider_or_admission_write(read
     assert refused.json()["detail"]["code"] == "export_password_rate_limited"
     assert world.auth.calls.count(("POST", "/auth/v1/token")) == before
     assert world.auth.password not in refused.text
-    row, events = _stored(world)
+    row, events = stored_export(world)
     assert row.admission_digest is None and not events
 
 
@@ -106,7 +105,7 @@ def test_export_row_lock_wait_cannot_admit_a_now_expired_presented_credential(
     before = None
     if endpoint == "content":
         assert world.admit().status_code == 200
-        before = _stored(world)[0].admission_digest
+        before = stored_export(world)[0].admission_digest
         original = downloads.prepare_artifact
 
         def hold_before_consumption(*args, **kwargs):
@@ -172,7 +171,7 @@ def test_export_row_lock_wait_cannot_admit_a_now_expired_presented_credential(
             event.remove(world.runtime, "before_cursor_execute", query_started)
     assert response.status_code == 401
     assert "content-disposition" not in response.headers and response.content != world.content
-    row, events = _stored(world)
+    row, events = stored_export(world)
     if endpoint == "admission":
         assert (
             row.admission_digest,
@@ -185,8 +184,19 @@ def test_export_row_lock_wait_cannot_admit_a_now_expired_presented_credential(
     assert not events
 
 
-@pytest.mark.parametrize("shape", ["canonical", "compact", "braced", "invalid"])
-@pytest.mark.parametrize("chunked", [False, True])
+@pytest.mark.parametrize(
+    ("shape", "chunked"),
+    [
+        # The selector table in test_backup_export_contracts.py owns which paths get the
+        # limit; the follow-up request depends on the path shape only, so the chunked
+        # body is proved once, on the canonical path.
+        ("canonical", False),
+        ("canonical", True),
+        ("compact", False),
+        ("braced", False),
+        ("invalid", False),
+    ],
+)
 def test_admission_route_family_bounds_secret_body_before_parsing_or_provider(
     ready_export, shape, chunked
 ):
@@ -208,7 +218,7 @@ def test_admission_route_family_bounds_secret_body_before_parsing_or_provider(
     assert response.status_code == 413 and response.headers["cache-control"] == "no-store"
     assert "x" * 128 not in response.text
     assert world.auth.calls.count(("POST", "/auth/v1/token")) == before
-    row, events = _stored(world)
+    row, events = stored_export(world)
     assert row.admission_digest is None and not events
     bounded = world.auth.client.post(
         path,
@@ -219,6 +229,6 @@ def test_admission_route_family_bounds_secret_body_before_parsing_or_provider(
     assert world.auth.password not in bounded.text
     if shape == "invalid":
         assert world.auth.calls.count(("POST", "/auth/v1/token")) == before
-        assert _stored(world)[0].admission_digest is None
+        assert stored_export(world)[0].admission_digest is None
     else:
         assert f"Path={world.path}/content" in bounded.headers["set-cookie"]

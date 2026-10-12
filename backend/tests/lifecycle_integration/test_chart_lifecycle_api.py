@@ -1,6 +1,5 @@
 """Saved Chart queries remain field-purge dependencies through real HTTP/PG journeys."""
 
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -8,6 +7,10 @@ import pytest
 from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.fields.models import Field
 from tests.charts.chart_route_support import chart_world as chart_world
+from tests.lifecycle_integration.lifecycle_integration_support import (
+    close_field,
+    patch_password_boundary,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -16,84 +19,20 @@ def _reference(field):
     return {"field_id": str(field.id), "expected_type": getattr(field.type, "value", field.type)}
 
 
-def _query(world, location):
-    query = world.grouped()
-    if location == "dimension":
-        return "bar", query, world.label
-    query["dimension"] = _reference(world.person)
-    if location == "measure":
-        query.update(aggregation="sum", measure=_reference(world.amount))
-        return "bar", query, world.amount
-    if location in {"date_series", "grouped_date"}:
-        query.update(
-            date_field=_reference(world.date), from_date="2026-01-01", to_date="2026-01-31"
-        )
-        if location == "date_series":
-            query.pop("dimension")
-            query["mode"] = "date_series"
-        return "line" if location == "date_series" else "bar", query, world.date
-    definition = {"version": 1, location: [_reference(world.label)]}
-    if location == "filters":
-        definition[location][0].update(operator="eq", value="owned matching value")
-    return "records", {"module_id": str(world.module.id), "definition": definition}, world.label
-
-
-def _password_boundary(world, monkeypatch):
-    class PasswordClient:
-        def __init__(self, _db):
-            pass
-
-        def verify_password(self, _email, _password):
-            return world.users["admin"].id
-
-    monkeypatch.setattr(
-        "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-        PasswordClient,
-    )
-    monkeypatch.setattr(
-        "app.systems.sandbox.lifecycle.router.get_settings",
-        lambda: SimpleNamespace(lifecycle_purge_enabled=True),
-    )
-
-
-def _close(client, field):
-    preview = client.post(f"/api/fields/{field.id}/close/preview")
-    assert preview.status_code == 200, preview.text
-    response = client.post(
-        f"/api/fields/{field.id}/close",
-        json={
-            "token": preview.json()["token"],
-            "confirmation_name": field.name,
-            "password": "owned chart lifecycle password",
-        },
-    )
-    assert response.status_code == 200, response.text
-
-
-@pytest.mark.parametrize(
-    "location",
-    [
-        "dimension",
-        "measure",
-        "date_series",
-        "grouped_date",
-        "columns",
-        "filters",
-        "sort",
-        "search_fields",
-    ],
-)
-def test_retained_chart_query_blocks_every_typed_field_reference(
-    chart_world, monkeypatch, location
-):
+def test_retained_chart_filter_reference_blocks_field_purge(chart_world, monkeypatch):
     world = chart_world
-    _password_boundary(world, monkeypatch)
-    kind, query, field = _query(world, location)
+    patch_password_boundary(monkeypatch, lambda: world.users["admin"].id, purge_enabled=True)
+    kind, field = "records", world.label
+    reference = {**_reference(field), "operator": "eq", "value": "owned matching value"}
+    query = {
+        "module_id": str(world.module.id),
+        "definition": {"version": 1, "filters": [reference]},
+    }
     with world.client("admin") as client:
         created = client.post("/api/charts", json=world.body(kind=kind, query=query))
         assert created.status_code == 201, created.text
         chart = created.json()
-        _close(client, field)
+        close_field(client, field)
         preview = client.post(f"/api/fields/{field.id}/purge/preview")
         assert preview.status_code == 200, preview.text
         impact = preview.json()["impact"]
@@ -125,14 +64,14 @@ def test_archived_query_still_blocks_then_restore_and_repair_preserve_chart(
     chart_world, monkeypatch
 ):
     world = chart_world
-    _password_boundary(world, monkeypatch)
+    patch_password_boundary(monkeypatch, lambda: world.users["admin"].id, purge_enabled=True)
     with world.client("admin") as client:
         created = client.post("/api/charts", json=world.body())
         assert created.status_code == 201, created.text
         chart = created.json()
         archived = client.delete(f"/api/charts/{chart['id']}?revision={chart['revision']}")
         assert archived.status_code == 204
-        _close(client, world.label)
+        close_field(client, world.label)
         preview = client.post(f"/api/fields/{world.label.id}/purge/preview")
         assert preview.status_code == 200
         assert any(

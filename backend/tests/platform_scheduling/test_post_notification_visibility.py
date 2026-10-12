@@ -3,14 +3,10 @@
 from datetime import UTC, datetime
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
@@ -20,9 +16,9 @@ from app.systems.platform.scheduling.models import (
     WorkKind,
     WorkState,
 )
-from app.systems.platform.scheduling.notification_router import router as notification_router
 from app.systems.platform.scheduling.service import current_user_notification_query
 from tests.boards.support import department_board
+from tests.platform_scheduling.support import assert_notice_hidden, notification_client
 from tests.rbac.support import add_department, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -40,14 +36,6 @@ def _actor(db: Session, label: str) -> User:
     db.add(actor)
     db.flush()
     return actor
-
-
-def _client(db: Session, actor: User) -> TestClient:
-    app = FastAPI()
-    app.include_router(notification_router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
 
 
 def test_post_notice_list_and_read_hide_after_department_revocation_or_board_archive(
@@ -116,7 +104,7 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
         event.remove(connection, "before_cursor_execute", observe)
     assert all("in_app_notifications" not in sql for sql in observed_sql)
 
-    client = _client(db, viewer)
+    client = notification_client(db, viewer)
     visible = client.get("/api/notifications")
     assert visible.status_code == 200, visible.text
     assert visible.json()["pagination"]["total"] == 1
@@ -131,11 +119,8 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     db.delete(access)
     db.commit()
     db.expire_all()
-    assert client.get("/api/notifications").json()["pagination"]["total"] == 0
-    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
-    assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
+    assert_notice_hidden(client, notice.id)
     assert db.get(InAppNotification, notice.id).read_at is None
-    assert client.post(path).status_code == 404
 
     make_group_access(db, [viewer], department, level=AccessLevel.READ)
     db.commit()
@@ -144,11 +129,8 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     board.status = "archived"
     db.commit()
     db.expire_all()
-    assert client.get("/api/notifications").json()["pagination"]["total"] == 0
-    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
-    assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
+    assert_notice_hidden(client, notice.id)
     assert db.get(InAppNotification, notice.id).read_at is None
-    assert client.post(path).status_code == 404
 
     board.status = "active"
     db.commit()

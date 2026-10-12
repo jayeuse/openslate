@@ -148,3 +148,36 @@ def test_internal_security_event_ingestion_validates_before_persisting(api: Fast
     assert response.status_code == 422
     assert database.events == []
     assert database.committed is False
+
+
+@pytest.mark.parametrize(
+    ("params", "location", "error"),
+    [
+        ({"event_type": ""}, ["query", "event_type"], "string_too_short"),
+        ({"event_type": "x" * 101}, ["query", "event_type"], "string_too_long"),
+        ({"outcome": "unknown"}, ["query", "outcome"], "enum"),
+        ({"person_id": "not-a-uuid"}, ["query", "person_id"], "uuid_parsing"),
+        ({"occurred_after": "2030-04-05T00:00:00"}, ["query", "occurred_after"], "timezone_aware"),
+        (
+            {"occurred_before": "2030-04-05T00:00:00"},
+            ["query", "occurred_before"],
+            "timezone_aware",
+        ),
+        ({"deleted": "only"}, ["query", "deleted"], "value_error"),
+    ],
+)
+def test_feed_rejects_invalid_filters_before_reading_events(
+    api: FastAPI, params: dict[str, str], location: list[str], error: str
+) -> None:
+    # The inverted date range keeps its HTTP row in test_feed_integration.py, through a
+    # real administrator session.
+    database = _SecurityEventDatabase([_make_event()])
+    client = _configure_api(api, user=_user(UserRole.ADMIN), database=database)
+
+    response = client.get("/api/security-events", params=params)
+
+    assert response.status_code == 422
+    assert [(item["loc"], item["type"]) for item in response.json()["detail"]] == [
+        (location, error)
+    ]
+    assert database.items_statement is None

@@ -66,22 +66,13 @@ def test_conjunctive_filters_count_page_and_historical_person_boundaries(event_w
     assert searched.status_code == 200 and searched.json()["pagination"]["total"] == 0
 
 
-@pytest.mark.parametrize(
-    "params",
-    [
-        {"event_type": ""},
-        {"event_type": "x" * 101},
-        {"outcome": "unknown"},
-        {"person_id": "not-a-uuid"},
-        {"occurred_after": "2030-04-05T00:00:00"},
-        {"occurred_before": "2030-04-05T00:00:00"},
-        {"occurred_after": "2030-04-06T00:00:00Z", "occurred_before": "2030-04-05T00:00:00Z"},
-        {"deleted": "only"},
-    ],
-)
-def test_feed_rejects_invalid_filters(event_world, params):
+def test_feed_rejects_invalid_filters(event_world):
+    # The other refused filters are stack-free rows of
+    # tests/security_events/test_api.py::test_feed_rejects_invalid_filters_before_reading_events.
+    params = {"occurred_after": "2030-04-06T00:00:00Z", "occurred_before": "2030-04-05T00:00:00Z"}
     result = event_world.client.get("/api/security-events", params=params)
     assert result.status_code == 422
+    assert result.json() == {"detail": "Security event date range is inverted"}
 
 
 def test_privileged_collection_detail_and_export_are_not_cached(event_world):

@@ -12,7 +12,6 @@ from app.systems.manage.backups import exports, service
 from app.systems.manage.backups.models import BackupExportOperation
 from app.systems.manage.backups.schemas import ExportCleanedCommand, ExportInspectCommand
 
-pytest_plugins = ("tests.backups.test_backup_exports_integration",)
 pytestmark = pytest.mark.integration
 
 

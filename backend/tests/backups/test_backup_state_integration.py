@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.main import create_app
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.platform.scheduling.models import InAppNotification
-from tests.platform_scheduling.test_notification_routes import _client as notice_client
+from tests.platform_scheduling.support import assert_notice_hidden, notification_client
 from tests.rbac.support import _client, add_user
 
 pytestmark = pytest.mark.integration
@@ -449,7 +449,7 @@ def test_reconciled_backup_failure_notifies_authoritative_audience_atomically(
         list(db.scalars(select(InAppNotification).where(InAppNotification.subject_id == run.id)))
     ) == len(expected)
     recipient = requester if audience == "manual" else fallback
-    client = notice_client(db, recipient)
+    client = notification_client(db, recipient)
     page = client.get("/api/notifications?status=unread")
     assert page.status_code == 200, page.text
     item = page.json()["items"][0]
@@ -458,7 +458,4 @@ def test_reconciled_backup_failure_notifies_authoritative_audience_atomically(
     assert client.get("/api/notifications/unread-count").json() == {"unread_count": 1}
     recipient.role = UserRole.MEMBER.value
     db.commit()
-    assert client.get("/api/notifications").json()["items"] == []
-    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
-    assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
-    assert client.post(f"/api/notifications/{notices[0].id}/read").status_code == 404
+    assert_notice_hidden(client, notices[0].id)

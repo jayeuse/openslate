@@ -21,7 +21,7 @@ from app.systems.sandbox.designs.service import (
 from app.systems.sandbox.publications.executor import PublicationError
 from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
-from tests.platform_scheduling.test_notification_routes import _client
+from tests.platform_scheduling.support import notification_client as _client
 from tests.rbac.support import add_user
 from tests.sandbox_publications.support import publish_saved, publishable_document
 

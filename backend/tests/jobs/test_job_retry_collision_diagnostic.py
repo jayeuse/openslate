@@ -8,12 +8,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.main import create_app
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.backups.models import BackupRun
-from tests.jobs.job_route_support import failed_jobs
-from tests.jobs.test_job_routes import _client
+from tests.jobs.job_route_support import committed_client, failed_jobs
 from tests.rbac.support import add_user
+from tests.route_app_support import route_app
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +31,7 @@ def test_backup_retry_isolates_public_preoccupation_and_replays_the_intended_run
         f"job.retry:backup:{original.id}:{external_key}".encode("ascii")
     ).hexdigest()
 
-    with _client(create_app(), admin, db) as client:
+    with committed_client(route_app(), admin, db) as client:
         occupied = client.post(
             "/api/backups",
             json={"name": original.name if same_name else "Unrelated ordinary API backup"},

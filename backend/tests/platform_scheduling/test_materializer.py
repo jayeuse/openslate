@@ -7,7 +7,7 @@ from datetime import UTC, datetime, time
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
@@ -22,6 +22,8 @@ from app.systems.platform.scheduling.models import ScheduledWork
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
+from tests.grant_support import assert_runtime_only_grants
+from tests.platform_scheduling.support import report_scope
 
 
 def test_daily_spring_gap_shifts_forward_then_resumes_local_time():
@@ -95,24 +97,9 @@ def _subject(
 ) -> tuple[User, Report, ReportSchedule, str, Module, Department]:
     # The materializer concerns scheduling; an administrator can always run the report.
     role = "admin"
-    owner = User(
-        email=f"materializer-{uuid7().hex}@example.test",
-        username=f"materializer_{uuid7().hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=role,
+    owner, report, _access, module, department = report_scope(
+        db, label="Materializer", role=role, grant_read=False
     )
-    department = Department(department_name=f"Materializer {uuid7().hex}")
-    db.add_all((owner, department))
-    db.flush()
-    module = Module(
-        department_id=department.id,
-        module_name=f"Materializer {uuid7().hex}",
-    )
-    db.add(module)
-    db.flush()
-    report = Report(module_id=module.id, name="Scheduled", recipe={})
-    db.add(report)
-    db.flush()
     schedule = ReportSchedule(
         report_id=report.id,
         enabled=True,
@@ -300,21 +287,7 @@ def test_unavailable_report_or_source_disables_policy_without_enqueuing(
 def test_report_schedule_table_grants_runtime_access_and_blocks_provider_roles(
     integration_owner_db,
 ):
-    connection = integration_owner_db.connection()
-    statement = text("SELECT has_table_privilege(:role, 'public.report_schedules', :privilege)")
-    for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-        assert connection.scalar(
-            statement,
-            {"role": "openslate_runtime", "privilege": privilege},
-        ) is True
-        for role in ("anon", "authenticated", "service_role"):
-            assert (
-                connection.scalar(
-                    statement,
-                    {"role": role, "privilege": privilege},
-                )
-                is False
-            )
+    assert_runtime_only_grants(integration_owner_db.connection(), "public.report_schedules")
 
 
 @pytest.mark.integration

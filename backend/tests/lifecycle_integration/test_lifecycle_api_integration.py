@@ -1,13 +1,12 @@
 import os
 from collections.abc import Callable
 from secrets import token_urlsafe
-from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
@@ -21,6 +20,10 @@ from app.systems.sandbox.modules.models import Module
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
 from tests.conftest import _assert_alembic_head, _guard_integration_database
 from tests.conftest import guarded_create_engine as create_engine
+from tests.lifecycle_integration.lifecycle_integration_support import (
+    delete_committed_scope,
+    password_boundary,
+)
 
 CONFIRMATION_PASSWORD = token_urlsafe(32)
 
@@ -97,52 +100,14 @@ def _cleanup(client: LifecycleApiClient) -> None:
     engine = create_engine(owner_url)
     try:
         with engine.begin() as connection:
-            entity_ids = client.created_department_ids | client.created_module_ids
-            if entity_ids or client.request_ids:
-                predicates = []
-                params: dict[str, object] = {
-                    "entity_ids": list(entity_ids),
-                    "request_ids": list(client.request_ids),
-                }
-                if entity_ids:
-                    predicates.append("entity_id IN :entity_ids")
-                if client.request_ids:
-                    predicates.append("request_id IN :request_ids")
-                connection.execute(
-                    text(
-                        "DELETE FROM public.audit_logs WHERE " + " OR ".join(predicates)
-                    ).bindparams(
-                        bindparam("entity_ids", expanding=True),
-                        bindparam("request_ids", expanding=True),
-                    ),
-                    params,
-                )
-            connection.execute(
-                text("DELETE FROM public.lifecycle_rate_limit_failures WHERE actor_id = :id"),
-                {"id": client.actor.id},
+            delete_committed_scope(
+                connection,
+                actor_id=client.actor.id,
+                audit_entity_ids=client.created_department_ids | client.created_module_ids,
+                audit_request_ids=client.request_ids,
+                module_ids=client.created_module_ids,
+                department_ids=client.created_department_ids,
             )
-            connection.execute(
-                text("DELETE FROM public.lifecycle_confirmation_challenges WHERE actor_id = :id"),
-                {"id": client.actor.id},
-            )
-            connection.execute(
-                text("DELETE FROM public.lifecycle_rate_limit_buckets WHERE actor_id = :id"),
-                {"id": client.actor.id},
-            )
-            if client.created_module_ids:
-                connection.execute(
-                    text("DELETE FROM public.modules WHERE id IN :ids").bindparams(
-                        bindparam("ids", expanding=True)
-                    ),
-                    {"ids": list(client.created_module_ids)},
-                )
-            if client.created_department_ids:
-                connection.execute(
-                    text("DELETE FROM public.departments WHERE id IN :ids").bindparams(
-                        bindparam("ids", expanding=True)
-                    ),
-                    {"ids": list(client.created_department_ids)},
-                )
     finally:
         engine.dispose()
         delete_owned_admin(owner_url, client.actor.id)
@@ -190,20 +155,12 @@ def test_registered_close_password_callback_starts_without_request_transaction(
     token = preview.json()["token"]
     observations: list[bool] = []
 
-    class PasswordClient:
-        def __init__(self, _db) -> None:
-            pass
+    def verify() -> UUID:
+        assert client.active_database is not None
+        observations.append(client.active_database.in_transaction())
+        return client.actor.id
 
-        def verify_password(self, _email: str, _password: str) -> UUID:
-            assert client.active_database is not None
-            observations.append(client.active_database.in_transaction())
-            return client.actor.id
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-            PasswordClient,
-        )
+    with password_boundary(verify):
         closed = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
@@ -222,19 +179,11 @@ def test_registered_close_rejects_invalid_confirmation_without_provider_call(
     preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     calls: list[str] = []
 
-    class PasswordClient:
-        def __init__(self, _db) -> None:
-            pass
+    def verify() -> UUID:
+        calls.append("called")
+        return client.actor.id
 
-        def verify_password(self, _email: str, _password: str) -> UUID:
-            calls.append("called")
-            return client.actor.id
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-            PasswordClient,
-        )
+    with password_boundary(verify):
         response = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
@@ -260,20 +209,12 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
 
     observations: list[bool] = []
 
-    class FailingPasswordClient:
-        def __init__(self, _db) -> None:
-            pass
+    def verify() -> UUID:
+        assert client.active_database is not None
+        observations.append(client.active_database.in_transaction())
+        raise LifecyclePasswordServiceUnavailable("provider unavailable")
 
-        def verify_password(self, _email: str, _password: str) -> UUID:
-            assert client.active_database is not None
-            observations.append(client.active_database.in_transaction())
-            raise LifecyclePasswordServiceUnavailable("provider unavailable")
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-            FailingPasswordClient,
-        )
+    with password_boundary(verify):
         failed = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
@@ -284,18 +225,10 @@ def test_registered_close_maps_provider_failure_and_consumed_token_replay(
     assert failed.json()["detail"]["code"] == "password_upstream_unavailable"
     assert observations == [False]
 
-    class PasswordClient:
-        def __init__(self, _db) -> None:
-            pass
+    def verify() -> UUID:
+        return client.actor.id
 
-        def verify_password(self, _email: str, _password: str) -> UUID:
-            return client.actor.id
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-            PasswordClient,
-        )
+    with password_boundary(verify):
         closed = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
@@ -328,23 +261,15 @@ def test_registered_close_rejects_plan_drift_after_provider_success(
     preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     token = preview.json()["token"]
 
-    class PasswordClient:
-        def __init__(self, _db) -> None:
-            pass
+    def verify() -> UUID:
+        with client.engine.begin() as connection:
+            connection.execute(
+                text("UPDATE public.modules SET module_name = :name WHERE id = :id"),
+                {"name": "Assets changed", "id": module_id},
+            )
+        return client.actor.id
 
-        def verify_password(self, _email: str, _password: str) -> UUID:
-            with client.engine.begin() as connection:
-                connection.execute(
-                    text("UPDATE public.modules SET module_name = :name WHERE id = :id"),
-                    {"name": "Assets changed", "id": module_id},
-                )
-            return client.actor.id
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-            PasswordClient,
-        )
+    with password_boundary(verify):
         response = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
@@ -369,24 +294,12 @@ def test_registered_module_purge_succeeds_when_enabled(
     close_preview = client.request("POST", f"/api/modules/{module_id}/close/preview")
     observations: list[bool] = []
 
-    class PasswordClient:
-        def __init__(self, _db) -> None:
-            pass
+    def verify() -> UUID:
+        assert client.active_database is not None
+        observations.append(client.active_database.in_transaction())
+        return client.actor.id
 
-        def verify_password(self, _email: str, _password: str) -> UUID:
-            assert client.active_database is not None
-            observations.append(client.active_database.in_transaction())
-            return client.actor.id
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.router.get_settings",
-            lambda: SimpleNamespace(lifecycle_purge_enabled=True),
-        )
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-            PasswordClient,
-        )
+    with password_boundary(verify, purge_enabled=True):
         closed = client.request(
             "POST",
             f"/api/modules/{module_id}/close",
@@ -427,23 +340,11 @@ def test_registered_purge_refuses_when_disabled_before_provider(
     module_id = client.create_module("API purge off")
     calls: list[str] = []
 
-    class PasswordClient:
-        def __init__(self, _db) -> None:
-            pass
+    def verify() -> UUID:
+        calls.append("called")
+        return client.actor.id
 
-        def verify_password(self, _email: str, _password: str) -> UUID:
-            calls.append("called")
-            return client.actor.id
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.router.get_settings",
-            lambda: SimpleNamespace(lifecycle_purge_enabled=False),
-        )
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-            PasswordClient,
-        )
+    with password_boundary(verify, purge_enabled=False):
         response = client.request("POST", f"/api/modules/{module_id}/purge/preview")
 
     assert response.status_code == 403, response.text

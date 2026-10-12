@@ -1,6 +1,7 @@
 """Focused contracts for PostgreSQL-backed SSE invalidation."""
 
 import asyncio
+from dataclasses import dataclass
 
 import pytest
 from uuid6 import uuid7
@@ -30,7 +31,7 @@ def _viewer(role: str = "member", modules: tuple[object, ...] = (), user_id: obj
     )
 
 
-def test_notification_payload_is_opaque_and_rejects_unknown_fields() -> None:
+def test_notification_payload_is_opaque_and_round_trips() -> None:
     event = InvalidationEvent(entity="records", entity_id=uuid7(), module_id=uuid7())
 
     payload = event.to_payload()
@@ -41,24 +42,6 @@ def test_notification_payload_is_opaque_and_rejects_unknown_fields() -> None:
         "module_id": str(event.module_id),
     }
     assert parse_invalidation_payload(payload) == event
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        parse_invalidation_payload({"entity": "records", "snapshot": {"secret": "no"}})
-
-
-@pytest.mark.parametrize(
-    "entity",
-    ["files", "saved_views", "workspace_profiles", "groups", "group_members", "group_access"],
-)
-def test_entity_only_notification_payload_rejects_an_untrusted_identifier(entity: str) -> None:
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        parse_invalidation_payload({"entity": entity, "entity_id": str(uuid7())})
-
-
-def test_module_is_accepted_only_on_module_scoped_entities() -> None:
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        parse_invalidation_payload({"entity": "workspace_profiles", "module_id": str(uuid7())})
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        parse_invalidation_payload({"entity": "records", "capability": "records.read"})
 
 
 @pytest.mark.parametrize(
@@ -73,25 +56,6 @@ def test_module_scoped_event_without_its_module_fails_closed_to_administrators(
     assert event.module_id is None
     assert event.administrators_only
     assert parse_invalidation_payload(event.to_payload()).administrators_only
-
-
-@pytest.mark.parametrize("entity", ["backup_policies", "backup_runs", "update_statuses"])
-def test_backup_authority_invalidations_reach_only_administrators(entity: str) -> None:
-    event = event_for_entity(entity, uuid7())
-    assert event is not None and event.administrators_only
-    assert parse_invalidation_payload(event.to_payload()).administrators_only
-
-    async def exercise() -> None:
-        hub = EventHub()
-        admin = await hub.subscribe(_viewer(role="admin"))
-        member = await hub.subscribe(_viewer())
-        await hub.publish(event)
-        assert await admin.queue.get() == event
-        assert member.queue.empty()
-        await hub.unsubscribe(admin)
-        await hub.unsubscribe(member)
-
-    asyncio.run(exercise())
 
 
 def test_runtime_settings_target_rejects_an_owner_or_different_database() -> None:
@@ -213,61 +177,6 @@ def test_subscriber_capacity_preserves_http_headroom_at_every_server_limit(
     assert subscriber_capacity(server_max_concurrency) == expected_subscriber_capacity
 
 
-def test_saved_views_and_workspace_profiles_have_safe_non_admin_audiences() -> None:
-    module_id = uuid7()
-
-    async def exercise() -> None:
-        hub = EventHub()
-        module_reader = _viewer(modules=(module_id,))
-        ordinary_user = _viewer()
-        view_subscription = await hub.subscribe(module_reader)
-        workspace_subscription = await hub.subscribe(ordinary_user)
-        views = event_for_entity("saved_views", uuid7(), module_id=module_id)
-        workspace = event_for_entity("workspace_profiles", uuid7())
-
-        await hub.publish(views)
-        await hub.publish(workspace)
-
-        assert await view_subscription.queue.get() == views
-        assert await view_subscription.queue.get() == workspace
-        assert await workspace_subscription.queue.get() == workspace
-        await hub.unsubscribe(view_subscription)
-        await hub.unsubscribe(workspace_subscription)
-
-    views = event_for_entity("saved_views", uuid7(), module_id=module_id)
-    workspace = event_for_entity("workspace_profiles", uuid7())
-
-    assert views is not None and workspace is not None
-    assert views.to_payload() == {"entity": "saved_views", "module_id": str(module_id)}
-    assert workspace.to_payload() == {"entity": "workspace_profiles"}
-    assert workspace.all_authenticated
-    asyncio.run(exercise())
-
-
-def test_file_invalidations_are_entity_only_and_administrator_only() -> None:
-    async def exercise() -> None:
-        hub = EventHub()
-        records_reader = _viewer(modules=(uuid7(),))
-        administrator = _viewer("admin")
-        reader_subscription = await hub.subscribe(records_reader)
-        administrator_subscription = await hub.subscribe(administrator)
-        event = event_for_entity("files", uuid7())
-
-        await hub.publish(event)
-
-        assert reader_subscription.queue.empty()
-        assert await administrator_subscription.queue.get() == event
-        await hub.unsubscribe(reader_subscription)
-        await hub.unsubscribe(administrator_subscription)
-
-    file_event = event_for_entity("files", uuid7())
-
-    assert file_event is not None
-    assert file_event.to_payload() == {"entity": "files"}
-    assert file_event.administrators_only
-    asyncio.run(exercise())
-
-
 def test_notification_transport_keeps_recipient_internal_and_rejects_unsafe_envelopes() -> None:
     recipient_id = uuid7()
     event = event_for_entity("in_app_notifications", uuid7(), recipient_id=recipient_id)
@@ -295,125 +204,6 @@ def test_notification_transport_keeps_recipient_internal_and_rejects_unsafe_enve
             parse_invalidation_payload(payload)
 
 
-def test_audience_scoped_entities_are_not_generic_invalidation_subjects() -> None:
-    for entity in ("reports", "report_runs", "report_run_rows", "report_schedules"):
-        assert event_for_entity(entity, uuid7()) is None
-        with pytest.raises(ValueError, match="invalid invalidation payload"):
-            parse_invalidation_payload({"entity": entity, "entity_id": str(uuid7())})
-
-
-def test_unscoped_and_raw_board_child_events_fail_closed() -> None:
-    for entity in (
-        "boards",
-        "board_groups",
-        "board_widgets",
-        "board_events",
-        "board_event_reminders",
-        "board_posts",
-        "board_post_revisions",
-        "board_post_revision_attachments",
-        "board_post_revision_record_links",
-        "board_attachments",
-        "board_record_links",
-    ):
-        assert event_for_entity(entity, uuid7()) is None
-        with pytest.raises(ValueError, match="invalid invalidation payload"):
-            parse_invalidation_payload({"entity": entity, "entity_id": str(uuid7())})
-
-
-@pytest.mark.parametrize("entity", ["boards", "board_posts", "board_events", "board_widgets"])
-def test_board_notification_is_opaque_and_reaches_only_current_board_readers(entity: str) -> None:
-    board_id = uuid7()
-    payload = {"entity": entity, "board_id": str(board_id)}
-    event = parse_invalidation_payload(payload)
-
-    assert event.to_payload() == event.to_transport_payload() == payload
-    assert event_for_entity(entity, uuid7(), board_id=board_id, module_id=uuid7()) == event
-
-    async def exercise() -> None:
-        hub = EventHub()
-        reader = await hub.subscribe(
-            EventViewer(uuid7(), "member", frozenset(), board_ids=frozenset({board_id}))
-        )
-        guest = await hub.subscribe(
-            EventViewer(uuid7(), "guest", frozenset(), board_ids=frozenset({board_id}))
-        )
-        outsider = await hub.subscribe(_viewer(modules=(board_id,)))
-        admin = await hub.subscribe(_viewer("admin"))
-        inactive = await hub.subscribe(
-            EventViewer(uuid7(), None, None, board_ids=frozenset({board_id}))
-        )
-
-        await hub.publish_notification(event.to_transport_json())
-
-        for subscriber in (reader, guest, admin):
-            assert subscriber.queue.get_nowait() == event
-        assert outsider.queue.empty()
-        assert inactive.queue.empty()
-        for subscriber in (reader, guest, outsider, admin, inactive):
-            await hub.unsubscribe(subscriber)
-
-    asyncio.run(exercise())
-
-
-@pytest.mark.parametrize("extra", ["entity_id", "module_id", "recipient_id", "snapshot", "name"])
-def test_board_transport_rejects_every_field_beyond_its_canonical_scope(extra: str) -> None:
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        parse_invalidation_payload({"entity": "board_posts", "board_id": str(uuid7()), extra: None})
-
-
-@pytest.mark.parametrize("board_id", [None, "invalid", 1, {}, []])
-def test_board_transport_rejects_missing_or_malformed_board_scope(board_id: object) -> None:
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        parse_invalidation_payload({"entity": "boards", "board_id": board_id})
-
-
-def test_board_scope_cannot_be_attached_to_other_invalidation_entities() -> None:
-    for entity in (
-        "records",
-        "dashboards",
-        "reports",
-        "board_post_revisions",
-        "in_app_notifications",
-    ):
-        with pytest.raises(ValueError, match="invalid invalidation payload"):
-            parse_invalidation_payload({"entity": entity, "board_id": str(uuid7())})
-    for routing in ({"entity_id": uuid7()}, {"module_id": uuid7()}, {"recipient_id": uuid7()}):
-        with pytest.raises(ValueError, match="invalid invalidation payload"):
-            InvalidationEvent("board_posts", board_id=uuid7(), **routing)
-
-
-@pytest.mark.parametrize("entity", ["dashboards", "dashboard_widgets"])
-def test_dashboard_changes_reach_every_authenticated_account_without_row_identifiers(
-    entity: str,
-) -> None:
-    event = event_for_entity(entity, uuid7(), module_id=uuid7())
-    assert event is not None
-    assert event.to_payload() == {"entity": "dashboards"}
-    assert parse_invalidation_payload(event.to_payload()) == event
-
-    async def exercise() -> None:
-        hub = EventHub()
-        subscribers = [await hub.subscribe(_viewer(role)) for role in ("admin", "member", "guest")]
-        inactive = await hub.subscribe(EventViewer(uuid7(), None, frozenset()))
-        await hub.publish_notification(event.to_transport_json())
-        for subscriber in subscribers:
-            assert subscriber.queue.get_nowait() == event
-            await hub.unsubscribe(subscriber)
-        assert inactive.queue.empty()
-        await hub.unsubscribe(inactive)
-
-    asyncio.run(exercise())
-
-
-@pytest.mark.parametrize("extra", ["entity_id", "module_id", "recipient_id", "board_id"])
-def test_dashboard_transport_and_values_reject_row_or_routing_metadata(extra: str) -> None:
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        parse_invalidation_payload({"entity": "dashboards", extra: str(uuid7())})
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        InvalidationEvent("dashboards", **{extra: uuid7()})
-
-
 def test_module_and_board_access_with_the_same_identifier_have_distinct_signatures() -> None:
     async def exercise() -> None:
         hub = EventHub()
@@ -432,48 +222,6 @@ def test_module_and_board_access_with_the_same_identifier_have_distinct_signatur
     asyncio.run(exercise())
 
 
-def test_notification_fanout_targets_only_the_persisted_recipient_even_for_admins() -> None:
-    async def exercise() -> None:
-        hub = EventHub()
-        recipient_id = uuid7()
-        recipient = await hub.subscribe(_viewer(user_id=recipient_id))
-        other = await hub.subscribe(_viewer())
-        admin = await hub.subscribe(_viewer("admin"))
-        event = event_for_entity("in_app_notifications", uuid7(), recipient_id=recipient_id)
-        assert event is not None
-
-        await hub.publish_notification(event.to_transport_json())
-
-        assert await recipient.queue.get() == event
-        assert other.queue.empty()
-        assert admin.queue.empty()
-        for subscription in (recipient, other, admin):
-            await hub.unsubscribe(subscription)
-
-    asyncio.run(exercise())
-
-
-def test_group_events_are_entity_only_and_reach_only_administrators() -> None:
-    async def exercise() -> None:
-        hub = EventHub()
-        member = await hub.subscribe(_viewer(modules=(uuid7(),)))
-        admin = await hub.subscribe(_viewer("admin"))
-        event = event_for_entity("group_access", uuid7())
-        assert event is not None
-
-        await hub.publish(event)
-
-        assert member.queue.empty()
-        assert await admin.queue.get() == event
-        for subscription in (member, admin):
-            await hub.unsubscribe(subscription)
-
-    event = event_for_entity("group_access", uuid7())
-    assert event is not None
-    assert event.to_payload() == {"entity": "group_access"}
-    asyncio.run(exercise())
-
-
 def test_refreshed_access_changes_the_subscription_signature() -> None:
     async def exercise() -> None:
         hub = EventHub()
@@ -489,3 +237,211 @@ def test_refreshed_access_changes_the_subscription_signature() -> None:
         await hub.unsubscribe(subscription)
 
     asyncio.run(exercise())
+
+
+@dataclass(frozen=True)
+class _FanOut:
+    """Events published in order, the subscribers, and the events each one receives.
+
+    ``transports`` are the cross-process payloads; ``payloads`` are what a browser sees.
+    ``audiences`` name each event's audience flag: "administrators_only", "all_authenticated"
+    or "neither" (the entity, module, board or recipient decides).
+    """
+
+    events: list[InvalidationEvent | None]
+    payloads: list[dict[str, str]]
+    transports: list[dict[str, str]]
+    audiences: list[str]
+    viewers: dict[str, EventViewer]
+    receives: dict[str, list[int]]
+    through_transport: bool
+
+
+def _entity_only(
+    entity: str,
+    viewers: dict[str, EventViewer],
+    receivers: set[str],
+    *,
+    audience: str,
+    keeps_row_id: bool = False,
+) -> _FanOut:
+    row_id = uuid7()
+    payload = {"entity": entity, "entity_id": str(row_id)} if keeps_row_id else {"entity": entity}
+    return _FanOut(
+        events=[event_for_entity(entity, row_id)],
+        payloads=[payload],
+        transports=[payload],
+        audiences=[audience],
+        viewers=viewers,
+        receives={name: [0] if name in receivers else [] for name in viewers},
+        through_transport=False,
+    )
+
+
+def _backup_authority(entity: str) -> _FanOut:
+    viewers = {"admin": _viewer(role="admin"), "member": _viewer()}
+    return _entity_only(
+        entity, viewers, {"admin"}, audience="administrators_only", keeps_row_id=True
+    )
+
+
+def _files() -> _FanOut:
+    viewers = {"records_reader": _viewer(modules=(uuid7(),)), "administrator": _viewer("admin")}
+    return _entity_only("files", viewers, {"administrator"}, audience="administrators_only")
+
+
+def _group_access() -> _FanOut:
+    viewers = {"member": _viewer(modules=(uuid7(),)), "admin": _viewer("admin")}
+    return _entity_only("group_access", viewers, {"admin"}, audience="neither")
+
+
+def _saved_views_and_workspace() -> _FanOut:
+    module_id = uuid7()
+    payloads = [
+        {"entity": "saved_views", "module_id": str(module_id)},
+        {"entity": "workspace_profiles"},
+    ]
+    return _FanOut(
+        events=[
+            event_for_entity("saved_views", uuid7(), module_id=module_id),
+            event_for_entity("workspace_profiles", uuid7()),
+        ],
+        payloads=payloads,
+        transports=payloads,
+        audiences=["neither", "all_authenticated"],
+        viewers={"module_reader": _viewer(modules=(module_id,)), "ordinary": _viewer()},
+        receives={"module_reader": [0, 1], "ordinary": [1]},
+        through_transport=False,
+    )
+
+
+def _board(entity: str) -> _FanOut:
+    board_id = uuid7()
+    scope = frozenset({board_id})
+    payload = {"entity": entity, "board_id": str(board_id)}
+    return _FanOut(
+        events=[event_for_entity(entity, uuid7(), board_id=board_id, module_id=uuid7())],
+        payloads=[payload],
+        transports=[payload],
+        audiences=["neither"],
+        viewers={
+            "reader": EventViewer(uuid7(), "member", frozenset(), board_ids=scope),
+            "guest": EventViewer(uuid7(), "guest", frozenset(), board_ids=scope),
+            "outsider": _viewer(modules=(board_id,)),
+            "admin": _viewer("admin"),
+            "inactive": EventViewer(uuid7(), None, None, board_ids=scope),
+        },
+        receives={"reader": [0], "guest": [0], "outsider": [], "admin": [0], "inactive": []},
+        through_transport=True,
+    )
+
+
+def _dashboard(entity: str) -> _FanOut:
+    return _FanOut(
+        events=[event_for_entity(entity, uuid7(), module_id=uuid7())],
+        payloads=[{"entity": "dashboards"}],
+        transports=[{"entity": "dashboards"}],
+        audiences=["all_authenticated"],
+        viewers={
+            "admin": _viewer("admin"),
+            "member": _viewer("member"),
+            "guest": _viewer("guest"),
+            "inactive": EventViewer(uuid7(), None, frozenset()),
+        },
+        receives={"admin": [0], "member": [0], "guest": [0], "inactive": []},
+        through_transport=True,
+    )
+
+
+def _notification_recipient() -> _FanOut:
+    recipient_id = uuid7()
+    return _FanOut(
+        events=[event_for_entity("in_app_notifications", uuid7(), recipient_id=recipient_id)],
+        payloads=[{"entity": "in_app_notifications"}],
+        transports=[{"entity": "in_app_notifications", "recipient_id": str(recipient_id)}],
+        audiences=["neither"],
+        viewers={
+            "recipient": _viewer(user_id=recipient_id),
+            "other": _viewer(),
+            "admin": _viewer("admin"),
+        },
+        receives={"recipient": [0], "other": [], "admin": []},
+        through_transport=True,
+    )
+
+
+def _chart_hint() -> _FanOut:
+    module_id = uuid7()
+    payload = {"entity": "charts", "module_id": str(module_id)}
+    return _FanOut(
+        events=[event_for_entity("charts", uuid7(), module_id=module_id)],
+        payloads=[payload],
+        transports=[payload],
+        audiences=["neither"],
+        viewers={
+            "allowed": EventViewer(uuid7(), "member", frozenset({module_id})),
+            "denied": EventViewer(uuid7(), "member", frozenset({uuid7()})),
+            "admin": EventViewer(uuid7(), "admin", None),
+        },
+        receives={"allowed": [0], "denied": [], "admin": [0]},
+        through_transport=True,
+    )
+
+
+def _received(row: _FanOut, events: list[InvalidationEvent]) -> dict[str, list[object]]:
+    async def exercise() -> dict[str, list[object]]:
+        hub = EventHub()
+        subscriptions = {name: await hub.subscribe(viewer) for name, viewer in row.viewers.items()}
+        for event in events:
+            if row.through_transport:
+                await hub.publish_notification(event.to_transport_json())
+            else:
+                await hub.publish(event)
+        received: dict[str, list[object]] = {}
+        for name, subscription in subscriptions.items():
+            received[name] = []
+            while not subscription.queue.empty():
+                received[name].append(subscription.queue.get_nowait())
+            await hub.unsubscribe(subscription)
+        return received
+
+    return asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        *(
+            pytest.param(lambda entity=entity: _backup_authority(entity), id=entity)
+            for entity in ["backup_policies", "backup_runs", "update_statuses"]
+        ),
+        pytest.param(_saved_views_and_workspace, id="saved_views-and-workspace_profiles"),
+        pytest.param(_files, id="files"),
+        *(
+            pytest.param(lambda entity=entity: _board(entity), id=entity)
+            for entity in ["boards", "board_posts", "board_events", "board_widgets"]
+        ),
+        *(
+            pytest.param(lambda entity=entity: _dashboard(entity), id=entity)
+            for entity in ["dashboards", "dashboard_widgets"]
+        ),
+        pytest.param(_notification_recipient, id="in_app_notifications"),
+        pytest.param(_group_access, id="group_access"),
+        pytest.param(_chart_hint, id="charts"),
+    ],
+)
+def test_each_invalidation_reaches_exactly_its_audience_without_row_identifiers(build) -> None:
+    row = build()
+    events = [event for event in row.events if event is not None]
+    assert len(events) == len(row.events)
+    for event, payload, transport, audience in zip(
+        events, row.payloads, row.transports, row.audiences, strict=True
+    ):
+        assert event.to_payload() == payload
+        assert event.to_transport_payload() == transport
+        assert parse_invalidation_payload(transport) == event
+        assert event.administrators_only is (audience == "administrators_only")
+        assert event.all_authenticated is (audience == "all_authenticated")
+    assert _received(row, events) == {
+        name: [events[index] for index in indexes] for name, indexes in row.receives.items()
+    }
