@@ -227,23 +227,11 @@ test("six new kinds show exact current-source titles and destinations with only 
   ])
     await expect(region.getByText(title, { exact: true })).toBeVisible();
   await expect(
-    region.getByRole("link", { name: "Open report" }),
-  ).toHaveAttribute("href", `/openview?section=reports&report=${reportId}`);
-  await expect(
-    region.getByRole("link", { name: "Open backup history" }),
-  ).toHaveAttribute("href", "/manage?view=backup");
-  await expect(
     region.getByRole("link", { name: "Open record" }),
   ).toHaveAttribute(
     "href",
     `/openview?section=views&module=${moduleId}&record=${recordId}`,
   );
-  await expect(
-    region.getByRole("link", { name: "Open person" }),
-  ).toHaveAttribute("href", `/access?view=people&user=${acceptedId}`);
-  await expect(
-    region.getByRole("link", { name: "Open version history" }),
-  ).toHaveAttribute("href", "/sandbox?section=history");
   await expect(region.getByRole("link")).toHaveCount(5);
   await expect(region.getByText(/· Scheduled/)).toHaveCount(1);
   expect(

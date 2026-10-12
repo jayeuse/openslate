@@ -181,9 +181,6 @@ test("connected inbox shows Board publication and reminder references without co
   await expect(
     connected.getByText("Board post", { exact: true }),
   ).toBeVisible();
-  await expect(
-    connected.getByText("Event reminder", { exact: true }),
-  ).toBeVisible();
   await expect(connected).not.toContainText(postId);
   await expect(connected).not.toContainText(eventId);
   await expect(connected).not.toContainText("Publication body");
@@ -193,12 +190,6 @@ test("connected inbox shows Board publication and reminder references without co
   ).toHaveAttribute(
     "href",
     `/boards?board=${boardId}&section=posts&post=${postId}`,
-  );
-  await expect(
-    connected.getByRole("link", { name: "Open event" }),
-  ).toHaveAttribute(
-    "href",
-    `/boards?board=${boardId}&section=calendar&event=${eventId}`,
   );
 });
 

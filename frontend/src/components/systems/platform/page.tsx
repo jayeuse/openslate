@@ -11,30 +11,7 @@ import ImportExport from "./components/import-export";
 import Notifications from "./components/notifications";
 import Search from "./components/search";
 import Files from "./components/files";
-
-const PLATFORM_SECTIONS = {
-  search: "Search",
-  files: "Files",
-  notifications: "Notifications",
-  "import-export": "Import & export",
-  account: "Account",
-} as const;
-
-type PlatformSection =
-  (typeof PLATFORM_SECTIONS)[keyof typeof PLATFORM_SECTIONS];
-
-function platformSectionFromSearch(
-  requestedSection: string | null,
-  hash: string,
-): PlatformSection {
-  if (requestedSection !== null)
-    return Object.hasOwn(PLATFORM_SECTIONS, requestedSection)
-      ? PLATFORM_SECTIONS[requestedSection as keyof typeof PLATFORM_SECTIONS]
-      : "Search";
-  if (hash === "#account") return "Account";
-  if (hash === "#notifications") return "Notifications";
-  return "Search";
-}
+import { platformSectionFromSearch } from "./helpers/platform-section";
 
 export default function Platform() {
   const searchParams = useSearchParams();

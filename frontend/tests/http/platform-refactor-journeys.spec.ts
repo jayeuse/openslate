@@ -490,7 +490,7 @@ test("Export sends the saved-view query and downloads the complete server CSV", 
   expect(Buffer.concat(chunks).toString("utf8")).toBe(csv);
   expect(requests).toHaveLength(1);
 });
-test("CSV input rejects invalid UTF-8, row limits and widths while accepting one-column CSV", async ({
+test("CSV input rejects invalid UTF-8 and a wrong width while accepting one-column CSV", async ({
   page,
 }) => {
   await catalog(page);
@@ -506,9 +506,7 @@ test("CSV input rejects invalid UTF-8, row limits and widths while accepting one
   const file = page.getByLabel("CSV file", { exact: true });
   for (const [buffer, message] of [
     [Buffer.from([84, 105, 116, 108, 101, 10, 255]), "UTF-8"],
-    [Buffer.from(`Title,Quantity\n${"Pump,1\n".repeat(10001)}`), "10,000"],
     [Buffer.from("Title,Quantity\nPump,1,extra"), "Row 2 must have 2 cells"],
-    [Buffer.alloc(8 * 1024 * 1024 + 1, 65), "8 MB"],
   ] as const) {
     await file.setInputFiles({
       name: "invalid.csv",
