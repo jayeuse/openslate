@@ -51,7 +51,7 @@ const rows: {
     status: 429,
     retryAfter: "60",
     parsedRetryAfter: 60,
-    message: "Too many attempts. Try again in 1 minutes.",
+    message: "Too many attempts. Try again in 1 minute.",
   },
   {
     name: "a delay of 61 seconds rounds up to 2 minutes",
@@ -65,7 +65,7 @@ const rows: {
     status: 429,
     retryAfter: "0",
     parsedRetryAfter: 0,
-    message: "Too many attempts. Try again in 1 minutes.",
+    message: "Too many attempts. Try again in 1 minute.",
   },
   {
     name: "no delay",

@@ -5,9 +5,10 @@ export function loginFailureMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 401) {
     return "That email or password is not right.";
   } else if (error instanceof ApiError && error.status === 429) {
-    return error.retryAfter !== undefined
-      ? `Too many attempts. Try again in ${Math.max(1, Math.ceil(error.retryAfter / 60))} minutes.`
-      : "Too many attempts. Try again later.";
+    if (error.retryAfter === undefined)
+      return "Too many attempts. Try again later.";
+    const minutes = Math.max(1, Math.ceil(error.retryAfter / 60));
+    return `Too many attempts. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`;
   } else if (error instanceof ApiError && error.status === 503) {
     return "Sign-in is not available now. Try again later.";
   } else if (
