@@ -30,3 +30,15 @@ Do not add `pragma: no mutate`. It hides a mutant instead of explaining it.
 ## app/systems/access/policy/scope.py
 
 - `_resolve`, the group-row and module-department SELECT statements and the active-account check: 70 mutants — stack-owned: `tests/access/test_scope_integration.py` and the access stack batch own the reads and rule 2; `tests/access/test_access_fold.py` owns rules 1 and 3 to 6 (every `_fold_access` mutant is killed).
+
+## app/systems/sandbox/fields/validation.py
+
+- `_canonical_decimal`, `fractional_part.rstrip("0")` changed to `rstrip("XX0XX")`: 1 mutant — equivalent: `_DECIMAL_PATTERN` admits only digits, so stripping `X` as well as `0` changes nothing.
+- `_validate_date`, `datetime_values=False` changed to `None`: 1 mutant — equivalent: `date_in_range` only tests the flag for truth, and `None` is false like `False`.
+- `_validate_decimal`, the `"minimum"` and `"maximum"` labels passed to `_canonical_decimal` for the bounds: 6 mutants — equivalent: the `except (InvalidOperation, ValueError)` at the bound parse discards the label message and raises "has invalid decimal configuration" instead.
+- `_validate_email` and `_validate_url`, `cast(str, value)` changed to `cast(None, value)`: 2 mutants — type-only: `cast` returns its second argument unchanged.
+- `_numeric_config`, the second finite check of `defaultValue` (lines 85 and 86): 4 mutants — unreachable default: the key loop at lines 62 to 66 already refuses a non-finite `defaultValue` with the same message. Dead code, listed for the owner.
+- `_decimal_config`, the `except InvalidOperation` around the bound comparison (lines 121, 124 and 125): 4 mutants — unreachable default: both bounds are already canonical decimal strings from `_canonical_decimal`, and `Decimal` never refuses one. Dead code, listed for the owner.
+- `_validate_decimal`, the `except InvalidOperation` around `Decimal(canonical)` (lines 324 to 327): 1 mutant — unreachable default: same reason. Dead code, listed for the owner.
+- `_numeric_config`, `key == "defaultValue" and config[key] is None` changed to `or`: 1 mutant — unreachable default: the mutant only changes the outcome for a `None` minimum, maximum or step, and the publish path drops `None` values before `field_config` (`publications/rules.py`, the `present` filter); for a non-finite `defaultValue` the later check raises the same message.
+- `_numeric_config`, the `continue` after a `None` `defaultValue` changed to `break`: 1 mutant — unreachable default (unreachable in a deterministic test; no listed class fits, parent decision pending): it changes behavior only when string-set iteration puts `defaultValue` before a malformed key, and that order follows the per-process hash seed, so a test that kills it is flaky. The `None` default and each malformed key are covered alone in `tests/catalog/test_fields.py`.

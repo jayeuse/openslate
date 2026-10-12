@@ -12,6 +12,7 @@ from uuid6 import uuid7
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.fields.validation import (
     field_config,
+    parse_field_key,
     validate_field_value,
     validate_record_data,
 )
@@ -70,6 +71,8 @@ def test_required_text_record_values_reject_null_and_empty(value: object) -> Non
         validate_record_mutation({str(field.id): value}, {}, [field])
 
     assert [issue.code for issue in raised.value.issues] == ["required_field"]
+    with pytest.raises(ValueError, match=f"^Field {field.id} is required$"):
+        validate_field_value(field, value)
 
 
 def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
@@ -262,6 +265,17 @@ def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
         (FieldType.DECIMAL, {"minimum": "2"}, "1", "below its minimum"),
         (FieldType.DECIMAL, {"minimum": 0}, "1", "invalid decimal configuration"),
         (FieldType.SELECT, {}, "open", "configured options"),
+        (FieldType.NUMBER, {"step": 0}, 1, "invalid numeric configuration"),
+        (FieldType.NUMBER, {"step": -1}, 1, "invalid numeric configuration"),
+        (FieldType.TEXT, {"minLength": True}, "ab", "invalid text configuration"),
+        (FieldType.TEXT, {"maxLength": True}, "ab", "invalid text configuration"),
+        (FieldType.DATE, {"earliest": "bad"}, "2026-01-15", "invalid date configuration"),
+        (
+            FieldType.DATE,
+            {"earliest": "2026-02-01", "latest": "2026-01-01"},
+            "2026-01-15",
+            "invalid date configuration",
+        ),
     ],
 )
 def test_record_validation_rejects_malformed_persisted_field_configuration(
@@ -291,6 +305,17 @@ def test_record_data_validation_rejects_unknown_relationship_and_missing_require
     with pytest.raises(ValueError, match="is required"):
         validate_record_data({}, [required, relationship])
     validate_record_data({str(required.id): "present"}, [required, relationship])
+    with pytest.raises(ValueError, match=f"^Field {required.id} is required$"):
+        validate_record_data({}, [relationship, required])
+    optional = make_field(module_id, FieldType.INTEGER)
+    validate_record_data({str(required.id): "present"}, [relationship, required, optional])
+    with pytest.raises(ValueError, match=f"^Field {optional.id} must be an integer$"):
+        validate_record_data(
+            {str(required.id): "present", str(optional.id): "1"},
+            [relationship, required, optional],
+        )
+    with pytest.raises(ValueError, match="^Invalid field key: not-a-field-id$"):
+        parse_field_key("not-a-field-id")
 
 
 def test_record_mutation_aggregates_errors_and_normalizes_active_values() -> None:
@@ -341,6 +366,51 @@ def test_record_mutation_caps_deterministic_errors() -> None:
     assert [str(issue.field_id) for issue in first.value.issues] == [
         str(issue.field_id) for issue in raised.value.issues
     ]
+
+
+USER_ID = "0192f0c4-6b1e-7c3a-9d2e-4f5a6b7c8d9e"
+
+
+@pytest.mark.parametrize(
+    ("field_type", "config", "value"),
+    [
+        (FieldType.NUMBER, {"maximum": 1}, 1),
+        (FieldType.NUMBER, {"step": 0.5}, 1.5),
+        (FieldType.NUMBER, {"step": 2}, 4),
+        (FieldType.TEXT, {"minLength": 2}, "ab"),
+        (FieldType.EMAIL, {}, "ops@example.test"),
+        (FieldType.EMAIL, {}, ""),
+        (FieldType.URL, {}, "https://example.test/path"),
+        (FieldType.URL, {}, ""),
+        (FieldType.USER, {}, USER_ID),
+    ],
+)
+def test_record_values_on_their_limits_are_accepted_unchanged(
+    field_type: FieldType, config: dict[str, object], value: object
+) -> None:
+    field = make_field(uuid7(), field_type, config=config)
+
+    assert validate_field_value(field, value) == value
+
+
+@pytest.mark.parametrize(
+    ("field_type", "value", "message"),
+    [
+        (FieldType.NUMBER, "1", "must be a number"),
+        (FieldType.EMAIL, "not-an-email", "must be an email address"),
+        (FieldType.URL, "ftp://example.test", "must be an http or https URL"),
+        (FieldType.USER, 5, "must be a user ID"),
+        (FieldType.USER, "not-a-user", "must be a user ID"),
+        (FieldType.USER, USER_ID.upper(), "must be a user ID"),
+    ],
+)
+def test_record_values_of_the_wrong_kind_are_refused(
+    field_type: FieldType, value: object, message: str
+) -> None:
+    field = make_field(uuid7(), field_type)
+
+    with pytest.raises(ValueError, match=f"^Field {field.id} {message}$"):
+        validate_field_value(field, value)
 
 
 # The message each field type raises for the shared fixture's "invalid" value.
