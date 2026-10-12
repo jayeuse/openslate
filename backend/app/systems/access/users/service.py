@@ -322,7 +322,7 @@ def resend_invitation(
             profile is None
             or profile.is_deleted
             or profile.status != UserStatus.PENDING.value
-            or getattr(profile, "invitation_accepted_at", None) is not None
+            or profile.invitation_accepted_at is not None
             or profile.supabase_user_id is None
             or profile.provider_invitation_operation_id is None
         ):
@@ -381,7 +381,7 @@ def reconcile_invitation(
             profile is None
             or profile.is_deleted
             or profile.status != UserStatus.PENDING.value
-            or getattr(profile, "invitation_accepted_at", None) is not None
+            or profile.invitation_accepted_at is not None
             or profile.provider_invitation_operation_id is None
         ):
             raise InvitationError("Invitation is not pending")
