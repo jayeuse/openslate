@@ -364,7 +364,7 @@ def change_password(
                 )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
-        locked = db.get(User, user.id, with_for_update=True)
+        locked = db.get(User, user.id, with_for_update=True, populate_existing=True)
         if (
             locked is None
             or locked.supabase_user_id != temporary.user_id

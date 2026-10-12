@@ -8,10 +8,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import app.systems.access.auth.router as auth_router
 from app.core.config import get_settings
+from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import User, UserStatus
 
 pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
@@ -153,3 +155,56 @@ def test_password_change_retains_current_and_revokes_other_provider_sessions(pro
     finally:
         for client in clients:
             client.close()
+
+
+def test_an_account_disabled_after_the_provider_grant_keeps_its_password(
+    provider_account, monkeypatch: pytest.MonkeyPatch
+):
+    email, old_password, provider_id, local_user_id, owner = provider_account
+    with Session(owner) as db:
+        user = db.get(User, local_user_id)
+        assert user is not None
+        user.supabase_user_id = provider_id
+        db.commit()
+    browser = _browser_client(str(get_settings().public_origin))
+    real = get_supabase_auth_client()
+    raced: list[bool] = []
+
+    class DisableAfterGrant:
+        """The real provider client; an administrator disables the account right after
+        the provider accepts the current password, before the change locks the profile."""
+
+        def __getattr__(self, name: str):
+            return getattr(real, name)
+
+        def password_grant(self, grant_email: str, password: str):
+            tokens = real.password_grant(grant_email, password)
+            with Session(owner) as db:
+                target = db.get(User, local_user_id)
+                assert target is not None
+                target.status = UserStatus.DISABLED.value
+                db.commit()
+            raced.append(True)
+            return tokens
+
+    try:
+        login = browser.post("/api/auth/login", json={"email": email, "password": old_password})
+        assert login.status_code == 200, login.text
+        csrf = browser.cookies.get("openslate_csrf")
+        assert csrf is not None
+        monkeypatch.setattr(auth_router, "get_supabase_auth_client", DisableAfterGrant)
+
+        changed = browser.post(
+            "/api/auth/password/change",
+            json={"current_password": old_password, "password": token_urlsafe(32)},
+            headers={"X-CSRF-Token": csrf},
+        )
+
+        assert raced == [True]
+        assert changed.status_code == 403
+        assert changed.json() == {"detail": "Password cannot be changed"}
+        # The provider still holds the old password.
+        tokens = real.password_grant(email, old_password)
+        real.sign_out(tokens.access_token, scope="local")
+    finally:
+        browser.close()
