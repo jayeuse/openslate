@@ -5,6 +5,7 @@ no group, with ``read`` or with ``write``, and a guest in a ``manage`` group, ca
 never create, change or delete Dashboards, Views, Reports or schedules.
 """
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -18,7 +19,7 @@ from app.systems.openview.reports.router import router as reports_router
 from app.systems.openview.reports.schedule_router import router as schedule_router
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.router import router as views_router
-from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.openview_access.support import (
     Area,
@@ -223,11 +224,18 @@ def test_making_a_view_the_default_clears_the_previous_default(
 
     db = integration_owner_db
     area = new_area(db)
-    client = route_client(db, _actor(db, area, "manage"), views_router)
+    manager = _actor(db, area, "manage")
+    client = route_client(db, manager, views_router)
     first = client.post("/api/views", json=view_payload(area, "All", is_default=True)).json()
     second = client.post("/api/views", json=view_payload(area, "Low stock")).json()
+    third = client.post("/api/views", json=view_payload(area, "Overdue")).json()
+    # Another module's default is not this module's default.
+    other_area = new_area(db)
+    make_group_access(db, [manager], other_area.department, level=AccessLevel.MANAGE)
+    other = client.post("/api/views", json=view_payload(other_area, "All", is_default=True)).json()
     assert first["is_default"] is True
     assert second["is_default"] is False
+    assert other["is_default"] is True
 
     promoted = client.patch(
         f"/api/views/{second['id']}", json={"revision": second["revision"], "is_default": True}
@@ -244,6 +252,61 @@ def test_making_a_view_the_default_clears_the_previous_default(
     reread = client.get(f"/api/views/{first['id']}").json()
     assert reread["is_default"] is False
     assert reread["revision"] == first["revision"] + 1
+    untouched = client.get(f"/api/views/{third['id']}").json()
+    assert (untouched["is_default"], untouched["revision"]) == (False, 1)
+    other_reread = client.get(f"/api/views/{other['id']}").json()
+    assert (other_reread["is_default"], other_reread["revision"]) == (True, 1)
+
+
+def test_view_on_a_closed_module_is_refused(integration_owner_db: Session) -> None:
+    db = integration_owner_db
+    area = new_area(db)
+    new_area(db)  # Another active module exists.
+    area.module.is_deleted = True
+    area.module.deleted_at = datetime.now(UTC)
+    db.flush()
+    client = route_client(db, _actor(db, area, "admin"), views_router)
+
+    response = client.post("/api/views", json=view_payload(area, "Low stock"))
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "view_invalid",
+        "message": "The module is unavailable",
+    }
+    assert db.scalars(select(SavedView.id).where(SavedView.module_id == area.module.id)).all() == []
+
+
+def test_view_presentation_may_name_some_of_the_module_fields(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    area = new_area(db)
+    db.add(
+        Field(
+            module_id=area.module.id,
+            name="Owner",
+            type=FieldType.TEXT,
+            required=False,
+            position=1,
+            config={},
+        )
+    )
+    db.flush()
+    client = route_client(db, _actor(db, area, "manage"), views_router)
+    payload = view_payload(area, "Low stock") | {
+        "presentation": {
+            "version": 1,
+            "layout": "table",
+            "column_field_ids": [str(area.field.id)],
+            "pinned_field_ids": [],
+        }
+    }
+
+    response = client.post("/api/views", json=payload)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["presentation"]["column_field_ids"] == [str(area.field.id)]
 
 
 def test_removed_view_audience_and_default_routes_are_gone(integration_owner_db: Session) -> None:

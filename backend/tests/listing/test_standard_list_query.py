@@ -45,8 +45,20 @@ def test_list_query_escapes_search_and_counts_before_pagination() -> None:
     assert all(keyword not in count_sql for keyword in ("ORDER BY", "LIMIT", "OFFSET"))
 
 
-@pytest.mark.parametrize("params", [{"search": "alpha"}, {"deleted": "only"}])
-def test_unsupported_list_filters_return_422(params: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    ("params", "parameter", "message"),
+    [
+        ({"search": "alpha"}, "search", "This endpoint does not support search"),
+        (
+            {"deleted": "only"},
+            "deleted",
+            "This endpoint does not support deleted record filtering",
+        ),
+    ],
+)
+def test_unsupported_list_filters_return_422(
+    params: dict[str, str], parameter: str, message: str
+) -> None:
     spec = ListQuerySpec(
         sort_fields={DepartmentSortField.NAME: Department.department_name},
         default_sort=DepartmentSortField.NAME,
@@ -59,6 +71,66 @@ def test_unsupported_list_filters_return_422(params: dict[str, str]) -> None:
             spec,
         )
     assert error.value.status_code == 422
+    # The same shape as a FastAPI request validation error.
+    assert error.value.detail == [
+        {"loc": ["query", parameter], "msg": message, "type": "value_error"}
+    ]
+
+
+def _department_spec() -> ListQuerySpec[DepartmentSortField]:
+    return ListQuerySpec(
+        sort_fields={DepartmentSortField.NAME: Department.department_name},
+        default_sort=DepartmentSortField.NAME,
+        tie_breaker=Department.id,
+        deleted_field=Department.is_deleted,
+    )
+
+
+def test_default_list_hides_deleted_rows_sorts_ascending_and_counts_every_match() -> None:
+    items, count = build_standard_list_statements(
+        select(Department),
+        StandardListRequest[DepartmentSortField](limit=10, offset=20),
+        _department_spec(),
+    )
+
+    item_sql = str(
+        items.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+    assert "WHERE departments.is_deleted IS false" in item_sql
+    assert (
+        "ORDER BY departments.department_name ASC NULLS LAST, departments.id ASC NULLS LAST"
+        in item_sql
+    )
+    assert item_sql.endswith("LIMIT 10 OFFSET 20")
+    count_sql = str(count.compile(dialect=postgresql.dialect()))
+    assert count_sql.startswith("SELECT count(*) AS count_1")
+
+
+def test_an_empty_list_reports_a_total_of_zero() -> None:
+    from app.common.listing.query import execute_standard_list
+    from app.common.listing.schemas import PaginationMetadata
+
+    class EmptyResultSession:
+        def scalar(self, _statement: object) -> int:
+            return 0
+
+        def scalars(self, _statement: object) -> "EmptyResultSession":
+            return self
+
+        def all(self) -> list[Department]:
+            return []
+
+    result = execute_standard_list(
+        EmptyResultSession(),
+        select(Department),
+        StandardListRequest[DepartmentSortField](),
+        _department_spec(),
+    )
+
+    assert result.items == []
+    assert result.pagination == PaginationMetadata(
+        limit=25, offset=0, count=0, total=0, has_more=False
+    )
 
 
 def _like_pattern(search: str) -> str:

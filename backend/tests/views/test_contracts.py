@@ -178,3 +178,98 @@ def test_view_mutation_rejects_owner_audience_and_empty_patch():
         ViewUpdate(revision=1)
     with pytest.raises(ValidationError):
         ViewUpdate.model_validate({"revision": 1, "visibility": "workspace"})
+
+
+def _admin() -> User:
+    # An administrator needs no database lookup for the module level.
+    return User(id=uuid7(), status="active", role="admin", is_deleted=False)
+
+
+class _NoRowSession:
+    def scalar(self, _statement: object) -> None:
+        return None
+
+
+def test_missing_or_hidden_view_reads_as_not_found() -> None:
+    from app.systems.openview.views.router import read_view
+
+    with pytest.raises(HTTPException) as error:
+        read_view(uuid7(), _admin(), _NoRowSession())
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "View not found"
+
+
+def test_view_change_on_an_unavailable_module_is_refused() -> None:
+    from app.systems.openview.views.router import _active_module
+
+    with pytest.raises(HTTPException) as error:
+        _active_module(_NoRowSession(), uuid7())
+
+    assert error.value.status_code == 409
+    assert error.value.detail == {"code": "view_invalid", "message": "The module is unavailable"}
+
+
+def test_constraint_failure_on_save_rolls_back_and_reports_view_invalid() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from app.systems.openview.views.router import commit
+
+    class RefusingSession:
+        rolled_back = False
+
+        def commit(self) -> None:
+            raise IntegrityError("INSERT", {}, Exception("uq_saved_views_module_default"))
+
+        def rollback(self) -> None:
+            self.rolled_back = True
+
+    session = RefusingSession()
+    with pytest.raises(HTTPException) as error:
+        commit(session)
+
+    assert session.rolled_back is True
+    assert error.value.status_code == 409
+    assert error.value.detail == {"code": "view_invalid", "message": "Unable to save view"}
+
+
+@pytest.mark.parametrize(
+    ("column_deleted", "refused"),
+    [
+        pytest.param(False, False, id="every referenced field is active"),
+        pytest.param(True, True, id="a query column names a deleted field"),
+    ],
+)
+def test_saved_view_definition_refuses_a_deleted_field(column_deleted: bool, refused: bool) -> None:
+    from app.systems.openview.views.router import _validate_definition
+    from app.systems.sandbox.fields.models import Field, FieldType
+    from app.systems.sandbox.modules.models import Module
+    from app.systems.sandbox.records.query_schemas import FieldReference, QueryDefinition
+
+    module = Module(id=uuid7())
+    active = Field(id=uuid7(), module_id=module.id, type=FieldType.TEXT, is_deleted=False)
+    column = Field(id=uuid7(), module_id=module.id, type=FieldType.TEXT, is_deleted=column_deleted)
+
+    class ModuleFieldSession:
+        def get(self, model: type, ident: object) -> object:
+            return module if model is Module and ident == module.id else None
+
+        def scalars(self, _statement: object) -> list[Field]:
+            return [active, column]
+
+    definition = QueryDefinition(
+        columns=[FieldReference(field_id=column.id, expected_type="text")],
+        sort=[{"field_id": active.id, "expected_type": "text", "direction": "asc"}],
+    )
+
+    session = ModuleFieldSession()
+    if not refused:
+        _validate_definition(session, _admin(), module.id, definition)
+        return
+    with pytest.raises(HTTPException) as error:
+        _validate_definition(session, _admin(), module.id, definition)
+    assert error.value.status_code == 409
+    assert error.value.detail == {
+        "code": "view_invalid",
+        "message": "A referenced field is no longer active",
+    }

@@ -4,6 +4,7 @@
 ``date_trunc`` grouping, the workspace week anchor and the time zones.
 """
 
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -17,6 +18,8 @@ from app.systems.sandbox.records.query_schemas import DateSeriesAggregateQuery
 from tests.property_support import PROPERTY
 
 _WEEKDAY = {"monday": 0, "sunday": 6}
+_REVERSED = "Date series end must not precede its start"
+_TOO_MANY = "Date series must contain at most 366 calendar buckets"
 
 
 @pytest.mark.parametrize(
@@ -34,6 +37,7 @@ _WEEKDAY = {"monday": 0, "sunday": 6}
             ["2026-07-01", "2026-10-01", "2027-01-01"],
         ),
         ("year", "monday", "2026-12-31", "2027-01-01", ["2026-01-01", "2027-01-01"]),
+        ("day", "monday", "9999-12-30", "9999-12-31", ["9999-12-30", "9999-12-31"]),
     ],
 )
 def test_buckets_start_on_their_calendar_boundary(bucket, week_start, from_date, to_date, expected):
@@ -81,6 +85,59 @@ def test_a_sunday_week_before_the_first_supported_day_is_refused():
 def test_a_reversed_window_is_refused():
     with pytest.raises(ValueError, match="must not precede its start"):
         calendar_buckets(date(2026, 10, 2), date(2026, 10, 1), "day")
+
+
+# The route sends these messages as ``aggregate_date_range_invalid`` (aggregation.py).
+@pytest.mark.parametrize(
+    "bucket,week_start,from_date,to_date,message",
+    [
+        (
+            "week",
+            "sunday",
+            date.min,
+            date.min,
+            "The calendar bucket starts before the supported date range",
+        ),
+        ("day", "monday", date(2026, 10, 2), date(2026, 10, 1), _REVERSED),
+        ("month", "monday", date(2020, 1, 31), date(2050, 7, 1), _TOO_MANY),
+    ],
+)
+def test_refused_windows_name_their_rule(bucket, week_start, from_date, to_date, message):
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+        calendar_buckets(from_date, to_date, bucket, week_start)
+
+
+def _weekly_series(from_date: str, to_date: str) -> DateSeriesAggregateQuery:
+    return DateSeriesAggregateQuery(
+        module_id=uuid7(),
+        definition={},
+        date_field={"field_id": uuid7(), "expected_type": "date"},
+        bucket="week",
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+
+# The schema has no workspace, so it accepts a weekly window that one anchor allows;
+# the service checks the workspace anchor (test_aggregate_buckets.py on PostgreSQL).
+@pytest.mark.parametrize(
+    "from_date,to_date",
+    [
+        # 366 Sunday weeks, but 367 Monday weeks.
+        pytest.param("2033-10-09", "2040-10-13", id="legal for a Sunday anchor only"),
+        # A Sunday week would start before 0001-01-01.
+        pytest.param("0001-01-01", "0001-01-03", id="legal for a Monday anchor only"),
+    ],
+)
+def test_weekly_schema_accepts_a_window_that_one_anchor_allows(from_date, to_date):
+    assert _weekly_series(from_date, to_date).bucket == "week"
+
+
+def test_weekly_schema_refusal_reports_the_monday_anchor_rule():
+    # Monday: 367 buckets; Sunday: starts before the first supported day.
+    with pytest.raises(ValidationError) as error:
+        _weekly_series("0001-01-01", "0010-01-01")
+    assert [item["msg"] for item in error.value.errors()] == [f"Value error, {_TOO_MANY}"]
 
 
 def _contains(start: date, day: date, bucket: str, week_start: str) -> bool:
