@@ -1,13 +1,11 @@
 import type {
-  AccessGroup,
   AccessInvitationSettings,
   AccessInvitationSettingsPatch,
-  AccessUser,
 } from "../state/api-contracts";
-import { groupsOf, personState } from "./people";
 
-// Pure rules for the Access overview: the health counts and the invitation
-// settings form. Each count matches the People or Groups view its card opens.
+// Pure rules for the Access overview: the health count shape and the
+// invitation settings form. Each count matches the People or Groups view its
+// card opens.
 
 export type OverviewHealth = {
   /** Active administrators. One or none leaves nobody to step in. */
@@ -21,33 +19,6 @@ export type OverviewHealth = {
   /** Invitations sent and not accepted, not revoked. */
   pendingInvitations: number;
 };
-
-export function overviewHealth(
-  users: readonly AccessUser[],
-  groups: readonly AccessGroup[],
-  now: number,
-): OverviewHealth {
-  const current = users
-    .map((user) => ({ user, state: personState(user, now) }))
-    .filter(({ state }) => state.id !== "deleted");
-  return {
-    administrators: current.filter(
-      ({ user, state }) => user.role === "admin" && state.id === "active",
-    ).length,
-    withoutGroup: current.filter(
-      ({ user }) =>
-        user.role !== "admin" && groupsOf(user.id, groups).length === 0,
-    ).length,
-    groupsWithoutAccess: groups.filter((group) => group.access.length === 0)
-      .length,
-    groupsWithoutMembers: groups.filter(
-      (group) => group.member_ids.length === 0,
-    ).length,
-    guestsEndingSoon: current.filter(({ state }) => state.expiresSoon).length,
-    pendingInvitations: current.filter(({ state }) => state.id === "pending")
-      .length,
-  };
-}
 
 // Invitation settings
 

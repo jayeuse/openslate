@@ -207,6 +207,8 @@ W7 adds a personal start page. After W7, `workspaceStartRoute()` reads it first.
 | `userSessionsOptions` (`:127-136`) | `GET /users/{id}/sessions` | `person-sessions.tsx:46` |
 | `libraryDepartmentsOptions` (`platform/adapters/platform-queries.ts:51-65`) | `GET /departments` | `platform/components/files.tsx:128` |
 
+Update (2026-10-13): `memberCandidateListOptions`, `departmentListOptions` and `moduleListOptions` later lost every consumer. Member candidates are read through `people-picker-queries.ts` and `use-people-search.ts`, departments and modules through `use-access-catalog.ts`. Item 25 of `test-suite-tier-2-5.md` deleted the three options.
+
 Other loops:
 
 - `openview/adapters/departments-api.ts:41-58` (10 pages).

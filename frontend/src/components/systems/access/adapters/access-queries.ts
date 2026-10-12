@@ -20,10 +20,7 @@ import {
   getAccessInvitationSettings,
   getAccessUserAccess,
   getAccessUserSummary,
-  listAccessDepartments,
   listAccessGroups,
-  listAccessMemberCandidates,
-  listAccessModules,
   listAccessUserSessions,
   listAccessUsers,
   type AccessDeletedFilter,
@@ -171,50 +168,6 @@ export const groupListOptions = (
         limit: 25,
         offset: 0,
         sort_by: "name",
-        ...request,
-        deleted,
-        signal,
-      }),
-  });
-
-/** A bounded search or selected-ID lookup within the manager boundary. */
-export const memberCandidateListOptions = (
-  request: AccessMemberCandidateListOptions = {},
-) =>
-  queryOptions({
-    queryKey: accessKeys.memberCandidatePage(request),
-    queryFn: ({ signal }) =>
-      listAccessMemberCandidates({ limit: 25, offset: 0, ...request, signal }),
-  });
-
-export const departmentListOptions = (
-  deleted: AccessDeletedFilter,
-  request: AccessDepartmentListOptions = {},
-) =>
-  queryOptions({
-    queryKey: accessKeys.departments(deleted, request),
-    queryFn: ({ signal }) =>
-      listAccessDepartments({
-        limit: 25,
-        offset: 0,
-        sort_by: "department_name",
-        ...request,
-        deleted,
-        signal,
-      }),
-  });
-
-export const moduleListOptions = (
-  deleted: AccessDeletedFilter,
-  request: AccessModuleListOptions = {},
-) =>
-  queryOptions({
-    queryKey: accessKeys.modules(deleted, request),
-    queryFn: ({ signal }) =>
-      listAccessModules({
-        limit: 25,
-        offset: 0,
-        sort_by: "module_name",
         ...request,
         deleted,
         signal,

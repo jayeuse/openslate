@@ -3,81 +3,8 @@ import { expect, test } from "@playwright/test";
 import {
   invitationSettingsErrors,
   invitationSettingsPatch,
-  overviewHealth,
 } from "../../../src/components/systems/access/helpers/overview";
 import { directoryFiltersFromParams } from "../../../src/components/systems/access/helpers/people";
-import type {
-  AccessGroup,
-  AccessUser,
-} from "../../../src/components/systems/access/state/api-contracts";
-import { group, user } from "./fixtures";
-
-const DAY = 86_400_000;
-const now = Date.parse("2026-09-28T12:00:00Z");
-const base = { ...user, sponsor_user_id: null, expires_at: null } as AccessUser;
-let next = 0;
-function person(fields: Partial<AccessUser>): AccessUser {
-  next += 1;
-  const id = `00000000-0000-4000-8000-${String(next).padStart(12, "0")}`;
-  return { ...base, id, username: `user${next}`, role: "member", ...fields };
-}
-
-const admin = person({ role: "admin" });
-const disabledAdmin = person({ role: "admin", status: "disabled" });
-const grouped = person({});
-const loose = person({});
-const pending = person({ status: "pending" });
-const deleted = person({
-  is_deleted: true,
-  deleted_at: "2026-09-01T00:00:00Z",
-});
-const endingGuest = person({
-  role: "guest",
-  expires_at: new Date(now + 3 * DAY).toISOString(),
-});
-const laterGuest = person({
-  role: "guest",
-  expires_at: new Date(now + 40 * DAY).toISOString(),
-});
-const endedGuest = person({
-  role: "guest",
-  expires_at: new Date(now - DAY).toISOString(),
-});
-const users = [
-  admin,
-  disabledAdmin,
-  grouped,
-  loose,
-  pending,
-  deleted,
-  endingGuest,
-  laterGuest,
-  endedGuest,
-];
-const groups: AccessGroup[] = [
-  {
-    ...(group as AccessGroup),
-    id: "00000000-0000-4000-8000-0000000000a1",
-    member_ids: [grouped.id, endingGuest.id, laterGuest.id],
-  },
-  {
-    ...(group as AccessGroup),
-    id: "00000000-0000-4000-8000-0000000000a2",
-    member_ids: [],
-    access: [],
-  },
-];
-
-test("health counts what needs attention, leaving deleted people out", () => {
-  const health = overviewHealth(users, groups, now);
-  expect(health.administrators).toBe(1);
-  // Members and guests with no group: loose, pending and the ended guest.
-  expect(health.withoutGroup).toBe(3);
-  expect(health.groupsWithoutAccess).toBe(1);
-  expect(health.groupsWithoutMembers).toBe(1);
-  expect(health.guestsEndingSoon).toBe(1);
-  expect(health.pendingInvitations).toBe(1);
-});
 
 test("filters from the URL fall back to the defaults for unknown values", () => {
   expect(

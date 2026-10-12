@@ -231,49 +231,6 @@ export function groupRows(
   }));
 }
 
-function compareGroups(sort: GroupSort) {
-  return (left: GroupRow, right: GroupRow): number => {
-    if (sort === "members") {
-      const difference =
-        right.group.member_ids.length - left.group.member_ids.length;
-      if (difference) return difference;
-    }
-    if (sort === "newest") {
-      const difference = right.group.created_at.localeCompare(
-        left.group.created_at,
-      );
-      if (difference) return difference;
-    }
-    return compareNames(left.group, right.group);
-  };
-}
-
-/** Filter and sort the complete list; paging happens afterwards. */
-export function filterGroups(
-  rows: readonly GroupRow[],
-  filters: GroupFilters,
-): GroupRow[] {
-  const query = filters.query.trim().toLocaleLowerCase();
-  return rows
-    .filter(
-      (row) =>
-        (filters.filter === "all" ||
-          (filters.filter === "no-access"
-            ? row.group.access.length === 0
-            : row.group.member_ids.length === 0)) &&
-        (!query ||
-          [
-            row.group.name,
-            row.group.description,
-            ...row.reach.map((item) => item.name),
-          ]
-            .join("\n")
-            .toLocaleLowerCase()
-            .includes(query)),
-    )
-    .sort(compareGroups(filters.sort));
-}
-
 /** The gap filter an Overview link asks for; everything else starts at the default. */
 export function groupFiltersFromParams(params: URLSearchParams): GroupFilters {
   const filter = params.get("filter");
