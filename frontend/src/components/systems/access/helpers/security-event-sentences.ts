@@ -286,7 +286,7 @@ export function securityEventSentence(
           ? kinds[event.metadata.kind]
           : null;
       return result(
-        `${actor} queued a retry for a ${kind ? `${kind} ` : ""}job.`,
+        `${actor} queued a retry for ${kind ? `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}` : "a"} job.`,
         `Job retry by ${actor}`,
       );
     }

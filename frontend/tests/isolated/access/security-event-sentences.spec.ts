@@ -638,7 +638,7 @@ const factRows: {
   {
     name: "an event reminder retry",
     patch: { event_type: "job.retry", metadata: { kind: "event-reminder" } },
-    sentence: "Mara queued a retry for a event reminder job.",
+    sentence: "Mara queued a retry for an event reminder job.",
   },
   {
     name: "a retry of an unknown kind",
