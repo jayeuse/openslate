@@ -26,6 +26,7 @@ def _user(
     status: UserStatus = UserStatus.ACTIVE,
     deleted: bool = False,
     invitation_sent_at: datetime | None = None,
+    invitation_accepted_at: datetime | None = None,
 ) -> User:
     guest = role == "guest"
     sponsor = _user(db) if guest else None
@@ -40,6 +41,7 @@ def _user(
         expires_at=datetime.now(UTC) + timedelta(days=30) if guest else None,
         is_deleted=deleted,
         invitation_sent_at=invitation_sent_at,
+        invitation_accepted_at=invitation_accepted_at,
     )
     db.add(user)
     db.flush()
@@ -154,6 +156,18 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
         {"id": str(eligible[2].id), "username": "choice_gamma"},
     ]
     assert client.get(f"/api/boards/{board.id}/preview-users?limit=101").status_code == 422
+
+    # An invitee who accepted the invitation is an established account and is listed.
+    invited = datetime.now(UTC) - timedelta(days=2)
+    accepted = _user(
+        db,
+        username="invitee_accepted",
+        invitation_sent_at=invited,
+        invitation_accepted_at=invited + timedelta(days=1),
+    )
+    listed = client.get(f"/api/boards/{board.id}/preview-users?search=invitee_").json()
+    assert listed["items"] == [{"id": str(accepted.id), "username": "invitee_accepted"}]
+    assert listed["pagination"]["total"] == 1
 
 
 def test_expired_active_identity_is_hidden_from_preview_and_chooser(

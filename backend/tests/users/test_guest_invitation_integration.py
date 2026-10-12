@@ -11,7 +11,7 @@ from uuid6 import uuid7
 import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.rbac.support import add_user
@@ -100,6 +100,31 @@ def test_guest_invitation_without_a_sponsor_creates_no_profile(
     payload = _guest_payload(None)
 
     with pytest.raises(InvitationError, match="sponsor"):
+        user_service.invite_user(db, payload, actor_id=admin.id, client=provider)
+
+    assert db.scalar(select(User.id).where(User.email == payload.email)) is None
+    provider.admin_create_invitation_user.assert_not_called()
+
+
+@pytest.mark.parametrize("sponsor_kind", ["guest", "disabled"])
+@pytest.mark.usefixtures("quiet_invitation_events")
+def test_guest_invitation_naming_an_unusable_sponsor_creates_no_profile(
+    integration_owner_db: Session, sponsor_kind: str
+) -> None:
+    db = integration_owner_db
+    admin = add_user(db, role=UserRole.ADMIN)
+    # A guest cannot sponsor a guest, and a disabled member sponsors nobody.
+    sponsor = (
+        add_user(db, role=UserRole.GUEST)
+        if sponsor_kind == "guest"
+        else add_user(db, role=UserRole.MEMBER, status=UserStatus.DISABLED)
+    )
+    provider = _provider()
+    payload = _guest_payload(sponsor)
+
+    with pytest.raises(
+        InvitationError, match="^Guest sponsor is not an active member or administrator$"
+    ):
         user_service.invite_user(db, payload, actor_id=admin.id, client=provider)
 
     assert db.scalar(select(User.id).where(User.email == payload.email)) is None

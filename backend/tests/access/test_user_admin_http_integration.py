@@ -5,6 +5,7 @@ disable and enable, delete and restore, and group edits under an ETag. Each
 test goes through the real routes and the real administrator checks.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -205,6 +206,71 @@ def test_administrator_gets_not_found_for_an_unknown_user(world: UserAdminWorld)
     assert {name: response.json() for name, response in responses.items()} == {
         name: {"detail": "User not found"} for name in responses
     }
+
+
+def _make_world_admin_the_only_usable_one(world: UserAdminWorld) -> None:
+    """Disable, inside this test's transaction, administrators that other tests committed."""
+    others = world.db.scalars(
+        select(User).where(
+            User.role == UserRole.ADMIN.value,
+            User.status == UserStatus.ACTIVE.value,
+            User.id != world.admin.id,
+        )
+    ).all()
+    for other in others:
+        other.status = UserStatus.DISABLED.value
+    world.db.flush()
+
+
+def _add_admin(world: UserAdminWorld, name: str, **state: Any) -> User:
+    admin = User(
+        email=f"{name}-{uuid7().hex}@example.com",
+        username=f"{name}-{uuid7().hex[-12:]}",
+        role=UserRole.ADMIN.value,
+        status=UserStatus.ACTIVE.value,
+        **state,
+    )
+    world.db.add(admin)
+    world.db.flush()
+    return admin
+
+
+def test_unusable_administrators_do_not_keep_the_last_usable_one(world: UserAdminWorld) -> None:
+    _make_world_admin_the_only_usable_one(world)
+    past = datetime.now(UTC) - timedelta(days=1)
+    # Deleted, never-accepted and expired administrators can no longer act.
+    _add_admin(world, "deleted-admin", is_deleted=True, deleted_at=past)
+    _add_admin(world, "unaccepted-admin", invitation_sent_at=past)
+    _add_admin(world, "expired-admin", expires_at=past)
+    world.db.commit()
+    client = world.client(world.admin)
+
+    demoted = client.patch(f"/api/users/{world.admin.id}", json={"role": "member"})
+
+    assert demoted.status_code == 409
+    assert demoted.json() == {"detail": "Cannot remove the last active admin"}
+    world.db.refresh(world.admin)
+    assert world.admin.role == UserRole.ADMIN.value
+
+
+def test_a_temporary_administrator_does_not_keep_the_last_durable_one(
+    world: UserAdminWorld,
+) -> None:
+    _make_world_admin_the_only_usable_one(world)
+    temporary = _add_admin(
+        world, "temporary-admin", expires_at=datetime.now(UTC) + timedelta(days=30)
+    )
+    world.db.commit()
+    client = world.client(world.admin)
+
+    durable_demoted = client.patch(f"/api/users/{world.admin.id}", json={"role": "member"})
+    temporary_demoted = client.patch(f"/api/users/{temporary.id}", json={"role": "member"})
+
+    assert durable_demoted.status_code == 409
+    assert durable_demoted.json() == {"detail": "Cannot remove the last durable admin"}
+    # The durable administrator remains, so the temporary one may step down.
+    assert temporary_demoted.status_code == 200, temporary_demoted.text
+    assert temporary_demoted.json()["role"] == "member"
 
 
 def test_group_rename_requires_the_current_version(world: UserAdminWorld) -> None:
