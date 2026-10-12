@@ -7,7 +7,6 @@ import { SearchField } from "@/components/ui/search-field";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { PersonCardPopover } from "@/components/person-card";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
-import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
 import { Action, Panel } from "../../shared/components/ui";
 import {
@@ -16,6 +15,10 @@ import {
   searchDestination,
   type SearchKind,
 } from "../adapters/platform-search-api";
+import {
+  isSearchAdmissionError,
+  searchFailureMessage,
+} from "../helpers/search-failure";
 
 type SearchProps = {
   query: string;
@@ -48,11 +51,8 @@ export default function Search({ query, onQueryChange }: SearchProps) {
       ),
     ),
   });
-  const admissionDenied = reads.some(
-    (read) =>
-      read.error instanceof ApiError &&
-      (read.error.code === "mfa_required" ||
-        read.error.code === "ip_not_allowed"),
+  const admissionDenied = reads.some((read) =>
+    isSearchAdmissionError(read.error),
   );
   useEffect(() => {
     if (admissionDenied) requestSessionRecheck();
@@ -91,12 +91,7 @@ export default function Search({ query, onQueryChange }: SearchProps) {
                 ) : read.isError || admissionDenied ? (
                   <div className="space-y-3">
                     <p role="alert" className="text-destructive text-sm">
-                      {admissionDenied
-                        ? "Session access needs to be checked before continuing."
-                        : read.error instanceof ApiError &&
-                            read.error.status === 403
-                          ? "You do not have permission to search these results."
-                          : "Search could not be completed."}
+                      {searchFailureMessage(read.error, admissionDenied)}
                     </p>
                     <Action
                       onClick={() => void read.refetch()}

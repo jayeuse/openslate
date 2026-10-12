@@ -12,6 +12,7 @@ import {
   type ImportEnvelope,
   type ImportResultRow,
 } from "../adapters/record-import-api";
+import { importFailure } from "../helpers/record-import-failure";
 import type { WorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 
 type CsvDraft = { name: string; headers: string[]; rows: CsvRow[] };
@@ -19,24 +20,9 @@ type Preview = { digest: string; rows: ImportResultRow[] };
 type Configuration = Omit<ImportEnvelope, "mode" | "schema_digest" | "headers">;
 
 function failureMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) {
-    if (error.code === "mfa_required" || error.code === "ip_not_allowed") {
-      queueMicrotask(requestSessionRecheck);
-      return "Session access needs to be checked before continuing.";
-    }
-    if (error.status === 401) {
-      queueMicrotask(requestSessionRecheck);
-      return "Your session needs to be checked before continuing.";
-    }
-    if (error.status === 403)
-      return "Administrator permission is required to import records.";
-    if (error.code === "schema_changed")
-      return "Module schema changed; preview again.";
-    if (error.status === 404)
-      return "This module is no longer available. Choose another module.";
-    return error.message;
-  }
-  return error instanceof Error ? error.message : fallback;
+  const failure = importFailure(error, fallback);
+  if (failure.recheckSession) queueMicrotask(requestSessionRecheck);
+  return failure.message;
 }
 
 export function useRecordImport() {
