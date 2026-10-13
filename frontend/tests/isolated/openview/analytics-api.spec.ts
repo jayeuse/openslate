@@ -13,6 +13,7 @@ import {
 import { wirePagination } from "../../helpers/pagination";
 import { emptyQuery } from "../../helpers/query-definitions";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
+import { wireRecord, wireBucket } from "../../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000011";
 const fieldId = "00000000-0000-4000-8000-000000000012";
@@ -33,17 +34,13 @@ const emptyGroupResult = {
   selected_group: null,
 };
 
-const record = {
+const record = wireRecord({
   id: recordId,
   module_id: moduleId,
   data: { [fieldId]: "Pump 04" },
-  display_values: {},
   created_at: "2026-09-23T00:00:00Z",
   updated_at: "2026-09-23T00:00:00Z",
-  deleted_at: null,
-  is_deleted: false,
-  performed_by: null,
-};
+});
 
 function dailyAggregateResult(
   days: readonly string[],
@@ -56,12 +53,13 @@ function dailyAggregateResult(
   }>,
 ) {
   return {
-    items: days.map((day) => ({
-      key: day,
-      label: day,
-      value: "0.00",
-      record_count: 0,
-    })),
+    items: days.map((day) =>
+      wireBucket({
+        key: day,
+        value: "0.00",
+        record_count: 0,
+      }),
+    ),
     pagination: {
       limit: days.length,
       offset: 0,
@@ -208,12 +206,11 @@ test("sends aggregate groups through the shared definition serializer and preser
   const mock = installFetch(() =>
     Response.json({
       items: [
-        {
+        wireBucket({
           key: "Copper",
-          label: "Copper",
           value: "0.3000000000",
           record_count: 2,
-        },
+        }),
       ],
       pagination: wirePagination({ limit: 12, count: 1, total: 1 }),
     }),
@@ -399,18 +396,17 @@ test("sends complete grouped aggregate snapshots without pagination and preserve
     responseIndex++ === 0
       ? Response.json({
           items: [
-            {
+            wireBucket({
               key: "Copper",
-              label: "Copper",
               value: "0.3000000000",
               record_count: 2,
-            },
-            {
+            }),
+            wireBucket({
               key: null,
               label: "Unspecified",
               value: 3,
               record_count: 1,
-            },
+            }),
           ],
           pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
         })
@@ -575,13 +571,21 @@ test("rejects incomplete and oversized snapshot pages and preserves structured A
   const responses: Response[] = [
     Response.json({
       items: [
-        { key: "Copper", label: "Copper", value: "1.25", record_count: 2 },
+        wireBucket({
+          key: "Copper",
+          value: "1.25",
+          record_count: 2,
+        }),
       ],
       pagination: wirePagination({ limit: 1, count: 1, total: 2 }),
     }),
     Response.json({
       items: [
-        { key: "Copper", label: "Copper", value: "1.25", record_count: 2 },
+        wireBucket({
+          key: "Copper",
+          value: "1.25",
+          record_count: 2,
+        }),
       ],
       pagination: wirePagination({
         limit: 1,
@@ -592,7 +596,11 @@ test("rejects incomplete and oversized snapshot pages and preserves structured A
     }),
     Response.json({
       items: [
-        { key: "Copper", label: "Copper", value: "1.25", record_count: 2 },
+        wireBucket({
+          key: "Copper",
+          value: "1.25",
+          record_count: 2,
+        }),
       ],
       pagination: wirePagination({ limit: 10_001, count: 1, total: 1 }),
     }),

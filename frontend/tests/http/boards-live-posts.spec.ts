@@ -10,7 +10,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { pageOf } from "../helpers/pagination";
-import { wireBoard } from "../helpers/wire";
+import { wireBoard, wireWorkspace } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -1217,26 +1217,14 @@ async function installS05PostApi(page: Page, manage = true) {
   reader.setViewerId(authorId);
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
-      json: {
+      json: wireWorkspace({
         id: "00000000-0000-4000-8000-000000000102",
-        display_name: "OpenSlate",
-        legal_name: null,
-        description: null,
-        contact_email: null,
-        contact_phone: null,
-        postal_address: null,
-        logo_file_id: null,
         locale: "en-US",
         timezone: "UTC",
-        mark: "OS",
         currency: "PHP",
-        week_start: "monday",
-        business_hours: "09:00–18:00",
-        theme: "slate",
-        revision: 1,
         today: "2035-06-01",
         purge_enabled: false,
-      },
+      }),
     }),
   );
   let boardRevision = 4;

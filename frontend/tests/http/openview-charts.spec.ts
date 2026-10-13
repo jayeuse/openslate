@@ -8,7 +8,7 @@ import {
 } from "./helpers/openview-event-source";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
-import { wireField } from "../helpers/wire";
+import { wireField, wireBucket } from "../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000110";
 const departmentId = "00000000-0000-4000-8000-000000000111";
@@ -114,12 +114,12 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       contentType: "application/json",
       body: JSON.stringify({
         items: [
-          {
+          wireBucket({
             key: eligibleUserId,
             label: groupLabel,
             value: 1,
             record_count: 1,
-          },
+          }),
         ],
         pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       }),
@@ -302,7 +302,13 @@ async function editorCatalog(page: Page) {
 
 function calendarSnapshot(keys: string[]) {
   return {
-    items: keys.map((key) => ({ key, label: key, value: 1, record_count: 1 })),
+    items: keys.map((key) =>
+      wireBucket({
+        key,
+        value: 1,
+        record_count: 1,
+      }),
+    ),
     pagination: wirePagination({
       limit: keys.length,
       count: keys.length,
@@ -318,12 +324,14 @@ test("Top choices change only the preview and retain the complete wire query, ta
   const bodies: unknown[] = [];
   await page.route("**/api/records/aggregate-snapshot", (route) => {
     bodies.push(route.request().postDataJSON());
-    const items = Array.from({ length: 55 }, (_, index) => ({
-      key: `group-${index + 1}`,
-      label: `Group ${index + 1}`,
-      value: 55 - index,
-      record_count: 55 - index,
-    }));
+    const items = Array.from({ length: 55 }, (_, index) =>
+      wireBucket({
+        key: `group-${index + 1}`,
+        label: `Group ${index + 1}`,
+        value: 55 - index,
+        record_count: 55 - index,
+      }),
+    );
     return route.fulfill({
       json: {
         items,
@@ -1435,13 +1443,18 @@ test("saved Chart result metadata belongs to its resolved module without replaci
     return route.fulfill({
       json: {
         items: [
-          {
+          wireBucket({
             key: "segment",
             label: "Enterprise",
             value: "12.500",
             record_count: 91,
-          },
-          { key: "empty", label: "Unpriced", value: null, record_count: 1 },
+          }),
+          wireBucket({
+            key: "empty",
+            label: "Unpriced",
+            value: null,
+            record_count: 1,
+          }),
         ],
         pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
       },

@@ -302,6 +302,8 @@ Counts include shared helpers. Repeated windows are distinct repeated sequences 
 | F5: Sandbox field inputs | 114,076 | 114,029 | 1,204 | 1,181 | Fifteen equivalent Text/Select field objects, including null defaults and fresh option arrays; assertions and malformed inputs retained |
 | F2: field and Board wire inputs | 114,029 | 113,980 | 1,181 | 1,164 | Sixty equivalent objects (39 fields, 21 Boards); explicit non-defaults, nested identities, malformed inputs and literal expectations retained |
 | F7: Chart invalidation support | 113,980 | 113,945 | 1,164 | 1,164 | Sixteen identical event payloads share one intention-named helper; page/module arguments, awaits and paired delivery remain unchanged; direct dialog locators retained |
+| Separate search-action repair | 113,945 | 113,946 | 1,164 | 1,164 | Same search value and assertions; target the named input rather than depend on popup autofocus timing |
+| F6: remaining wire inputs | 113,946 | 114,067 | 1,164 | 1,136 | Sixty-four equivalent record/workspace/view/bucket inputs; explicit variants remain inline. Typed shared support adds 121 lines while reducing repeated windows; no assertions or rows removed |
 
 ## 10. Exit criteria
 

@@ -14,7 +14,7 @@ import {
 } from "./helpers/openview-event-source";
 import { pageOf } from "../helpers/pagination";
 import { emptyWireQuery } from "../helpers/query-definitions";
-import { wireField } from "../helpers/wire";
+import { wireField, wireRecord, wireView } from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -74,17 +74,14 @@ type HarnessOptions = {
 function record(id: string, moduleId: string, name: string) {
   const fieldId =
     moduleId === sourceModuleId ? sourceNameFieldId : targetNameFieldId;
-  return {
+  return wireRecord({
     id,
     module_id: moduleId,
     data: { [fieldId]: name },
-    display_values: {},
     created_at: "2026-09-30T08:00:00Z",
     updated_at: "2026-09-30T08:00:00Z",
-    deleted_at: null,
-    is_deleted: false,
     performed_by: userId,
-  };
+  });
 }
 
 const sourceRecord = record(
@@ -104,7 +101,7 @@ const handoverRecord = record(
 );
 
 function savedView() {
-  return {
+  return wireView({
     id: viewId,
     module_id: sourceModuleId,
     name: "Service requests",
@@ -127,12 +124,9 @@ function savedView() {
       date_range: "month",
       scale: null,
     },
-    revision: 1,
-    is_deleted: false,
-    can_edit: true,
     created_at: "2026-09-30T08:00:00Z",
     updated_at: "2026-09-30T08:00:00Z",
-  };
+  });
 }
 
 function relationship(): Relationship {

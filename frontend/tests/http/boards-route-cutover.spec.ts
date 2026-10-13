@@ -13,7 +13,7 @@ import {
   userId,
 } from "./helpers/boards-api";
 import { pageOf } from "../helpers/pagination";
-import { wireField } from "../helpers/wire";
+import { wireField, wireRecord } from "../helpers/wire";
 
 test("Board menu keeps administration reachable without crowding the section", async ({
   page,
@@ -1147,17 +1147,15 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
       body: JSON.stringify(
         pageOf(
           [
-            {
+            wireRecord({
               id: "00000000-0000-4000-8000-000000000065",
               module_id: moduleId,
               data: { [assigneeFieldId]: assigneeId },
               display_values: { [assigneeFieldId]: assigneeLabel },
               created_at: "2026-09-25T00:00:00Z",
               updated_at: "2026-09-25T00:00:00Z",
-              deleted_at: null,
-              is_deleted: false,
               performed_by: userId,
-            },
+            }),
           ],
           { limit: 5 },
         ),
@@ -1547,17 +1545,15 @@ test("an author links a Record using its off-page title field without crawling t
     return route.fulfill({
       json: pageOf(
         [
-          {
+          wireRecord({
             id: recordId,
             module_id: moduleId,
             data: { [fieldId]: "Request 27" },
             display_values: { [fieldId]: "Request 27" },
             created_at: now,
             updated_at: now,
-            deleted_at: null,
-            is_deleted: false,
             performed_by: userId,
-          },
+          }),
         ],
         { limit: 25 },
       ),

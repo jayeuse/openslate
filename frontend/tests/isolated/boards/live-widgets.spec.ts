@@ -19,6 +19,7 @@ import {
   type LiveWidgetsState,
 } from "../../../src/components/systems/boards/hooks/use-live-widgets";
 import { parsedPagination, wirePagination } from "../../helpers/pagination";
+import { wireRecord } from "../../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -494,7 +495,7 @@ test("record widgets show authorized select and person labels instead of stored 
     if (path === "/api/records/query")
       return Response.json({
         items: [
-          {
+          wireRecord({
             id: recordId,
             module_id: moduleId,
             data: {
@@ -507,10 +508,7 @@ test("record widgets show authorized select and person labels instead of stored 
             },
             created_at: timestamp,
             updated_at: timestamp,
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: null,
-          },
+          }),
         ],
         pagination: wirePagination({ limit: 5, count: 1, total: 1 }),
       });

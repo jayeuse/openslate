@@ -8,6 +8,7 @@ import {
   type Route,
 } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
+import { wireView } from "../helpers/wire";
 const MODULE = "10000000-0000-4000-8000-000000000001";
 const TITLE = "20000000-0000-4000-8000-000000000001";
 const QUANTITY = "20000000-0000-4000-8000-000000000002";
@@ -69,11 +70,10 @@ async function catalog(page: Page) {
   await page.route("**/api/views?*", (r) =>
     r.fulfill({
       json: list([
-        {
+        wireView({
           id: VIEW,
           module_id: MODULE,
           name: "Enabled jobs",
-          is_default: false,
           definition,
           presentation: {
             version: 1,
@@ -90,12 +90,9 @@ async function catalog(page: Page) {
             date_range: "month",
             scale: null,
           },
-          revision: 1,
-          is_deleted: false,
-          can_edit: true,
           created_at: "2026-10-01T00:00:00Z",
           updated_at: "2026-10-01T00:00:00Z",
-        },
+        }),
       ]),
     }),
   );

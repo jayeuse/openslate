@@ -5,6 +5,7 @@ import { installOpenViewEventSource } from "./openview-event-source";
 import { avatarPng, profilePreferences } from "./profile-api";
 import { pageOf } from "../../helpers/pagination";
 import { emptyWireQuery } from "../../helpers/query-definitions";
+import { wireRecord, wireView } from "../../helpers/wire";
 
 export const cardTarget = ids.ana;
 export const secondTarget = ids.ben;
@@ -85,11 +86,10 @@ async function installSurface(
       position,
       config: {},
     }));
-    const view = {
+    const view = wireView({
       id: cardView,
       module_id: cardModule,
       name: "Assigned equipment",
-      is_default: false,
       definition: emptyWireQuery({
         columns: [
           { field_id: titleField, expected_type: "text" },
@@ -111,29 +111,24 @@ async function installSurface(
         date_range: "month",
         scale: null,
       },
-      revision: 1,
-      is_deleted: false,
-      can_edit: true,
       created_at: stamp,
       updated_at: stamp,
-    };
+    });
     if (primaryUser) {
       view.definition.columns.reverse();
       view.presentation.column_field_ids.reverse();
       view.presentation.primary_field_id = userField;
       view.presentation.secondary_field_id = titleField;
     }
-    const record = {
+    const record = wireRecord({
       id: cardRecord,
       module_id: cardModule,
       data: { [titleField]: "Pump inspection", [userField]: cardTarget },
       display_values: { [userField]: "Ana Santos" },
       created_at: stamp,
       updated_at: stamp,
-      deleted_at: null,
-      is_deleted: false,
       performed_by: cardViewer,
-    };
+    });
     await page.route("**/api/views**", (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === "/api/views/data-sources")

@@ -4,6 +4,7 @@ import {
   updateOpenViewRecordMoves,
   type OpenViewRecordMove,
 } from "../../../src/components/systems/openview/adapters/records-api";
+import { wireRecord } from "../../helpers/wire";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -20,17 +21,14 @@ function updated(data: Record<string, string>) {
   return {
     record_id: recordId,
     status: "updated",
-    record: {
+    record: wireRecord({
       id: recordId,
       module_id: moduleId,
       data,
-      display_values: {},
       created_at: revision,
       updated_at: "2026-03-05T12:01:00Z",
-      deleted_at: null,
-      is_deleted: false,
       performed_by: id(1),
-    },
+    }),
   };
 }
 

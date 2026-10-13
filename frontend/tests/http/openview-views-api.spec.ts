@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { hideDevOverlay } from "./helpers/test-styles";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
-import { wireField } from "../helpers/wire";
+import { wireField, wireRecord, wireView } from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -915,11 +915,10 @@ type SavedView = {
 type SavedViewLayout = SavedView["presentation"]["layout"];
 
 function baseView(): SavedView {
-  return {
+  return wireView<SavedView["definition"], SavedView["presentation"]>({
     id: viewId,
     module_id: moduleId,
     name: "Equipment register",
-    is_default: false,
     definition: {
       version: 1,
       logic: "and",
@@ -948,12 +947,9 @@ function baseView(): SavedView {
       date_range: "month",
       scale: null,
     },
-    revision: 1,
-    is_deleted: false,
-    can_edit: true,
     created_at: "2026-09-23T00:00:00Z",
     updated_at: "2026-09-23T00:00:00Z",
-  };
+  });
 }
 
 function record(id: string, name: string, status: string) {
@@ -963,7 +959,7 @@ function record(id: string, name: string, status: string) {
       : status === "Inspection due"
         ? inspectionDueChoiceId
         : status;
-  return {
+  return wireRecord({
     id,
     module_id: moduleId,
     data: {
@@ -981,10 +977,8 @@ function record(id: string, name: string, status: string) {
     display_values: { [statusFieldId]: status },
     created_at: "2026-09-23T00:00:00Z",
     updated_at: "2026-09-23T00:00:00Z",
-    deleted_at: null,
-    is_deleted: false,
     performed_by: userId,
-  };
+  });
 }
 
 async function installViewsApi(

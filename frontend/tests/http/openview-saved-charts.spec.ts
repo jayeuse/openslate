@@ -5,6 +5,7 @@ import {
 } from "./helpers/openview-event-source";
 import { pageOf } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
+import { wireBucket } from "../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000210";
 const otherModule = "00000000-0000-4000-8000-000000000211";
@@ -129,8 +130,18 @@ async function setup(
     route.fulfill({
       json: pageOf(
         [
-          { key: "support", label: "Support", value: 8, record_count: 8 },
-          { key: "delivery", label: "Delivery", value: 3, record_count: 3 },
+          wireBucket({
+            key: "support",
+            label: "Support",
+            value: 8,
+            record_count: 8,
+          }),
+          wireBucket({
+            key: "delivery",
+            label: "Delivery",
+            value: 3,
+            record_count: 3,
+          }),
         ],
         { limit: 2, total: 2 },
       ),
@@ -719,12 +730,12 @@ test("an opened chart resolves fresh bounded labels before Apply and withdraws o
     return route.fulfill({
       json: pageOf(
         [
-          {
+          wireBucket({
             key: "queue",
             label: "Authorised value",
             value: 9,
             record_count: 9,
-          },
+          }),
         ],
         { limit: 1, total: 1 },
       ),

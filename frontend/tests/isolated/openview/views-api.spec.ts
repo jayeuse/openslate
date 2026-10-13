@@ -16,7 +16,7 @@ import {
   type OpenViewSavedView,
 } from "../../../src/components/systems/openview/adapters/views-api";
 import { wirePagination } from "../../helpers/pagination";
-import { wireField } from "../../helpers/wire";
+import { wireField, wireRecord } from "../../helpers/wire";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
@@ -202,17 +202,14 @@ test("maps validated catalog, saved-view, and record pages", async () => {
     viewResponse,
     {
       items: [
-        {
+        wireRecord({
           id: "00000000-0000-4000-8000-000000000006",
           module_id: moduleId,
           data: { [fieldId]: "Pump 04", [userFieldId]: eligibleUserId },
           display_values: { [userFieldId]: "Alex Reader" },
           created_at: "2026-09-23T00:00:00Z",
           updated_at: "2026-09-23T00:00:00Z",
-          deleted_at: null,
-          is_deleted: false,
-          performed_by: null,
-        },
+        }),
       ],
       pagination: { ...pagination, limit: 25 },
     },

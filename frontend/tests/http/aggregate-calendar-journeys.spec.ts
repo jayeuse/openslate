@@ -2,6 +2,7 @@ import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import { boardId, installBoardApi } from "./helpers/boards-api";
 import { pageOf } from "../helpers/pagination";
+import { wireBucket } from "../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000701";
 const departmentId = "00000000-0000-4000-8000-000000000702";
@@ -26,12 +27,13 @@ function collection<T>(items: T[], limit = 100) {
 }
 function snapshot(keys: string[], values: (string | number | null)[]) {
   return collection(
-    keys.map((key, index) => ({
-      key,
-      label: key,
-      value: values[index],
-      record_count: values[index] === null ? 0 : 1,
-    })),
+    keys.map((key, index) =>
+      wireBucket({
+        key,
+        value: values[index],
+        record_count: values[index] === null ? 0 : 1,
+      }),
+    ),
     keys.length,
   );
 }

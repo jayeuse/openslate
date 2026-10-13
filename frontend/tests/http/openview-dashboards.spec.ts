@@ -17,7 +17,13 @@ import {
 } from "./helpers/test";
 import { gate as requestGate, type Gate as RequestGate } from "./helpers/gate";
 import { pageOf, wirePagination } from "../helpers/pagination";
-import { wireBoard, wireField } from "../helpers/wire";
+import {
+  wireBoard,
+  wireField,
+  wireRecord,
+  wireWorkspace,
+  wireBucket,
+} from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -328,12 +334,14 @@ function dataSourceField(
 }
 
 function snapshot(length = 30) {
-  const items = Array.from({ length }, (_, index) => ({
-    key: `group-${index + 1}`,
-    label: `Group ${index + 1}`,
-    value: index + 1,
-    record_count: index + 1,
-  }));
+  const items = Array.from({ length }, (_, index) =>
+    wireBucket({
+      key: `group-${index + 1}`,
+      label: `Group ${index + 1}`,
+      value: index + 1,
+      record_count: index + 1,
+    }),
+  );
   return pageOf(items, { limit: items.length });
 }
 
@@ -343,7 +351,11 @@ function dateSnapshot(from: string, to: string) {
   const length = Math.floor((end - start) / 86_400_000) + 1;
   const items = Array.from({ length }, (_, index) => {
     const day = new Date(start + index * 86_400_000).toISOString().slice(0, 10);
-    return { key: day, label: day, value: index + 1, record_count: index + 1 };
+    return wireBucket({
+      key: day,
+      value: index + 1,
+      record_count: index + 1,
+    });
   });
   return pageOf(items, { limit: items.length });
 }
@@ -366,26 +378,14 @@ async function installDashboardApi(
   await page.route("**/api/workspace", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({
-          json: {
+          json: wireWorkspace({
             id: "00000000-0000-4000-8000-000000000102",
-            display_name: "OpenSlate",
-            legal_name: null,
-            description: null,
-            contact_email: null,
-            contact_phone: null,
-            postal_address: null,
-            logo_file_id: null,
             locale: "en-PH",
             timezone: "Asia/Manila",
-            mark: "OS",
             currency: "PHP",
-            week_start: "monday",
-            business_hours: "09:00–18:00",
-            theme: "slate",
-            revision: 1,
             today: "2026-10-07",
             purge_enabled: false,
-          },
+          }),
         })
       : route.fallback(),
   );
@@ -844,17 +844,15 @@ async function installDashboardApi(
     }
     const allItems = Array.from({ length: recordResultCount }, (_, index) => {
       const option = categoryChoice(index % categoryChoices.length);
-      return {
+      return wireRecord({
         id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
         module_id: moduleId,
         data: { [recordFieldId]: option.id },
         display_values: { [recordFieldId]: option.label },
         created_at: timestamp,
         updated_at: timestamp,
-        deleted_at: null,
-        is_deleted: false,
         performed_by: userId,
-      };
+      });
     });
     const items = allItems.slice(
       request.offset,
@@ -1154,40 +1152,40 @@ test("renders every widget in one correlated aggregate batch and independent rec
         items: [
           {
             items: [
-              {
+              wireBucket({
                 key: "chart",
                 label: "Chart cohort",
                 value: 7,
                 record_count: 7,
-              },
+              }),
             ],
             pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
           },
           {
             items: [
-              {
+              wireBucket({
                 key: "north",
                 label: "Measured cohort",
                 value: "123456789012.1234",
                 record_count: 128,
-              },
-              {
+              }),
+              wireBucket({
                 key: "south",
                 label: "No measure",
                 value: null,
                 record_count: 17,
-              },
+              }),
             ],
             pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
           },
           {
             items: [
-              {
+              wireBucket({
                 key: "summary",
                 label: "Summary cohort",
                 value: 41,
                 record_count: 41,
-              },
+              }),
             ],
             pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
           },
@@ -1928,12 +1926,13 @@ test("Dashboard previews an unsaved monthly draft and saves the exact inline ins
             "2025-11-01",
             "2025-12-01",
             "2026-01-01",
-          ].map((key, index) => ({
-            key,
-            label: key,
-            value: index === 0 ? 12.5 : null,
-            record_count: index === 0 ? 92 : 0,
-          })),
+          ].map((key, index) =>
+            wireBucket({
+              key,
+              value: index === 0 ? 12.5 : null,
+              record_count: index === 0 ? 92 : 0,
+            }),
+          ),
         ],
         pagination: wirePagination({ limit: 13, count: 13, total: 13 }),
       },
@@ -2171,12 +2170,12 @@ test("Dashboard saved picker preview refuses a changed source and saves referenc
     return route.fulfill({
       json: {
         items: [
-          {
+          wireBucket({
             key: "private",
             label: "Private draft result",
             value: 3,
             record_count: 3,
-          },
+          }),
         ],
         pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       },
@@ -2379,13 +2378,18 @@ for (const sourceKind of ["inline", "referenced"] as const) {
         return fulfillSnapshot(route, {
           json: {
             items: [
-              {
+              wireBucket({
                 key: "north",
                 label: "North",
                 value: expected,
                 record_count: 127,
-              },
-              { key: "south", label: "South", value: null, record_count: 17 },
+              }),
+              wireBucket({
+                key: "south",
+                label: "South",
+                value: null,
+                record_count: 17,
+              }),
             ],
             pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
           },
@@ -2594,12 +2598,12 @@ test("Chart invalidation refreshes its current query while preserving a dirty Da
     return fulfillSnapshot(route, {
       json: {
         items: [
-          {
+          wireBucket({
             key: "current",
             label: changed ? "New region data" : "Original category data",
             value: changed ? 9 : 3,
             record_count: changed ? 9 : 3,
-          },
+          }),
         ],
         pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       },
@@ -2742,26 +2746,14 @@ test("paired Board and Dashboard follow one Chart revision without source writes
       );
       await target.route("**/api/workspace", (route) =>
         route.fulfill({
-          json: {
+          json: wireWorkspace({
             id: departmentId,
-            display_name: "OpenSlate",
-            legal_name: null,
-            description: null,
-            contact_email: null,
-            contact_phone: null,
-            postal_address: null,
-            logo_file_id: null,
             locale: "en-US",
             timezone: "UTC",
-            mark: "OS",
             currency: "USD",
-            week_start: "monday",
-            business_hours: "09:00–18:00",
-            theme: "slate",
-            revision: 1,
             today: "2026-10-09",
             purge_enabled: true,
-          },
+          }),
         }),
       );
       await target.route(`**/api/charts/${chartId}`, (route) => {
@@ -2793,14 +2785,14 @@ test("paired Board and Dashboard follow one Chart revision without source writes
         return fulfillSnapshot(route, {
           json: list(
             [
-              {
+              wireBucket({
                 key: "shared",
                 label: current
                   ? "Revised shared Chart"
                   : "Original shared Chart",
                 value: current ? 9 : 3,
                 record_count: 127,
-              },
+              }),
             ],
             1,
           ),

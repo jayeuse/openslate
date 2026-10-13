@@ -6,6 +6,7 @@ import {
 } from "../../../src/components/systems/openview/adapters/openview-access";
 import { getOpenViewDashboard } from "../../../src/components/systems/openview/adapters/dashboards-api";
 import { wirePagination } from "../../helpers/pagination";
+import { wireBucket } from "../../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000701";
 const fieldId = "00000000-0000-4000-8000-000000000702";
@@ -43,12 +44,13 @@ function snapshot(
   values: readonly (number | string | null)[] = [],
 ) {
   return {
-    items: keys.map((key, index) => ({
-      key,
-      label: key,
-      value: values[index] ?? null,
-      record_count: index === 0 ? 1 : 0,
-    })),
+    items: keys.map((key, index) =>
+      wireBucket({
+        key,
+        value: values[index] ?? null,
+        record_count: index === 0 ? 1 : 0,
+      }),
+    ),
     pagination: wirePagination({
       limit: Math.max(1, keys.length),
       count: keys.length,

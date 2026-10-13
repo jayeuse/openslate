@@ -12,6 +12,7 @@ import {
 import { wirePagination } from "../../helpers/pagination";
 import { emptyQuery } from "../../helpers/query-definitions";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
+import { wireRecord } from "../../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000101";
 const dateFieldId = "00000000-0000-4000-8000-000000000102";
@@ -57,17 +58,13 @@ const timelineRequest: OpenViewWindowQueryRequest = {
 function calendarResponse() {
   return {
     items: [
-      {
+      wireRecord({
         id: recordId,
         module_id: moduleId,
         data: { [dateFieldId]: "2024-02-29" },
-        display_values: {},
         created_at: "2026-09-23T00:00:00Z",
         updated_at: "2026-09-23T00:00:00Z",
-        deleted_at: null,
-        is_deleted: false,
-        performed_by: null,
-      },
+      }),
     ],
     pagination: wirePagination({ limit: 10, offset: 7, count: 1, total: 8 }),
     timezone: null,

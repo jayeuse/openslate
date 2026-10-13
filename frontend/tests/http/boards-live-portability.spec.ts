@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import { isEventStream } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
+import { wireWorkspace } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const newBoardId = "00000000-0000-4000-8000-000000000002";
@@ -142,26 +143,16 @@ test("real configuration download and import preserve the complete named normali
         appearance: { motion: "reduce", keyboard_shortcuts: true },
       });
     if (path === "/api/workspace")
-      return json({
-        id: departmentId,
-        display_name: "OpenSlate",
-        legal_name: null,
-        description: null,
-        contact_email: null,
-        contact_phone: null,
-        postal_address: null,
-        logo_file_id: null,
-        locale: "en-US",
-        timezone: "UTC",
-        mark: "OS",
-        currency: "USD",
-        week_start: "monday",
-        business_hours: "09:00–18:00",
-        theme: "slate",
-        revision: 1,
-        today: "2026-10-07",
-        purge_enabled: true,
-      });
+      return json(
+        wireWorkspace({
+          id: departmentId,
+          locale: "en-US",
+          timezone: "UTC",
+          currency: "USD",
+          today: "2026-10-07",
+          purge_enabled: true,
+        }),
+      );
     if (path === "/api/boards/import") {
       expect(route.request().headers()["content-type"]).toBe(
         "application/octet-stream",

@@ -12,7 +12,13 @@ import {
 import { gate as newGate, type Gate } from "./helpers/gate";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { emptyWireQuery } from "../helpers/query-definitions";
-import { wireBoard, wireField } from "../helpers/wire";
+import {
+  wireBoard,
+  wireField,
+  wireRecord,
+  wireWorkspace,
+  wireBucket,
+} from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -74,26 +80,16 @@ async function installS26WidgetApi(page: Page, widgets: unknown[]) {
         appearance: { motion: "reduce", keyboard_shortcuts: true },
       });
     if (url.pathname === "/api/workspace")
-      return reply({
-        id: otherBoardId,
-        display_name: "OpenSlate",
-        legal_name: null,
-        description: null,
-        contact_email: null,
-        contact_phone: null,
-        postal_address: null,
-        logo_file_id: null,
-        locale: "en-US",
-        timezone: "UTC",
-        mark: "OS",
-        currency: "USD",
-        week_start: "monday",
-        business_hours: "09:00–18:00",
-        theme: "slate",
-        revision: 1,
-        today: "2026-10-07",
-        purge_enabled: true,
-      });
+      return reply(
+        wireWorkspace({
+          id: otherBoardId,
+          locale: "en-US",
+          timezone: "UTC",
+          currency: "USD",
+          today: "2026-10-07",
+          purge_enabled: true,
+        }),
+      );
     if (url.pathname === "/api/boards")
       return reply(pageOf([board], { limit: 25 }));
     if (url.pathname === `/api/boards/${boardId}`) return reply(board);
@@ -192,18 +188,20 @@ for (const sourceKind of ["inline", "reference"] as const) {
         requests.push(route.request().postDataJSON());
         return route.fulfill({
           json: {
-            items: Array.from({ length: 10 }, (_, index) => ({
-              key:
-                visualization === "line"
-                  ? `2025-${String(index + 1).padStart(2, "0")}-01`
-                  : `group-${index + 1}`,
-              label:
-                visualization === "line"
-                  ? `2025-${String(index + 1).padStart(2, "0")}-01`
-                  : `Work group ${index + 1}`,
-              value: index + 0.5,
-              record_count: index + 100,
-            })),
+            items: Array.from({ length: 10 }, (_, index) =>
+              wireBucket({
+                key:
+                  visualization === "line"
+                    ? `2025-${String(index + 1).padStart(2, "0")}-01`
+                    : `group-${index + 1}`,
+                label:
+                  visualization === "line"
+                    ? `2025-${String(index + 1).padStart(2, "0")}-01`
+                    : `Work group ${index + 1}`,
+                value: index + 0.5,
+                record_count: index + 100,
+              }),
+            ),
             pagination: wirePagination({ limit: 10, count: 10, total: 10 }),
           },
         });
@@ -434,12 +432,12 @@ async function installEvidenceSnapshot(page: Page) {
     return route.fulfill({
       json: pageOf(
         [
-          {
+          wireBucket({
             key: "private",
             label: "Private Board group",
             value: 12.5,
             record_count: 127,
-          },
+          }),
         ],
         { limit: 1 },
       ),
@@ -535,30 +533,31 @@ async function installS30WidgetData(page: Page) {
       return route.fulfill({
         json: pageOf(
           dates
-            ? dates.map((key, index) => ({
-                key,
-                label: key,
-                value:
-                  index === 0
-                    ? body.aggregation === "count"
-                      ? 7
-                      : "123456789012.1234"
-                    : null,
-                record_count: index === 0 ? 7 : 0,
-              }))
+            ? dates.map((key, index) =>
+                wireBucket({
+                  key,
+                  value:
+                    index === 0
+                      ? body.aggregation === "count"
+                        ? 7
+                        : "123456789012.1234"
+                      : null,
+                  record_count: index === 0 ? 7 : 0,
+                }),
+              )
             : [
-                {
+                wireBucket({
                   key: "measured",
                   label: "S30 measured group",
                   value: body.aggregation === "count" ? 7 : "123456789012.1234",
                   record_count: 7,
-                },
-                {
+                }),
+                wireBucket({
                   key: "missing",
                   label: "No measure",
                   value: body.aggregation === "count" ? 2 : null,
                   record_count: 2,
-                },
+                }),
               ],
           {
             limit: dates
@@ -576,20 +575,16 @@ async function installS30WidgetData(page: Page) {
     return route.fulfill({
       json: {
         items: [
-          {
+          wireRecord({
             id: recordId,
             module_id: moduleId,
             data: {
               [fieldId]: "S30 priority row",
               [evidenceMeasureId]: "12.5000",
             },
-            display_values: {},
             created_at: timestamp,
             updated_at: timestamp,
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: null,
-          },
+          }),
         ],
         pagination: {
           limit: body.limit,
@@ -1790,12 +1785,12 @@ for (const fault of [
       return route.fulfill({
         json: pageOf(
           [
-            {
+            wireBucket({
               key: "private",
               label: "Private Board group",
               value: 12.5,
               record_count: 127,
-            },
+            }),
           ],
           { limit: 1 },
         ),
@@ -1897,17 +1892,14 @@ test("Board records Chart refusal stops both field metadata and record rows", as
     return route.fulfill({
       json: pageOf(
         [
-          {
+          wireRecord({
             id: recordId,
             module_id: moduleId,
             data: { [fieldId]: "Private Board row" },
             display_values: { [fieldId]: "Private Board row" },
             created_at: timestamp,
             updated_at: timestamp,
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: null,
-          },
+          }),
         ],
         { limit: 5 },
       ),
@@ -1982,7 +1974,7 @@ test("Board Chart hints and readable department move preserve dirty and pending 
     return route.fulfill({
       json: pageOf(
         [
-          {
+          wireBucket({
             key: "current",
             label: current
               ? "Current Board region"
@@ -1991,7 +1983,7 @@ test("Board Chart hints and readable department move preserve dirty and pending 
                 : "Private Board group",
             value: current ? 9.25 : pending ? 23.75 : 12.5,
             record_count: 127,
-          },
+          }),
         ],
         { limit: 1 },
       ),
@@ -2187,14 +2179,14 @@ for (const replacement of ["board", "source", "account"] as const) {
         return route.fulfill({
           json: pageOf(
             [
-              {
+              wireBucket({
                 key: current ? "new" : "old",
                 label: current
                   ? "Replacement Board group"
                   : "Private Board group",
                 value: current ? 24.75 : 12.5,
                 record_count: 127,
-              },
+              }),
             ],
             { limit: 1 },
           ),
@@ -2468,8 +2460,18 @@ test("live Board Overview renders supported group and date charts with exact val
     },
   };
   const groups = [
-    { key: "open", label: "Open", value: "4.25", record_count: 4 },
-    { key: "closed", label: "Closed", value: "2.5", record_count: 2 },
+    wireBucket({
+      key: "open",
+      label: "Open",
+      value: "4.25",
+      record_count: 4,
+    }),
+    wireBucket({
+      key: "closed",
+      label: "Closed",
+      value: "2.5",
+      record_count: 2,
+    }),
   ];
   await installS26WidgetApi(page, [
     workload,
@@ -2508,19 +2510,20 @@ test("live Board Overview renders supported group and date charts with exact val
       return route.fulfill({
         json: pageOf(
           dates
-            ? dates.map((key, index) => ({
-                key,
-                label: key,
-                value:
-                  index === 0
-                    ? 3
-                    : index === 1
-                      ? null
-                      : index === dates.length - 1
-                        ? "4.2500"
-                        : 0,
-                record_count: index === 1 ? 0 : 2,
-              }))
+            ? dates.map((key, index) =>
+                wireBucket({
+                  key,
+                  value:
+                    index === 0
+                      ? 3
+                      : index === 1
+                        ? null
+                        : index === dates.length - 1
+                          ? "4.2500"
+                          : 0,
+                  record_count: index === 1 ? 0 : 2,
+                }),
+              )
             : groups,
           {
             limit: dates

@@ -5,6 +5,7 @@ import {
   type Page,
   type Route,
 } from "@playwright/test";
+import { wireWorkspace } from "../../helpers/wire";
 
 // The shared `test` for HTTP specs. The auth gate reads `/api/auth/session`
 // and the app navigation reads `/api/auth/me` on every signed-in page, and the
@@ -170,26 +171,14 @@ export const test = base.extend({
     await context.route("**/api/workspace", (route) =>
       route.request().method() === "GET"
         ? route.fulfill({
-            json: {
+            json: wireWorkspace({
               id: "00000000-0000-4000-8000-000000000102",
-              display_name: "OpenSlate",
-              legal_name: null,
-              description: null,
-              contact_email: null,
-              contact_phone: null,
-              postal_address: null,
-              logo_file_id: null,
               locale: "en-PH",
               timezone: "Asia/Manila",
-              mark: "OS",
               currency: "PHP",
-              week_start: "monday",
-              business_hours: "09:00–18:00",
-              theme: "slate",
-              revision: 1,
               today: "2026-10-06",
               purge_enabled: false,
-            },
+            }),
           })
         : route.fallback(),
     );

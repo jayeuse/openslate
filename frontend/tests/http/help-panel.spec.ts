@@ -9,13 +9,14 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { wireWorkspace } from "../helpers/wire";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
 const userA = "00000000-0000-4000-8000-000000000001";
 const userB = "00000000-0000-4000-8000-000000000002";
 // Literal server DTOs, independent of the new Help projection and guide registry.
-const fullWorkspace = {
+const fullWorkspace = wireWorkspace({
   id: "00000000-0000-4000-8000-000000000102",
   display_name: "Help fixture workspace",
   legal_name: "Private legal name",
@@ -23,18 +24,14 @@ const fullWorkspace = {
   contact_email: "administrator@example.test",
   contact_phone: "+1 555 0142",
   postal_address: "Private postal address",
-  logo_file_id: null,
   locale: "en-PH",
   timezone: "Asia/Manila",
   mark: "HW",
   currency: "PHP",
-  week_start: "monday",
-  business_hours: "09:00–18:00",
-  theme: "slate",
   revision: 4,
   today: "2026-10-06",
   purge_enabled: false,
-};
+});
 const guestWorkspace = {
   id: "00000000-0000-4000-8000-000000000102",
   display_name: "Help fixture workspace",
