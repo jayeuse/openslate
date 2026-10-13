@@ -30,11 +30,17 @@ type AccessEntry = Readonly<{
   level: "read" | "write" | "manage";
 }>;
 
+type GroupAccessResponse = AccessEntry &
+  Readonly<{
+    department_name: string;
+    module_name: string | null;
+  }>;
+
 type GroupResponse = Readonly<{
   id: string;
   revision: number;
   member_ids: readonly string[];
-  access: readonly AccessEntry[];
+  access: readonly GroupAccessResponse[];
 }>;
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -472,7 +478,9 @@ async function createGroup(
   expect(saved.status).toBe(200);
   expect(saved.group?.access).toContainEqual({
     department_id: departmentId,
+    department_name: departmentName,
     module_id: null,
+    module_name: null,
     level: "manage",
   });
   return groupId;
@@ -681,7 +689,9 @@ test("admin and a department manager manage group membership across the live Acc
     expect(managerGroup.group?.member_ids).toContain(runFixture.member.id);
     expect(managerGroup.group?.access).toContainEqual({
       department_id: departmentId,
+      department_name: managedDepartment,
       module_id: null,
+      module_name: null,
       level: "manage",
     });
     await closeGroupPanel(page, managerGroupName);
@@ -700,7 +710,9 @@ test("admin and a department manager manage group membership across the live Acc
     expect(unrelatedGroup.group?.member_ids).toEqual([]);
     expect(unrelatedGroup.group?.access).toContainEqual({
       department_id: unrelatedDepartmentId,
+      department_name: unrelatedDepartment,
       module_id: null,
+      module_name: null,
       level: "manage",
     });
     expect(unrelatedGroup.group?.revision).toBeGreaterThan(0);
