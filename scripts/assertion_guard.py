@@ -228,6 +228,7 @@ def _ts_assertions(source: str) -> Counter[str]:
             continue  # Imports/references to expect are not assertions.
         ignored: set[int] = set()
         end = balanced(end, "poll" if tokens[start + 1 : start + 3] == [".", "poll"] else "")
+        matcher_start = end
         matcher = False
         while end and end < len(tokens) and tokens[end] in (".", "?."):
             end += 1
@@ -265,6 +266,18 @@ def _ts_assertions(source: str) -> Counter[str]:
                 and values[index - 1] not in ("(", "[", ",")
             )
         )
+        # Pinned Locator predicates are complements; only this argument-free tail is proven.
+        if (
+            tokens[start + 1] == "("
+            and tokens[start - 1 : start] not in (["."], ["?."])
+            and [
+                value
+                for index, value in enumerate(tokens[matcher_start:end], matcher_start)
+                if index not in ignored
+            ]
+            == [".", "not", ".", "toBeVisible", "(", ")"]
+        ):
+            key = key[:-6] + (".", "toBeHidden", "(", ")")
         assertions[repr(key)] += 1
     return assertions
 

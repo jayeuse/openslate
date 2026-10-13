@@ -225,6 +225,44 @@ class AnalyzeTests(unittest.TestCase):
                 if removals:
                     self.assertIn("1 assertion(s) removed, 0 recorded", violations[0])
 
+    def test_equivalent_hidden_locator_assertions_keep_their_owner(self):
+        invisible = "await expect(row).not.toBeVisible();"
+        hidden = "await expect(row).toBeHidden();"
+        for before, after, removals in (
+            (invisible, hidden, 0),
+            ("await expect(row).not.toBeVisible({ timeout: 5000 });", hidden, 0),
+            (invisible, "await expect(other).toBeHidden();", 1),
+            ("await expect(row).not.toBeVisible({ visible: false });", hidden, 1),
+            (invisible, "await expect(row).not.toBeHidden();", 1),
+            (invisible, "expect(row).toBeHidden();", 1),
+            (
+                "expect(() => row.not.toBeVisible()).toBe(1);\n"
+                "expect(value).toEqual({ result: row.not.toBeVisible() });\n"
+                "expect(value).toEqual('.not.toBeVisible()');",
+                "expect(() => row.toBeHidden()).toBe(1);\n"
+                "expect(value).toEqual({ result: row.toBeHidden() });\n"
+                "expect(value).toEqual('.toBeHidden()');",
+                3,
+            ),
+            (
+                "await custom.expect(row).not.toBeVisible();",
+                "await custom.expect(row).toBeHidden();",
+                1,
+            ),
+            (
+                "await expect(row).resolves.not.toBeVisible();",
+                "await expect(row).resolves.toBeHidden();",
+                1,
+            ),
+        ):
+            with self.subTest(before=before, after=after):
+                item = change("frontend/tests/http/a.spec.ts")
+                item.before_source, item.after_source = before, after
+                violations = self.analyze([item])
+                self.assertEqual(len(violations), int(removals > 0), violations)
+                if removals:
+                    self.assertIn(f"{removals} assertion(s) removed, 0 recorded", violations[0])
+
     def test_ledger_row_with_existing_owner_covers_the_removal(self):
         violations = self.analyze(
             [
