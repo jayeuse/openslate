@@ -71,34 +71,44 @@ def _provider() -> Mock:
 
 
 @pytest.fixture
-def empty_installation() -> Iterator[tuple[Engine, list[str]]]:
+def empty_installation(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine, list[str]]]:
     """Hide every live administrator, then restore each one and remove the invited ones."""
 
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
-    invited: list[str] = []
-    with Session(owner) as db:
-        hidden = {row.id: row.deleted_at for row in db.scalars(_live_administrators()).all()}
-        if hidden:
-            db.execute(
-                update(User)
-                .where(User.id.in_(hidden))
-                .values(is_deleted=True, deleted_at=datetime.now(UTC))
-            )
-        db.commit()
-        assert db.scalars(_live_administrators()).all() == []
     try:
-        yield owner, invited
+        runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"])
+        try:
+            monkeypatch.setattr(bootstrap, "get_engine", lambda: runtime)
+            invited: list[str] = []
+            hidden: dict[UUID, datetime | None] = {}
+            try:
+                with Session(owner) as db:
+                    hidden = {
+                        row.id: row.deleted_at for row in db.scalars(_live_administrators()).all()
+                    }
+                    if hidden:
+                        db.execute(
+                            update(User)
+                            .where(User.id.in_(hidden))
+                            .values(is_deleted=True, deleted_at=datetime.now(UTC))
+                        )
+                    db.commit()
+                    assert db.scalars(_live_administrators()).all() == []
+                yield owner, invited
+            finally:
+                with Session(owner) as db:
+                    if invited:
+                        db.execute(delete(User).where(User.email.in_(invited)))
+                    for user_id, deleted_at in hidden.items():
+                        db.execute(
+                            update(User)
+                            .where(User.id == user_id)
+                            .values(is_deleted=False, deleted_at=deleted_at)
+                        )
+                    db.commit()
+        finally:
+            runtime.dispose()
     finally:
-        with Session(owner) as db:
-            if invited:
-                db.execute(delete(User).where(User.email.in_(invited)))
-            for user_id, deleted_at in hidden.items():
-                db.execute(
-                    update(User)
-                    .where(User.id == user_id)
-                    .values(is_deleted=False, deleted_at=deleted_at)
-                )
-            db.commit()
         owner.dispose()
 
 
