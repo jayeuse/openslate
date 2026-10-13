@@ -1,3 +1,5 @@
+export { installFetch, type RecordedRequest } from "../helpers/fake-fetch";
+
 // Response bodies shaped like the current FastAPI Platform models. Each one is
 // the smallest valid example; tests spread and change single fields.
 
@@ -23,27 +25,6 @@ export const ids = {
   backup: "00000000-0000-4000-8000-000000000209",
 };
 export const timestamp = "2026-10-04T18:30:00Z";
-
-export type RecordedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-/**
- * Replaces `fetch` for one test; `restore()` puts the original back. A
- * responder may return a pending promise to hold the answer.
- */
-export function installFetch(
-  response: (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ) => Response | Promise<Response>,
-): { requests: RecordedRequest[]; restore: () => void } {
-  const originalFetch = globalThis.fetch;
-  const requests: RecordedRequest[] = [];
-  globalThis.fetch = async (input, init) => {
-    requests.push({ input, init });
-    return response(input, init);
-  };
-  return { requests, restore: () => (globalThis.fetch = originalFetch) };
-}
 
 /** A ready Library document in `ids.department`. */
 export function libraryFileWire(overrides: Record<string, unknown> = {}) {

@@ -14,29 +14,13 @@ import {
   restoreBoard,
   updateBoard,
 } from "../../../src/components/systems/boards/adapters/board-management-api";
+import { installNoArgumentFetch as installFetch } from "../helpers/fake-fetch";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const newBoardId = "00000000-0000-4000-8000-000000000002";
 const departmentId = "00000000-0000-4000-8000-000000000003";
 const groupId = "00000000-0000-4000-8000-000000000004";
 const timestamp = "2026-09-23T00:00:00Z";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(responder: () => Response) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder());
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status });

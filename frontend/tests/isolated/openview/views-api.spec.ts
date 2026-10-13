@@ -16,6 +16,7 @@ import {
   type OpenViewSavedView,
 } from "../../../src/components/systems/openview/adapters/views-api";
 import { wirePagination } from "../../helpers/pagination";
+import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const fieldId = "00000000-0000-4000-8000-000000000002";
@@ -25,25 +26,6 @@ const viewId = "00000000-0000-4000-8000-000000000005";
 const departmentId = "00000000-0000-4000-8000-000000000007";
 const timelineStartFieldId = "00000000-0000-4000-8000-000000000008";
 const timelineEndFieldId = "00000000-0000-4000-8000-000000000009";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(
-  responder: (input: RequestInfo | URL, init?: RequestInit) => Response,
-) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder(input, init));
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 const definition: OpenViewQueryDefinition = {
   version: 1,

@@ -12,30 +12,12 @@ import {
 } from "../../../src/components/systems/openview/adapters/views-api";
 import { wirePagination } from "../../helpers/pagination";
 import { emptyQuery } from "../../helpers/query-definitions";
+import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
 const moduleId = "00000000-0000-4000-8000-000000000011";
 const fieldId = "00000000-0000-4000-8000-000000000012";
 const groupFieldId = "00000000-0000-4000-8000-000000000013";
 const recordId = "00000000-0000-4000-8000-000000000014";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(
-  responder: (input: RequestInfo | URL, init?: RequestInit) => Response,
-) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder(input, init));
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 const definition: OpenViewQueryDefinition = emptyQuery({
   columns: [{ fieldId, expectedType: "text" }],

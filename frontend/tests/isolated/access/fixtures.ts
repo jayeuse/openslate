@@ -1,4 +1,5 @@
 import { wirePagination } from "../../helpers/pagination";
+export { installFetch } from "../helpers/fake-fetch";
 
 // Response bodies shaped like the current FastAPI Access models. Each one is
 // the smallest valid example; tests spread and change single fields.
@@ -137,20 +138,6 @@ export const workspace = {
 
 export function pageOf<Item>(items: Item[]) {
   return { items, pagination: { ...pagination, count: items.length } };
-}
-
-type RecordedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-export function installFetch(
-  response: (input: RequestInfo | URL, init?: RequestInit) => Response,
-): { requests: RecordedRequest[]; restore: () => void } {
-  const originalFetch = globalThis.fetch;
-  const requests: RecordedRequest[] = [];
-  globalThis.fetch = async (input, init) => {
-    requests.push({ input, init });
-    return response(input, init);
-  };
-  return { requests, restore: () => (globalThis.fetch = originalFetch) };
 }
 
 /** Cookie-authenticated mutations read the CSRF token from document.cookie. */

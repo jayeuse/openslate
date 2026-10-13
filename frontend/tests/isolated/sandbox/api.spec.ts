@@ -21,6 +21,7 @@ import {
   publishSandbox,
   updateSandboxVersion,
 } from "../../../src/components/systems/sandbox/state/api";
+import { installFetch } from "../helpers/fake-fetch";
 
 const versionId = "00000000-0000-4000-8000-000000000001";
 
@@ -124,20 +125,6 @@ const version = {
   isDeleted: false,
   deletedAt: null,
 };
-
-type RecordedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(
-  response: (input: RequestInfo | URL, init?: RequestInit) => Response,
-): { requests: RecordedRequest[]; restore: () => void } {
-  const originalFetch = globalThis.fetch;
-  const requests: RecordedRequest[] = [];
-  globalThis.fetch = async (input, init) => {
-    requests.push({ input, init });
-    return response(input, init);
-  };
-  return { requests, restore: () => (globalThis.fetch = originalFetch) };
-}
 
 test("loads and replaces the revisioned Sandbox document through the same-origin API", async () => {
   const mock = installFetch(() => Response.json(documentResponse));

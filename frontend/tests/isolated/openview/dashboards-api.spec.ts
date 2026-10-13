@@ -12,6 +12,7 @@ import {
   type OpenViewDashboard,
 } from "../../../src/components/systems/openview/adapters/dashboards-api";
 import { wirePagination } from "../../helpers/pagination";
+import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const dimensionId = "00000000-0000-4000-8000-000000000002";
@@ -21,25 +22,6 @@ const widgetId = "00000000-0000-4000-8000-000000000005";
 const dateFieldId = "00000000-0000-4000-8000-000000000006";
 const measureId = "00000000-0000-4000-8000-000000000007";
 const timestamp = "2026-09-23T00:00:00Z";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(
-  responder: (input: RequestInfo | URL, init?: RequestInit) => Response,
-) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder(input, init));
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

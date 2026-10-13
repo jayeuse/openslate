@@ -298,6 +298,7 @@ Counts include shared helpers. Repeated windows are distinct repeated sequences 
 | F1a: isolated pagination fixtures | 114,887 | 114,758 | 1,332 | 1,316 | 41 equivalent input objects; 520 assertion expressions and 123 direct test declarations unchanged; all contract-table rows retained |
 | F1b: HTTP pagination fixtures | 114,758 | 114,290 | 1,316 | 1,241 | 72 equivalent input objects; 143 existing page-builder calls relocated; 4,025 assertion roots and all table rows retained |
 | F3: query-definition inputs | 114,290 | 114,267 | 1,241 | 1,235 | Ten equivalent input definitions; assertion expectations retain their original literals; no rows or assertions removed |
+| F4: fetch mock support | 114,267 | 114,076 | 1,235 | 1,204 | Fourteen installers share support while retaining synchronous/async failures, responder arguments, capture identity and restoration; test bodies unchanged |
 
 ## 10. Exit criteria
 

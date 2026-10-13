@@ -11,6 +11,7 @@ import {
 } from "../../../src/components/systems/openview/adapters/views-api";
 import { wirePagination } from "../../helpers/pagination";
 import { emptyQuery } from "../../helpers/query-definitions";
+import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
 const moduleId = "00000000-0000-4000-8000-000000000101";
 const dateFieldId = "00000000-0000-4000-8000-000000000102";
@@ -19,25 +20,6 @@ const endFieldId = "00000000-0000-4000-8000-000000000104";
 const recordId = "00000000-0000-4000-8000-000000000105";
 const unrelatedFieldId = "00000000-0000-4000-8000-000000000106";
 const deadlineFieldId = "00000000-0000-4000-8000-000000000107";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(
-  responder: (input: RequestInfo | URL, init?: RequestInit) => Response,
-) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder(input, init));
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 const calendarDefinition: OpenViewQueryDefinition = emptyQuery({
   columns: [{ fieldId: dateFieldId, expectedType: "date" }],
