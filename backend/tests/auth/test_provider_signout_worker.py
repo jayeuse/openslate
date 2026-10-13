@@ -24,13 +24,21 @@ def test_signout_worker_reports_inflight_work_until_it_finishes(
     worker = module.ProviderSignoutWorker(Settings(**settings_values(), _env_file=None))
     monkeypatch.setattr(worker, "run_once", blocked_batch)
     monkeypatch.setattr(module, "_SHUTDOWN_SECONDS", 0.01, raising=False)
+    thread = None
     try:
         worker.start()
+        thread = worker._thread
+        assert thread is not None
         worker.start()
         assert entered.wait(timeout=1), "The durable queue was not polled"
         assert worker.stop() is False
+        assert worker._stop.is_set(), "stop() did not request shutdown"
     finally:
+        worker._stop.set()
         release.set()
+        if thread is not None:
+            thread.join(timeout=2)
+            assert not thread.is_alive(), "The sign-out worker did not terminate"
     assert worker.stop() is True
     assert len(calls) == 1
 
@@ -111,10 +119,18 @@ def test_stop_reports_inflight_retention_until_its_transaction_finishes(monkeypa
         return 0
 
     monkeypatch.setattr(worker, "_run_retention_once", retention, raising=False)
+    thread = None
     try:
         worker.start()
+        thread = worker._thread
+        assert thread is not None
         assert entered.wait(timeout=1), "Due retention was not attempted"
         assert worker.stop() is False
+        assert worker._stop.is_set(), "stop() did not request shutdown"
     finally:
+        worker._stop.set()
         release.set()
+        if thread is not None:
+            thread.join(timeout=2)
+            assert not thread.is_alive(), "The retention worker did not terminate"
         assert worker.stop() is True
