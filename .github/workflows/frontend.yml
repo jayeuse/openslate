@@ -141,21 +141,21 @@ jobs:
       fail-fast: false
       matrix:
         # The http project runs against the static export through the production
-        # static-site code (frontend/playwright.config.ts). Shards and workers per
-        # shard come from measurements (docs/plans/test-suite-tier-2-5.md, item 2).
+        # static-site code (frontend/playwright.config.ts). Whole-file shards use
+        # verified CI duration weights; current native collection owns membership.
         include:
           - suite: http 1/6
-            args: --project=http --shard=1/6 --workers=2
+            duration-shard: 1
           - suite: http 2/6
-            args: --project=http --shard=2/6 --workers=2
+            duration-shard: 2
           - suite: http 3/6
-            args: --project=http --shard=3/6 --workers=2
+            duration-shard: 3
           - suite: http 4/6
-            args: --project=http --shard=4/6 --workers=2
+            duration-shard: 4
           - suite: http 5/6
-            args: --project=http --shard=5/6 --workers=2
+            duration-shard: 5
           - suite: http 6/6
-            args: --project=http --shard=6/6 --workers=2
+            duration-shard: 6
     defaults:
       run:
         working-directory: frontend
@@ -192,11 +192,21 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
       - name: Install pinned Playwright Chromium
         run: npm exec --no -- playwright install --with-deps chromium
+      - name: Plan whole-file duration shards from current native collection
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/collection.json
+        run: |
+          mkdir -p test-results/ci
+          npm test -- --project=http --list --reporter=json
+          python3 ../scripts/playwright_shards.py plan \
+            --collection test-results/ci/collection.json --weights tests/http/.test-durations.json \
+            --shard ${{ matrix.duration-shard }} --shards 6 \
+            --test-list test-results/ci/selected.txt --receipt test-results/ci/assignment.json
       - name: Run browser tests against the static export
         timeout-minutes: 15
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/http-${{ strategy.job-index }}.json
-        run: npm test -- ${{ matrix.args }} --reporter=line,json
+        run: npm test -- --project=http --workers=2 --test-list=test-results/ci/selected.txt --reporter=line,json
       - name: Keep failure context and traces
         if: failure()
         uses: actions/upload-artifact@v7
@@ -209,11 +219,12 @@ jobs:
         if: ${{ always() }}
         env:
           REPORT_SHARD: ${{ matrix.suite }}
+          REPORT_DURATION_SHARD: ${{ matrix.duration-shard }}
         run: |
           mkdir -p test-results/ci
-          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=http\nshard=%s\n' \
+          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=http\nshard=%s\nduration-shard=%s/6\n' \
             "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" \
-            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" "$REPORT_SHARD" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" "$REPORT_SHARD" "$REPORT_DURATION_SHARD" \
             > test-results/ci/http-${{ strategy.job-index }}.metadata.txt
           test -s test-results/ci/http-${{ strategy.job-index }}.json
       - name: Keep the native Playwright report
@@ -224,6 +235,8 @@ jobs:
           path: |
             frontend/test-results/ci/http-${{ strategy.job-index }}.json
             frontend/test-results/ci/http-${{ strategy.job-index }}.metadata.txt
+            frontend/test-results/ci/selected.txt
+            frontend/test-results/ci/assignment.json
           retention-days: 14
           if-no-files-found: error
 

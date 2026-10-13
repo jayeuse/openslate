@@ -25,7 +25,7 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertEqual(source.count("npm ci --prefer-offline --no-audit --no-fund"), 4)
         self.assertIn("npm run check", source)
         self.assertIn("npm run build", source)
-        self.assertIn("npm test -- ${{ matrix.args }}", source)
+        self.assertIn("npm test -- --project=http --workers=2 --test-list=", source)
         isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
         self.assertIn("run: npm test -- --project=isolated", isolated)
         # One isolated test drives next dev in Chromium.
@@ -33,7 +33,13 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("download-artifact", isolated)
         for shard in range(1, 7):
             with self.subTest(shard=shard):
-                self.assertIn(f"args: --project=http --shard={shard}/6 --workers=2", source)
+                self.assertIn(f"duration-shard: {shard}", source)
+        self.assertNotIn("--shard=", source)
+        self.assertIn("--shard ${{ matrix.duration-shard }} --shards 6", source)
+        self.assertIn("--weights tests/http/.test-durations.json", source)
+        self.assertIn("--project=http --list --reporter=json", source)
+        self.assertIn("python3 ../scripts/playwright_shards.py plan", source)
+        self.assertIn("--project=http --workers=2 --test-list=test-results/ci/selected.txt", source)
         self.assertIn("fail-fast: false", source)
 
     def test_frontend_browser_tests_use_the_built_static_export(self):
@@ -118,6 +124,8 @@ class CiWorkflowContractTests(unittest.TestCase):
                 self.assertIn(f"frontend/{report}.metadata.txt", upload)
                 self.assertIn("retention-days: 14", upload)
                 self.assertIn("if-no-files-found: error", upload)
+        self.assertIn("duration-shard=%s/6", http)
+        self.assertIn("frontend/test-results/ci/assignment.json", http)
 
     def test_frontend_has_no_production_container_or_runtime_contract(self):
         source = self.source("frontend.yml")
