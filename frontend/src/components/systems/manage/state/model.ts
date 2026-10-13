@@ -14,20 +14,6 @@ export type ManageSettings = {
   expiry: string;
 };
 export type ManageSection = "organization" | "backup";
-export type ManageValidationErrors = Partial<
-  Record<keyof ManageSettings, string>
->;
-export type ManageActivityEntry = {
-  id: string;
-  user: string;
-  date: string;
-  entity: string;
-  action: string;
-  target: string;
-  before: string;
-  after: string;
-  source: "example" | "manage";
-};
 
 export const initialManageSettings: ManageSettings = {
   name: "Riverside Services",

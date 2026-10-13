@@ -27,8 +27,6 @@ import {
   type AccessInvitationSettings,
   type AccessGroupListOptions,
   type AccessDepartmentListOptions,
-  type AccessModuleListOptions,
-  type AccessMemberCandidateListOptions,
   type AccessSessionListOptions,
   type AccessUserListOptions,
 } from "../state/api";
@@ -50,7 +48,6 @@ import {
 // OpenView and the navigation; Access does not define a second identity key.
 
 export const accessKeys = {
-  all: ["access"] as const,
   security: () => ["access", "security"] as const,
   securityEvents: () => ["access", "security-events"] as const,
   securityEventList: (request: AccessSecurityEventsRequest) =>
@@ -84,17 +81,10 @@ export const accessKeys = {
     request: AccessGroupListOptions = {},
   ) => ["access", "groups", "list", deleted, request] as const,
   memberCandidates: () => ["access", "member-candidates"] as const,
-  memberCandidatePage: (request: AccessMemberCandidateListOptions) =>
-    ["access", "member-candidates", request] as const,
-  catalog: ["access", "catalog"] as const,
   departments: (
     deleted: AccessDeletedFilter,
     request: AccessDepartmentListOptions = {},
   ) => ["access", "catalog", "departments", deleted, request] as const,
-  modules: (
-    deleted: AccessDeletedFilter,
-    request: AccessModuleListOptions = {},
-  ) => ["access", "catalog", "modules", deleted, request] as const,
   invitationSettings: () => ["access", "invitation-settings"] as const,
 };
 
