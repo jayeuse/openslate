@@ -13,6 +13,7 @@ import {
   userId,
 } from "./helpers/boards-api";
 import { pageOf } from "../helpers/pagination";
+import { wireField } from "../helpers/wire";
 
 test("Board menu keeps administration reachable without crowding the section", async ({
   page,
@@ -1482,15 +1483,16 @@ test("an author links a Record using its off-page title field without crawling t
         });
       return route.fulfill({
         json: {
-          items: Array.from({ length: 100 }, (_, index) => ({
-            id: `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
-            module_id: moduleId,
-            name: `Other field ${index + 1}`,
-            type: "text",
-            required: false,
-            position: index,
-            config: { kind: "text" },
-          })),
+          items: Array.from({ length: 100 }, (_, index) =>
+            wireField({
+              id: `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
+              module_id: moduleId,
+              name: `Other field ${index + 1}`,
+              type: "text",
+              position: index,
+              config: { kind: "text" },
+            }),
+          ),
           pagination: {
             limit: 100,
             offset: 0,

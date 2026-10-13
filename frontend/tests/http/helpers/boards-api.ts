@@ -1,6 +1,7 @@
 import type { Page } from "./test";
 import { isEventStream, signedInAs } from "./test";
 import { wirePagination } from "../../helpers/pagination";
+import { wireBoard } from "../../helpers/wire";
 
 // The Board shell's API, mocked for HTTP specs: an authorized administrator,
 // two Boards, and empty posts, events and widgets. A spec registers its own
@@ -8,18 +9,14 @@ import { wirePagination } from "../../helpers/pagination";
 
 export const boardId = "00000000-0000-4000-8000-000000000011";
 export const userId = "00000000-0000-4000-8000-000000000012";
-export const board = {
+export const board = wireBoard({
   id: boardId,
-  scope: "project",
-  department_id: null,
   name: "Live operations board",
   description: "Current authorized workspace content",
-  status: "active",
-  revision: 1,
   level: "manage",
   created_at: "2026-09-23T00:00:00Z",
   updated_at: "2026-09-23T00:00:00Z",
-};
+});
 export const otherBoard = {
   ...board,
   id: "00000000-0000-4000-8000-000000000013",

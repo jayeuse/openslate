@@ -22,6 +22,7 @@ import {
 } from "../../../src/components/systems/boards/hooks/use-board-widget-management";
 import { blankWidgetCreation } from "../../../src/components/systems/boards/domain/widget-editor";
 import { wirePagination } from "../../helpers/pagination";
+import { wireBoard } from "../../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000002";
@@ -178,18 +179,17 @@ test("widget denial revokes parent Board only after independent VIEW loss confir
     globalThis.fetch = ((input: RequestInfo | URL) => {
       paths.push(String(input));
       return Promise.resolve(
-        Response.json({
-          id: boardId,
-          scope: "project",
-          department_id: null,
-          name: "Still visible",
-          description: null,
-          status: "active",
-          revision: 4,
-          level: "read",
-          created_at: timestamp,
-          updated_at: timestamp,
-        }),
+        Response.json(
+          wireBoard({
+            id: boardId,
+            name: "Still visible",
+            description: null,
+            revision: 4,
+            level: "read",
+            created_at: timestamp,
+            updated_at: timestamp,
+          }),
+        ),
       );
     }) as typeof fetch;
     await notifyIfBoardViewLost(

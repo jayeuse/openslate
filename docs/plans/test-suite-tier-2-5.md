@@ -300,6 +300,7 @@ Counts include shared helpers. Repeated windows are distinct repeated sequences 
 | F3: query-definition inputs | 114,290 | 114,267 | 1,241 | 1,235 | Ten equivalent input definitions; assertion expectations retain their original literals; no rows or assertions removed |
 | F4: fetch mock support | 114,267 | 114,076 | 1,235 | 1,204 | Fourteen installers share support while retaining synchronous/async failures, responder arguments, capture identity and restoration; test bodies unchanged |
 | F5: Sandbox field inputs | 114,076 | 114,029 | 1,204 | 1,181 | Fifteen equivalent Text/Select field objects, including null defaults and fresh option arrays; assertions and malformed inputs retained |
+| F2: field and Board wire inputs | 114,029 | 113,980 | 1,181 | 1,164 | Sixty equivalent objects (39 fields, 21 Boards); explicit non-defaults, nested identities, malformed inputs and literal expectations retained |
 
 ## 10. Exit criteria
 

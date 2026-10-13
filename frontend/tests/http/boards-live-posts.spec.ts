@@ -10,6 +10,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { pageOf } from "../helpers/pagination";
+import { wireBoard } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -44,18 +45,15 @@ const browserPost = {
   body: "Use the new entrance.\n<script>not markup</script>",
 };
 
-const browserBoard = {
+const browserBoard = wireBoard({
   id: boardId,
-  scope: "project",
-  department_id: null,
   name: "Operations board",
   description: "Current authorized workspace content",
-  status: "active",
   revision: 4,
   level: "write",
   created_at: publishedAt,
   updated_at: publishedAt,
-};
+});
 
 function wirePage(items: unknown[]) {
   return { ...pageOf(items, { limit: 25 }), board_revision: 4 };

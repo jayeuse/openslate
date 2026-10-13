@@ -16,6 +16,7 @@ import {
 } from "./helpers/test";
 import { gate as requestGate, type Gate as RequestGate } from "./helpers/gate";
 import { pageOf, wirePagination } from "../helpers/pagination";
+import { wireBoard, wireField } from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -315,15 +316,14 @@ function dataSourceField(
   name: string,
   position: number,
 ): FieldWire {
-  return {
+  return wireField({
     id,
     module_id: moduleId,
     name,
     type: "select",
-    required: false,
     position,
     config: { options: categoryChoices },
-  };
+  });
 }
 
 function snapshot(length = 30) {
@@ -528,21 +528,19 @@ async function installDashboardApi(
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            wireField({
               id: categoryFieldId,
               module_id: moduleId,
               name: "Category",
               type: "select",
-              required: false,
               position: 0,
               config: { options: categoryChoices },
-            },
-            {
+            }),
+            wireField({
               id: regionFieldId,
               module_id: moduleId,
               name: "Region",
               type: "select",
-              required: false,
               position: 1,
               config: {
                 options: [
@@ -550,52 +548,42 @@ async function installDashboardApi(
                   { id: southChoiceId, label: "South" },
                 ],
               },
-            },
-            {
+            }),
+            wireField({
               id: amountFieldId,
               module_id: moduleId,
               name: "Amount",
               type: "decimal",
-              required: false,
               position: 2,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: dateFieldId,
               module_id: moduleId,
               name: "Occurred on",
               type: "date",
-              required: false,
               position: 3,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: datetimeFieldId,
               module_id: moduleId,
               name: "Updated at",
               type: "datetime",
-              required: false,
               position: 4,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: unitsFieldId,
               module_id: moduleId,
               name: "Units",
               type: "int",
-              required: false,
               position: 5,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: scoreFieldId,
               module_id: moduleId,
               name: "Score",
               type: "number",
-              required: false,
               position: 6,
-              config: {},
-            },
+            }),
           ],
           pagination: wirePagination({ limit: 100, count: 7, total: 7 }),
         }),
@@ -2703,18 +2691,14 @@ test("paired Board and Dashboard follow one Chart revision without source writes
   };
   try {
     await installDashboardApi(boardPage, dashboard({ widgets: [referenced] }));
-    const board = {
+    const board = wireBoard({
       id: boardId,
-      scope: "project",
-      department_id: null,
       name: "Paired Board",
       description: null,
-      status: "active",
-      revision: 1,
       level: "manage",
       created_at: timestamp,
       updated_at: timestamp,
-    };
+    });
     const widget = {
       id: boardWidgetId,
       board_id: boardId,

@@ -14,6 +14,7 @@ import {
   restoreBoard,
   updateBoard,
 } from "../../../src/components/systems/boards/adapters/board-management-api";
+import { wireBoard } from "../../helpers/wire";
 import { installNoArgumentFetch as installFetch } from "../helpers/fake-fetch";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
@@ -60,18 +61,14 @@ const bundle = {
 };
 
 function boardResponse(id = newBoardId) {
-  return {
+  return wireBoard({
     id,
-    scope: "project",
-    department_id: null,
     name: "Dispatch",
     description: "Daily handoffs",
-    status: "active",
-    revision: 1,
     level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
-  };
+  });
 }
 
 test("Board collection sends bounded filters and returns a validated page", async () => {

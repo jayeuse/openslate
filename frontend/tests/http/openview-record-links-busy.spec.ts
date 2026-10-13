@@ -14,6 +14,7 @@ import {
 } from "./helpers/openview-event-source";
 import { pageOf } from "../helpers/pagination";
 import { emptyWireQuery } from "../helpers/query-definitions";
+import { wireField } from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -377,29 +378,28 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
         const limit = Number(url.searchParams.get("limit") ?? 100);
         const catalog = Array.from(
           { length: options.temporaryFieldOffPage ? 102 : 101 },
-          (_, index) => ({
-            id:
-              index === 0
-                ? sourceNameFieldId
-                : index === 100
-                  ? incomingFieldId
-                  : index === 101
-                    ? temporaryFieldId
-                    : `40000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-            module_id: sourceModuleId,
-            name:
-              index === 0
-                ? "Request title"
-                : index === 100
-                  ? "Off-page detail"
-                  : index === 101
-                    ? "Temporary-only detail"
-                    : `Extra field ${index}`,
-            type: "text",
-            required: false,
-            position: index,
-            config: {},
-          }),
+          (_, index) =>
+            wireField({
+              id:
+                index === 0
+                  ? sourceNameFieldId
+                  : index === 100
+                    ? incomingFieldId
+                    : index === 101
+                      ? temporaryFieldId
+                      : `40000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              module_id: sourceModuleId,
+              name:
+                index === 0
+                  ? "Request title"
+                  : index === 100
+                    ? "Off-page detail"
+                    : index === 101
+                      ? "Temporary-only detail"
+                      : `Extra field ${index}`,
+              type: "text",
+              position: index,
+            }),
         );
         const items = catalog.slice(offset, offset + limit);
         return route.fulfill({
@@ -409,15 +409,14 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       return route.fulfill({
         json: pageOf(
           [
-            {
+            wireField({
               id: isSource ? sourceNameFieldId : targetNameFieldId,
               module_id: moduleId,
               name: isSource ? "Request title" : "Visit title",
               type: "text",
               required: true,
               position: 0,
-              config: {},
-            },
+            }),
           ],
           { limit: 100 },
         ),

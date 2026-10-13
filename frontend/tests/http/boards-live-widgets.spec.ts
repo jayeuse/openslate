@@ -11,6 +11,7 @@ import {
 import { gate as newGate, type Gate } from "./helpers/gate";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { emptyWireQuery } from "../helpers/query-definitions";
+import { wireBoard, wireField } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -45,18 +46,14 @@ const wireWidget = {
 async function installS26WidgetApi(page: Page, widgets: unknown[]) {
   await installOpenViewEventSource(page);
   const actor = "00000000-0000-4000-8000-000000000661";
-  const board = {
+  const board = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Query overview",
     description: null,
-    status: "active",
-    revision: 1,
     level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
-  };
+  });
   await page.route("**/api/**", (route) => {
     if (isEventStream(route)) return route.fallback();
     const url = new URL(route.request().url());
@@ -1352,24 +1349,20 @@ test("later field-page denial hides all catalog names but retains the typed Boar
       return route.fulfill({
         json: pageOf(
           [
-            {
+            wireField({
               id: fieldId,
               module_id: moduleId,
               name: "Private dimension label",
               type: "text",
-              required: false,
               position: 0,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: evidenceMeasureId,
               module_id: moduleId,
               name: "Private measure label",
               type: "decimal",
-              required: false,
               position: 1,
-              config: {},
-            },
+            }),
           ],
           { limit: 100, total: 3, hasMore: true },
         ),
@@ -2144,18 +2137,14 @@ for (const replacement of ["board", "source", "account"] as const) {
           },
         }),
       );
-      const replacementBoard = {
+      const replacementBoard = wireBoard({
         id: otherBoardId,
-        scope: "project",
-        department_id: null,
         name: "Replacement board",
         description: null,
-        status: "active",
-        revision: 1,
         level: "manage",
         created_at: timestamp,
         updated_at: timestamp,
-      };
+      });
       await page.route("**/api/boards**", (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === "/api/boards")
@@ -2804,18 +2793,15 @@ test("widget create and edit omit refresh even when the server returns a legacy 
     },
   ];
   const writes: Record<string, unknown>[] = [];
-  const board = {
+  const board = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Operations board",
     description: "Synthetic S05 widget controls",
-    status: "active",
     revision,
     level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
-  };
+  });
   await page.route("**/api/**", async (route) => {
     if (isEventStream(route)) return route.fallback();
     const request = route.request();
@@ -2959,18 +2945,15 @@ test("widget metadata and scoped record bursts refresh once on the shared stream
   let count = 3;
   let queryReads = 0;
   const actor = "00000000-0000-4000-8000-000000000007";
-  const board = {
+  const board = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Operations board",
     description: "Current requests",
-    status: "active",
     revision: 4,
     level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
-  };
+  });
   await page.route("**/api/**", (route) => {
     if (isEventStream(route)) return route.fallback();
     const path = new URL(route.request().url()).pathname;

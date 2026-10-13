@@ -11,6 +11,7 @@ import type {
 import { group as accessGroupFixture } from "../isolated/access/fixtures";
 import { isEventStream } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
+import { wireBoard } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -71,10 +72,8 @@ async function installArchivedBoard(page: Page) {
     purge_enabled: true as boolean | undefined,
   };
   let workspaceFailure = false;
-  const archived = {
+  const archived = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: board.name,
     description: board.description,
     status: "archived",
@@ -82,7 +81,7 @@ async function installArchivedBoard(page: Page) {
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   await page.route("**/api/**", (route) => {
     if (isEventStream(route)) return route.fallback();
     const path = new URL(route.request().url()).pathname;
@@ -307,18 +306,14 @@ test("Board creation closes its form and confirms the created Board", async ({
   page,
 }) => {
   await installArchivedBoard(page);
-  const created = {
+  const created = wireBoard({
     id: departmentId,
-    scope: "project",
-    department_id: null,
     name: "New dispatch",
     description: "Owned feedback journey",
-    status: "active",
-    revision: 1,
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   await page.route("**/api/boards", (route) =>
     route.request().method() === "POST"
       ? route.fulfill({ status: 201, json: created })
@@ -400,18 +395,15 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
   page,
 }) => {
   await installArchivedBoard(page);
-  const activeBoard = {
+  const activeBoard = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: board.name,
     description: board.description,
-    status: "active",
     revision: board.revision,
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   await page.route("**/api/boards", (route) =>
     route.fulfill({
       json: pageOf([activeBoard], { limit: 25 }),
@@ -516,10 +508,8 @@ const controlFile = {
 
 async function installFileManagement(page: Page, startArchived = false) {
   const api = await installArchivedBoard(page);
-  const currentBoard = {
+  const currentBoard = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: board.name,
     description: board.description,
     status: startArchived ? "archived" : "active",
@@ -527,7 +517,7 @@ async function installFileManagement(page: Page, startArchived = false) {
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   let file = { ...controlFile };
   let fileReadsWhileArchived = 0;
   let purgeAttempts = 0;
@@ -660,18 +650,14 @@ test("another Board invalidation refreshes the current bounded selector search i
       return route.fulfill({
         json: pageOf(
           [
-            {
+            wireBoard({
               id: otherId,
-              scope: "project",
-              department_id: null,
               name,
               description: "",
-              status: "active",
-              revision: 1,
               level: "manage",
               created_at: board.createdAt,
               updated_at: board.updatedAt,
-            },
+            }),
           ],
           { limit: 25 },
         ),
@@ -944,18 +930,15 @@ test("obsolete file preview cannot unlock a fresh Board review after real refres
   page,
 }) => {
   await installFileManagement(page);
-  let current = {
+  let current = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: board.name,
     description: board.description,
-    status: "active",
     revision: board.revision,
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   let holdNext = false,
     detailHeld = false,
     fileHeld = false,

@@ -7,6 +7,7 @@ import {
 } from "./helpers/openview-event-source";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
+import { wireField } from "../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000110";
 const departmentId = "00000000-0000-4000-8000-000000000111";
@@ -61,26 +62,24 @@ test("Charts filter on stable choice and eligible person IDs", async ({
         body: JSON.stringify(
           pageOf(
             [
-              {
+              wireField({
                 id: selectFieldId,
                 module_id: moduleId,
                 name: "Status",
                 type: "select",
-                required: false,
                 position: 0,
                 config: {
                   options: [{ id: choiceId, label: "Awaiting review" }],
                 },
-              },
-              {
+              }),
+              wireField({
                 id: userFieldId,
                 module_id: moduleId,
                 name: "Assignee",
                 type: "user",
-                required: false,
                 position: 1,
                 config: { kind: "user" },
-              },
+              }),
             ],
             { limit: 100 },
           ),

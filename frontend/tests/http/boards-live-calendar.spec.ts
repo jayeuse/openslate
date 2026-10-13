@@ -11,6 +11,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { pageOf, wirePagination } from "../helpers/pagination";
+import { wireBoard } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
@@ -45,18 +46,14 @@ async function installSelectedEventApi(
   browser: Page,
   weekStart: "monday" | "sunday" = "monday",
 ) {
-  const board = {
+  const board = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Calendar board",
     description: "Current calendar",
-    status: "active",
-    revision: 1,
     level: "read",
     created_at: selectedEventWire.created_at,
     updated_at: selectedEventWire.updated_at,
-  };
+  });
   await browser.route("**/api/**", (route) =>
     isEventStream(route)
       ? route.fallback()
@@ -147,18 +144,15 @@ async function installS11EventApi(browser: Page) {
       });
     }
     reads.push(url.pathname);
-    const board = {
+    const board = wireBoard({
       id: boardId,
-      scope: "project",
-      department_id: null,
       name: "Calendar board",
       description: "Current calendar",
-      status: "active",
       revision: saved.board_revision,
       level: "manage",
       created_at: saved.created_at,
       updated_at: saved.updated_at,
-    };
+    });
     const pagination = wirePagination({ limit: 25, count: 1, total: 1 });
     if (url.pathname === "/api/boards")
       return route.fulfill({ json: { items: [board], pagination } });
@@ -949,18 +943,15 @@ test("admin purges archived-parent event while ordinary lifecycle editing stays 
   page: browser,
 }) => {
   const api = await installArchivedEventPurge(browser);
-  const archivedParent = {
+  const archivedParent = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Calendar board",
     description: "Current calendar",
     status: "archived",
-    revision: 1,
     level: "manage",
     created_at: selectedEventWire.created_at,
     updated_at: selectedEventWire.updated_at,
-  };
+  });
   await browser.route(`**/api/boards/${boardId}`, (route) =>
     route.fulfill({ json: archivedParent }),
   );
@@ -1030,18 +1021,15 @@ test("archived-parent admin retains current-access retry after an event-list fai
   page: browser,
 }) => {
   await installArchivedEventPurge(browser);
-  const parent = {
+  const parent = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Calendar board",
     description: "Current calendar",
     status: "archived",
-    revision: 1,
     level: "manage",
     created_at: selectedEventWire.created_at,
     updated_at: selectedEventWire.updated_at,
-  };
+  });
   await browser.route(`**/api/boards/${boardId}`, (route) =>
     route.fulfill({ json: parent }),
   );

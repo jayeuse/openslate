@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import { profilePreferences } from "./helpers/profile-api";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
+import { wireField } from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -205,7 +206,7 @@ async function installReportsApi(
       body: JSON.stringify(
         pageOf(
           [
-            {
+            wireField({
               id: fieldId,
               // Answer for the requested module: /api/views/data-sources/<id>/fields.
               module_id: path.split("/")[4],
@@ -213,8 +214,7 @@ async function installReportsApi(
               type: "text",
               required: true,
               position: 0,
-              config: {},
-            },
+            }),
           ],
           { limit: 100 },
         ),
@@ -1182,21 +1182,19 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
       body: JSON.stringify(
         pageOf(
           [
-            {
+            wireField({
               id: fieldId,
               module_id: moduleId,
               name: "Asset",
               type: "text",
               required: true,
               position: 0,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: selectFieldId,
               module_id: moduleId,
               name: "Status",
               type: "select",
-              required: false,
               position: 1,
               config: {
                 options: [
@@ -1204,16 +1202,15 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
                   { id: inspectionChoiceId, label: "Inspection due" },
                 ],
               },
-            },
-            {
+            }),
+            wireField({
               id: userFieldId,
               module_id: moduleId,
               name: "Assignee",
               type: "user",
-              required: false,
               position: 2,
               config: { kind: "user" },
-            },
+            }),
           ],
           { limit: 100 },
         ),

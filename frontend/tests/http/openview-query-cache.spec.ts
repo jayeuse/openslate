@@ -4,6 +4,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { pageOf } from "../helpers/pagination";
+import { wireField } from "../helpers/wire";
 
 const userA = "00000000-0000-4000-8000-000000000101";
 const userB = "00000000-0000-4000-8000-000000000201";
@@ -178,15 +179,14 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       body: JSON.stringify(
         pageOf(
           [
-            {
+            wireField({
               id: fieldId,
               module_id: moduleId,
               name: "Asset",
               type: "text",
               required: true,
               position: 0,
-              config: {},
-            },
+            }),
           ],
           { limit: 100 },
         ),

@@ -1,20 +1,17 @@
 import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
+import { wireBoard } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";
-const board = {
+const board = wireBoard({
   id: boardId,
-  scope: "project",
-  department_id: null,
   name: "Authorized operations",
   description: null,
-  status: "active",
-  revision: 1,
   level: "read",
   created_at: "2026-09-23T00:00:00Z",
   updated_at: "2026-09-23T00:00:00Z",
-};
+});
 
 async function installServerBoards(page: Page) {
   await page.route("**/api/workspace", (route) =>

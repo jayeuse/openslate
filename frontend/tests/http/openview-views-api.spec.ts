@@ -14,6 +14,7 @@ import { readFile } from "node:fs/promises";
 import { hideDevOverlay } from "./helpers/test-styles";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
+import { wireField } from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -1252,21 +1253,19 @@ async function installViewsApi(
         body: JSON.stringify(
           pageOf(
             [
-              {
+              wireField({
                 id: nameFieldId,
                 module_id: moduleId,
                 name: "Equipment name",
                 type: "text",
                 required: true,
                 position: 0,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: statusFieldId,
                 module_id: moduleId,
                 name: "Status",
                 type: "select",
-                required: false,
                 position: 1,
                 config: {
                   options: [
@@ -1274,97 +1273,77 @@ async function installViewsApi(
                     { id: inspectionDueChoiceId, label: "Inspection due" },
                   ],
                 },
-              },
-              {
+              }),
+              wireField({
                 id: serialFieldId,
                 module_id: moduleId,
                 name: options.serialFieldName ?? "Serial number",
                 type: "text",
-                required: false,
                 position: 2,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: unselectedQueryFieldId,
                 module_id: moduleId,
                 name: "Unselected query field",
                 type: "text",
-                required: false,
                 position: 3,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: timelineStartFieldId,
                 module_id: moduleId,
                 name: "Start date",
                 type: "date",
-                required: false,
                 position: 4,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: timelineEndFieldId,
                 module_id: moduleId,
                 name: "End date",
                 type: "date",
-                required: false,
                 position: 5,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: calendarDateFieldId,
                 module_id: moduleId,
                 name: "Scheduled at",
                 type: "datetime",
-                required: false,
                 position: 6,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: timelineDeadlineFieldId,
                 module_id: moduleId,
                 name: "Deadline",
                 type: "date",
-                required: false,
                 position: 7,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: timelineProgressFieldId,
                 module_id: moduleId,
                 name: "Progress",
                 type: "decimal",
-                required: false,
                 position: 8,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: timelineTimestampDeadlineFieldId,
                 module_id: moduleId,
                 name: "Timestamp deadline",
                 type: "datetime",
-                required: false,
                 position: 9,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: numberFieldId,
                 module_id: moduleId,
                 name: "Measurement",
                 type: "number",
-                required: false,
                 position: 10,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: integerFieldId,
                 module_id: moduleId,
                 name: "Item count",
                 type: "int",
-                required: false,
                 position: 11,
-                config: {},
-              },
+              }),
             ],
             { limit: 100 },
           ),
@@ -5227,35 +5206,31 @@ test("Views show authorized labels while filters keep stable choice and eligible
         body: JSON.stringify(
           pageOf(
             [
-              {
+              wireField({
                 id: nameFieldId,
                 module_id: moduleId,
                 name: "Equipment name",
                 type: "text",
                 required: true,
                 position: 0,
-                config: {},
-              },
-              {
+              }),
+              wireField({
                 id: statusFieldId,
                 module_id: moduleId,
                 name: "Status",
                 type: "select",
-                required: false,
                 position: 1,
                 config: {
                   options: [{ id: choiceId, label }],
                 },
-              },
-              {
+              }),
+              wireField({
                 id: userFieldId,
                 module_id: moduleId,
                 name: "Assignee",
                 type: "user",
-                required: false,
                 position: 2,
-                config: {},
-              },
+              }),
             ],
             { limit: 100 },
           ),

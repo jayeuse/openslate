@@ -16,6 +16,7 @@ import {
   type OpenViewSavedView,
 } from "../../../src/components/systems/openview/adapters/views-api";
 import { wirePagination } from "../../helpers/pagination";
+import { wireField } from "../../helpers/wire";
 import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
@@ -173,33 +174,27 @@ test("maps validated catalog, saved-view, and record pages", async () => {
           position: 0,
           config: { choices: ["active", "retired"] },
         },
-        {
+        wireField({
           id: timelineStartFieldId,
           module_id: moduleId,
           name: "Start date",
           type: "date",
-          required: false,
           position: 1,
-          config: {},
-        },
-        {
+        }),
+        wireField({
           id: timelineEndFieldId,
           module_id: moduleId,
           name: "End date",
           type: "datetime",
-          required: false,
           position: 2,
-          config: {},
-        },
-        {
+        }),
+        wireField({
           id: userFieldId,
           module_id: moduleId,
           name: "Assignee",
           type: "user",
-          required: false,
           position: 3,
-          config: {},
-        },
+        }),
       ],
       pagination,
     },
@@ -620,15 +615,13 @@ test("rejects malformed payloads, relationship fields, and preserves conflicts",
   const relationship = installFetch(() =>
     Response.json({
       items: [
-        {
+        wireField({
           id: fieldId,
           module_id: moduleId,
           name: "Related item",
           type: "relationship",
-          required: false,
           position: 0,
-          config: {},
-        },
+        }),
       ],
       pagination,
     }),

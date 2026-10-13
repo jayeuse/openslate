@@ -9,6 +9,7 @@ import {
   mfaUserB,
 } from "./helpers/mfa";
 import { pageOf, wirePagination } from "../helpers/pagination";
+import { wireBoard } from "../helpers/wire";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 test.afterEach(async ({ page }) => {
@@ -55,18 +56,14 @@ test("MFA gate stays accessible over an alert dialog and restores its typed conf
   page,
 }) => {
   const id = "00000000-0000-4000-8000-000000000301";
-  const board = {
+  const board = wireBoard({
     id,
-    scope: "project",
-    department_id: null,
     name: "Pending dispatch",
     description: null,
-    status: "active",
-    revision: 1,
     level: "manage",
     created_at: "2026-10-02T00:00:00Z",
     updated_at: "2026-10-02T00:00:00Z",
-  };
+  });
   const writes: string[] = [];
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
