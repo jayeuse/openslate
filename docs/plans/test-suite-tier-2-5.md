@@ -1,6 +1,6 @@
 # Tier 2.5: test suite refactor plan
 
-Implementation status: item 13 covers the eight frontend `http` families (F1 to F8) and the backend areas B2 to B13 (section 9; B1 removed no test, F9 and I4 stay deferred with OpenComms). Items 12, 16, 24, 25 and 26 are implemented; shard measurements, compaction decisions and retained exceptions are recorded below. Remaining scope: CI shape and parity (item 21), scheduled mutation (item 27), and final documentation (item 23).
+Implementation status: item 13 covers the eight frontend `http` families (F1 to F8) and the backend areas B2 to B13 (section 9; B1 removed no test, F9 and I4 stay deferred with OpenComms). Items 12, 16, 21, 24, 25 and 26 are implemented; shard measurements, parity, compaction decisions and retained exceptions are recorded below. Remaining scope: scheduled mutation (item 27) and final documentation (item 23).
 
 This plan refactors every test suite in the repository and the CI that runs them: backend pytest, frontend Playwright (`isolated`, `http`, `fullstack`, smoke), the pre-push gate, and the GitHub workflows. The plan has three goals: less bloat, less duplicated setup, and shorter run times. Protection must stay the same or improve.
 
@@ -144,6 +144,7 @@ The slowest frontend files are `sandbox-relationship-mappings` (432 worker-secon
    - Preserve the complete Harbor Small seed, controls and phases: request-contract, route-coverage and queued-backup verification depend on them. Do not trim the seed or replace it with a saved snapshot. The smoke fixture derives its workspace label from the selected seed pack; navigation checks the shell before a post deep link opens a modal. Attachment/download checks remain intact.
 - **15. Clean baseline.** On one commit, with nothing else running, measure the frontend lane alone with the `blob` or `json` reporter (per-test durations), the backend lane alone, and the same commit in CI. Store the numbers in this file. Every later "before" value comes from this baseline.
 - **21. CI target shape and parity.** See section 7. Prove parity: run one commit three times locally and in CI; the results must be the same each time.
+   - Result: all six runs at exact commit `ab5bad22006786a7222b559779e94eb6110093cd` have identical complete passing identity sets: 1,752 isolated + 1,209 HTTP cases; 5,832 backend JUnit parent identities + 25 aggregate passing numeric-title subtests = 5,857 backend outcomes. The 25 subtests have no individual passing JUnit child identities; their owner and aggregate outcomes are compared, not invented child IDs. No missing/duplicate identities, failures, errors, skips, flakes or retries. Frontend [38378999443](https://github.com/jayeuse/openslate/actions/runs/38378999443) and Backend [38378999603](https://github.com/jayeuse/openslate/actions/runs/38378999603) completed full attempts 1, 2 and 3; each attempt's native reports were archived before the next rerun. Native checkout metadata, not the PR-event merge SHA, binds the tested commit. Local round 1 passed the 12-command serial pre-push gate in 899.52 s; rounds 2 and 3 repeated both complete behavior lanes serially and explicitly reused unchanged auxiliary gate evidence. Overall/changed production coverage is 94.206%/100% in every round.
 - **24. Survivor triage.** Strengthen the tests where mutation testing shows a real gap. Scope: every module with a mutation score in section 9 and the item 5 notes (about 1,360 mutants not killed across 15 modules on 2026-10-12, plus the Auth and Access modules from B3/B12 and any module scored in B6, B7, B9 or B10). Order by the number of survivors: `fields.validation` (234), `mutation_validation` (188), `importing` (159), Sandbox `designs.validation` (133), `event_occurrences` (112), then the rest.
    - Result (2026-10-13): done. Groups G1 to G8b triaged every module with a mutation score. Killed counts rose in every module (for example `fields.validation` 706 to 927, `mutation_validation` 132 to 294, Sandbox design validation 625 to 754 of 754, `supabase_auth` 573 to 747, `provider_actions` 241 to 493, `users.service` 250 to 353, `file_transfers` 117 to 152 of 157, `readiness` 183 to 224, sample `episodes` 282 to 301). Every remaining survivor has a recorded reason in `docs/plans/mutation-survivors.md`. The triage found six product bugs, each fixed with a failing test first: a disabled account could still change its password, a confirmation challenge could be leased twice, a publish blocker message depended on the hash seed, one malformed provider key caused 500s for every uncached token, a rate-limited password change sent no `Retry-After`, and the backend accepted a closed title field that the frontend refuses.
    - **What a kill is.** A mutant is a fake bug in a temporary copy of the code. A test kills it when that test fails on the mutant and passes on the real code. The fix is a test change, not a product change. The mutant is the red step: run the new assertion against the mutant first and see it fail.
@@ -231,18 +232,18 @@ Counts come from the inventory of 2026-10-11. "Routes" counts `.route(` calls. "
 | B12 | Access, users, RBAC, OpenView access | 38 | 8,354 | 381 | 99 s | Policy matrix into one table per rule. |
 | B13 | Runner, runtime, reset, contracts, operations root, test support | 72 | 13,928 | 469 | 53 s | Runner guards stay (D4). Bounded polling loops may stay. |
 
-## 7. CI target shape
+## 7. Settled CI shape
 
-This shape is a hypothesis. Items 1, 2, 3, and 12 confirm or change it with measurements.
+Items 1, 2, 3 and 12 established this shape; item 21 verified complete local/CI outcome parity at one exact commit.
 
-| Workflow | Today | Target |
-|---|---|---|
-| Frontend | `check`, `build`, `isolated`, and 12 `http` shards. Each `http` shard installs Chromium and starts `next dev`. | `check`; `build` uploads `out/` as an artifact; `isolated`; N `http` shards with W workers each, serving `out/` through the static-site entry and balanced by duration. Use the Playwright container image or no browser cache (the cache misses today). |
-| Backend | `quality`, 5 stack shards, `coverage-gate`, `reset-acceptance`, `container`. | `quality`; one job with no stack (`pytest-xdist`); M stack shards for database tests only; `coverage-gate` combines both; `reset-acceptance`; `container`. Durations come from the CI combine step. |
-| Both | No check on test diffs. | The item 14 ledger and forbidden-pattern check on every change to test files. |
-| Pre-push | `prepush.py --serial` runs the lanes one after another. | The same lanes and commands as CI, with the local worker counts from item 2. A change of shape in CI changes `prepush.py` in the same commit. |
+| Workflow | Implemented shape |
+|---|---|
+| Frontend | `check`; `build` uploads `out/`; one `isolated` job; six whole-file, duration-balanced HTTP shards with two workers each. The HTTP tests serve the static export through the FastAPI test entry. Pinned Chromium installation and the lockfile-keyed browser cache remain. |
+| Backend | `quality`; a stack-free unit job with four workers; five integration-only stack shards; `coverage-gate` combines both; separate `reset-acceptance`; unified server `container` build. Durations come from the CI combine step. |
+| Both | Change classification and the item 14 ledger/forbidden-pattern guard preserve required checks. Source-consuming jobs check out the exact PR head, or the event SHA for non-PR runs. |
+| Pre-push | At push time, `python3 scripts/prepush.py --base <base-ref> --serial` runs frontend and backend lanes one after another. Frontend uses up to three local workers; backend runs its stack-free unit lane before three integration shards. Same complete behavior coverage and gates, with measured host-specific parallelism. |
 
-Parity proof (item 21): run the same commit three times through the local gate and through CI. The pass and fail result of every test must be the same.
+Parity proof (item 21): freeze one commit for three local and three complete CI rounds. Use the serial pre-push gate as local round 1; repeat complete frontend/backend behavior lanes for local rounds 2 and 3, reusing unchanged static/build/image/reset evidence explicitly. Compare complete native identity/outcome unions, not shard assignments, timing or ordering. Archive every complete CI attempt before requesting another full rerun; never combine failed-jobs-only reruns. Native JSON/JUnit and checkout/run/shard metadata are retained; this proof does not add a permanent reporting framework.
 
 ## 8. Execution model
 
@@ -330,7 +331,7 @@ The plan is complete when all of these are true:
 2. Every deferred guard in item 10 is on, with zero violations.
 3. No `test.skip`, `test.fixme`, or `xfail` remains without an owner, an issue, and a review date.
 4. No test sets a timeout above the default without a measured reason written next to it.
-5. The parity proof in item 21 passes on three commits.
+5. The parity proof in item 21 passes three local and three complete CI rounds on one exact commit.
 6. Local gate time and CI runner minutes are recorded before and after.
 7. The documents in item 23 describe the final shape.
 
