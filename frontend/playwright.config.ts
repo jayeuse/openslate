@@ -125,7 +125,9 @@ export default defineConfig({
   expect: { timeout: 5_000 },
   forbidOnly: isCI,
   retries: 0,
-  reporter: "line",
+  reporter: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME
+    ? [["line"], ["json"]]
+    : "line",
   // CI runs in UTC and en-US; pin both so a local run cannot pass only
   // because this machine's zone or language matches a test fixture.
   use: {

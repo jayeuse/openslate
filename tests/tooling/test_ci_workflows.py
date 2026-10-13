@@ -16,6 +16,20 @@ class CiWorkflowContractTests(unittest.TestCase):
     def jobs(self, source: str) -> list[str]:
         return re.findall(r"(?m)^  ([a-z][a-z0-9-]*):\n", source.split("jobs:\n", 1)[1])
 
+    def test_source_consuming_workflows_checkout_the_event_head_consistently(self):
+        ref = "${{ github.event.pull_request.head.sha || github.sha }}"
+        for workflow in ("frontend.yml", "backend.yml"):
+            checkouts = [
+                step
+                for step in re.split(r"(?m)^      - ", self.source(workflow))[1:]
+                if re.search(r"(?m)^\s*uses: actions/checkout@", step)
+            ]
+            with self.subTest(workflow=workflow):
+                self.assertTrue(checkouts)
+            for index, checkout in enumerate(checkouts, 1):
+                with self.subTest(workflow=workflow, checkout=index):
+                    self.assertEqual(re.findall(r"(?m)^          ref: (.+)$", checkout), [ref])
+
     def test_frontend_runs_check_build_and_sharded_tests_in_parallel(self):
         source = self.source("frontend.yml")
 
