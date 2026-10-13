@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import {
   expect,
-  test,
+  test as base,
   type APIRequestContext,
   type BrowserContext,
   type Page,
@@ -43,13 +43,11 @@ type GroupResponse = Readonly<{
   access: readonly GroupAccessResponse[];
 }>;
 
-test.use({ trace: "off", screenshot: "off", video: "off" });
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function fixture(): Fixture {
+function fixture(expectedBaseURL: string | undefined): Fixture {
   const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
   const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("full-stack fixture is unavailable");
@@ -58,7 +56,7 @@ function fixture(): Fixture {
   if (
     !isRecord(parsed) ||
     parsed.runId !== runId ||
-    parsed.baseURL !== test.info().project.use.baseURL ||
+    parsed.baseURL !== expectedBaseURL ||
     typeof parsed.mailpitUrl !== "string" ||
     !isRecord(parsed.admin) ||
     !isRecord(parsed.member)
@@ -614,50 +612,153 @@ async function retirePendingInvite(page: Page, userId: string): Promise<void> {
   expect(result.deleteStatus).toBe(204);
 }
 
-test("admin and a department manager manage group membership across the live Access boundary", async ({
-  page,
-  browser,
-  request,
-}) => {
-  test.setTimeout(90_000);
-  const runFixture = fixture();
-  const suffix = runFixture.runId.slice(0, 8);
-  const managedDepartment = `E2E Managed ${suffix}`;
-  const unrelatedDepartment = `E2E Unrelated ${suffix}`;
-  const managedModule = `E2E Records ${suffix}`;
-  const managerGroupName = `E2E Managers ${suffix}`;
-  const unrelatedGroupName = `E2E Other Group ${suffix}`;
-  const pendingName = `Pending Access ${suffix}`;
-  const pendingEmail = `access-pending-${runFixture.runId}@example.com`;
-  const mailpitOrigin = new URL(runFixture.mailpitUrl);
+type AccessJourney = {
+  page: Page;
+  runFixture: Fixture;
+  ownedGroupIds: string[];
+  pendingUserId?: string;
+  managerContext?: BrowserContext;
+  sandboxSnapshot?: SandboxSnapshot;
+  sandboxTouched: boolean;
+  sandboxPublished: boolean;
+  initialMemberAccess?: unknown;
+  published?: Awaited<ReturnType<typeof publishedIds>>;
+  managerGroupId?: string;
+  unrelatedGroupId?: string;
+  unrelatedGroup?: GroupRead;
+};
 
-  const ownedGroupIds: string[] = [];
-  let pendingUserId: string | undefined;
-  let managerContext: BrowserContext | undefined;
-  let sandboxSnapshot: SandboxSnapshot | undefined;
-  let sandboxTouched = false;
-  let sandboxPublished = false;
-  let initialMemberAccess: unknown;
-  let journeyFailure: unknown;
+const test = base.extend<Record<never, never>, { journey: AccessJourney }>({
+  journey: [
+    async ({ browser }, provide, workerInfo) => {
+      const runFixture = fixture(workerInfo.project.use.baseURL);
+      let context: BrowserContext | undefined;
+      try {
+        context = await browser.newContext({
+          baseURL: workerInfo.project.use.baseURL,
+          ignoreHTTPSErrors: workerInfo.project.use.ignoreHTTPSErrors,
+        });
+        const page = await context.newPage();
+        await provide({
+          page,
+          runFixture,
+          ownedGroupIds: [],
+          sandboxTouched: false,
+          sandboxPublished: false,
+        });
+      } finally {
+        await context?.close();
+      }
+    },
+    { scope: "worker" },
+  ],
+});
 
-  try {
+test.use({ trace: "off", screenshot: "off", video: "off" });
+
+function requirePublished(journey: AccessJourney) {
+  if (!journey.published)
+    throw new Error("the ordered Access journey has no published departments");
+  return journey.published;
+}
+
+test.describe("Access", () => {
+  test.describe.configure({ mode: "serial" });
+
+  test.afterAll(async ({ journey }) => {
+    const {
+      page,
+      runFixture,
+      managerContext,
+      ownedGroupIds,
+      pendingUserId,
+      sandboxSnapshot,
+      sandboxTouched,
+      sandboxPublished,
+      initialMemberAccess,
+    } = journey;
+    const cleanupFailures: string[] = [];
+    if (managerContext) {
+      try {
+        await managerContext.close();
+      } catch {
+        cleanupFailures.push("manager browser context did not close");
+      }
+    }
+    for (const groupId of [...ownedGroupIds].reverse()) {
+      try {
+        await clearAndDeleteGroup(page, groupId);
+      } catch {
+        cleanupFailures.push("a generated Access group could not be removed");
+      }
+    }
+    if (pendingUserId) {
+      try {
+        await retirePendingInvite(page, pendingUserId);
+      } catch {
+        cleanupFailures.push(
+          "the generated pending invitation could not be retired",
+        );
+      }
+    }
+    if (sandboxTouched && sandboxSnapshot) {
+      try {
+        await restoreSandboxSnapshot(page, sandboxSnapshot);
+        if (sandboxPublished) {
+          await page.goto("/sandbox?section=designer");
+          await expect(
+            page.getByRole("heading", { name: "Sandbox", exact: true }),
+          ).toBeVisible();
+          await publishDraft(page, runFixture.admin.password);
+        }
+      } catch {
+        cleanupFailures.push(
+          "the original Sandbox draft/catalog could not be restored",
+        );
+      }
+    }
+    if (initialMemberAccess !== undefined) {
+      try {
+        const restoredMemberAccess = await getJson<unknown>(
+          page,
+          `/api/users/${encodeURIComponent(runFixture.member.id)}/access`,
+        );
+        expect(restoredMemberAccess).toEqual(initialMemberAccess);
+      } catch {
+        cleanupFailures.push(
+          "the seeded member's original effective access changed",
+        );
+      }
+    }
+    if (cleanupFailures.length)
+      throw new Error(
+        `Access acceptance cleanup failed: ${cleanupFailures.join("; ")}`,
+      );
+  });
+
+  test("Publish managed and unrelated departments", async ({ journey }) => {
+    const { page, runFixture } = journey;
+    const suffix = runFixture.runId.slice(0, 8);
+    const managedDepartment = `E2E Managed ${suffix}`;
+    const unrelatedDepartment = `E2E Unrelated ${suffix}`;
+    const managedModule = `E2E Records ${suffix}`;
     await signIn(page, runFixture.baseURL, runFixture.admin);
-    initialMemberAccess = await getJson<unknown>(
+    journey.initialMemberAccess = await getJson<unknown>(
       page,
       `/api/users/${encodeURIComponent(runFixture.member.id)}/access`,
     );
-    sandboxSnapshot = await readSandboxSnapshot(page);
+    journey.sandboxSnapshot = await readSandboxSnapshot(page);
 
     await page.goto("/sandbox?section=designer");
     await expect(
       page.getByRole("heading", { name: "Sandbox", exact: true }),
     ).toBeVisible();
-    sandboxTouched = true;
+    journey.sandboxTouched = true;
     await addDepartment(page, managedDepartment);
     await addModuleAndField(page, managedModule, `E2E Name ${suffix}`);
     await addDepartment(page, unrelatedDepartment);
     await publishDraft(page, runFixture.admin.password, () => {
-      sandboxPublished = true;
+      journey.sandboxPublished = true;
     });
 
     const { departmentId, unrelatedDepartmentId, moduleId } =
@@ -667,13 +768,23 @@ test("admin and a department manager manage group membership across the live Acc
         unrelatedDepartment,
         managedModule,
       );
+    journey.published = { departmentId, unrelatedDepartmentId, moduleId };
     expect(departmentId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu,
     );
     expect(moduleId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu,
     );
+  });
 
+  test("Create scoped manager and unrelated groups", async ({ journey }) => {
+    const { page, runFixture, ownedGroupIds } = journey;
+    const { departmentId, unrelatedDepartmentId } = requirePublished(journey);
+    const suffix = runFixture.runId.slice(0, 8);
+    const managedDepartment = `E2E Managed ${suffix}`;
+    const unrelatedDepartment = `E2E Unrelated ${suffix}`;
+    const managerGroupName = `E2E Managers ${suffix}`;
+    const unrelatedGroupName = `E2E Other Group ${suffix}`;
     await page.goto("/access?view=groups");
     await expect(page.getByRole("heading", { name: "Groups" })).toBeVisible();
     const managerGroupId = await createGroup(
@@ -684,6 +795,7 @@ test("admin and a department manager manage group membership across the live Acc
       runFixture.member.email,
       ownedGroupIds,
     );
+    journey.managerGroupId = managerGroupId;
     const managerGroup = await readGroup(page, managerGroupId);
     expect(managerGroup.status).toBe(200);
     expect(managerGroup.group?.member_ids).toContain(runFixture.member.id);
@@ -704,7 +816,9 @@ test("admin and a department manager manage group membership across the live Acc
       undefined,
       ownedGroupIds,
     );
+    journey.unrelatedGroupId = unrelatedGroupId;
     const unrelatedGroup = await readGroup(page, unrelatedGroupId);
+    journey.unrelatedGroup = unrelatedGroup;
     expect(unrelatedGroup.status).toBe(200);
     expect(unrelatedGroup.group?.id).toBe(unrelatedGroupId);
     expect(unrelatedGroup.group?.member_ids).toEqual([]);
@@ -718,7 +832,19 @@ test("admin and a department manager manage group membership across the live Acc
     expect(unrelatedGroup.group?.revision).toBeGreaterThan(0);
     expect(unrelatedGroup.etag).toBeTruthy();
     await closeGroupPanel(page, unrelatedGroupName);
+  });
 
+  test("Invite pending person and confirm Mailpit", async ({ journey }) => {
+    const { page, runFixture } = journey;
+    const { departmentId } = requirePublished(journey);
+    if (!journey.managerGroupId || !journey.unrelatedGroup)
+      throw new Error("the ordered Access journey has no generated groups");
+    const suffix = runFixture.runId.slice(0, 8);
+    const managerGroupName = `E2E Managers ${suffix}`;
+    const pendingName = `Pending Access ${suffix}`;
+    const pendingEmail = `access-pending-${runFixture.runId}@example.com`;
+    const mailpitOrigin = new URL(runFixture.mailpitUrl);
+    const request = page.request;
     await page.goto("/access?view=people");
     await expect(
       page.getByRole("heading", { name: "People", exact: true }),
@@ -749,7 +875,8 @@ test("admin and a department manager manage group membership across the live Acc
       throw new Error(
         "invitation response did not contain the generated pending user",
       );
-    pendingUserId = invitationPayload.user.id;
+    const pendingUserId = invitationPayload.user.id;
+    journey.pendingUserId = pendingUserId;
     await expect(inviteDialog).toBeHidden();
     await expect(
       page
@@ -783,8 +910,33 @@ test("admin and a department manager manage group membership across the live Acc
       level: "manage",
       groups: expect.any(Array),
     });
+  });
 
-    managerContext = await browser.newContext({ ignoreHTTPSErrors: true });
+  test("Manager membership control and unrelated 403", async ({
+    journey,
+    browser,
+  }) => {
+    const {
+      page,
+      runFixture,
+      managerGroupId,
+      unrelatedGroupId,
+      unrelatedGroup,
+      pendingUserId,
+    } = journey;
+    const { departmentId, moduleId } = requirePublished(journey);
+    if (!managerGroupId || !unrelatedGroupId || !unrelatedGroup)
+      throw new Error(
+        "the ordered Access journey has no original group snapshot",
+      );
+    const suffix = runFixture.runId.slice(0, 8);
+    const managerGroupName = `E2E Managers ${suffix}`;
+    const unrelatedGroupName = `E2E Other Group ${suffix}`;
+    const pendingName = `Pending Access ${suffix}`;
+    const managerContext = await browser.newContext({
+      ignoreHTTPSErrors: true,
+    });
+    journey.managerContext = managerContext;
     const managerPage = await managerContext.newPage();
     await signIn(managerPage, runFixture.baseURL, runFixture.member);
     await managerPage.goto(
@@ -895,72 +1047,5 @@ test("admin and a department manager manage group membership across the live Acc
     expect(unchangedUnrelatedGroup.group?.member_ids).toEqual(
       unrelatedGroup.group?.member_ids,
     );
-  } catch (error) {
-    journeyFailure = error;
-  }
-
-  const cleanupFailures: string[] = [];
-  if (managerContext) {
-    try {
-      await managerContext.close();
-    } catch {
-      cleanupFailures.push("manager browser context did not close");
-    }
-  }
-  for (const groupId of [...ownedGroupIds].reverse()) {
-    try {
-      await clearAndDeleteGroup(page, groupId);
-    } catch {
-      cleanupFailures.push("a generated Access group could not be removed");
-    }
-  }
-  if (pendingUserId) {
-    try {
-      await retirePendingInvite(page, pendingUserId);
-    } catch {
-      cleanupFailures.push(
-        "the generated pending invitation could not be retired",
-      );
-    }
-  }
-  if (sandboxTouched && sandboxSnapshot) {
-    try {
-      await restoreSandboxSnapshot(page, sandboxSnapshot);
-      if (sandboxPublished) {
-        await page.goto("/sandbox?section=designer");
-        await expect(
-          page.getByRole("heading", { name: "Sandbox", exact: true }),
-        ).toBeVisible();
-        await publishDraft(page, runFixture.admin.password);
-      }
-    } catch {
-      cleanupFailures.push(
-        "the original Sandbox draft/catalog could not be restored",
-      );
-    }
-  }
-  if (initialMemberAccess !== undefined) {
-    try {
-      const restoredMemberAccess = await getJson<unknown>(
-        page,
-        `/api/users/${encodeURIComponent(runFixture.member.id)}/access`,
-      );
-      expect(restoredMemberAccess).toEqual(initialMemberAccess);
-    } catch {
-      cleanupFailures.push(
-        "the seeded member's original effective access changed",
-      );
-    }
-  }
-
-  if (journeyFailure !== undefined && cleanupFailures.length)
-    throw new AggregateError(
-      [journeyFailure, ...cleanupFailures.map((failure) => new Error(failure))],
-      "Access journey failed and its generated state was not fully restored",
-    );
-  if (journeyFailure !== undefined) throw journeyFailure;
-  if (cleanupFailures.length)
-    throw new Error(
-      `Access acceptance cleanup failed: ${cleanupFailures.join("; ")}`,
-    );
+  });
 });

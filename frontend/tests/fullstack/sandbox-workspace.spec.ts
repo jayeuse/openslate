@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { expect, test } from "@playwright/test";
-import type { Page, Request, Response } from "@playwright/test";
+import { expect, test as base } from "@playwright/test";
+import type { BrowserContext, Page, Request, Response } from "@playwright/test";
 import { dummyFile } from "../helpers/dummy-files";
 
 type Fixture = Readonly<{
@@ -9,15 +9,12 @@ type Fixture = Readonly<{
   admin: Readonly<{ email: string; password: string }>;
 }>;
 
-function fixture(): Fixture {
+function fixture(expectedBaseURL: string | undefined): Fixture {
   const location = process.env.OPENSLATE_FULLSTACK_FIXTURE;
   const runId = process.env.OPENSLATE_FULLSTACK_RUN_ID;
   if (!location || !runId) throw new Error("full-stack fixture is unavailable");
   const value = JSON.parse(readFileSync(location, "utf8")) as Fixture;
-  if (
-    value.runId !== runId ||
-    value.baseURL !== test.info().project.use.baseURL
-  )
+  if (value.runId !== runId || value.baseURL !== expectedBaseURL)
     throw new Error("full-stack fixture does not match this gateway run");
   return value;
 }
@@ -27,9 +24,6 @@ async function applyTemplate(page: Page, name: string) {
   await page.getByRole("menuitem", { name: "Start from a template" }).click();
   await page.getByRole("button", { name: `Select ${name}` }).click();
   await page.getByRole("button", { name: `Use ${name}` }).click();
-  await expect(
-    page.getByText(`${name} template applied to the shared Sandbox.`),
-  ).toBeVisible();
 }
 
 /** Publish the draft and return the new version's sequence number. */
@@ -77,6 +71,7 @@ type SeededSupplier = Readonly<{
 async function seedPublishedSupplier(
   page: Page,
   runId: string,
+  onCreated: (supplier: SeededSupplier) => void,
 ): Promise<SeededSupplier> {
   const seeded = await page.evaluate(async (currentRunId) => {
     type CatalogPage = Readonly<{
@@ -189,6 +184,7 @@ async function seedPublishedSupplier(
     };
   }, runId);
 
+  if (seeded.recordId) onCreated(seeded);
   expect(seeded.status).toBe(201);
   for (const id of [
     seeded.recordId,
@@ -348,9 +344,7 @@ async function exerciseOpenView(
     archivedDialog.getByRole("status").filter({ hasText: "restored" }),
   ).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`[?&]view=${viewId}(?:&|$)`));
-  await expect(page.getByLabel("Saved view")).toHaveValue(viewId, {
-    timeout: 20_000,
-  });
+  return viewId;
 }
 
 async function exerciseLiveCharts(page: Page, supplier: SeededSupplier) {
@@ -391,12 +385,13 @@ async function exerciseLiveCharts(page: Page, supplier: SeededSupplier) {
   await expect(
     page.getByRole("button", { name: "Download complete CSV" }),
   ).toBeEnabled();
-  await expect(
-    page.getByRole("button", { name: "Print complete table" }),
-  ).toBeEnabled();
 }
 
-async function permanentlyDeleteReport(page: Page, reportId: string) {
+async function permanentlyDeleteReport(
+  page: Page,
+  reportId: string,
+  password: string,
+) {
   const status = await page.evaluate(
     async ({ id, password }) => {
       const csrfCookie = document.cookie
@@ -454,7 +449,7 @@ async function permanentlyDeleteReport(page: Page, reportId: string) {
       });
       return deleted.status;
     },
-    { id: reportId, password: fixture().admin.password },
+    { id: reportId, password },
   );
   expect(status).toBe(200);
 }
@@ -463,13 +458,12 @@ async function exerciseConnectedReports(
   page: Page,
   runId: string,
   supplier: SeededSupplier,
+  password: string,
 ) {
   const reportName = `Full-stack Supplier Report ${runId.slice(0, 8)}`;
   let reportId: string | null = null;
-  await page.goto("/openview?section=reports");
-  await expect(
-    page.getByRole("heading", { name: "Reports", exact: true }),
-  ).toBeVisible();
+  let reportFailed = false;
+  let reportFailure: unknown;
   try {
     await page.getByRole("button", { name: "New Report" }).click();
     await page.getByLabel("Data source").selectOption({ label: "Suppliers" });
@@ -612,8 +606,23 @@ async function exerciseConnectedReports(
     ]);
     expect(archived.status()).toBe(204);
     await expect(page.getByText("Report archived.")).toBeVisible();
+  } catch (error) {
+    reportFailed = true;
+    reportFailure = error;
+    throw error;
   } finally {
-    if (reportId) await permanentlyDeleteReport(page, reportId);
+    if (reportId) {
+      try {
+        await permanentlyDeleteReport(page, reportId, password);
+      } catch (error) {
+        if (reportFailed)
+          throw new AggregateError(
+            [reportFailure, error],
+            "Report journey and permanent cleanup both failed",
+          );
+        throw error;
+      }
+    }
   }
 }
 
@@ -952,10 +961,6 @@ async function exerciseConnectedBoard(
   await expect(
     page.getByRole("heading", { name: "Notifications" }),
   ).toBeVisible();
-  const notices = page.getByRole("list", {
-    name: "Notifications",
-  });
-  await expect(notices.getByText("Board post", { exact: true })).toBeVisible();
 }
 
 type DashboardSnapshotBody = Readonly<{
@@ -1207,9 +1212,7 @@ async function exercisePrivateDashboard(
   await expect(
     page.getByRole("combobox", { name: "Dashboard", exact: true }),
   ).toHaveValue(dashboardId);
-  await expect(
-    page.getByRole("heading", { name: dashboardName, exact: true }),
-  ).toBeVisible();
+  return dashboardName;
 }
 
 type WindowQueryBody = Readonly<{
@@ -1484,136 +1487,255 @@ async function exerciseLiveCalendarAndTimeline(page: Page) {
   await expect(timeline.getByLabel("Window ends")).toHaveValue(
     timelineBody.to_date,
   );
-  await expect(
-    timeline.getByText("No scheduled intervals in this window"),
-  ).toBeVisible();
+  return timeline;
 }
 
-test("Sandbox exposes the simplified Build, Triggers, Test, and History journey", async ({
-  page,
-}) => {
-  test.setTimeout(360_000);
-  page.setDefaultTimeout(30_000);
-  const runFixture = fixture();
-  const credentials = runFixture.admin;
-  await page.goto("/login");
-  await page.getByLabel("Email", { exact: true }).fill(credentials.email);
-  await page.getByLabel("Password").fill(credentials.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/(openview|sandbox)$/);
-  await page.goto("/sandbox?section=designer");
+type SandboxJourney = {
+  page: Page;
+  runFixture: Fixture;
+  publishedSequence?: number;
+  supplier?: SeededSupplier;
+};
 
-  await expect(
-    page.getByRole("heading", { name: "Sandbox", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Review & Publish" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Build", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Triggers", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Test", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "History", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Create release snapshot")).toHaveCount(0);
-  await expect(page.getByText("Simulation", { exact: true })).toHaveCount(0);
+const test = base.extend<Record<never, never>, { journey: SandboxJourney }>({
+  journey: [
+    async ({ browser }, provide, workerInfo) => {
+      const runFixture = fixture(workerInfo.project.use.baseURL);
+      let context: BrowserContext | undefined;
+      try {
+        context = await browser.newContext({
+          baseURL: workerInfo.project.use.baseURL,
+          ignoreHTTPSErrors: workerInfo.project.use.ignoreHTTPSErrors,
+        });
+        const page = await context.newPage();
+        await provide({ page, runFixture });
+      } finally {
+        await context?.close();
+      }
+    },
+    { scope: "worker" },
+  ],
+});
 
-  await applyTemplate(page, "Inventory & procurement");
-  const publishedSequence = await publishDraft(page, credentials.password);
-  await expect(page.getByText("Published", { exact: true })).toBeVisible();
-  const supplier = await seedPublishedSupplier(page, runFixture.runId);
-  await exercisePrivateDashboard(page, runFixture.runId, supplier);
-  await exerciseOpenView(page, runFixture.runId, supplier);
-  await exerciseLiveCalendarAndTimeline(page);
-  await exerciseLiveCharts(page, supplier);
-  await exerciseConnectedReports(page, runFixture.runId, supplier);
-  await exerciseConnectedBoard(page, runFixture.runId, supplier);
-  await retireSeededSupplier(page, supplier.recordId);
-  await page.goto("/sandbox?section=designer");
+function requireSupplier(journey: SandboxJourney): SeededSupplier {
+  if (!journey.supplier)
+    throw new Error("the ordered Sandbox journey has no seeded supplier");
+  return journey.supplier;
+}
 
-  await page.getByRole("link", { name: "Triggers", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Recent activity" }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Recent activity", exact: true })
-    .click();
-  await expect(
-    page
-      .getByRole("region", { name: "Recent activity details" })
-      .getByText("No published trigger activity yet."),
-  ).toBeVisible();
+test.describe("Sandbox", () => {
+  test.describe.configure({ mode: "serial" });
 
-  await page.getByRole("link", { name: "Test", exact: true }).click();
-  const testSetup = page.getByRole("region", {
-    name: "Test setup",
-    exact: true,
+  test.afterAll(async ({ journey }) => {
+    if (journey.supplier) {
+      await retireSeededSupplier(journey.page, journey.supplier.recordId);
+      journey.supplier = undefined;
+    }
   });
-  await expect(
-    testSetup.getByRole("heading", { name: "Test setup" }),
-  ).toBeVisible();
-  await testSetup
-    .getByLabel("Module", { exact: true })
-    .selectOption({ label: "Suppliers" });
-  await testSetup
-    .getByRole("button", { name: "All input fields", exact: true })
-    .click();
-  await testSetup.getByLabel("Supplier ID", { exact: true }).fill("SUP-001");
-  await testSetup
-    .getByLabel("Status", { exact: true })
-    .selectOption({ label: "Active" });
-  await testSetup
-    .getByLabel("Legal name", { exact: true })
-    .fill("Acceptance Supplier");
-  await testSetup
-    .getByLabel("When", { exact: true })
-    .selectOption("field-changed");
-  await testSetup
-    .getByLabel("Changed field", { exact: true })
-    .selectOption({ label: "Status" });
-  const recordsUrl = "/api/records?limit=100&offset=0";
-  const beforeRecords = await page.request.get(recordsUrl);
-  expect(beforeRecords.status()).toBe(200);
-  const beforeRecordState: unknown = await beforeRecords.json();
-  expect(beforeRecordState).toMatchObject({ pagination: { has_more: false } });
-  const [testResponse] = await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/sandbox/tests" &&
-        response.request().method() === "POST",
-    ),
-    testSetup.getByRole("button", { name: "Run test" }).click(),
-  ]);
-  expect(testResponse.status()).toBe(201);
-  await expect(
-    page.getByRole("heading", { name: "Test result" }),
-  ).toBeVisible();
-  const afterRecords = await page.request.get(recordsUrl);
-  expect(afterRecords.status()).toBe(200);
-  expect(await afterRecords.json()).toEqual(beforeRecordState);
 
-  await page.getByRole("link", { name: "History", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
-  // Other specs in the same run also publish; History then adds the version number
-  // to every "Published structure" label, so select this test's own version.
-  await page
-    .getByRole("button", {
-      name: new RegExp(
-        `^View Published structure(, version ${publishedSequence})?$`,
+  test("Inventory publication and supplier", async ({ journey }) => {
+    const { page, runFixture } = journey;
+    page.setDefaultTimeout(30_000);
+    const credentials = runFixture.admin;
+    await page.goto("/login");
+    await page.getByLabel("Email", { exact: true }).fill(credentials.email);
+    await page.getByLabel("Password").fill(credentials.password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page).toHaveURL(/\/(openview|sandbox)$/);
+    await page.goto("/sandbox?section=designer");
+
+    await expect(
+      page.getByRole("heading", { name: "Sandbox", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Review & Publish" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Build", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Triggers", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Test", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "History", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Create release snapshot")).toHaveCount(0);
+    await expect(page.getByText("Simulation", { exact: true })).toHaveCount(0);
+
+    await applyTemplate(page, "Inventory & procurement");
+    await expect(
+      page.getByText(
+        "Inventory & procurement template applied to the shared Sandbox.",
       ),
-    })
-    .click();
-  await expect(
-    page
-      .getByRole("region", { name: "Selected version", exact: true })
-      .getByRole("heading", { name: "Published structure", exact: true }),
-  ).toBeVisible();
+    ).toBeVisible();
+    const publishedSequence = await publishDraft(page, credentials.password);
+    journey.publishedSequence = publishedSequence;
+    await expect(page.getByText("Published", { exact: true })).toBeVisible();
+    await seedPublishedSupplier(page, runFixture.runId, (supplier) => {
+      journey.supplier = supplier;
+    });
+  });
+
+  test("Dashboard persistence", async ({ journey }) => {
+    const { page, runFixture } = journey;
+    const supplier = requireSupplier(journey);
+    const dashboardName = await exercisePrivateDashboard(
+      page,
+      runFixture.runId,
+      supplier,
+    );
+    await expect(
+      page.getByRole("heading", { name: dashboardName, exact: true }),
+    ).toBeVisible();
+  });
+
+  test("Saved view conflict and restore", async ({ journey }) => {
+    const { page, runFixture } = journey;
+    const supplier = requireSupplier(journey);
+    const viewId = await exerciseOpenView(page, runFixture.runId, supplier);
+    await expect(page.getByLabel("Saved view")).toHaveValue(viewId, {
+      timeout: 20_000,
+    });
+  });
+
+  test("Calendar and timeline windows", async ({ journey }) => {
+    const timeline = await exerciseLiveCalendarAndTimeline(journey.page);
+    await expect(
+      timeline.getByText("No scheduled intervals in this window"),
+    ).toBeVisible();
+  });
+
+  test("Complete live chart", async ({ journey }) => {
+    const { page } = journey;
+    await exerciseLiveCharts(page, requireSupplier(journey));
+    await expect(
+      page.getByRole("button", { name: "Print complete table" }),
+    ).toBeEnabled();
+  });
+
+  test("Connected report and CSV", async ({ journey }) => {
+    const { page, runFixture } = journey;
+    const supplier = requireSupplier(journey);
+    await page.goto("/openview?section=reports");
+    await expect(
+      page.getByRole("heading", { name: "Reports", exact: true }),
+    ).toBeVisible();
+    await exerciseConnectedReports(
+      page,
+      runFixture.runId,
+      supplier,
+      runFixture.admin.password,
+    );
+  });
+
+  test("Board events and posts", async ({ journey }) => {
+    const { page, runFixture } = journey;
+    await exerciseConnectedBoard(
+      page,
+      runFixture.runId,
+      requireSupplier(journey),
+    );
+    const notices = page.getByRole("list", {
+      name: "Notifications",
+    });
+    await expect(
+      notices.getByText("Board post", { exact: true }),
+    ).toBeVisible();
+  });
+
+  test("Triggers, Test and History", async ({ journey }) => {
+    const { page, publishedSequence } = journey;
+    const supplier = requireSupplier(journey);
+    if (publishedSequence === undefined)
+      throw new Error(
+        "the ordered Sandbox journey has no publication sequence",
+      );
+    await retireSeededSupplier(page, supplier.recordId);
+    journey.supplier = undefined;
+    await page.goto("/sandbox?section=designer");
+    await page.getByRole("link", { name: "Triggers", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Recent activity" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Recent activity", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("region", { name: "Recent activity details" })
+        .getByText("No published trigger activity yet."),
+    ).toBeVisible();
+
+    await page.getByRole("link", { name: "Test", exact: true }).click();
+    const testSetup = page.getByRole("region", {
+      name: "Test setup",
+      exact: true,
+    });
+    await expect(
+      testSetup.getByRole("heading", { name: "Test setup" }),
+    ).toBeVisible();
+    await testSetup
+      .getByLabel("Module", { exact: true })
+      .selectOption({ label: "Suppliers" });
+    await testSetup
+      .getByRole("button", { name: "All input fields", exact: true })
+      .click();
+    await testSetup.getByLabel("Supplier ID", { exact: true }).fill("SUP-001");
+    await testSetup
+      .getByLabel("Status", { exact: true })
+      .selectOption({ label: "Active" });
+    await testSetup
+      .getByLabel("Legal name", { exact: true })
+      .fill("Acceptance Supplier");
+    await testSetup
+      .getByLabel("When", { exact: true })
+      .selectOption("field-changed");
+    await testSetup
+      .getByLabel("Changed field", { exact: true })
+      .selectOption({ label: "Status" });
+    const recordsUrl = "/api/records?limit=100&offset=0";
+    const beforeRecords = await page.request.get(recordsUrl);
+    expect(beforeRecords.status()).toBe(200);
+    const beforeRecordState: unknown = await beforeRecords.json();
+    expect(beforeRecordState).toMatchObject({
+      pagination: { has_more: false },
+    });
+    const [testResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/sandbox/tests" &&
+          response.request().method() === "POST",
+      ),
+      testSetup.getByRole("button", { name: "Run test" }).click(),
+    ]);
+    expect(testResponse.status()).toBe(201);
+    await expect(
+      page.getByRole("heading", { name: "Test result" }),
+    ).toBeVisible();
+    const afterRecords = await page.request.get(recordsUrl);
+    expect(afterRecords.status()).toBe(200);
+    expect(await afterRecords.json()).toEqual(beforeRecordState);
+
+    await page.getByRole("link", { name: "History", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+    // Other specs in the same run also publish; History then adds the version number
+    // to every "Published structure" label, so select this test's own version.
+    await page
+      .getByRole("button", {
+        name: new RegExp(
+          `^View Published structure(, version ${publishedSequence})?$`,
+        ),
+      })
+      .click();
+    await expect(
+      page
+        .getByRole("region", { name: "Selected version", exact: true })
+        .getByRole("heading", { name: "Published structure", exact: true }),
+    ).toBeVisible();
+  });
 
   for (const name of [
     "Finance, accounting & sales",
@@ -1622,8 +1744,14 @@ test("Sandbox exposes the simplified Build, Triggers, Test, and History journey"
     "Field service & maintenance",
     "Light manufacturing",
   ]) {
-    await page.getByRole("link", { name: "Build", exact: true }).click();
-    await applyTemplate(page, name);
-    await publishDraft(page, credentials.password);
+    test(`Publish ${name}`, async ({ journey }) => {
+      const { page, runFixture } = journey;
+      await page.getByRole("link", { name: "Build", exact: true }).click();
+      await applyTemplate(page, name);
+      await expect(
+        page.getByText(`${name} template applied to the shared Sandbox.`),
+      ).toBeVisible();
+      await publishDraft(page, runFixture.admin.password);
+    });
   }
 });
