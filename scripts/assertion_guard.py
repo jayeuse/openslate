@@ -2,7 +2,7 @@
 
 The guard compares a base revision with the working tree. For test files it:
 
-- counts assertions per file; a file that loses assertions needs ledger rows in
+- pairs unchanged assertion expressions per file; every unpaired removal needs rows in
   docs/plans/test-ledger.md that name an existing owner test for each one;
 - refuses new skips, retries, sleeps, long timeouts, suppressions, and loose matchers;
 - refuses a changed snapshot unless a ledger row records that it was reviewed.
@@ -13,10 +13,12 @@ Inline reasons and measurement notes do not authorize forbidden patterns.
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import subprocess
 import sys
+import textwrap
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,6 +76,9 @@ class FileChange:
     added: list[str] = field(default_factory=list)
     # The path before a rename; ledger rows may name either path.
     old_path: str = ""
+    # Complete revisions expose edits below unchanged assertion-start lines.
+    before_source: str | None = None
+    after_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +103,161 @@ def count_assertions(path: str, lines: list[str]) -> int:
     if _is_ts_test(path):
         return sum(len(_TS_ASSERTION.findall(line)) for line in lines)
     return 0
+
+
+_UNKEYED_TS: Final = "\x00unkeyed TS assertion"
+_TS_TOKEN: Final = re.compile(
+    r"\s+|//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\[\s\S]|[^\"\\])*\"|'(?:\\[\s\S]|[^'\\])*'|"
+    r"`(?:\\[\s\S]|[^`\\])*`|[\w$]+|===|!==|>>>?=?|<<=?|\*\*=?|=>|==|!=|<=|>=|"
+    r"\?\.|\?\?=?|&&=?|\|\|=?|\+\+|--|[+*/%&|^!-]=|\.\.\.|[^\s]"
+)
+_TS_REGEX: Final = re.compile(r"/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\r\n])+/[a-z]*")
+_REGEX_PREFIX: Final = frozenset(
+    [""]
+    + (
+        "( [ { = : , ; => ! ~ ? && || ?? + - * / % ** & | ^ < > <= >= == != === !== "
+        "<< >> >>> += -= *= /= %= **= &= |= ^= <<= >>= >>>= &&= ||= ??= return throw case "
+        "typeof void delete await yield in instanceof"
+    ).split()
+)
+
+
+def _ts_tokens(source: str) -> list[str]:
+    """Only lexical assertion keys, not a TS parser; unsupported tokens stay unpaired."""
+    tokens: list[str] = []
+    pos, previous = 0, ""
+    while pos < len(source):
+        regex = previous in _REGEX_PREFIX and not source.startswith(("//", "/*"), pos)
+        match = (_TS_REGEX.match(source, pos) if regex else None) or _TS_TOKEN.match(source, pos)
+        assert match is not None  # The final lexical alternative consumes any non-whitespace.
+        raw, pos = match.group(), match.end()
+        if raw.isspace() or raw.startswith(("//", "/*")):
+            continue
+        value = raw
+        if raw[0] in "'\"" and len(raw) > 1:
+            value = "string:" + raw[1:-1]
+        elif raw.startswith("`") and len(raw) > 1:
+            value = re.sub(
+                r"(?<!\\)\$\{([^{}'\"`\\]*)\}",
+                lambda found: "\x00" + repr(_ts_tokens(found[1])),
+                raw,
+            )
+            value = _UNKEYED_TS if "${" in value else "template:" + value
+        tokens.append(value)
+        previous = raw
+    return tokens
+
+
+def _ts_assertions(source: str) -> Counter[str]:
+    tokens = _ts_tokens(source)
+
+    def balanced(start: int) -> int:
+        stack: list[tuple[str, bool]] = []
+        for end in range(start, len(tokens)):
+            token = tokens[end]
+            if token in ("(", "[", "{"):
+                stack.append((token, tokens[end - 1] in ("if", "while", "for", "with", "switch")))
+            elif token in (")", "]", "}"):
+                if not stack:
+                    return 0
+                opening, control = stack.pop()
+                if opening != {")": "(", "]": "[", "}": "{"}[token] or (
+                    (control or token == "}") and tokens[end + 1 : end + 2] == ["/"]
+                ):
+                    return 0
+                if not stack:
+                    return end + 1
+        return 0
+
+    assertions: Counter[str] = Counter()
+    for start, token in enumerate(tokens):
+        if token != "expect":
+            continue
+        end = start + 1
+        if tokens[end : end + 2] in ([".", "soft"], [".", "poll"]):
+            end += 2
+        if end < len(tokens) and tokens[end] == "<":
+            assertions[_UNKEYED_TS] += 1
+            continue
+        if end == len(tokens) or tokens[end] != "(":
+            continue  # Imports/references to expect are not assertions.
+        end = balanced(end)
+        matcher = False
+        while end and end < len(tokens) and tokens[end] in (".", "?."):
+            end += 1
+            if end == len(tokens) or not re.fullmatch(r"[\w$]+", tokens[end]):
+                end = 0
+                break
+            name = tokens[end]
+            end += 1
+            if end < len(tokens) and tokens[end] == "(":
+                end = balanced(end)
+                matcher = bool(end)
+            elif name not in ("not", "resolves", "rejects"):
+                end = 0
+                break
+        begin = start - 1 if start and tokens[start - 1] == "await" else start
+        if (
+            not end
+            or not matcher
+            or any(t in (_UNKEYED_TS, "'", '"', "`") for t in tokens[begin:end])
+        ):
+            assertions[_UNKEYED_TS] += 1
+            continue
+        # Trailing argument/object commas are formatting, not literal whitespace.
+        # Keep array holes (e.g. [a,,]) and consecutive commas distinct.
+        key = tuple(
+            value
+            for index, value in enumerate(tokens[begin:end], begin)
+            if not (
+                value == ","
+                and index + 1 < end
+                and tokens[index + 1] in (")", "}", "]")
+                and tokens[index - 1] not in ("(", "[", ",")
+            )
+        )
+        assertions[repr(key)] += 1
+    return assertions
+
+
+def _assertion_keys(path: str, source: str) -> Counter[str]:
+    if _is_ts_test(path):
+        return _ts_assertions(source)
+    if not _is_python_test(path):
+        return Counter()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        raise ValueError("cannot parse Python assertion source") from error
+    assertions: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assert):
+            assertions[ast.dump(node, include_attributes=False)] += 1
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            func = node.func
+            if (
+                isinstance(func.value, ast.Name)
+                and func.value.id == "pytest"
+                and func.attr in ("raises", "warns")
+            ) or re.fullmatch(
+                r"assert_(called|not_called|awaited|has_calls|any_call)\w*", func.attr
+            ):
+                assertions[ast.dump(node, include_attributes=False)] += 1
+    return assertions
+
+
+def _unpaired_assertions(item: FileChange) -> int:
+    def keys(source: str | None, lines: list[str]) -> Counter[str]:
+        if source is None:
+            # Synthetic callers provide complete assertion fragments or nonassertion lines.
+            if not count_assertions(item.path, lines):
+                return Counter()
+            source = textwrap.dedent("\n".join(lines))
+        return _assertion_keys(item.path, source)
+
+    before, after = keys(item.before_source, item.removed), keys(item.after_source, item.added)
+    after.pop(_UNKEYED_TS, None)  # Unkeyable additions never offset any removed protection.
+    return (before - after).total()
 
 
 def _pattern_hits(path: str, lines: list[str]) -> Counter[str]:
@@ -152,9 +312,11 @@ def analyze(changes: list[FileChange], ledger: list[LedgerRow], root: Path) -> l
                     f"{item.path}: snapshot changed; add a 'snapshot' ledger row after review"
                 )
             continue
-        deficit = count_assertions(item.path, item.removed) - count_assertions(
-            item.path, item.added
-        )
+        try:
+            deficit = _unpaired_assertions(item)
+        except ValueError as error:
+            violations.append(f"{item.path}: assertion analysis refused: {error}")
+            continue
         recorded = covered[item.path] + (covered[item.old_path] if item.old_path else 0)
         if deficit > recorded:
             violations.append(
@@ -209,16 +371,34 @@ def collect_changes(root: Path, base: str) -> list[FileChange]:
 
     diff = _git(root, "diff", "--no-color", "--no-ext-diff", "-M", "--unified=0", base, "--")
     changes = _parse_diff(diff)
+    for item in changes:
+        if item.path not in _EXEMPT and (_is_python_test(item.path) or _is_ts_test(item.path)):
+            item.before_source = (
+                ""
+                if item.status == "A"
+                else _git(root, "show", f"{base}:{item.old_path or item.path}")
+            )
+            item.after_source = (
+                "" if item.status == "D" else (root / item.path).read_text(encoding="utf-8")
+            )
     known = {item.path for item in changes}
     for path in _git(root, "ls-files", "--others", "--exclude-standard").splitlines():
         if path in known:
             continue
         file = root / path
         try:
-            lines = file.read_text(encoding="utf-8").splitlines()
+            source = file.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        changes.append(FileChange(path=path, status="A", added=lines))
+        changes.append(
+            FileChange(
+                path=path,
+                status="A",
+                added=source.splitlines(),
+                before_source="",
+                after_source=source,
+            )
+        )
     return changes
 
 

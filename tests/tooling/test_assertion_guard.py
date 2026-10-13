@@ -86,6 +86,60 @@ class AnalyzeTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
         self.assertIn("1 assertion(s) removed", violations[0])
 
+    def test_unrelated_additions_do_not_cover_removed_assertions(self):
+        for path, removed, added in (
+            (
+                "backend/tests/a/test_x.py",
+                ["    assert denied.status_code == 403"],
+                ["    assert allowed.status_code == 200"],
+            ),
+            (
+                "frontend/tests/http/a.spec.ts",
+                ["expect(denied.status()).toBe(403);"],
+                ["expect(allowed.status()).toBe(200);"],
+            ),
+            (
+                "backend/tests/a/test_x.py",
+                ["    assert denied.status_code == 403"] * 2,
+                ["    assert denied.status_code == 403", "    assert allowed.status_code == 200"],
+            ),
+        ):
+            with self.subTest(path=path, removed=removed):
+                violations = self.analyze([change(path, removed=removed, added=added)])
+                self.assertEqual(len(violations), 1, violations)
+                self.assertIn("1 assertion(s) removed, 0 recorded", violations[0])
+
+    def test_unkeyable_ts_assertion_requires_only_its_ledger_owner(self):
+        path = "frontend/tests/http/a.spec.ts"
+        closing_block = (
+            "await expect.poll(() => {\n"
+            "  let matched = false;\n"
+            "  if (!ready) { return false; }\n"
+            "  /a b/.test(value) && (matched = true);\n"
+            "  return matched;\n"
+            "}).toBe(true);\n"
+        )
+        for expression, edited_expression in (
+            ("expect<Result>(value).toBe(3);", "expect<Result>(value).toBe(3);"),
+            (
+                "expect.poll(() => { if (ready) /a b/.test(value); return ready; }).toBe(true);",
+                "expect.poll(() => { if (ready) /a b/.test(value); return ready; }).toBe(true);",
+            ),
+            (closing_block, closing_block.replace("/a b/", "/a  b/")),
+        ):
+            with self.subTest(expression=expression):
+                source = expression + "\nexpect(other).toBe(4);\n"
+                item = change(path)
+                item.before_source = source
+                item.after_source = source.replace(expression, edited_expression).replace(
+                    "expect(other).toBe(4);", "expect(other)\n  .toBe(4);"
+                )
+                violations = self.analyze([item])
+                self.assertEqual(len(violations), 1, violations)
+                self.assertIn("1 assertion(s) removed, 0 recorded", violations[0])
+                row = guard.LedgerRow(path, 1, "backend/tests/a/test_owner.py::test_owner", "D1")
+                self.assertEqual(self.analyze([item], [row]), [])
+
     def test_reformatted_assertion_is_not_a_removal(self):
         violations = self.analyze(
             [
@@ -299,6 +353,156 @@ class AnalyzeTests(unittest.TestCase):
 
 
 class GitCollectionTests(unittest.TestCase):
+    def test_tracked_test_sources_can_be_keyed(self):
+        root = Path(guard.__file__).resolve().parents[1]
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=root, check=True, capture_output=True, text=True
+        ).stdout.splitlines()
+        paths = [path for path in tracked if guard._is_python_test(path) or guard._is_ts_test(path)]
+        self.assertTrue(paths, "the tracked test-source inventory must not be empty")
+        for path in paths:
+            with self.subTest(path=path):
+                try:
+                    guard._assertion_keys(path, (root / path).read_text(encoding="utf-8"))
+                except ValueError as error:
+                    self.fail(f"valid tracked test source was refused: {error}")
+
+    def analyze_edit(self, path, before, after, renamed_path=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", *args], cwd=root, check=True, capture_output=True, text=True
+                )
+
+            git("init", "-q")
+            git("config", "user.email", "ci@example.invalid")
+            git("config", "user.name", "CI Test")
+            file = root / path
+            file.parent.mkdir(parents=True)
+            comment = "//" if path.endswith(".ts") else "#"
+            # Stable context also lets Git recognize formatting plus a rename.
+            context = "".join(f"{comment} unchanged context {n}\n" for n in range(30))
+            file.write_text(context + before)
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD").stdout.strip()
+            if renamed_path:
+                renamed = root / renamed_path
+                renamed.parent.mkdir(parents=True, exist_ok=True)
+                git("mv", str(file), str(renamed))
+                file = renamed
+            file.write_text(context + after)
+            changes = guard.collect_changes(root, base)
+            return guard.analyze(changes, [], root)
+
+    def test_multiline_assertion_edits_require_an_owner(self):
+        python_literal = (
+            "def test_a():\n    assert (\n        response.status_code\n        == 403\n    )\n"
+        )
+        python_raises = (
+            'def test_a():\n    with pytest.raises(\n        ValueError, match="denied access"\n'
+            "    ):\n        call()\n"
+        )
+        python_mock = (
+            "def test_a():\n    mock.assert_called_once_with(\n        granted=False,\n    )\n"
+        )
+        typescript = (
+            "test('denied', async () => {\n  await expect(response)\n"
+            "    .not.toHaveText('denied access');\n});\n"
+        )
+        for path, before, after in (
+            ("backend/tests/test_a.py", python_literal, python_literal.replace("403", "200")),
+            (
+                "backend/tests/test_a.py",
+                python_raises,
+                python_raises.replace("denied access", "deniedaccess"),
+            ),
+            ("backend/tests/test_a.py", python_mock, python_mock.replace("False", "True")),
+            ("frontend/tests/http/a.spec.ts", typescript, typescript.replace(".not", "")),
+            (
+                "frontend/tests/http/a.spec.ts",
+                typescript,
+                typescript.replace("toHaveText", "toContainText"),
+            ),
+            (
+                "frontend/tests/http/a.spec.ts",
+                typescript,
+                typescript.replace("denied access", "deniedaccess"),
+            ),
+        ):
+            with self.subTest(path=path, after=after):
+                violations = self.analyze_edit(path, before, after)
+                self.assertEqual(len(violations), 1, violations)
+                self.assertIn("1 assertion(s) removed, 0 recorded", violations[0])
+
+    def test_formatted_moved_and_renamed_assertions_keep_their_owner(self):
+        for path, renamed_path, before, after in (
+            (
+                "backend/tests/test_a.py",
+                "backend/tests/test_moved.py",
+                "def test_a():\n    assert response.status_code == 403\n"
+                '    assert message == "denied access"\n',
+                'def test_moved():\n    assert (\n        message == "denied access"\n    )\n'
+                "    assert (\n        response.status_code == 403\n    )\n",
+            ),
+            (
+                "frontend/tests/http/a.spec.ts",
+                "frontend/tests/isolated/moved.spec.ts",
+                "test('a', async () => {\n"
+                "  await expect(response).not.toHaveText('denied access');\n"
+                "  expect(count).toBe(2);\n});\n",
+                "test('moved', async () => {\n  expect(count).toBe(\n    2,\n  );\n"
+                "  await expect(\n    response,\n  ).not.toHaveText(\n"
+                '    "denied access",\n  );\n});\n',
+            ),
+            (
+                "frontend/tests/http/a.spec.ts",
+                "frontend/tests/isolated/moved.spec.ts",
+                "expect(name).toBe(`report ${run.id}.csv`);\n",
+                "expect(name).toBe(\n  `report ${ run.id /* formatting */ }.csv`,\n);\n",
+            ),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.analyze_edit(path, before, after, renamed_path), [])
+
+    def test_unclosed_assertion_expression_fails_closed(self):
+        for path, before, after in (
+            (
+                "backend/tests/test_a.py",
+                "def test_a():\n    assert value == 3\n",
+                "def test_a():\n    assert (\n",
+            ),
+            ("frontend/tests/http/a.spec.ts", "expect(value).toBe(3);\n", "expect(value).toBe(\n"),
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(self.analyze_edit(path, before, after))
+
+    def test_typescript_literal_and_callback_changes_require_an_owner(self):
+        for before, after in (
+            (
+                "await expect.poll(() => { return { ready: true }; }).toEqual({ ready: true });\n",
+                "await expect.poll(() => { return { ready: true }; }).toEqual({ ready: false });\n",
+            ),
+            (
+                "expect(name).toBe(`report ${run.id}.csv`);\n",
+                "expect(name).toBe(`report${run.id}.csv`);\n",
+            ),
+            (
+                r"expect(key).toMatch(/^[a-z ()]+$/);" + "\n",
+                r"expect(key).toMatch(/^[a-z()]+$/);" + "\n",
+            ),
+            (
+                "expect(value).toBe(2 + /a b/.source.length);\n",
+                "expect(value).toBe(2 + /a  b/.source.length);\n",
+            ),
+        ):
+            with self.subTest(before=before):
+                violations = self.analyze_edit("frontend/tests/http/a.spec.ts", before, after)
+                self.assertEqual(len(violations), 1, violations)
+                self.assertIn("1 assertion(s) removed, 0 recorded", violations[0])
+
     def test_collects_committed_unstaged_untracked_and_deleted_test_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
