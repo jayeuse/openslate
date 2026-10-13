@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import NAMESPACE_URL, uuid5
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
+from tests.sandbox_documents import sandbox_document_payload, trigger_payload
 
 
 def sample_option_id(field_id: str, label: str) -> str:
@@ -45,10 +46,8 @@ def sample_document() -> SandboxDocument:
     """Return isolated graph data for validation and publication tests."""
 
     return SandboxDocument.model_validate(
-        {
-            "kind": "openslate-sandbox",
-            "schemaVersion": 4,
-            "design": {
+        sandbox_document_payload(
+            design={
                 "departments": [
                     {"id": "sample-operations", "name": "Operations", "closed": False},
                     {"id": "sample-commercial", "name": "Commercial", "closed": False},
@@ -121,14 +120,13 @@ def sample_document() -> SandboxDocument:
                     "sample-customers": {"x": 208, "y": 344, "width": 280, "height": 168},
                 },
             },
-            "triggers": [
-                {
-                    "id": "sample-urgent",
-                    "name": "Urgent request alert",
-                    "enabled": True,
-                    "priority": 0,
-                    "trigger": {"kind": "record-created", "moduleId": "sample-requests"},
-                    "conditionGroup": {
+            triggers=[
+                trigger_payload(
+                    "sample-urgent", "Urgent request alert",
+                    enabled=True,
+                    priority=0,
+                    trigger={"kind": "record-created", "moduleId": "sample-requests"},
+                    condition_group={
                         "operator": "all",
                         "conditions": [
                             {
@@ -142,15 +140,15 @@ def sample_document() -> SandboxDocument:
                             }
                         ],
                     },
-                    "actions": [
+                    actions=[
                         {
                             "id": "sample-urgent-notification",
                             "kind": "notification",
                             "message": "Send a notification",
                         }
                     ],
-                }
+                )
             ],
-            "scenarios": [],
-        }
+            scenarios=[],
+        )
     )

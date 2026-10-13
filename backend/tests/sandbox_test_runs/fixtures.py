@@ -6,6 +6,7 @@ from copy import deepcopy
 from uuid import NAMESPACE_URL, uuid5
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
+from tests.sandbox_documents import field_payload, sandbox_document_payload, trigger_payload
 
 
 def option_id(field_id: str, label: str) -> str:
@@ -18,10 +19,8 @@ def _options(field_id: str, labels: tuple[str, ...]) -> list[dict[str, str]]:
 
 def sandbox_document() -> SandboxDocument:
     return SandboxDocument.model_validate(
-        {
-            "kind": "openslate-sandbox",
-            "schemaVersion": 4,
-            "design": {
+        sandbox_document_payload(
+            design={
                 "departments": [
                     {"id": "operations", "name": "Operations"},
                     {"id": "service", "name": "Service"},
@@ -43,18 +42,14 @@ def sandbox_document() -> SandboxDocument:
                                     "options": _options("priority", ("Low", "High")),
                                 },
                             },
-                            {
-                                "id": "status",
-                                "name": "Status",
-                                "type": "Text",
-                                "config": {"kind": "text", "defaultValue": ""},
-                            },
-                            {
-                                "id": "score",
-                                "name": "Score",
-                                "type": "Number",
-                                "config": {"kind": "number", "defaultValue": 0, "min": 0},
-                            },
+                            field_payload(
+                                "status", "Status", "Text",
+                                config={"kind": "text", "defaultValue": ""},
+                            ),
+                            field_payload(
+                                "score", "Score", "Number",
+                                config={"kind": "number", "defaultValue": 0, "min": 0},
+                            ),
                         ],
                     },
                     {
@@ -62,16 +57,14 @@ def sandbox_document() -> SandboxDocument:
                         "departmentId": "service",
                         "name": "Equipment",
                         "fields": [
-                            {
-                                "id": "priority-copy",
-                                "name": "Priority copy",
-                                "type": "Select",
-                                "config": {
+                            field_payload(
+                                "priority-copy", "Priority copy", "Select",
+                                config={
                                     "kind": "select",
                                     "defaultValue": option_id("priority-copy", "Low"),
                                     "options": _options("priority-copy", ("Low", "High")),
                                 },
-                            }
+                            )
                         ],
                     },
                 ],
@@ -89,14 +82,13 @@ def sandbox_document() -> SandboxDocument:
                 ],
                 "layout": {},
             },
-            "triggers": [
-                {
-                    "id": "mark-high",
-                    "name": "Mark high requests",
-                    "enabled": True,
-                    "priority": 10,
-                    "trigger": {"kind": "record-created", "moduleId": "requests"},
-                    "conditionGroup": {
+            triggers=[
+                trigger_payload(
+                    "mark-high", "Mark high requests",
+                    enabled=True,
+                    priority=10,
+                    trigger={"kind": "record-created", "moduleId": "requests"},
+                    condition_group={
                         "operator": "all",
                         "conditions": [
                             {
@@ -110,7 +102,7 @@ def sandbox_document() -> SandboxDocument:
                             }
                         ],
                     },
-                    "actions": [
+                    actions=[
                         {
                             "id": "set-triaged",
                             "kind": "set-field",
@@ -118,14 +110,13 @@ def sandbox_document() -> SandboxDocument:
                             "value": {"kind": "literal", "value": "Triaged"},
                         }
                     ],
-                },
-                {
-                    "id": "copy-triaged",
-                    "name": "Copy triage",
-                    "enabled": True,
-                    "priority": 20,
-                    "trigger": {"kind": "record-created", "moduleId": "requests"},
-                    "conditionGroup": {
+                ),
+                trigger_payload(
+                    "copy-triaged", "Copy triage",
+                    enabled=True,
+                    priority=20,
+                    trigger={"kind": "record-created", "moduleId": "requests"},
+                    condition_group={
                         "operator": "all",
                         "conditions": [
                             {
@@ -136,7 +127,7 @@ def sandbox_document() -> SandboxDocument:
                             }
                         ],
                     },
-                    "actions": [
+                    actions=[
                         {
                             "id": "set-score",
                             "kind": "set-field",
@@ -144,10 +135,10 @@ def sandbox_document() -> SandboxDocument:
                             "value": {"kind": "literal", "value": 10},
                         }
                     ],
-                },
+                ),
             ],
-            "scenarios": [],
-        }
+            scenarios=[],
+        )
     )
 
 

@@ -34,6 +34,7 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTriggerEvent,
     RecordTriggerRun,
 )
+from tests.sandbox_documents import field_payload, sandbox_document_payload, trigger_payload
 from tests.sandbox_publications.support import publish_saved
 
 
@@ -243,10 +244,8 @@ def publish_trigger(
 
 def publication_document(triggers: Sequence[TriggerDocument]) -> SandboxDocument:
     return SandboxDocument.model_validate(
-        {
-            "kind": "openslate-sandbox",
-            "schemaVersion": 4,
-            "design": {
+        sandbox_document_payload(
+            design={
                 "departments": [{"id": "sample-operations", "name": "Operations"}],
                 "modules": [
                     {
@@ -261,34 +260,28 @@ def publication_document(triggers: Sequence[TriggerDocument]) -> SandboxDocument
                                 "required": True,
                                 "config": {"kind": "text", "defaultValue": ""},
                             },
-                            {
-                                "id": "sample-field-requests-title",
-                                "name": "Title",
-                                "type": "Text",
-                                "config": {"kind": "text", "defaultValue": ""},
-                            },
-                            {
-                                "id": "sample-field-requests-status",
-                                "name": "Status",
-                                "type": "Select",
-                                "config": {
+                            field_payload(
+                                "sample-field-requests-title", "Title", "Text",
+                                config={"kind": "text", "defaultValue": ""},
+                            ),
+                            field_payload(
+                                "sample-field-requests-status", "Status", "Select",
+                                config={
                                     "kind": "select",
                                     "defaultValue": document_option_id("status", "Open"),
                                     "options": _options(
                                         "status", ("Open", "In progress", "Complete")
                                     ),
                                 },
-                            },
-                            {
-                                "id": "sample-field-requests-priority",
-                                "name": "Priority",
-                                "type": "Select",
-                                "config": {
+                            ),
+                            field_payload(
+                                "sample-field-requests-priority", "Priority", "Select",
+                                config={
                                     "kind": "select",
                                     "defaultValue": document_option_id("priority", "Low"),
                                     "options": _options("priority", ("Low", "High")),
                                 },
-                            },
+                            ),
                         ],
                     }
                 ],
@@ -298,25 +291,24 @@ def publication_document(triggers: Sequence[TriggerDocument]) -> SandboxDocument
                     "sample-requests": {"x": 40, "y": 40, "width": 280, "height": 220},
                 },
             },
-            "triggers": [item.model_dump(by_alias=True, mode="json") for item in triggers],
-            "scenarios": [],
-        }
+            triggers=[item.model_dump(by_alias=True, mode="json") for item in triggers],
+            scenarios=[],
+        )
     )
 
 
 def field_change_trigger() -> TriggerDocument:
     return TriggerDocument.model_validate(
-        {
-            "id": "set-request-status",
-            "name": "Set request status",
-            "enabled": True,
-            "priority": 0,
-            "trigger": {
+        trigger_payload(
+            "set-request-status", "Set request status",
+            enabled=True,
+            priority=0,
+            trigger={
                 "kind": "field-changed",
                 "moduleId": "sample-requests",
                 "fieldId": "sample-field-requests-priority",
             },
-            "conditionGroup": {
+            condition_group={
                 "operator": "all",
                 "conditions": [
                     {
@@ -333,7 +325,7 @@ def field_change_trigger() -> TriggerDocument:
                     }
                 ],
             },
-            "actions": [
+            actions=[
                 {
                     "id": "set-in-progress",
                     "kind": "set-field",
@@ -347,7 +339,7 @@ def field_change_trigger() -> TriggerDocument:
                     },
                 }
             ],
-        }
+        )
     )
 
 

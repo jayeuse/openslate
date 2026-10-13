@@ -308,6 +308,7 @@ Counts include shared helpers. Repeated windows are distinct repeated sequences 
 | Unit | Backend test lines before | After | Repeated windows before | After | Protection retained |
 |---|---:|---:|---:|---:|---|
 | B2: confirmed reset support | 141,758 | 141,722 | 714 | 705 | Nineteen exact confirmed calls across five test files; 163 assertion nodes and 216 input/row nodes retained. Dry-run, invalid confirmation and admission calls remain explicit |
+| B3: Sandbox document builders | 141,722 | 141,752 | 705 | 704 | Thirteen exact objects across three fixtures: three envelopes, six fields and four triggers. Ordered keys, omitted flags, UUID namespaces, validation and copy boundaries retained; shared typed support adds 30 lines |
 
 ## 10. Exit criteria
 
