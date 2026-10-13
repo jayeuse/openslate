@@ -106,7 +106,28 @@ jobs:
       - name: Install pinned Playwright Chromium
         run: npm exec --no -- playwright install --with-deps chromium
       - name: Run isolated frontend tests
-        run: npm test -- --project=isolated
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/isolated.json
+        run: npm test -- --project=isolated --reporter=line,json
+      - name: Record the checked-out test identity
+        if: ${{ always() }}
+        run: |
+          mkdir -p test-results/ci
+          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=isolated\nshard=none\n' \
+            "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" \
+            > test-results/ci/isolated.metadata.txt
+          test -s test-results/ci/isolated.json
+      - name: Keep the native Playwright report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-playwright-isolated
+          path: |
+            frontend/test-results/ci/isolated.json
+            frontend/test-results/ci/isolated.metadata.txt
+          retention-days: 14
+          if-no-files-found: error
 
   test:
     name: test (${{ matrix.suite }})
@@ -173,7 +194,9 @@ jobs:
         run: npm exec --no -- playwright install --with-deps chromium
       - name: Run browser tests against the static export
         timeout-minutes: 15
-        run: npm test -- ${{ matrix.args }}
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/http-${{ strategy.job-index }}.json
+        run: npm test -- ${{ matrix.args }} --reporter=line,json
       - name: Keep failure context and traces
         if: failure()
         uses: actions/upload-artifact@v7
@@ -182,6 +205,27 @@ jobs:
           path: frontend/test-results/playwright/
           retention-days: 7
           if-no-files-found: ignore
+      - name: Record the checked-out test identity
+        if: ${{ always() }}
+        env:
+          REPORT_SHARD: ${{ matrix.suite }}
+        run: |
+          mkdir -p test-results/ci
+          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=http\nshard=%s\n' \
+            "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" "$REPORT_SHARD" \
+            > test-results/ci/http-${{ strategy.job-index }}.metadata.txt
+          test -s test-results/ci/http-${{ strategy.job-index }}.json
+      - name: Keep the native Playwright report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-playwright-http-${{ strategy.job-index }}
+          path: |
+            frontend/test-results/ci/http-${{ strategy.job-index }}.json
+            frontend/test-results/ci/http-${{ strategy.job-index }}.metadata.txt
+          retention-days: 14
+          if-no-files-found: error
 
   verify:
     needs: [changes, check, build, isolated, test]

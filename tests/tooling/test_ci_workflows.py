@@ -79,16 +79,45 @@ class CiWorkflowContractTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source.lower())
 
-    def test_frontend_uploads_the_export_and_only_failed_test_context(self):
+    def test_frontend_uploads_the_export_reports_and_only_failed_test_context(self):
         source = self.source("frontend.yml")
         test = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
         upload = test.split("uses: actions/upload-artifact@", 1)
 
-        # One upload hands the build to the browser shards; the other keeps failures.
-        self.assertEqual(source.count("upload-artifact"), 2)
-        self.assertEqual(test.count("upload-artifact"), 1)
+        # The export and two native reports supplement the existing failure context.
+        self.assertEqual(source.count("upload-artifact"), 4)
+        self.assertEqual(test.count("upload-artifact"), 2)
         self.assertIn("if: failure()", upload[0].rsplit("- name:", 1)[1])
         self.assertIn("path: frontend/test-results/playwright/", upload[1])
+
+    def test_frontend_retains_native_reports_even_on_failure_and_requires_the_report(self):
+        source = self.source("frontend.yml")
+        isolated = source.split("\n  isolated:\n", 1)[1].split("\n  test:\n", 1)[0]
+        http = source.split("\n  test:\n", 1)[1].split("\n  verify:\n", 1)[0]
+
+        for job, suffix, artifact in (
+            (isolated, "isolated", "frontend-playwright-isolated"),
+            (
+                http,
+                "http-${{ strategy.job-index }}",
+                "frontend-playwright-http-${{ strategy.job-index }}",
+            ),
+        ):
+            with self.subTest(artifact=artifact):
+                report = f"test-results/ci/{suffix}"
+                identity, upload = job.split("- name: Keep the native Playwright report", 1)
+                self.assertIn(f"PLAYWRIGHT_JSON_OUTPUT_NAME: {report}.json", job)
+                self.assertIn("--reporter=line,json", job)
+                # A metadata-only upload must not hide a missing native report.
+                self.assertIn(f"test -s {report}.json", identity)
+                self.assertIn('"$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})"', identity)
+                self.assertIn('"$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB"', identity)
+                self.assertIn("if: ${{ always() }}", upload)
+                self.assertIn(f"name: {artifact}", upload)
+                self.assertIn(f"frontend/{report}.json", upload)
+                self.assertIn(f"frontend/{report}.metadata.txt", upload)
+                self.assertIn("retention-days: 14", upload)
+                self.assertIn("if-no-files-found: error", upload)
 
     def test_frontend_has_no_production_container_or_runtime_contract(self):
         source = self.source("frontend.yml")
