@@ -12,6 +12,7 @@ from operations import reset_application_data as reset
 from operations.reset import execution
 from operations.reset import planning as reset_planning
 from operations.reset.backups import read_backup_snapshot, validate_backup_preservation
+from tests.reset_application_data.execution_support import apply_confirmed
 from tests.reset_application_data.reset_integration_support import (
     delete_sessions_and_rate_limits,
     guarded_reset_database,
@@ -213,12 +214,9 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 with pytest.raises(reset.ResetError, match="reconciliation"):
                     reset.build_reset_plan(database, admin_email)
                 with pytest.raises(reset.ResetError, match="reconciliation"):
-                    execution.apply_reset(
+                    apply_confirmed(
                         database,
                         plan,
-                        execute=True,
-                        stdin_is_tty=True,
-                        confirmation=plan.impact_digest,
                         storage=storage,
                         auth=auth,
                     )
@@ -250,12 +248,9 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             )
             auth.list_account_ids.side_effect = (provider_account_ids, ())
             with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
-                execution.apply_reset(
+                apply_confirmed(
                     database,
                     plan,
-                    execute=True,
-                    stdin_is_tty=True,
-                    confirmation=plan.impact_digest,
                     storage=storage,
                     auth=auth,
                 )
@@ -272,12 +267,9 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
         assert storage.list_object_keys() == plan.storage_object_keys
         # Restart the mocked provider fixture for the independent successful attempt.
         auth.list_account_ids.side_effect = (provider_account_ids, ())
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
         )

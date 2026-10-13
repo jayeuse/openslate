@@ -9,6 +9,7 @@ from operations import reset_application_data as reset
 from operations.reset import models as reset_models
 from operations.reset import planning as reset_planning
 from tests.conftest import alembic_heads
+from tests.reset_application_data.execution_support import apply_confirmed
 
 # Each table the reset counts, locks and clears: whether it is a non-preserved table, and
 # the tables whose rows it must be deleted before. The reset deletes every Board, then
@@ -173,12 +174,9 @@ def test_unresolved_backup_checkpoint_precedes_auth_or_application_deletion(
         reset.ResetError,
         match=("reconciliation" if checkpoint == "advisory" else "profiles were retained"),
     ):
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
             build_plan_fn=lambda *_a, **_k: plan,

@@ -10,6 +10,7 @@ from psycopg import connect
 from app.systems.boards.post_models import publication_content_fingerprint
 from operations import reset_application_data as reset
 from operations.reset import execution
+from tests.reset_application_data.execution_support import apply_confirmed
 from tests.reset_application_data.reset_integration_support import (
     delete_sessions_and_rate_limits,
     guarded_reset_database,
@@ -247,12 +248,9 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             )
         database.commit()
         with pytest.raises(reset.ResetError, match="reset plan changed"):
-            execution.apply_reset(
+            apply_confirmed(
                 database,
                 plan_before_dashboard,
-                execute=True,
-                stdin_is_tty=True,
-                confirmation=plan_before_dashboard.impact_digest,
                 storage=storage,
                 auth=auth,
             )
@@ -287,12 +285,9 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 )
                 assert changed_plan.impact_digest != plan.impact_digest, column
                 with pytest.raises(reset.ResetError, match="reset plan changed"):
-                    execution.apply_reset(
+                    apply_confirmed(
                         database,
                         plan,
-                        execute=True,
-                        stdin_is_tty=True,
-                        confirmation=plan.impact_digest,
                         storage=storage,
                         auth=auth,
                     )
@@ -314,12 +309,9 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         auth.delete_and_verify_missing.side_effect = change_theme_during_provider_cleanup
         auth.list_account_ids.side_effect = ((member_provider_id,), ())
         with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
-            execution.apply_reset(
+            apply_confirmed(
                 database,
                 plan,
-                execute=True,
-                stdin_is_tty=True,
-                confirmation=plan.impact_digest,
                 storage=storage,
                 auth=auth,
             )
@@ -352,12 +344,9 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                 with pytest.raises(
                     reset.ResetError, match="Provider accounts.*profiles were retained"
                 ):
-                    execution.apply_reset(
+                    apply_confirmed(
                         database,
                         plan,
-                        execute=True,
-                        stdin_is_tty=True,
-                        confirmation=plan.impact_digest,
                         storage=storage,
                         auth=auth,
                     )
@@ -366,12 +355,9 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         # Restart the mocked provider fixture for the successful attempt.
         auth.reset_mock()
         auth.list_account_ids.side_effect = ((member_provider_id,), ())
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
         )

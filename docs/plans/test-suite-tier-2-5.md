@@ -305,6 +305,10 @@ Counts include shared helpers. Repeated windows are distinct repeated sequences 
 | Separate search-action repair | 113,945 | 113,946 | 1,164 | 1,164 | Same search value and assertions; target the named input rather than depend on popup autofocus timing |
 | F6: remaining wire inputs | 113,946 | 114,067 | 1,164 | 1,136 | Sixty-four equivalent record/workspace/view/bucket inputs; explicit variants remain inline. Typed shared support adds 121 lines while reducing repeated windows; no assertions or rows removed |
 
+| Unit | Backend test lines before | After | Repeated windows before | After | Protection retained |
+|---|---:|---:|---:|---:|---|
+| B2: confirmed reset support | 141,758 | 141,722 | 714 | 705 | Nineteen exact confirmed calls across five test files; 163 assertion nodes and 216 input/row nodes retained. Dry-run, invalid confirmation and admission calls remain explicit |
+
 ## 10. Exit criteria
 
 The plan is complete when all of these are true:
