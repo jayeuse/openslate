@@ -4,6 +4,10 @@ import {
   mergeProjectedDesign,
   projectSandboxDocument,
 } from "../../../src/components/systems/sandbox/domain/document-bridge";
+import {
+  documentSelectField,
+  documentTextField,
+} from "../../helpers/sandbox-fixtures";
 
 const selectedOptionId = "00000000-0000-4000-8000-000000000031";
 const userId = "00000000-0000-4000-8000-000000000032";
@@ -61,26 +65,13 @@ function documentFixture(): DocumentV4Fixture {
           closed: false,
           titleFieldId: "title",
           fields: [
-            {
-              id: "title",
-              name: "Title",
-              type: "Text",
-              required: true,
-              closed: false,
-              config: { kind: "text", defaultValue: "" },
-            },
-            {
+            documentTextField({ id: "title", name: "Title", required: true }),
+            documentSelectField({
               id: "status",
               name: "Status",
-              type: "Select",
-              required: false,
-              closed: false,
-              config: {
-                kind: "select",
-                defaultValue: selectedOptionId,
-                options: [{ id: selectedOptionId, label: "Open" }],
-              },
-            },
+              defaultValue: selectedOptionId,
+              options: [{ id: selectedOptionId, label: "Open" }],
+            }),
             {
               id: "assignee",
               name: "Assignee",

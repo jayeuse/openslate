@@ -8,6 +8,7 @@ import {
   updateSandboxDocumentSession,
 } from "../../../src/components/systems/sandbox/state/document-session";
 import type { SandboxDocumentResponse } from "../../../src/components/systems/sandbox/state/api";
+import { documentTextField } from "../../helpers/sandbox-fixtures";
 
 function response(revision = 7): SandboxDocumentResponse {
   return {
@@ -29,16 +30,7 @@ function response(revision = 7): SandboxDocumentResponse {
             name: "Requests",
             closed: false,
             titleFieldId: "title",
-            fields: [
-              {
-                id: "title",
-                name: "Title",
-                type: "Text",
-                required: false,
-                closed: false,
-                config: { kind: "text", defaultValue: "" },
-              },
-            ],
+            fields: [documentTextField({ id: "title", name: "Title" })],
           },
         ],
         relationships: [],

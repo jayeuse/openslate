@@ -22,6 +22,7 @@ import {
   updateSandboxVersion,
 } from "../../../src/components/systems/sandbox/state/api";
 import { installFetch } from "../helpers/fake-fetch";
+import { documentTextField } from "../../helpers/sandbox-fixtures";
 
 const versionId = "00000000-0000-4000-8000-000000000001";
 
@@ -38,14 +39,7 @@ const document: SandboxDocumentV4 = {
         closed: false,
         titleFieldId: "title",
         fields: [
-          {
-            id: "title",
-            name: "Title",
-            type: "Text",
-            required: true,
-            closed: false,
-            config: { kind: "text", defaultValue: "" },
-          },
+          documentTextField({ id: "title", name: "Title", required: true }),
         ],
       },
     ],
