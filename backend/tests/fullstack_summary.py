@@ -7,6 +7,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+if __package__:
+    from .runner_console import playwright_results
+else:
+    from runner_console import playwright_results
+
 
 def summary_path(backend: Path, frontend: Path, *, batch: str | None, backend_only: bool) -> Path:
     """Select the stable result location for the selected runner mode."""
@@ -41,21 +46,14 @@ def _junit_observations(private: Path) -> tuple[dict[str, str], dict[str, float]
     return counts, observations
 
 
-def _log_results(private: Path) -> tuple[list[dict[str, Any]], list[str]]:
-    browser_results: list[dict[str, Any]] = []
+def _backend_failures(private: Path) -> list[str]:
     backend_failures: list[str] = []
     for line in (private / "process.log").read_text(errors="replace").splitlines():
         failure = re.match(r"^(?:FAILED|ERROR) (tests/[A-Za-z0-9_/.-]+::[A-Za-z0-9_]+)", line)
         if failure:
             backend_failures.append(failure.group(1))
             print(f"Backend test failed: {failure.group(1)}")
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(record, dict) and set(record) == {"test", "status"}:
-            browser_results.append(record)
-    return browser_results, backend_failures
+    return backend_failures
 
 
 def write_fullstack_summary(
@@ -67,6 +65,8 @@ def write_fullstack_summary(
     backend_only: bool,
     acceptance_only: bool,
     stage: str,
+    stage_seconds: dict[str, float],
+    browser_lines: list[str],
     browser_completed: bool,
     admission: dict[str, Any],
     checker_exit: int | None,
@@ -76,7 +76,8 @@ def write_fullstack_summary(
 ) -> None:
     """Persist the result without exposing the private runtime environment."""
     backend_counts, resource_observations = _junit_observations(private)
-    browser_results, backend_failures = _log_results(private)
+    browser_results = playwright_results(browser_lines)
+    backend_failures = _backend_failures(private)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
@@ -95,6 +96,7 @@ def write_fullstack_summary(
                 ),
                 "backend_tests_rerun": not acceptance_only and not browser_only,
                 "stage": stage,
+                "stage_seconds": stage_seconds,
                 "browser_tests": browser_results,
                 "browser_completed": browser_completed,
                 "backend_failures": backend_failures,
