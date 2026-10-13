@@ -5,6 +5,7 @@ import {
   test,
   type Page,
 } from "./helpers/test";
+import { pageOf } from "../helpers/pagination";
 
 const userA = "00000000-0000-4000-8000-000000000001";
 const userB = "00000000-0000-4000-8000-000000000002";
@@ -99,16 +100,7 @@ async function workspaceSession(page: Page, baseURL: string | undefined) {
           ]
         : [];
     return route.fulfill({
-      json: {
-        items,
-        pagination: {
-          limit: 10,
-          offset: 0,
-          count: items.length,
-          total: items.length,
-          has_more: false,
-        },
-      },
+      json: pageOf(items, { limit: 10 }),
     });
   });
   await page.goto("/platform?section=search");

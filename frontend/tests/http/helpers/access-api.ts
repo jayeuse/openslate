@@ -1,5 +1,6 @@
 import { expect, type Page, type Route } from "@playwright/test";
 import { isEventStream } from "./test";
+import { pageOf } from "../../helpers/pagination";
 
 // A mocked Access API for the People, Groups and Overview HTTP specs. Every
 // response matches the strict frontend contracts, and every list answers
@@ -124,16 +125,7 @@ export function listPage(items: object[], url: URL) {
   const offset = Number(url.searchParams.get("offset") ?? 0);
   const limit = Number(url.searchParams.get("limit") ?? 100);
   const slice = items.slice(offset, offset + limit);
-  return {
-    items: slice,
-    pagination: {
-      limit,
-      offset,
-      count: slice.length,
-      total: items.length,
-      has_more: offset + slice.length < items.length,
-    },
-  };
+  return pageOf(slice, { limit, offset, total: items.length });
 }
 
 export type Call = { method: string; path: string; body: unknown };

@@ -13,6 +13,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf, wirePagination } from "../helpers/pagination";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const notificationId = "00000000-0000-4000-8000-000000000102";
@@ -84,13 +85,7 @@ test("connected Report notifications show reference status and refetch after mar
       contentType: "application/json",
       body: JSON.stringify({
         items: [notification(status)],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       }),
     });
   });
@@ -157,13 +152,7 @@ test("connected inbox shows Board publication and reminder references without co
             read_at: null,
           },
         ],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 2,
-          total: 2,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 2, total: 2 }),
       }),
     });
   });
@@ -206,13 +195,11 @@ test("Report notification SSE resync and recipient invalidation refresh without 
       contentType: "application/json",
       body: JSON.stringify({
         items: available ? [notification("unread")] : [],
-        pagination: {
+        pagination: wirePagination({
           limit: 25,
-          offset: 0,
           count: available ? 1 : 0,
           total: available ? 1 : 0,
-          has_more: false,
-        },
+        }),
       }),
     });
   });
@@ -275,13 +262,7 @@ test("Report notification refresh retains last good on transient failure and cle
       contentType: "application/json",
       body: JSON.stringify({
         items: [notification("unread")],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       }),
     });
   });
@@ -426,13 +407,7 @@ test("a revoked notice on a later page reloads the authorized first page", async
               scheduled_for: "2026-10-01T00:00:00Z",
             },
           ],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
         }),
       });
       return;
@@ -526,16 +501,7 @@ function noticePage(
   offset: number,
   total: number,
 ) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
+  return pageOf(items, { limit, offset, total });
 }
 
 async function installTitleSources(page: Page) {

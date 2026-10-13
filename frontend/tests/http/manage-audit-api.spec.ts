@@ -11,6 +11,7 @@ import {
 import { fixtureId } from "./helpers/access-api";
 import { mockMfa } from "./helpers/mfa";
 import { profilePreferences, profileSelf } from "./helpers/profile-api";
+import { pageOf } from "../helpers/pagination";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000201";
 const NULL_LABEL_ACTOR_ID = "00000000-0000-4000-8000-000000000202";
@@ -322,16 +323,11 @@ function createAuditRoute(logs: AuditLogFixture[]) {
       const offset = Number(params.get("offset") ?? 0);
       const items = filtered.slice(offset, offset + limit);
       await route.fulfill({
-        json: {
-          items: items.map(wireAuditLog),
-          pagination: {
-            limit,
-            offset,
-            count: items.length,
-            total: filtered.length,
-            has_more: offset + items.length < filtered.length,
-          },
-        },
+        json: pageOf(items.map(wireAuditLog), {
+          limit,
+          offset,
+          total: filtered.length,
+        }),
       });
     },
   };

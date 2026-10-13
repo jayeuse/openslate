@@ -8,6 +8,7 @@ import {
 } from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import { fixtureId as id } from "./helpers/access-api";
+import { pageOf } from "../helpers/pagination";
 
 const ADMIN = "00000000-0000-4000-8000-000000000101";
 const OTHER = "00000000-0000-4000-8000-000000000102";
@@ -172,16 +173,7 @@ async function installJobs(
         );
       const items = filtered.slice(offset, offset + limit);
       return route.fulfill({
-        json: {
-          items,
-          pagination: {
-            limit,
-            offset,
-            count: items.length,
-            total: filtered.length,
-            has_more: offset + items.length < filtered.length,
-          },
-        },
+        json: pageOf(items, { limit, offset, total: filtered.length }),
       });
     }
     const [, , , kind, targetId] = url.pathname.split("/");

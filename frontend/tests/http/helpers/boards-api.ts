@@ -1,5 +1,6 @@
 import type { Page } from "./test";
 import { isEventStream, signedInAs } from "./test";
+import { wirePagination } from "../../helpers/pagination";
 
 // The Board shell's API, mocked for HTTP specs: an authorized administrator,
 // two Boards, and empty posts, events and widgets. A spec registers its own
@@ -82,13 +83,7 @@ export async function installBoardApi(
       contentType: "application/json",
       body: JSON.stringify({
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
       }),
     }),
   );
@@ -104,25 +99,13 @@ export async function installBoardApi(
     if (path === "/api/boards")
       return reply(200, {
         items: [visibleBoard, otherBoard],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 2,
-          total: 2,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 2, total: 2 }),
       });
     if (path === `/api/boards/${boardId}/my-access`) return reply(200, access);
     if (path === `/api/boards/${boardId}/events/occurrences`)
       return reply(200, {
         items: [],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 0, total: 0 }),
         board_revision: 1,
       });
     if (path === `/api/boards/${boardId}/post-authors`) {
@@ -133,48 +116,29 @@ export async function installBoardApi(
           : [];
       return reply(200, {
         items,
-        pagination: {
+        pagination: wirePagination({
           limit: Number(url.searchParams.get("limit") ?? 25),
           offset: Number(url.searchParams.get("offset") ?? 0),
           count: items.length,
           total: items.length,
-          has_more: false,
-        },
+        }),
       });
     }
     if (path === `/api/boards/${boardId}/posts`)
       return reply(200, {
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
         board_revision: 1,
       });
     if (path === `/api/boards/${boardId}/files`)
       return reply(200, {
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
       });
     if (path === `/api/boards/${boardId}/widgets`)
       return reply(200, {
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
         board_revision: 1,
       });
     if (path === `/api/boards/${boardId}`)

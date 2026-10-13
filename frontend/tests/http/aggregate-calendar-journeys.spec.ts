@@ -1,6 +1,7 @@
 import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import { boardId, installBoardApi } from "./helpers/boards-api";
+import { pageOf } from "../helpers/pagination";
 
 const moduleId = "00000000-0000-4000-8000-000000000701";
 const departmentId = "00000000-0000-4000-8000-000000000702";
@@ -21,16 +22,7 @@ const wireDefinition = {
 };
 
 function collection<T>(items: T[], limit = 100) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
+  return pageOf(items, { limit });
 }
 function snapshot(keys: string[], values: (string | number | null)[]) {
   return collection(

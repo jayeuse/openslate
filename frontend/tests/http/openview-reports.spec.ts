@@ -8,7 +8,7 @@ import {
 } from "./helpers/test";
 import { readFile } from "node:fs/promises";
 import { profilePreferences } from "./helpers/profile-api";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
 
 const userId = "00000000-0000-4000-8000-000000000101";
@@ -962,13 +962,7 @@ test("saved Report cards name the department of their module", async ({
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       },
     }),
   );

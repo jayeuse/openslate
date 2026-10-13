@@ -7,6 +7,7 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
+import { pageOf } from "../helpers/pagination";
 const MODULE = "10000000-0000-4000-8000-000000000001";
 const TITLE = "20000000-0000-4000-8000-000000000001";
 const QUANTITY = "20000000-0000-4000-8000-000000000002";
@@ -17,16 +18,7 @@ const DIGEST = "a".repeat(64);
 const uuid = (n: number) =>
   `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 function list<T>(items: T[], total = items.length, offset = 0, limit = 100) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
+  return pageOf(items, { limit, offset, total });
 }
 const definition = {
   version: 1,

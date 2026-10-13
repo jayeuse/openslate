@@ -3,7 +3,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf } from "../helpers/pagination";
 
 const userA = "00000000-0000-4000-8000-000000000101";
 const userB = "00000000-0000-4000-8000-000000000201";

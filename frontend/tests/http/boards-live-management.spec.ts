@@ -10,7 +10,7 @@ import type {
 
 import { group as accessGroupFixture } from "../isolated/access/fixtures";
 import { isEventStream } from "./helpers/test";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf } from "../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";

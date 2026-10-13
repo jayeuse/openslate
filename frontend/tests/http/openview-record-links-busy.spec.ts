@@ -12,7 +12,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf } from "../helpers/pagination";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -409,16 +409,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
         );
         const items = catalog.slice(offset, offset + limit);
         return route.fulfill({
-          json: {
-            items,
-            pagination: {
-              limit,
-              offset,
-              count: items.length,
-              total: catalog.length,
-              has_more: offset + items.length < catalog.length,
-            },
-          },
+          json: pageOf(items, { limit, offset, total: catalog.length }),
         });
       }
       return route.fulfill({
@@ -517,16 +508,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       const limit = Number(url.searchParams.get("limit") ?? 100);
       const items = links.slice(offset, offset + limit);
       return route.fulfill({
-        json: {
-          items,
-          pagination: {
-            limit,
-            offset,
-            count: items.length,
-            total: links.length,
-            has_more: offset + items.length < links.length,
-          },
-        },
+        json: pageOf(items, { limit, offset, total: links.length }),
       });
     }
     if (url.pathname === "/api/relationships" && method === "POST") {
@@ -598,16 +580,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
             ),
         );
         return route.fulfill({
-          json: {
-            items,
-            pagination: {
-              limit,
-              offset,
-              count: items.length,
-              total: options.targetCount,
-              has_more: offset + items.length < options.targetCount,
-            },
-          },
+          json: pageOf(items, { limit, offset, total: options.targetCount }),
         });
       }
       return route.fulfill({

@@ -1,4 +1,5 @@
 import { expect, signedInSession, test, type Page } from "./helpers/test";
+import { wirePagination } from "../helpers/pagination";
 
 async function openSignedIn(page: Page, path: string) {
   await signedInSession(page, "00000000-0000-4000-8000-000000000101");
@@ -70,13 +71,7 @@ test("Platform Files keeps the legacy file link and opens an empty department li
         ? route.fulfill({
             json: {
               items: [],
-              pagination: {
-                limit: 100,
-                offset: 0,
-                count: 0,
-                total: 0,
-                has_more: false,
-              },
+              pagination: wirePagination({ limit: 100, count: 0, total: 0 }),
             },
           })
         : route.fallback(),

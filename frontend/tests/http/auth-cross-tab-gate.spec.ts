@@ -8,6 +8,7 @@ import {
   mfaUserA,
   mfaUserB,
 } from "./helpers/mfa";
+import { pageOf, wirePagination } from "../helpers/pagination";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 test.afterEach(async ({ page }) => {
@@ -95,13 +96,11 @@ test("MFA gate stays accessible over an alert dialog and restores its typed conf
     return route.fulfill({
       json: {
         items,
-        pagination: {
+        pagination: wirePagination({
           limit: 25,
-          offset: 0,
           count: items.length,
           total: items.length,
-          has_more: false,
-        },
+        }),
         board_revision: 1,
       },
     });
@@ -398,16 +397,7 @@ test("a returning tab conceals the old account before revalidation and ignores d
         : [];
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        items,
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: items.length,
-          total: items.length,
-          has_more: false,
-        },
-      }),
+      body: JSON.stringify(pageOf(items, { limit: 25 })),
     });
   });
 

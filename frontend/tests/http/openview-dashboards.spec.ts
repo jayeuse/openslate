@@ -15,6 +15,7 @@ import {
   type SignedInIdentity,
 } from "./helpers/test";
 import { gate as requestGate, type Gate as RequestGate } from "./helpers/gate";
+import { pageOf, wirePagination } from "../helpers/pagination";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -332,16 +333,7 @@ function snapshot(length = 30) {
     value: index + 1,
     record_count: index + 1,
   }));
-  return {
-    items,
-    pagination: {
-      limit: items.length,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
+  return pageOf(items, { limit: items.length });
 }
 
 function dateSnapshot(from: string, to: string) {
@@ -352,16 +344,7 @@ function dateSnapshot(from: string, to: string) {
     const day = new Date(start + index * 86_400_000).toISOString().slice(0, 10);
     return { key: day, label: day, value: index + 1, record_count: index + 1 };
   });
-  return {
-    items,
-    pagination: {
-      limit: items.length,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
+  return pageOf(items, { limit: items.length });
 }
 
 async function installDashboardApi(
@@ -466,13 +449,7 @@ async function installDashboardApi(
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       }),
     }),
   );
@@ -499,16 +476,7 @@ async function installDashboardApi(
       ];
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({
-          items,
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: items.length,
-            total: items.length,
-            has_more: false,
-          },
-        }),
+        body: JSON.stringify(pageOf(items, { limit: 100 })),
       });
     }
     const requestedFieldModuleId = url.pathname.match(
@@ -629,13 +597,7 @@ async function installDashboardApi(
               config: {},
             },
           ],
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: 7,
-            total: 7,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 100, count: 7, total: 7 }),
         }),
       });
     }
@@ -659,13 +621,12 @@ async function installDashboardApi(
           contentType: "application/json",
           body: JSON.stringify({
             items: [pending.item],
-            pagination: {
+            pagination: wirePagination({
               limit: 25,
               offset,
               count: 1,
               total: offset + 1,
-              has_more: false,
-            },
+            }),
           }),
         });
       }
@@ -912,16 +873,13 @@ async function installDashboardApi(
     );
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        items,
-        pagination: {
+      body: JSON.stringify(
+        pageOf(items, {
           limit: request.limit,
           offset: request.offset,
-          count: items.length,
           total: allItems.length,
-          has_more: request.offset + items.length < allItems.length,
-        },
-      }),
+        }),
+      ),
     });
   });
 
@@ -1214,13 +1172,7 @@ test("renders every widget in one correlated aggregate batch and independent rec
                 record_count: 7,
               },
             ],
-            pagination: {
-              limit: 1,
-              offset: 0,
-              count: 1,
-              total: 1,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
           },
           {
             items: [
@@ -1237,13 +1189,7 @@ test("renders every widget in one correlated aggregate batch and independent rec
                 record_count: 17,
               },
             ],
-            pagination: {
-              limit: 2,
-              offset: 0,
-              count: 2,
-              total: 2,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
           },
           {
             items: [
@@ -1254,13 +1200,7 @@ test("renders every widget in one correlated aggregate batch and independent rec
                 record_count: 41,
               },
             ],
-            pagination: {
-              limit: 1,
-              offset: 0,
-              count: 1,
-              total: 1,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
           },
         ],
       },
@@ -1705,13 +1645,12 @@ test("edit resolves the current source and referenced fields beyond their first 
             title_field_id: null,
           },
         ],
-        pagination: {
+        pagination: wirePagination({
           limit: 100,
-          offset: 0,
           count: 1,
           total: 101,
           has_more: true,
-        },
+        }),
       },
     }),
   );
@@ -1778,13 +1717,7 @@ test("Add from saved chart and reference edit keep XOR while current definitions
     return route.fulfill({
       json: {
         items: [source()],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     });
   });
@@ -1952,13 +1885,7 @@ test("a held editor source blocks changes and cancellation fences it from the ne
     route.fulfill({
       json: {
         items: [source],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -2025,13 +1952,7 @@ test("Dashboard previews an unsaved monthly draft and saves the exact inline ins
             record_count: index === 0 ? 92 : 0,
           })),
         ],
-        pagination: {
-          limit: 13,
-          offset: 0,
-          count: 13,
-          total: 13,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 13, count: 13, total: 13 }),
       },
     });
   });
@@ -2252,13 +2173,7 @@ test("Dashboard saved picker preview refuses a changed source and saves referenc
     route.fulfill({
       json: {
         items: [chart],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -2280,13 +2195,7 @@ test("Dashboard saved picker preview refuses a changed source and saves referenc
             record_count: 3,
           },
         ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       },
     });
   });
@@ -2498,13 +2407,7 @@ for (const sourceKind of ["inline", "referenced"] as const) {
               },
               { key: "south", label: "South", value: null, record_count: 17 },
             ],
-            pagination: {
-              limit: 2,
-              offset: 0,
-              count: 2,
-              total: 2,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
           },
         });
       });
@@ -2721,13 +2624,7 @@ test("Chart invalidation refreshes its current query while preserving a dirty Da
             record_count: changed ? 9 : 3,
           },
         ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       },
     });
   });
@@ -2832,16 +2729,7 @@ test("paired Board and Dashboard follow one Chart revision without source writes
       created_at: timestamp,
       updated_at: timestamp,
     };
-    const list = (items: unknown[], limit = 12) => ({
-      items,
-      pagination: {
-        limit,
-        offset: 0,
-        count: items.length,
-        total: items.length,
-        has_more: false,
-      },
-    });
+    const list = (items: unknown[], limit = 12) => pageOf(items, { limit });
     await boardPage.route("**/api/boards**", (route) => {
       const path = new URL(route.request().url()).pathname;
       if (route.request().method() !== "GET") {
@@ -5103,13 +4991,12 @@ test("a Dashboard department picker searches beyond its first page and resolves 
     return route.fulfill({
       json: {
         items,
-        pagination: {
+        pagination: wirePagination({
           limit: 100,
-          offset: 0,
           count: items.length,
           total: search ? 1 : 101,
           has_more: !search,
-        },
+        }),
       },
     });
   });

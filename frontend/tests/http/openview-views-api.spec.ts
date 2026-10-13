@@ -12,7 +12,7 @@ import {
 } from "./helpers/openview-event-source";
 import { readFile } from "node:fs/promises";
 import { hideDevOverlay } from "./helpers/test-styles";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
 
 const userId = "00000000-0000-4000-8000-000000000001";
@@ -1220,13 +1220,7 @@ async function installViewsApi(
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       },
     }),
   );
@@ -5133,13 +5127,7 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
         contentType: "application/json",
         body: JSON.stringify({
           items: [],
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: 0,
-            total: 0,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 100, count: 0, total: 0 }),
         }),
       });
     }
@@ -5166,13 +5154,7 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       }),
     }),
   );
@@ -5184,13 +5166,7 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
         contentType: "application/json",
         body: JSON.stringify({
           items: [],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 0,
-            total: 0,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
         }),
       });
     }

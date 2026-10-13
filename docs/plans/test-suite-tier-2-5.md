@@ -296,6 +296,7 @@ Counts include shared helpers. Repeated windows are distinct repeated sequences 
 | Unit | Frontend test lines before | After | Repeated windows before | After | Protection retained |
 |---|---:|---:|---:|---:|---|
 | F1a: isolated pagination fixtures | 114,887 | 114,758 | 1,332 | 1,316 | 41 equivalent input objects; 520 assertion expressions and 123 direct test declarations unchanged; all contract-table rows retained |
+| F1b: HTTP pagination fixtures | 114,758 | 114,290 | 1,316 | 1,241 | 72 equivalent input objects; 143 existing page-builder calls relocated; 4,025 assertion roots and all table rows retained |
 
 ## 10. Exit criteria
 

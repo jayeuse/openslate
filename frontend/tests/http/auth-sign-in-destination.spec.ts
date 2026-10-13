@@ -2,6 +2,7 @@ import { expect, heldResponse, test, type Page } from "./helpers/test";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { regionalDefaults } from "./helpers/profile-api";
+import { pageOf } from "../helpers/pagination";
 
 const userId = "00000000-0000-4000-8000-000000000301";
 const moduleId = "00000000-0000-4000-8000-000000000302";
@@ -74,16 +75,7 @@ async function installDestination(
         : [];
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        items,
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: items.length,
-          total: items.length,
-          has_more: false,
-        },
-      }),
+      body: JSON.stringify(pageOf(items, { limit: 1 })),
     });
   });
 

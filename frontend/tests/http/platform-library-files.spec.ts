@@ -13,6 +13,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf } from "../helpers/pagination";
 
 const LIBRARY_USER = "00000000-0000-4000-8000-000000000001";
 const LIBRARY_OTHER_USER = "00000000-0000-4000-8000-000000000002";
@@ -100,16 +101,7 @@ function libraryPage<Item>(
   offset = 0,
   total = items.length,
 ) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
+  return pageOf(items, { limit, offset, total });
 }
 
 /**

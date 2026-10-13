@@ -3,6 +3,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf, wirePagination } from "../helpers/pagination";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -137,13 +138,7 @@ async function setup(page: Page) {
             expired_at: null,
           },
         ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       },
     });
   });
@@ -193,16 +188,7 @@ async function setup(page: Page) {
         : state.items;
     const pageItems = items.slice(offset, offset + limit);
     return route.fulfill({
-      json: {
-        items: pageItems,
-        pagination: {
-          limit,
-          offset,
-          count: pageItems.length,
-          total: items.length,
-          has_more: offset + pageItems.length < items.length,
-        },
-      },
+      json: pageOf(pageItems, { limit, offset, total: items.length }),
     });
   });
   return state;

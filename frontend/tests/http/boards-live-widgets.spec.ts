@@ -9,7 +9,7 @@ import {
   type AggregateBucket,
 } from "../../src/components/systems/openview/domain/aggregate-buckets";
 import { gate as newGate, type Gate } from "./helpers/gate";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf, wirePagination } from "../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -214,13 +214,7 @@ for (const sourceKind of ["inline", "reference"] as const) {
               value: index + 0.5,
               record_count: index + 100,
             })),
-            pagination: {
-              limit: 10,
-              offset: 0,
-              count: 10,
-              total: 10,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 10, count: 10, total: 10 }),
           },
         });
       });

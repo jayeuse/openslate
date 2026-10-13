@@ -12,7 +12,7 @@ import {
   readerAccess,
   userId,
 } from "./helpers/boards-api";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf } from "../helpers/pagination";
 
 test("Board menu keeps administration reachable without crowding the section", async ({
   page,

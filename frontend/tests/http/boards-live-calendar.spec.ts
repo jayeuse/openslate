@@ -10,7 +10,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf, wirePagination } from "../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const eventId = "00000000-0000-4000-8000-000000000002";
@@ -83,13 +83,7 @@ async function installSelectedEventApi(
   await browser.route("**/api/boards**", (route) => {
     const path = new URL(route.request().url()).pathname;
     const prefix = `/api/boards/${boardId}`;
-    const emptyPagination = {
-      limit: 100,
-      offset: 0,
-      count: 0,
-      total: 0,
-      has_more: false,
-    };
+    const emptyPagination = wirePagination({ limit: 100, count: 0, total: 0 });
     if (path === "/api/boards")
       return route.fulfill({
         json: {
@@ -165,13 +159,7 @@ async function installS11EventApi(browser: Page) {
       created_at: saved.created_at,
       updated_at: saved.updated_at,
     };
-    const pagination = {
-      limit: 25,
-      offset: 0,
-      count: 1,
-      total: 1,
-      has_more: false,
-    };
+    const pagination = wirePagination({ limit: 25, count: 1, total: 1 });
     if (url.pathname === "/api/boards")
       return route.fulfill({ json: { items: [board], pagination } });
     if (url.pathname === prefix) return route.fulfill({ json: board });
@@ -447,13 +435,7 @@ test.describe("Boards workspace regional dates", () => {
           route.fulfill({
             json: {
               items,
-              pagination: {
-                limit: 100,
-                offset: 0,
-                count: 2,
-                total: 2,
-                has_more: false,
-              },
+              pagination: wirePagination({ limit: 100, count: 2, total: 2 }),
               board_revision: 1,
             },
           }),

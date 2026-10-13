@@ -7,7 +7,7 @@ import {
   userId,
 } from "./helpers/boards-api";
 import { dummyFile, type DummyFile } from "../helpers/dummy-files";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf } from "../helpers/pagination";
 
 const UNCLEAR_UPLOAD =
   "The upload result is unclear. Use Attach file to finish, or choose the file again.";

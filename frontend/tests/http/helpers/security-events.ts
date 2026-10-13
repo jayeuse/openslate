@@ -3,6 +3,7 @@ import type { SecurityEvent, SecurityEventOutcome } from "../../../src/lib/api";
 import { mockManageSecurity } from "./manage-security";
 import { deferredMfaResponse, mockMfa, mfaUserA } from "./mfa";
 import type { Page, Route } from "./test";
+import { pageOf } from "../../helpers/pagination";
 
 export const historicalPersonId = "00000000-0000-4000-8000-000000000099";
 export const eventOperationId = "00000000-0000-4000-8000-000000000900";
@@ -248,16 +249,8 @@ export async function mockSecurityEvents(page: Page) {
     }
     await route.fulfill({
       headers: { "Cache-Control": "no-store" },
-      json: malformed ?? {
-        items,
-        pagination: {
-          limit,
-          offset,
-          count: items.length,
-          total: filtered.length,
-          has_more: offset + items.length < filtered.length,
-        },
-      },
+      json:
+        malformed ?? pageOf(items, { limit, offset, total: filtered.length }),
     });
   });
   await page.route(/\/api\/security-events\/[^/?]+$/, async (route) => {

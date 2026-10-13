@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 import { isEventStream } from "./helpers/test";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf } from "../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const newBoardId = "00000000-0000-4000-8000-000000000002";

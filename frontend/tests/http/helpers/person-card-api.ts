@@ -3,6 +3,7 @@ import { ids, mockAccessApi } from "./access-api";
 import { boardId, board, installBoardApi } from "./boards-api";
 import { installOpenViewEventSource } from "./openview-event-source";
 import { avatarPng, profilePreferences } from "./profile-api";
+import { pageOf } from "../../helpers/pagination";
 
 export const cardTarget = ids.ana;
 export const secondTarget = ids.ben;
@@ -30,16 +31,7 @@ export const memberCard = {
   bio: "Coordinates equipment and maintenance." as string | null,
 };
 export function cardPage(items: unknown[], limit = 100) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
+  return pageOf(items, { limit });
 }
 
 export type CardSurface =

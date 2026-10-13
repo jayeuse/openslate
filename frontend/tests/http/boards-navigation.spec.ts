@@ -1,5 +1,5 @@
 import { expect, signedInSession, test, type Page } from "./helpers/test";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf } from "../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";

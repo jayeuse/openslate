@@ -5,7 +5,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { pageOf } from "./helpers/openview-catalog";
+import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
 
 const moduleId = "00000000-0000-4000-8000-000000000110";
@@ -121,13 +121,7 @@ test("Charts filter on stable choice and eligible person IDs", async ({
             record_count: 1,
           },
         ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       }),
     });
   });
@@ -309,13 +303,11 @@ async function editorCatalog(page: Page) {
 function calendarSnapshot(keys: string[]) {
   return {
     items: keys.map((key) => ({ key, label: key, value: 1, record_count: 1 })),
-    pagination: {
+    pagination: wirePagination({
       limit: keys.length,
-      offset: 0,
       count: keys.length,
       total: keys.length,
-      has_more: false,
-    },
+    }),
   };
 }
 
@@ -335,13 +327,7 @@ test("Top choices change only the preview and retain the complete wire query, ta
     return route.fulfill({
       json: {
         items,
-        pagination: {
-          limit: 55,
-          offset: 0,
-          count: 55,
-          total: 55,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 55, count: 55, total: 55 }),
       },
     });
   });
@@ -959,13 +945,7 @@ test("saved picker refuses current source without using cached metadata or downs
     route.fulfill({
       json: {
         ...pageOf([pickerChart()], { limit: 100 }),
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -1021,13 +1001,7 @@ test("saved picker list refusal withdraws cached names and applied data", async 
       : route.fulfill({
           json: {
             items: [pickerChart()],
-            pagination: {
-              limit: 25,
-              offset: 0,
-              count: 1,
-              total: 1,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
           },
         }),
   );
@@ -1073,13 +1047,7 @@ test("saved picker manual source refusal hides selected metadata until an explic
     route.fulfill({
       json: {
         items: [pickerChart()],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -1245,13 +1213,7 @@ for (const priorApply of [false, true]) {
       route.fulfill({
         json: {
           items: [pickerChart(userId, "Earlier Chart"), pickerChart()],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 2,
-            total: 2,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 25, count: 2, total: 2 }),
         },
       }),
     );
@@ -1429,13 +1391,7 @@ test("saved Chart result metadata belongs to its resolved module without replaci
     route.fulfill({
       json: {
         items: [chart],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -1495,13 +1451,7 @@ test("saved Chart result metadata belongs to its resolved module without replaci
           },
           { key: "empty", label: "Unpriced", value: null, record_count: 1 },
         ],
-        pagination: {
-          limit: 2,
-          offset: 0,
-          count: 2,
-          total: 2,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
       },
     });
   });

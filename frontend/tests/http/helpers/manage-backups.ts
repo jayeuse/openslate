@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { Page, Route } from "./test";
 import { installOpenViewEventSource } from "./openview-event-source";
+import { pageOf } from "../../helpers/pagination";
 
 type RunState = "queued" | "running" | "succeeded" | "failed" | "interrupted";
 type Schedule = "disabled" | "daily" | "weekly";
@@ -244,16 +245,7 @@ export async function mockManageBackups(page: Page) {
     const offset = Number(query.get("offset") ?? 0);
     const items = filtered.slice(offset, offset + limit);
     await route.fulfill({
-      json: {
-        items,
-        pagination: {
-          limit,
-          offset,
-          count: items.length,
-          total: filtered.length,
-          has_more: offset + items.length < filtered.length,
-        },
-      },
+      json: pageOf(items, { limit, offset, total: filtered.length }),
     });
   });
   await page.route("**/api/version", async (route) => {
