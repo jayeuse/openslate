@@ -35,6 +35,7 @@ import {
   retryManageJob,
 } from "../../../src/components/systems/manage/adapters/jobs-api";
 import { describeContracts } from "./openapi-contract";
+import { wirePagination } from "../../helpers/pagination";
 
 const auditId = "00000000-0000-4000-8000-000000000001";
 const userId = "00000000-0000-4000-8000-000000000002";
@@ -113,13 +114,7 @@ describeContracts("Manage", [
     responses: {
       "GET /api/jobs": {
         items: [contractJob],
-        pagination: {
-          limit: 10,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 10, count: 1, total: 1 }),
       },
     },
   },

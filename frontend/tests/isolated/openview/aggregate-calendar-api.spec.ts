@@ -5,6 +5,7 @@ import {
   isOpenViewAccessDenied,
 } from "../../../src/components/systems/openview/adapters/openview-access";
 import { getOpenViewDashboard } from "../../../src/components/systems/openview/adapters/dashboards-api";
+import { wirePagination } from "../../helpers/pagination";
 
 const moduleId = "00000000-0000-4000-8000-000000000701";
 const fieldId = "00000000-0000-4000-8000-000000000702";
@@ -48,13 +49,11 @@ function snapshot(
       value: values[index] ?? null,
       record_count: index === 0 ? 1 : 0,
     })),
-    pagination: {
+    pagination: wirePagination({
       limit: Math.max(1, keys.length),
-      offset: 0,
       count: keys.length,
       total: keys.length,
-      has_more: false,
-    },
+    }),
   };
 }
 

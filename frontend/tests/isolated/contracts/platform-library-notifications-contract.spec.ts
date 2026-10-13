@@ -14,6 +14,7 @@ import {
   markNotificationRead,
 } from "../../../src/components/systems/shared/adapters/notifications-api";
 import { describeContracts } from "./openapi-contract";
+import { wirePagination } from "../../helpers/pagination";
 
 const departmentId = "00000000-0000-4000-8000-000000000001";
 const fileId = "00000000-0000-4000-8000-000000000002";
@@ -49,13 +50,7 @@ describeContracts("Platform: library files and notifications", [
             is_deleted: false,
           },
         ],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     },
   },
@@ -162,13 +157,7 @@ describeContracts("Platform: library files and notifications", [
       // request (common/listing/query.py:128-135).
       "GET /api/notifications": {
         items: [{ subject_id: runId, run_id: runId }],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     },
   },

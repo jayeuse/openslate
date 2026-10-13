@@ -10,6 +10,7 @@ import {
   serializeOpenViewQueryDefinition,
   type OpenViewQueryDefinition,
 } from "../../../src/components/systems/openview/adapters/views-api";
+import { wirePagination } from "../../helpers/pagination";
 
 const moduleId = "00000000-0000-4000-8000-000000000011";
 const fieldId = "00000000-0000-4000-8000-000000000012";
@@ -46,13 +47,7 @@ const definition: OpenViewQueryDefinition = {
   searchFields: [],
 };
 
-const groupPagination = {
-  limit: 100,
-  offset: 0,
-  count: 0,
-  total: 0,
-  has_more: false,
-};
+const groupPagination = wirePagination({ limit: 100, count: 0, total: 0 });
 
 const emptyGroupResult = {
   items: [],
@@ -169,41 +164,22 @@ test("preserves empty-string and unspecified group selectors and empty member pa
     if (isEmptyValueSelection(request.selected_group)) {
       return Response.json({
         items: [],
-        pagination: {
+        pagination: wirePagination({
           limit: 10,
           offset: 5,
           count: 0,
           total: 2,
-          has_more: false,
-        },
+        }),
         groups: [{ value: "", label: "", count: 2 }],
-        group_pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        group_pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
         selected_group: emptyValue,
       });
     }
     return Response.json({
       items: [record],
-      pagination: {
-        limit: 25,
-        offset: 0,
-        count: 1,
-        total: 1,
-        has_more: false,
-      },
+      pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       groups: [{ value: null, label: "Unspecified", count: 1 }],
-      group_pagination: {
-        limit: 100,
-        offset: 0,
-        count: 1,
-        total: 1,
-        has_more: false,
-      },
+      group_pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       selected_group: unspecified,
     });
   });
@@ -263,13 +239,7 @@ test("sends aggregate groups through the shared definition serializer and preser
           record_count: 2,
         },
       ],
-      pagination: {
-        limit: 12,
-        offset: 0,
-        count: 1,
-        total: 1,
-        has_more: false,
-      },
+      pagination: wirePagination({ limit: 12, count: 1, total: 1 }),
     }),
   );
   try {
@@ -466,23 +436,11 @@ test("sends complete grouped aggregate snapshots without pagination and preserve
               record_count: 1,
             },
           ],
-          pagination: {
-            limit: 2,
-            offset: 0,
-            count: 2,
-            total: 2,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
         })
       : Response.json({
           items: [],
-          pagination: {
-            limit: 1,
-            offset: 0,
-            count: 0,
-            total: 0,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 1, count: 0, total: 0 }),
         }),
   );
   try {
@@ -643,37 +601,24 @@ test("rejects incomplete and oversized snapshot pages and preserves structured A
       items: [
         { key: "Copper", label: "Copper", value: "1.25", record_count: 2 },
       ],
-      pagination: {
-        limit: 1,
-        offset: 0,
-        count: 1,
-        total: 2,
-        has_more: false,
-      },
+      pagination: wirePagination({ limit: 1, count: 1, total: 2 }),
     }),
     Response.json({
       items: [
         { key: "Copper", label: "Copper", value: "1.25", record_count: 2 },
       ],
-      pagination: {
+      pagination: wirePagination({
         limit: 1,
-        offset: 0,
         count: 1,
         total: 1,
         has_more: true,
-      },
+      }),
     }),
     Response.json({
       items: [
         { key: "Copper", label: "Copper", value: "1.25", record_count: 2 },
       ],
-      pagination: {
-        limit: 10_001,
-        offset: 0,
-        count: 1,
-        total: 1,
-        has_more: false,
-      },
+      pagination: wirePagination({ limit: 10_001, count: 1, total: 1 }),
     }),
     Response.json(
       {

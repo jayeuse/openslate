@@ -15,6 +15,7 @@ import {
   type OpenViewQueryDefinition,
   type OpenViewSavedView,
 } from "../../../src/components/systems/openview/adapters/views-api";
+import { wirePagination } from "../../helpers/pagination";
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const fieldId = "00000000-0000-4000-8000-000000000002";
@@ -164,13 +165,7 @@ const timelineViewResponse = {
   },
 };
 
-const pagination = {
-  limit: 20,
-  offset: 0,
-  count: 1,
-  total: 1,
-  has_more: false,
-};
+const pagination = wirePagination({ limit: 20, count: 1, total: 1 });
 
 test("maps validated catalog, saved-view, and record pages", async () => {
   const responses: unknown[] = [

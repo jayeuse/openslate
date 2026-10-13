@@ -4,6 +4,7 @@ import {
   listNotifications,
   markNotificationRead,
 } from "../../../src/components/systems/shared/adapters/notifications-api";
+import { wirePagination } from "../../helpers/pagination";
 
 const notificationId = "00000000-0000-4000-8000-000000000201";
 const otherNotificationId = "00000000-0000-4000-8000-000000000202";
@@ -57,13 +58,7 @@ function wireNotification(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const pagination = {
-  limit: 25,
-  offset: 0,
-  count: 1,
-  total: 1,
-  has_more: false,
-};
+const pagination = wirePagination({ limit: 25, count: 1, total: 1 });
 
 test("lists current-user notification references with bounded paging and no cache", async () => {
   const mock = installFetch((input) =>

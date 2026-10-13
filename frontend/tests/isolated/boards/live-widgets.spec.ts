@@ -18,6 +18,7 @@ import {
   type LiveWidgetItem,
   type LiveWidgetsState,
 } from "../../../src/components/systems/boards/hooks/use-live-widgets";
+import { parsedPagination, wirePagination } from "../../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -146,13 +147,7 @@ test("records widget resolves only configured fields by ID before querying rows"
     if (path === "/api/records/query")
       return Response.json({
         items: [],
-        pagination: {
-          limit: 5,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 5, count: 0, total: 0 }),
       });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -517,13 +512,7 @@ test("record widgets show authorized select and person labels instead of stored 
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 5,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 5, count: 1, total: 1 }),
       });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -562,13 +551,12 @@ test("live Board Overview renders exact summary count and escaped returned recor
         fieldNames: {},
         result: {
           items: [],
-          pagination: {
+          pagination: parsedPagination({
             limit: 1,
-            offset: 0,
             count: 0,
             total: 7,
             hasMore: true,
-          },
+          }),
         },
       }),
       widgetItem(records, {
@@ -588,13 +576,7 @@ test("live Board Overview renders exact summary count and escaped returned recor
               performedBy: null,
             },
           ],
-          pagination: {
-            limit: 5,
-            offset: 0,
-            count: 1,
-            total: 1,
-            hasMore: false,
-          },
+          pagination: parsedPagination({ limit: 5, count: 1, total: 1 }),
         },
       }),
     ]),
@@ -631,13 +613,12 @@ test("record summary cards show the exact count of each summary", () => {
     fieldNames: {},
     result: {
       items: [],
-      pagination: {
+      pagination: parsedPagination({
         limit: 1,
-        offset: 0,
         count: 0,
         total,
         hasMore: total > 0,
-      },
+      }),
     },
   });
   const html = renderWidgets(
@@ -693,13 +674,7 @@ test("records card does not show values when a selected field label is missing",
               performedBy: null,
             },
           ],
-          pagination: {
-            limit: 5,
-            offset: 0,
-            count: 1,
-            total: 1,
-            hasMore: false,
-          },
+          pagination: parsedPagination({ limit: 5, count: 1, total: 1 }),
         },
       }),
     ]),
@@ -790,13 +765,7 @@ test("pie and line previews reject geometry that overflows while preserving exac
         kind: "snapshot",
         result: {
           items: huge,
-          pagination: {
-            limit: 10000,
-            offset: 0,
-            count: 2,
-            total: 2,
-            hasMore: false,
-          },
+          pagination: parsedPagination({ limit: 10000, count: 2, total: 2 }),
         },
       }),
       widgetItem(line, {
@@ -806,13 +775,7 @@ test("pie and line previews reject geometry that overflows while preserving exac
             { ...huge[0], key: "2026-09-22" },
             { ...huge[1], key: "2026-09-23", value: "-1e308" },
           ],
-          pagination: {
-            limit: 10000,
-            offset: 0,
-            count: 2,
-            total: 2,
-            hasMore: false,
-          },
+          pagination: parsedPagination({ limit: 10000, count: 2, total: 2 }),
         },
       }),
     ]),
@@ -838,13 +801,7 @@ test("negative group values keep exact text without misleading positive bar leng
             { key: "in", label: "In", value: 5, recordCount: 5 },
             { key: "out", label: "Out", value: -5, recordCount: 5 },
           ],
-          pagination: {
-            limit: 8,
-            offset: 0,
-            count: 2,
-            total: 2,
-            hasMore: false,
-          },
+          pagination: parsedPagination({ limit: 8, count: 2, total: 2 }),
         },
       }),
     ]),

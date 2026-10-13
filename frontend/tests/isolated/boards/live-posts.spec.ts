@@ -16,6 +16,7 @@ import {
   visiblePostAuthorId,
   type PostFeedState,
 } from "../../../src/components/systems/boards/hooks/use-server-board-posts";
+import { wirePagination } from "../../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -72,13 +73,11 @@ const wirePost = {
 function wirePage(items: unknown[]) {
   return {
     items,
-    pagination: {
+    pagination: wirePagination({
       limit: 25,
-      offset: 0,
       count: items.length,
       total: items.length,
-      has_more: false,
-    },
+    }),
     board_revision: 4,
   };
 }
@@ -117,13 +116,12 @@ test("published search sends one applied title/body query while preserving serve
   const mock = installFetch(() =>
     Response.json({
       ...wirePage([wirePost]),
-      pagination: {
+      pagination: wirePagination({
         limit: 25,
-        offset: 0,
         count: 1,
         total: 7,
         has_more: true,
-      },
+      }),
     }),
   );
   try {

@@ -17,6 +17,7 @@ import {
   updateOpenViewReport,
   type OpenViewReport,
 } from "../../../src/components/systems/openview/adapters/reports-api";
+import { wirePagination } from "../../helpers/pagination";
 
 const moduleId = "00000000-0000-4000-8000-000000000101";
 const textFieldId = "00000000-0000-4000-8000-000000000102";
@@ -121,13 +122,7 @@ function reportResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const pagination = {
-  limit: 25,
-  offset: 0,
-  count: 1,
-  total: 1,
-  has_more: false,
-};
+const pagination = wirePagination({ limit: 25, count: 1, total: 1 });
 
 function expectedReport(): OpenViewReport {
   return {

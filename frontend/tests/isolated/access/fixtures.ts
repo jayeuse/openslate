@@ -1,3 +1,5 @@
+import { wirePagination } from "../../helpers/pagination";
+
 // Response bodies shaped like the current FastAPI Access models. Each one is
 // the smallest valid example; tests spread and change single fields.
 
@@ -12,13 +14,7 @@ export const ids = {
 };
 export const timestamp = "2026-09-28T00:00:00Z";
 
-export const pagination = {
-  limit: 25,
-  offset: 0,
-  count: 1,
-  total: 1,
-  has_more: false,
-};
+export const pagination = wirePagination({ limit: 25, count: 1, total: 1 });
 
 export const user = {
   id: ids.guest,

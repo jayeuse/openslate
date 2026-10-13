@@ -21,6 +21,7 @@ import {
   notifyIfBoardViewLost,
 } from "../../../src/components/systems/boards/hooks/use-board-widget-management";
 import { blankWidgetCreation } from "../../../src/components/systems/boards/domain/widget-editor";
+import { wirePagination } from "../../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000002";
@@ -388,13 +389,7 @@ test("management metadata uses Board access and a complete widget page", async (
             updated_at: timestamp,
           },
         ],
-        pagination: {
-          limit: 12,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 12, count: 1, total: 1 }),
         board_revision: 7,
       }),
     );
@@ -517,13 +512,7 @@ test("source chooser reads active OpenView catalog page rather than accepting a 
             title_field_id: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       }),
     );
   }) as typeof fetch;

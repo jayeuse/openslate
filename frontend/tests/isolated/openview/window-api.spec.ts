@@ -9,6 +9,7 @@ import {
   serializeOpenViewQueryDefinition,
   type OpenViewQueryDefinition,
 } from "../../../src/components/systems/openview/adapters/views-api";
+import { wirePagination } from "../../helpers/pagination";
 
 const moduleId = "00000000-0000-4000-8000-000000000101";
 const dateFieldId = "00000000-0000-4000-8000-000000000102";
@@ -92,13 +93,7 @@ function calendarResponse() {
         performed_by: null,
       },
     ],
-    pagination: {
-      limit: 10,
-      offset: 7,
-      count: 1,
-      total: 8,
-      has_more: false,
-    },
+    pagination: wirePagination({ limit: 10, offset: 7, count: 1, total: 8 }),
     timezone: null,
   };
 }
@@ -159,13 +154,12 @@ test("serializes Timeline refs and preserves offset DATETIME strings and timezon
         },
       },
     ],
-    pagination: {
+    pagination: wirePagination({
       limit: 25,
-      offset: 0,
       count: 1,
       total: 2,
       has_more: true,
-    },
+    }),
     timezone: "America/New_York",
   };
   const mock = installFetch(() => Response.json(response));

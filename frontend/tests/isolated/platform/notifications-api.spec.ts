@@ -7,6 +7,7 @@ import {
   markAllNotificationsRead,
 } from "../../../src/components/systems/shared/adapters/notifications-api";
 import { ids, installFetch, notificationWire, pagination } from "./fixtures";
+import { wirePagination } from "../../helpers/pagination";
 
 // The shell bell, its popover and the inbox trust only a confirmed unread
 // count, a confirmed read-all result and a page that matches the request.
@@ -231,13 +232,7 @@ test("notification page accepts an empty terminal page after concurrent removal"
   const mock = installFetch(() =>
     Response.json({
       items: [],
-      pagination: {
-        limit: 25,
-        offset: 25,
-        count: 0,
-        total: 0,
-        has_more: false,
-      },
+      pagination: wirePagination({ limit: 25, offset: 25, count: 0, total: 0 }),
     }),
   );
   try {

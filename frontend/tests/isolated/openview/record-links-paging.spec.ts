@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { pageOf } from "../../helpers/pagination";
 
 const recordId = "00000000-0000-4000-8000-000000000015";
 const fieldId = "00000000-0000-4000-8000-000000000016";
@@ -28,16 +29,7 @@ test("record links return one explicit page and preserve its continuation", asyn
     offsets.push(String(offset));
     const items = all.slice(offset, offset + 100);
     return Promise.resolve(
-      Response.json({
-        items,
-        pagination: {
-          limit: 100,
-          offset,
-          count: items.length,
-          total: all.length,
-          has_more: offset + items.length < all.length,
-        },
-      }),
+      Response.json(pageOf(items, { limit: 100, offset, total: all.length })),
     );
   }) as typeof fetch;
   try {

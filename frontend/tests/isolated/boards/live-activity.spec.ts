@@ -13,6 +13,7 @@ import {
   transitionBoardActivity,
   type BoardActivityState,
 } from "../../../src/components/systems/boards/hooks/use-server-board-activity";
+import { parsedPagination } from "../../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -51,13 +52,7 @@ test("Board Activity renders only sanitized summaries with server totals and a c
     createElement(ServerBoardActivityDisplay, {
       page: {
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          hasMore: false,
-        },
+        pagination: parsedPagination({ limit: 25, count: 0, total: 0 }),
       },
     }),
   );

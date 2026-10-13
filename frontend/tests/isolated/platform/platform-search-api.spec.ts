@@ -8,6 +8,7 @@ import {
   type SearchKind,
 } from "../../../src/components/systems/platform/adapters/platform-search-api";
 import { ids, installFetch, pagination } from "./fixtures";
+import { wirePagination } from "../../helpers/pagination";
 
 // Search reads one card of ten hits per kind and links each hit to the screen
 // that owns it. A page that is not the requested kind, size or offset is
@@ -185,13 +186,7 @@ test("search page accepts an empty later page after results were removed", async
   const mock = installFetch(() =>
     Response.json({
       items: [],
-      pagination: {
-        limit: 10,
-        offset: 10,
-        count: 0,
-        total: 4,
-        has_more: false,
-      },
+      pagination: wirePagination({ limit: 10, offset: 10, count: 0, total: 4 }),
     }),
   );
   try {

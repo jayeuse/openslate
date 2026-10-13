@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { workspaceStartRoute } from "../../../src/components/workspace-start";
 import { installFetch } from "../access/fixtures";
+import { wirePagination } from "../../helpers/pagination";
 
 // Where a signed-in person lands when a start page is saved. The inputs are
 // the bodies the sign-in journeys in tests/http/auth-sign-in-destination.spec.ts
@@ -184,13 +185,7 @@ for (const row of rows) {
           items: [
             { id: moduleId, name: "Equipment", department_id: departmentId },
           ],
-          pagination: {
-            limit: 1,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
         });
       throw new Error(`Unexpected request: ${path}`);
     });

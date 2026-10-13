@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { ApiContractError, ApiError } from "../../../src/lib/api";
 import { listBoardPostAuthors } from "../../../src/components/systems/boards/adapters/board-post-author-api";
+import { pageOf } from "../../helpers/pagination";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const firstId = "00000000-0000-4000-8000-000000000002";
@@ -12,16 +13,7 @@ function authorPage(
   total = items.length,
   limit = 25,
 ) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
+  return pageOf(items, { limit, offset, total });
 }
 
 function installFetch(responder: () => Response) {
