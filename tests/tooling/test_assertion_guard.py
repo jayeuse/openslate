@@ -152,6 +152,79 @@ class AnalyzeTests(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
+    def test_timing_options_do_not_change_assertion_ownership(self):
+        for before, after, removals in (
+            (
+                "await expect(row).toBeVisible({ timeout: 30_000 });",
+                "await expect(row).toBeVisible({ timeout: 20_000 });",
+                0,
+            ),
+            (
+                "await expect(row).toBeVisible({ timeout: 30_000 });",
+                "await expect(row).toBeVisible();",
+                0,
+            ),
+            (
+                "await expect.poll(() => ready, { timeout: 60_000 }).toBe(true);",
+                "await expect.poll(() => ready, { timeout: 20_000 }).toBe(true);",
+                0,
+            ),
+            (
+                "await expect.poll(() => api.read('ready', { timeout: 700 }), "
+                "{ timeout: 5000, intervals: [100, 250] }).toBe(true);",
+                "await expect.poll(() => api.read('ready', { timeout: 700 })).toBe(true);",
+                0,
+            ),
+            (
+                "await expect(row).toHaveText('Ready', { timeout: 5000, ignoreCase: true });",
+                "await expect(row).toHaveText('Ready', { ignoreCase: true });",
+                0,
+            ),
+            (
+                "expect({ timeout: 30000 }).toEqual(value);",
+                "expect({ timeout: 20000 }).toEqual(value);",
+                1,
+            ),
+            (
+                "expect(value).toEqual({ timeout: 30000, intervals: [100] });",
+                "expect(value).toEqual({ timeout: 20000, intervals: [50] });",
+                1,
+            ),
+            (
+                "await expect(row).toHaveJSProperty('data', "
+                "{ timeout: 30000 }, { timeout: 5000 });",
+                "await expect(row).toHaveJSProperty('data', { timeout: 20000 });",
+                1,
+            ),
+            (
+                "await expect(row).not.toBeVisible({ timeout: 5000 });",
+                "await expect(row).toBeVisible();",
+                1,
+            ),
+            (
+                "await expect(row).toBeVisible({ timeout: 5000 });",
+                "await expect(row).toBeHidden();",
+                1,
+            ),
+            (
+                "await expect(row).toHaveText('Ready', { timeout: 5000 });",
+                "await expect(row).toHaveText('Denied');",
+                1,
+            ),
+            (
+                "await expect(row).toHaveText('Ready', { timeout: 5000, ignoreCase: true });",
+                "await expect(row).toHaveText('Ready', { ignoreCase: false });",
+                1,
+            ),
+        ):
+            with self.subTest(before=before, after=after):
+                item = change("frontend/tests/http/a.spec.ts", removed=[before], added=[after])
+                item.before_source, item.after_source = before, after
+                violations = self.analyze([item])
+                self.assertEqual(len(violations), removals, violations)
+                if removals:
+                    self.assertIn("1 assertion(s) removed, 0 recorded", violations[0])
+
     def test_ledger_row_with_existing_owner_covers_the_removal(self):
         violations = self.analyze(
             [
@@ -475,6 +548,11 @@ class GitCollectionTests(unittest.TestCase):
                 "def test_a():\n    assert (\n",
             ),
             ("frontend/tests/http/a.spec.ts", "expect(value).toBe(3);\n", "expect(value).toBe(\n"),
+            (
+                "frontend/tests/http/a.spec.ts",
+                "expect(value).toBe(3);\n",
+                "expect(value).toBe(3,\n",
+            ),
         ):
             with self.subTest(path=path):
                 self.assertTrue(self.analyze_edit(path, before, after))

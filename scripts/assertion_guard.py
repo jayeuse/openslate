@@ -120,6 +120,24 @@ _REGEX_PREFIX: Final = frozenset(
         "typeof void delete await yield in instanceof"
     ).split()
 )
+# Verified Playwright option positions; arbitrary expected objects are never options.
+_TS_OPTION_ARGS: Final = {
+    **dict.fromkeys(
+        "toBeAttached toBeChecked toBeDisabled toBeEditable toBeEmpty toBeEnabled "
+        "toBeFocused toBeHidden toBeInViewport toBeVisible toPass".split(),
+        (0,),
+    ),
+    **dict.fromkeys(
+        "toContainClass toContainText toHaveAccessibleDescription toHaveAccessibleErrorMessage "
+        "toHaveAccessibleName toHaveClass toHaveCount toHaveId toHaveRole toHaveText "
+        "toHaveValue toHaveValues toHaveTitle toHaveURL poll".split(),
+        (1,),
+    ),
+    **dict.fromkeys("toHaveCSS toHaveJSProperty".split(), (2,)),
+    "toHaveAttribute": (1, 2),
+    "toHaveScreenshot": (0, 1),
+    "toMatchAriaSnapshot": (0, 1),
+}
 
 
 def _ts_tokens(source: str) -> list[str]:
@@ -151,8 +169,9 @@ def _ts_tokens(source: str) -> list[str]:
 def _ts_assertions(source: str) -> Counter[str]:
     tokens = _ts_tokens(source)
 
-    def balanced(start: int) -> int:
+    def balanced(start: int, options: str = "") -> int:
         stack: list[tuple[str, bool]] = []
+        arguments = [start + 1]
         for end in range(start, len(tokens)):
             token = tokens[end]
             if token in ("(", "[", "{"):
@@ -166,7 +185,33 @@ def _ts_assertions(source: str) -> Counter[str]:
                 ):
                     return 0
                 if not stack:
+                    last = end - (tokens[end - 1] == ",")
+                    first = arguments[-1]
+                    if len(arguments) - 1 in _TS_OPTION_ARGS.get(options, ()) and (
+                        tokens[first] == "{" and balanced(first) == last
+                    ):
+                        cursor, kept = first + 1, False
+                        while cursor < last - 1:
+                            stop = cursor
+                            while stop < last - 1 and tokens[stop] != ",":
+                                stop = (
+                                    balanced(stop) if tokens[stop] in ("(", "[", "{") else stop + 1
+                                )
+                                if not stop:
+                                    return 0
+                            names = {"timeout", "intervals"} if options == "poll" else {"timeout"}
+                            if tokens[cursor].removeprefix("string:") in names and (
+                                tokens[cursor + 1] == ":"
+                            ):
+                                ignored.update(range(cursor, min(stop + 1, last - 1)))
+                            else:
+                                kept = True
+                            cursor = stop + 1
+                        if not kept:
+                            ignored.update(range(first - (len(arguments) > 1), end))
                     return end + 1
+            elif token == "," and len(stack) == 1 and tokens[end + 1 : end + 2] != [")"]:
+                arguments.append(end + 1)
         return 0
 
     assertions: Counter[str] = Counter()
@@ -181,7 +226,8 @@ def _ts_assertions(source: str) -> Counter[str]:
             continue
         if end == len(tokens) or tokens[end] != "(":
             continue  # Imports/references to expect are not assertions.
-        end = balanced(end)
+        ignored: set[int] = set()
+        end = balanced(end, "poll" if tokens[start + 1 : start + 3] == [".", "poll"] else "")
         matcher = False
         while end and end < len(tokens) and tokens[end] in (".", "?."):
             end += 1
@@ -191,7 +237,7 @@ def _ts_assertions(source: str) -> Counter[str]:
             name = tokens[end]
             end += 1
             if end < len(tokens) and tokens[end] == "(":
-                end = balanced(end)
+                end = balanced(end, name)
                 matcher = bool(end)
             elif name not in ("not", "resolves", "rejects"):
                 end = 0
@@ -206,14 +252,17 @@ def _ts_assertions(source: str) -> Counter[str]:
             continue
         # Trailing argument/object commas are formatting, not literal whitespace.
         # Keep array holes (e.g. [a,,]) and consecutive commas distinct.
+        values = [
+            value for index, value in enumerate(tokens[begin:end], begin) if index not in ignored
+        ]
         key = tuple(
             value
-            for index, value in enumerate(tokens[begin:end], begin)
+            for index, value in enumerate(values)
             if not (
                 value == ","
-                and index + 1 < end
-                and tokens[index + 1] in (")", "}", "]")
-                and tokens[index - 1] not in ("(", "[", ",")
+                and index + 1 < len(values)
+                and values[index + 1] in (")", "}", "]")
+                and values[index - 1] not in ("(", "[", ",")
             )
         )
         assertions[repr(key)] += 1
