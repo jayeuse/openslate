@@ -1,8 +1,14 @@
-"""Static contracts for the required GitHub Actions checks."""
+"""Contracts for the required GitHub Actions checks and their comparison commands."""
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -15,6 +21,134 @@ class CiWorkflowContractTests(unittest.TestCase):
 
     def jobs(self, source: str) -> list[str]:
         return re.findall(r"(?m)^  ([a-z][a-z0-9-]*):\n", source.split("jobs:\n", 1)[1])
+
+    def backend_comparison_step(self, script: str) -> tuple[str, str]:
+        changes = self.source("backend.yml").split("\n  changes:\n", 1)[1]
+        changes = changes.split("\n  quality:\n", 1)[0]
+        step = next(step for step in re.split(r"(?m)^      - ", changes) if script in step)
+        run = step.split("        run: ", 1)[1]
+        command = textwrap.dedent(run[2:]) if run.startswith("|\n") else run.strip()
+        return step, command
+
+    def run_backend_comparison_step(
+        self, root: Path, script: str, event: str, base: str, outputs: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        step, command = self.backend_comparison_step(script)
+        base_expression = re.search(r"(?m)^\s+BASE_SHA: (.+)$", step)[1]
+        bindings = {
+            "${{ github.event.pull_request.base.sha || github.event.before }}": base,
+            "${{ steps.scope.outputs.base }}": (outputs or {}).get("base", ""),
+        }
+        self.assertIn(base_expression, bindings)
+        self.assertNotRegex(step, r"(?m)^\s*(if|continue-on-error):")
+        output = root.parent / "github-output"
+        if script == "ci_scope.py":
+            output.unlink(missing_ok=True)
+        return subprocess.run(
+            ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", command],
+            cwd=root,
+            env={
+                "PATH": os.environ["PATH"],
+                "GITHUB_EVENT_NAME": event,
+                "BASE_SHA": bindings[base_expression],
+                "GITHUB_OUTPUT": str(output),
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    @staticmethod
+    def diverged_backend_checkout(root: Path) -> tuple[str, str]:
+        def git(*arguments: str) -> str:
+            return subprocess.run(
+                ["git", *arguments], cwd=root, check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        root.mkdir()
+        git("init", "-q")
+        git("config", "user.email", "ci@example.invalid")
+        git("config", "user.name", "CI Test")
+        (root / "scripts").mkdir()
+        for script in ("ci_scope.py", "assertion_guard.py"):
+            shutil.copyfile(ROOT / "scripts" / script, root / "scripts" / script)
+        test = root / "backend/tests/test_comparison.py"
+        test.parent.mkdir(parents=True)
+        original = "def test_original():\n    assert value == 1\n"
+        test.write_text(original)
+        git("add", ".")
+        git("commit", "-qm", "P: common ancestor")
+        fork = git("rev-parse", "HEAD")
+        test.write_text(original + "\ndef test_target_only():\n    assert target_value == 2\n")
+        git("add", ".")
+        git("commit", "-qm", "B: target-only assertion")
+        target = git("rev-parse", "HEAD")
+        git("checkout", "-q", "--detach", fork)
+        product = root / "backend/app/head.py"
+        product.parent.mkdir()
+        product.write_text("HEAD_VALUE = 3\n")
+        git("add", ".")
+        git("commit", "-qm", "H: head-only backend change")
+        return fork, target
+
+    def test_backend_pr_comparisons_use_the_fork_point_of_a_diverged_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            fork, target = self.diverged_backend_checkout(root)
+            scope = self.run_backend_comparison_step(root, "ci_scope.py", "pull_request", target)
+            self.assertEqual(scope.returncode, 0, scope.stderr)
+            outputs = dict(
+                line.split("=", 1)
+                for line in (root.parent / "github-output").read_text().splitlines()
+            )
+            guard = self.run_backend_comparison_step(
+                root, "assertion_guard.py", "pull_request", target, outputs
+            )
+            self.assertEqual(outputs["base"], fork, guard.stderr)
+            self.assertEqual(json.loads(scope.stdout)["paths"], ["backend/app/head.py"])
+            self.assertEqual(guard.returncode, 0, guard.stderr)
+
+    def test_backend_push_comparisons_preserve_the_previous_event_sha(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            _, previous = self.diverged_backend_checkout(root)
+            scope = self.run_backend_comparison_step(root, "ci_scope.py", "push", previous)
+            self.assertEqual(scope.returncode, 0, scope.stderr)
+            outputs = dict(
+                line.split("=", 1)
+                for line in (root.parent / "github-output").read_text().splitlines()
+            )
+            self.assertEqual(outputs["base"], previous)
+            guard = self.run_backend_comparison_step(
+                root, "assertion_guard.py", "push", previous, outputs
+            )
+            self.assertNotEqual(guard.returncode, 0)
+            self.assertIn("1 assertion(s) removed, 0 recorded", guard.stderr)
+
+    def test_backend_invalid_comparison_bases_cannot_bypass_the_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            self.diverged_backend_checkout(root)
+            for event in ("pull_request", "push"):
+                for base in ("missing-revision", "0" * 40, ""):
+                    with self.subTest(event=event, base=base):
+                        scope = self.run_backend_comparison_step(root, "ci_scope.py", event, base)
+                        output = root.parent / "github-output"
+                        if event == "pull_request":
+                            self.assertNotEqual(scope.returncode, 0)
+                            self.assertFalse(output.exists())
+                        else:
+                            self.assertEqual(scope.returncode, 0, scope.stderr)
+                            outputs = dict(
+                                line.split("=", 1) for line in output.read_text().splitlines()
+                            )
+                            self.assertEqual(outputs["base"], "")
+                            for gate in ("frontend", "backend", "server_image", "docs"):
+                                self.assertEqual(outputs[f"run_{gate}"], "true")
+                            guard = self.run_backend_comparison_step(
+                                root, "assertion_guard.py", event, base, outputs
+                            )
+                            self.assertNotEqual(guard.returncode, 0)
 
     def test_source_consuming_workflows_checkout_the_event_head_consistently(self):
         ref = "${{ github.event.pull_request.head.sha || github.sha }}"
@@ -211,6 +345,11 @@ class CiWorkflowContractTests(unittest.TestCase):
         self.assertIn("tests/backend_coverage.py unit --workers 4", unit)
         self.assertIn("name: backend-coverage-unit", unit)
         self.assertNotIn("fullstack_runner", unit)
+        for job in (unit, coverage):
+            self.assertIn("COVERAGE_BASE_REF: ${{ needs.changes.outputs.base }}", job)
+        changes = source.split("\n  changes:\n", 1)[1].split("\n  quality:\n", 1)[0]
+        self.assertIn("fetch-depth: 0", changes)
+        self.assertIn("base: ${{ steps.scope.outputs.base }}", changes)
         self.assertIn("needs: [changes, unit, coverage]", gate)
         self.assertIn("fetch-depth: 0", gate)
         self.assertIn("pattern: backend-coverage-*", gate)
