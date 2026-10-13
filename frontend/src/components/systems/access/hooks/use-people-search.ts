@@ -8,7 +8,6 @@ import {
   type QueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
 import {
   extendsRead,
@@ -24,6 +23,12 @@ import {
   listAccessUsers,
   type AccessPage,
 } from "../state/api";
+import {
+  clearRefusal,
+  refusalRevision,
+  trackRefusal,
+  useRefusalLatch,
+} from "./refusal-latch";
 
 type Extension = {
   readAt: number;
@@ -34,33 +39,14 @@ type Extension = {
   offset: number;
 };
 
-type PeopleRefusal = { denied: boolean; revision: number };
 const refusalKey = (source: AccessPeopleSource) =>
   ["access", "people-picker-refusal", source] as const;
-function refusePeople(client: QueryClient, source: AccessPeopleSource) {
-  client.setQueryData<PeopleRefusal>(refusalKey(source), (current) => ({
-    denied: true,
-    revision: (current?.revision ?? 0) + 1,
-  }));
-}
-async function trackPeopleRead<Value>(
+const trackPeopleRead = <Value>(
   client: QueryClient,
   source: AccessPeopleSource,
   read: () => Promise<Value>,
   signal?: AbortSignal,
-): Promise<Value> {
-  try {
-    return await read();
-  } catch (error) {
-    if (
-      !signal?.aborted &&
-      error instanceof ApiError &&
-      [401, 403].includes(error.status)
-    )
-      refusePeople(client, source);
-    throw error;
-  }
-}
+) => trackRefusal(client, refusalKey(source), read, signal);
 function trackedPeopleOptions(
   client: QueryClient,
   source: AccessPeopleSource,
@@ -108,17 +94,7 @@ export function usePeopleSearch({
   const [extension, setExtension] = useState<Extension | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [pageError, setPageError] = useState("");
-  const refusal = useQuery({
-    queryKey: refusalKey(source),
-    queryFn: async (): Promise<PeopleRefusal> => ({
-      denied: false,
-      revision: 0,
-    }),
-    initialData: { denied: false, revision: 0 },
-    enabled: false,
-    // Survive dialog remounts until fresh Retry; the account owns this client.
-    gcTime: Infinity,
-  });
+  const latchKey = useMemo(() => refusalKey(source), [source]);
   const ids = [...new Set(selectedIds)].sort();
   const currentInputs = useRef<object | null>(null);
   const recovery = useRef<object | null>(null);
@@ -163,14 +139,7 @@ export function usePeopleSearch({
     combine: combineSelectedPeople,
     queries: selectedOptions,
   });
-  const currentRefused = [query.error, ...selected.errors].some(
-    (error) => error instanceof ApiError && [401, 403].includes(error.status),
-  );
-  const denied = refusal.data.denied || currentRefused;
-  // Also admit refusals already cached before this observer mounted.
-  useLayoutEffect(() => {
-    if (currentRefused && !refusal.data.denied) refusePeople(client, source);
-  }, [client, source, currentRefused, refusal.data.denied]);
+  const denied = useRefusalLatch(latchKey, [query.error, ...selected.errors]);
   const matching = search.trim() === appliedSearch;
   const more =
     extension &&
@@ -251,9 +220,7 @@ export function usePeopleSearch({
     if (!enabled || !matching || !inputs) return;
     const attempt = {};
     recovery.current = attempt;
-    const revision = client.getQueryData<PeopleRefusal>(
-      refusalKey(source),
-    )?.revision;
+    const revision = refusalRevision(client, latchKey);
     setPageError("");
     await Promise.all(
       [options, ...selectedOptions].map((option) =>
@@ -271,11 +238,7 @@ export function usePeopleSearch({
       recovery.current === attempt &&
       results.every((result) => !result.isError)
     ) {
-      client.setQueryData<PeopleRefusal>(refusalKey(source), (current) =>
-        current && current.revision === revision
-          ? { ...current, denied: false }
-          : current,
-      );
+      clearRefusal(client, latchKey, revision);
       setExtension(null);
     }
   };

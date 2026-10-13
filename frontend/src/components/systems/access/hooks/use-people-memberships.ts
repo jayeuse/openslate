@@ -3,11 +3,9 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   useQueries,
-  useQuery,
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { ApiError } from "@/lib/api";
 import {
   extendsRead,
   readStamp,
@@ -19,32 +17,19 @@ import {
   type AccessGroup,
   type AccessUser,
 } from "../state/api";
+import {
+  clearRefusal,
+  refusalRevision,
+  trackRefusal,
+  useRefusalLatch,
+} from "./refusal-latch";
 
-type Refusal = { denied: boolean; revision: number };
 const refusalKey = ["access", "people-membership-refusal"] as const;
-function refuse(client: QueryClient) {
-  client.setQueryData<Refusal>(refusalKey, (current) => ({
-    denied: true,
-    revision: (current?.revision ?? 0) + 1,
-  }));
-}
-async function membershipRead<Value>(
+const membershipRead = <Value>(
   client: QueryClient,
   signal: AbortSignal,
   read: () => Promise<Value>,
-): Promise<Value> {
-  try {
-    return await read();
-  } catch (error) {
-    if (
-      !signal.aborted &&
-      error instanceof ApiError &&
-      [401, 403].includes(error.status)
-    )
-      refuse(client);
-    throw error;
-  }
-}
+) => trackRefusal(client, refusalKey, read, signal);
 
 type Extension = {
   readAt: number;
@@ -100,15 +85,6 @@ export function usePeopleMemberships(people: readonly AccessUser[]) {
     };
   }, [client, scope]);
 
-  const refusal = useQuery({
-    queryKey: refusalKey,
-    queryFn: async (): Promise<Refusal> => ({ denied: false, revision: 0 }),
-    initialData: { denied: false, revision: 0 },
-    enabled: false,
-    // A remount must retain refusal until fresh Retry; account replacement
-    // discards the owning QueryClient and every membership read with it.
-    gcTime: Infinity,
-  });
   const options = ids.map((id) => {
     const request = {
       member_id: id,
@@ -125,22 +101,17 @@ export function usePeopleMemberships(people: readonly AccessUser[]) {
     };
   });
   const queries = useQueries({ queries: options });
-  const currentRefused = queries.some(
-    (query) =>
-      query.error instanceof ApiError &&
-      [401, 403].includes(query.error.status),
+  const denied = useRefusalLatch(
+    refusalKey,
+    queries.map((query) => query.error),
   );
-  const denied = refusal.data.denied || currentRefused;
-  useLayoutEffect(() => {
-    if (currentRefused && !refusal.data.denied) refuse(client);
-  }, [client, currentRefused, refusal.data.denied]);
 
   const retry = async () => {
     const inputs = currentInputs.current;
     if (!inputs || !queries.length) return;
     const attempt = {};
     recovery.current = attempt;
-    const revision = client.getQueryData<Refusal>(refusalKey)?.revision;
+    const revision = refusalRevision(client, refusalKey);
     setRecovering(true);
     for (const controller of controllers.current.values()) controller.abort();
     controllers.current.clear();
@@ -160,11 +131,7 @@ export function usePeopleMemberships(people: readonly AccessUser[]) {
         recovery.current === attempt &&
         results.every((result) => !result.isError)
       ) {
-        client.setQueryData<Refusal>(refusalKey, (current) =>
-          current && current.revision === revision
-            ? { ...current, denied: false }
-            : current,
-        );
+        clearRefusal(client, refusalKey, revision);
         setExtensions({});
         setPageErrors({});
       }

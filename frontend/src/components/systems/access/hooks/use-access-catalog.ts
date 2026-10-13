@@ -28,6 +28,12 @@ import {
   listAccessModules,
   listAccessGroups,
 } from "../state/api";
+import {
+  clearRefusal,
+  refusalRevision,
+  trackRefusal,
+  useRefusalLatch,
+} from "./refusal-latch";
 
 type CatalogItem = AccessDepartment | AccessModule | AccessGroup;
 type Kind = "departments" | "modules" | "groups";
@@ -40,32 +46,13 @@ type Request = {
   signal?: AbortSignal;
 };
 
-type CatalogRefusal = { denied: boolean; revision: number };
 const refusalKey = (kind: Kind) => ["access", "catalog-refusal", kind] as const;
-function refuseCatalog(client: QueryClient, kind: Kind) {
-  client.setQueryData<CatalogRefusal>(refusalKey(kind), (current) => ({
-    denied: true,
-    revision: (current?.revision ?? 0) + 1,
-  }));
-}
-async function trackCatalogRead<Value>(
+const trackCatalogRead = <Value>(
   client: QueryClient,
   kind: Kind,
   read: () => Promise<Value>,
   signal?: AbortSignal,
-): Promise<Value> {
-  try {
-    return await read();
-  } catch (error) {
-    if (
-      !signal?.aborted &&
-      error instanceof ApiError &&
-      [401, 403].includes(error.status)
-    )
-      refuseCatalog(client, kind);
-    throw error;
-  }
-}
+) => trackRefusal(client, refusalKey(kind), read, signal);
 
 function readPage(
   kind: Kind,
@@ -140,17 +127,7 @@ export function useAccessCatalog({
   } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [pageError, setPageError] = useState("");
-  const refusal = useQuery({
-    queryKey: refusalKey(kind),
-    queryFn: async (): Promise<CatalogRefusal> => ({
-      denied: false,
-      revision: 0,
-    }),
-    initialData: { denied: false, revision: 0 },
-    enabled: false,
-    // Retain refusal across remounts; account replacement discards this client.
-    gcTime: Infinity,
-  });
+  const latchKey = useMemo(() => refusalKey(kind), [kind]);
   const request = {
     limit: 25,
     offset: 0,
@@ -210,16 +187,10 @@ export function useAccessCatalog({
   const selected = useQueries({
     queries: selectedOptions,
   });
-  const currentRefused = [
+  const denied = useRefusalLatch(latchKey, [
     query.error,
     ...selected.map((item) => item.error),
-  ].some(
-    (error) => error instanceof ApiError && [401, 403].includes(error.status),
-  );
-  const denied = refusal.data.denied || currentRefused;
-  useLayoutEffect(() => {
-    if (currentRefused && !refusal.data.denied) refuseCatalog(client, kind);
-  }, [client, kind, currentRefused, refusal.data.denied]);
+  ]);
   const matching = search.trim() === applied;
   const more =
     extension?.scope === scope && extendsRead(extension.readAt, query)
@@ -283,9 +254,7 @@ export function useAccessCatalog({
     if (!enabled || !matching || !inputs) return;
     const attempt = {};
     recovery.current = attempt;
-    const revision = client.getQueryData<CatalogRefusal>(
-      refusalKey(kind),
-    )?.revision;
+    const revision = refusalRevision(client, latchKey);
     setPageError("");
     await Promise.all(
       [...(listEnabled ? [options] : []), ...selectedOptions].map((option) =>
@@ -304,11 +273,7 @@ export function useAccessCatalog({
       results.length > 0 &&
       results.every((result) => !result.isError)
     ) {
-      client.setQueryData<CatalogRefusal>(refusalKey(kind), (current) =>
-        current && current.revision === revision
-          ? { ...current, denied: false }
-          : current,
-      );
+      clearRefusal(client, latchKey, revision);
       setExtension(null);
     }
   };
