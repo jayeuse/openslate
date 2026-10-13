@@ -960,19 +960,25 @@ type DashboardSnapshotBody = Readonly<{
   dimension?: Readonly<{ field_id?: string; expected_type?: string }>;
 }>;
 
+type DashboardSnapshotsBody = Readonly<{
+  queries: ReadonlyArray<DashboardSnapshotBody>;
+}>;
+
 function waitForDashboardSnapshot(page: Page) {
   const seenRequests: string[] = [];
   const seenResponses: number[] = [];
   const isSnapshotRequest = (request: Request) =>
-    new URL(request.url()).pathname === "/api/records/aggregate-snapshot" &&
+    new URL(request.url()).pathname === "/api/records/aggregate-snapshots" &&
     request.method() === "POST";
   const onRequest = (request: Request) => {
     if (!isSnapshotRequest(request)) return;
     try {
-      const body = request.postDataJSON() as DashboardSnapshotBody;
-      seenRequests.push(
-        `${body.mode ?? "unknown"}:${body.module_id ?? "missing"}`,
-      );
+      const body = request.postDataJSON() as DashboardSnapshotsBody;
+      for (const query of body.queries) {
+        seenRequests.push(
+          `${query.mode ?? "unknown"}:${query.module_id ?? "missing"}`,
+        );
+      }
     } catch {
       seenRequests.push("invalid-json");
     }
@@ -1011,8 +1017,9 @@ async function expectPopulatedDashboardSnapshot(
   optionId: string,
 ) {
   expect(response.status()).toBe(200);
-  const body = response.request().postDataJSON() as DashboardSnapshotBody;
-  expect(body).toMatchObject({
+  const body = response.request().postDataJSON() as DashboardSnapshotsBody;
+  expect(body.queries).toHaveLength(1);
+  expect(body.queries[0]).toMatchObject({
     module_id: moduleId,
     mode: "groups",
     dimension: { field_id: dimensionId, expected_type: "select" },
@@ -1020,23 +1027,29 @@ async function expectPopulatedDashboardSnapshot(
   const result = (await response.json()) as {
     items: ReadonlyArray<
       Readonly<{
-        key: string | null;
-        label: string;
-        value: number | string;
-        record_count: number;
+        items: ReadonlyArray<
+          Readonly<{
+            key: string | null;
+            label: string;
+            value: number | string;
+            record_count: number;
+          }>
+        >;
+        pagination: Readonly<{
+          count: number;
+          total: number;
+          offset: number;
+          has_more: boolean;
+        }>;
       }>
     >;
-    pagination: Readonly<{
-      count: number;
-      total: number;
-      offset: number;
-      has_more: boolean;
-    }>;
   };
-  expect(result.items).toEqual([
+  expect(result.items).toHaveLength(1);
+  const snapshot = result.items[0];
+  expect(snapshot.items).toEqual([
     { key: optionId, label: "Net 30", value: 1, record_count: 1 },
   ]);
-  expect(result.pagination).toMatchObject({
+  expect(snapshot.pagination).toMatchObject({
     count: 1,
     total: 1,
     offset: 0,
@@ -1063,8 +1076,12 @@ async function exercisePrivateDashboard(
   const dashboardDepartment = newDashboard.getByLabel("Department", {
     exact: true,
   });
-  await dashboardDepartment.selectOption(supplier.departmentId);
-  await expect(dashboardDepartment).toHaveValue(supplier.departmentId);
+  await dashboardDepartment.click();
+  await page
+    .getByRole("combobox", { name: "Search department", exact: true })
+    .fill("Procurement");
+  await page.getByRole("option", { name: "Procurement", exact: true }).click();
+  await expect(dashboardDepartment).toHaveText("Procurement");
   await newDashboard.getByLabel("Dashboard name").fill(dashboardName);
   await newDashboard.getByRole("button", { name: "Continue" }).click();
   await expect(newDashboard).toBeHidden();
@@ -1074,7 +1091,7 @@ async function exercisePrivateDashboard(
   await moduleSelect.selectOption({ label: "Suppliers" });
   await expect(moduleSelect).toHaveValue(supplier.moduleId);
   const moduleId = supplier.moduleId;
-  const dimension = addWidget.getByLabel("Group records by");
+  const dimension = addWidget.getByLabel("Group by");
   await dimension.selectOption({ label: "Payment terms" });
   await expect(dimension).toHaveValue(supplier.paymentTermsFieldId);
   const dimensionId = supplier.paymentTermsFieldId;
@@ -1083,16 +1100,31 @@ async function exercisePrivateDashboard(
     .click();
   await expect(addWidget).toBeHidden();
   await expect(
-    page.getByRole("button", { name: /^View chart 1:/i }),
+    page.getByRole("article", { name: "Count by Payment terms", exact: true }),
   ).toBeVisible();
 
   const snapshotPromise = waitForDashboardSnapshot(page);
+  const dashboardCreation = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/dashboards" &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Save Dashboard" }).click();
+  const createdDashboard = await dashboardCreation;
+  expect(createdDashboard.status()).toBe(201);
+  const dashboardRequest = createdDashboard.request().postDataJSON() as {
+    department_id: string;
+  };
+  expect(dashboardRequest.department_id).toBe(supplier.departmentId);
+  const dashboardResponse = (await createdDashboard.json()) as {
+    department_id: string;
+  };
+  expect(dashboardResponse.department_id).toBe(supplier.departmentId);
   await expect(
     page.getByRole("status").filter({ hasText: "Dashboard saved." }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /^View chart 1:/i }),
+    page.getByRole("article", { name: "Count by Payment terms", exact: true }),
   ).toBeVisible();
   await expectPopulatedDashboardSnapshot(
     await snapshotPromise,
@@ -1123,7 +1155,7 @@ async function exercisePrivateDashboard(
     page.getByRole("heading", { name: dashboardName, exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /^View chart 1:/i }),
+    page.getByRole("article", { name: "Count by Payment terms", exact: true }),
   ).toBeVisible();
   const table = page.getByRole("table", { name: /^Complete data for / });
   await expect(table).toBeVisible();
