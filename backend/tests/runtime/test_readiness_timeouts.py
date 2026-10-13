@@ -11,7 +11,6 @@ from app.core import readiness
 from app.main import create_app
 from tests.runtime.readiness_support import (
     component,
-    install_provider_transport,
     install_readiness_settings,
     readiness_settings,
     reset_readiness_state,
@@ -24,7 +23,10 @@ def test_blocked_storage_probe_preserves_completed_core_and_one_shared_probe(
     reset_readiness_state()
     started = Event()
     release = Event()
+    closing = Event()
+    release_close = Event()
     storage_calls = 0
+    client_calls = 0
 
     def provider(request: httpx.Request) -> httpx.Response:
         nonlocal storage_calls
@@ -35,12 +37,34 @@ def test_blocked_storage_probe_preserves_completed_core_and_one_shared_probe(
                 assert release.wait(2), "blocked storage probe was never released"
         return httpx.Response(200, request=request)
 
+    class Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            nonlocal client_calls
+            client_calls += 1
+            self._second = client_calls == 2
+            self._client = httpx.Client(*args, transport=httpx.MockTransport(provider), **kwargs)
+
+        def __enter__(self) -> httpx.Client:
+            return self._client.__enter__()
+
+        def __exit__(self, *details: object) -> None:
+            if self._second:
+                closing.set()
+                assert release_close.wait(2), "the second client close was never released"
+            self._client.__exit__(*details)
+
+    # Stage real provider work separately from the caller's real-time deadline.
+    monkeypatch.setattr(readiness, "monotonic", lambda: 0.0)
     settings = readiness_settings(readiness_caller_timeout_seconds=0.1)
     install_readiness_settings(monkeypatch, settings)
-    install_provider_transport(monkeypatch, provider)
+    monkeypatch.setattr(
+        readiness, "httpx", SimpleNamespace(Client=Client, HTTPError=httpx.HTTPError)
+    )
     client = TestClient(create_app())
 
     try:
+        readiness._get_or_start_snapshot()
+        assert started.wait(5), "the first probe never reached Storage"
         first = client.get("/api/ready")
         assert started.is_set()
         assert first.status_code == 503
@@ -61,13 +85,22 @@ def test_blocked_storage_probe_preserves_completed_core_and_one_shared_probe(
         release.set()
         assert readiness._snapshot_future is not None
         readiness._snapshot_future.result(timeout=1)
+        fresh_future, _ = readiness._get_or_start_snapshot()
+        assert closing.wait(5), "the fresh probe never reached the second client close"
         recovered = client.get("/api/ready")
         assert recovered.status_code == 200
         assert recovered.json()["components"]["storage"] == component("ready")
         assert storage_calls == 2
+        release_close.set()
+        assert fresh_future.result(timeout=1)["status"] == "ready"
     finally:
         release.set()
-        reset_readiness_state()
+        release_close.set()
+        try:
+            if readiness._snapshot_future is not None:
+                readiness._snapshot_future.result(timeout=1)
+        finally:
+            reset_readiness_state()
 
 
 def test_a_caller_past_its_deadline_keeps_the_storage_result_while_the_client_closes(
