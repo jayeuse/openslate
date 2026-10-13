@@ -2,7 +2,6 @@
 
 import copy
 from datetime import UTC, datetime, timedelta
-from functools import cache
 
 import httpx
 import pytest
@@ -14,7 +13,7 @@ from operations.sample.phases.plan import phase_version_documents, plan_phases
 from operations.sample.verification.configuration import verify_configuration
 from operations.sample.verification.core import SampleVerificationError
 from operations.sample.verification.run import _people_issues, read_run_manifest
-from tests.operations.sample.sample_datasets import private_copy
+from tests.operations.sample.sample_datasets import mutation_aware_cache, private_copy
 from tests.operations.sample.verification.test_sample_run_verification import (
     _configuration_base,
     _configuration_fixture,
@@ -138,7 +137,7 @@ def _phase_configuration_fixture():
     return payloads, manifest, dataset, actions
 
 
-@cache
+@mutation_aware_cache
 def _phase_configuration_base():
     """Build the reorganized readback once per process from the foundation readback."""
 

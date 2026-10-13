@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime, timedelta
-from functools import cache
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_DNS, uuid5
@@ -16,7 +15,11 @@ from app.systems.sandbox.designs.schemas import SandboxDocument
 from operations.sample.population.people import _GROUP_ACCESS, _people
 from operations.sample.verification.core import SampleVerificationError
 from operations.sample.verification.run import read_run_manifest, verify_sample_data
-from tests.operations.sample.sample_datasets import private_copy, sample_dataset
+from tests.operations.sample.sample_datasets import (
+    mutation_aware_cache,
+    private_copy,
+    sample_dataset,
+)
 
 
 def _manifest(directory: Path, **changes: object) -> None:
@@ -128,7 +131,7 @@ def _configuration_fixture() -> tuple[dict[str, Any], dict[str, Any], dict[str, 
     return payloads, manifest, context
 
 
-@cache
+@mutation_aware_cache
 def _configuration_base() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Build the readback once per process; ``_configuration_fixture`` copies it."""
 
