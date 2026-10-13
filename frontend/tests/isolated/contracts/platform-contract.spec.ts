@@ -11,21 +11,16 @@ import {
 } from "../../../src/components/systems/platform/adapters/record-import-api";
 import type { OpenViewQueryDefinition } from "../../../src/components/systems/openview/adapters/views-schemas";
 import { describeContracts } from "./openapi-contract";
+import { emptyQuery } from "../../helpers/query-definitions";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000002";
 const fieldId = "00000000-0000-4000-8000-000000000003";
 
-const definition: OpenViewQueryDefinition = {
-  version: 1,
-  logic: "and",
+const definition: OpenViewQueryDefinition = emptyQuery({
   columns: [{ fieldId, expectedType: "text" }],
-  filters: [],
-  sort: [],
-  deleted: "exclude",
   search: "",
-  searchFields: [],
-};
+});
 
 describeContracts("Platform", [
   { name: "listAccountSessions", run: () => listAccountSessions() },

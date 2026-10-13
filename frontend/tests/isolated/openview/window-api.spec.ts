@@ -10,6 +10,7 @@ import {
   type OpenViewQueryDefinition,
 } from "../../../src/components/systems/openview/adapters/views-api";
 import { wirePagination } from "../../helpers/pagination";
+import { emptyQuery } from "../../helpers/query-definitions";
 
 const moduleId = "00000000-0000-4000-8000-000000000101";
 const dateFieldId = "00000000-0000-4000-8000-000000000102";
@@ -38,16 +39,9 @@ function installFetch(
   };
 }
 
-const calendarDefinition: OpenViewQueryDefinition = {
-  version: 1,
-  logic: "and",
+const calendarDefinition: OpenViewQueryDefinition = emptyQuery({
   columns: [{ fieldId: dateFieldId, expectedType: "date" }],
-  filters: [],
-  sort: [],
-  deleted: "exclude",
-  search: null,
-  searchFields: [],
-};
+});
 
 const timelineDefinition: OpenViewQueryDefinition = {
   ...calendarDefinition,

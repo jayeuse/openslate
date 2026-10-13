@@ -11,6 +11,7 @@ import {
   type OpenViewQueryDefinition,
 } from "../../../src/components/systems/openview/adapters/views-api";
 import { wirePagination } from "../../helpers/pagination";
+import { emptyQuery } from "../../helpers/query-definitions";
 
 const moduleId = "00000000-0000-4000-8000-000000000011";
 const fieldId = "00000000-0000-4000-8000-000000000012";
@@ -36,16 +37,9 @@ function installFetch(
   };
 }
 
-const definition: OpenViewQueryDefinition = {
-  version: 1,
-  logic: "and",
+const definition: OpenViewQueryDefinition = emptyQuery({
   columns: [{ fieldId, expectedType: "text" }],
-  filters: [],
-  sort: [],
-  deleted: "exclude",
-  search: null,
-  searchFields: [],
-};
+});
 
 const groupPagination = wirePagination({ limit: 100, count: 0, total: 0 });
 

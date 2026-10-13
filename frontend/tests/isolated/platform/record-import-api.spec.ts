@@ -11,6 +11,7 @@ import {
 } from "../../../src/components/systems/platform/adapters/record-import-api";
 import type { OpenViewQueryDefinition } from "../../../src/components/systems/openview/adapters/views-schemas";
 import { ids, installFetch } from "./fixtures";
+import { emptyQuery } from "../../helpers/query-definitions";
 
 // Import sends sequential batches of at most 100 rows and 900 KiB, and trusts
 // a batch result only when it confirms exactly the rows it was sent; any other
@@ -350,16 +351,10 @@ test("import batch result accepts an import that confirms each created record", 
   }
 });
 
-const definition: OpenViewQueryDefinition = {
-  version: 1,
-  logic: "and",
+const definition: OpenViewQueryDefinition = emptyQuery({
   columns: [{ fieldId: ids.field, expectedType: "text" }],
-  filters: [],
-  sort: [],
-  deleted: "exclude",
   search: "",
-  searchFields: [],
-};
+});
 const csvType = { "Content-Type": "text/csv; charset=utf-8" };
 const exportRecord = "50000000-0000-4000-8000-000000000001";
 

@@ -6,6 +6,7 @@ import {
   hasUnsafeIntegerFilter,
   isFilterReady,
 } from "../../../src/components/systems/openview/domain/server-view-draft";
+import { emptyQuery } from "../../helpers/query-definitions";
 
 const fieldId = "00000000-0000-4000-8000-000000000301";
 
@@ -19,16 +20,7 @@ function equalsFilter(
 }
 
 function definitionWith(filter: Filter): OpenViewQueryDefinition {
-  return {
-    version: 1,
-    logic: "and",
-    columns: [],
-    filters: [filter],
-    sort: [],
-    deleted: "exclude",
-    search: null,
-    searchFields: [],
-  };
+  return emptyQuery({ filters: [filter] });
 }
 
 // Each typed value reaches the query unchanged: decimal text keeps its

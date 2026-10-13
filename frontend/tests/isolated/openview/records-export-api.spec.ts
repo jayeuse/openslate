@@ -4,6 +4,7 @@ import {
   exportOpenViewRecords,
   type RecordsExportOptions,
 } from "../../../src/components/systems/openview/adapters/records-export-api";
+import { emptyQuery } from "../../helpers/query-definitions";
 
 const moduleId = "00000000-0000-4000-8000-000000000401";
 const viewId = "00000000-0000-4000-8000-000000000402";
@@ -25,16 +26,7 @@ type Reply = {
 const options: RecordsExportOptions = {
   moduleId,
   viewId,
-  definition: {
-    version: 1,
-    logic: "and",
-    columns: [],
-    filters: [],
-    sort: [],
-    deleted: "exclude",
-    search: null,
-    searchFields: [],
-  },
+  definition: emptyQuery(),
   includeRecordId: true,
   format: "csv",
 };

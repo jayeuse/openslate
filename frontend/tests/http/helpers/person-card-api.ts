@@ -4,6 +4,7 @@ import { boardId, board, installBoardApi } from "./boards-api";
 import { installOpenViewEventSource } from "./openview-event-source";
 import { avatarPng, profilePreferences } from "./profile-api";
 import { pageOf } from "../../helpers/pagination";
+import { emptyWireQuery } from "../../helpers/query-definitions";
 
 export const cardTarget = ids.ana;
 export const secondTarget = ids.ben;
@@ -89,19 +90,12 @@ async function installSurface(
       module_id: cardModule,
       name: "Assigned equipment",
       is_default: false,
-      definition: {
-        version: 1,
-        logic: "and",
+      definition: emptyWireQuery({
         columns: [
           { field_id: titleField, expected_type: "text" },
           { field_id: userField, expected_type: "user" },
         ],
-        filters: [],
-        sort: [],
-        deleted: "exclude",
-        search: null,
-        search_fields: [],
-      },
+      }),
       presentation: {
         version: 1,
         layout: "table",

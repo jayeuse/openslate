@@ -10,6 +10,7 @@ import {
 } from "../../src/components/systems/openview/domain/aggregate-buckets";
 import { gate as newGate, type Gate } from "./helpers/gate";
 import { pageOf, wirePagination } from "../helpers/pagination";
+import { emptyWireQuery } from "../helpers/query-definitions";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -138,16 +139,7 @@ for (const sourceKind of ["inline", "reference"] as const) {
         aggregation: "average",
         measure: { field_id: measureId, expected_type: "decimal" },
         dimension: { field_id: fieldId, expected_type: "text" },
-        definition: {
-          version: 1,
-          logic: "and",
-          columns: [],
-          filters: [],
-          sort: [],
-          deleted: "exclude",
-          search: null,
-          search_fields: [],
-        },
+        definition: emptyWireQuery(),
       };
       const nativeQuery =
         visualization === "line"
@@ -505,16 +497,7 @@ async function installS27BoardFields(page: Page) {
 }
 
 const s30DateFieldId = "00000000-0000-4000-8000-000000000690";
-const s30Definition = {
-  version: 1,
-  logic: "and",
-  columns: [],
-  filters: [],
-  sort: [],
-  deleted: "exclude",
-  search: null,
-  search_fields: [],
-};
+const s30Definition = emptyWireQuery();
 
 /** Only the HTTP boundaries used by the real Board editor and live tiles. */
 async function installS30WidgetData(page: Page) {

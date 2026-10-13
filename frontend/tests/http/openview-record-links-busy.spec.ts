@@ -13,6 +13,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { pageOf } from "../helpers/pagination";
+import { emptyWireQuery } from "../helpers/query-definitions";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -107,16 +108,9 @@ function savedView() {
     module_id: sourceModuleId,
     name: "Service requests",
     is_default: true,
-    definition: {
-      version: 1,
-      logic: "and",
+    definition: emptyWireQuery({
       columns: [{ field_id: sourceNameFieldId, expected_type: "text" }],
-      filters: [],
-      sort: [],
-      deleted: "exclude",
-      search: null,
-      search_fields: [],
-    },
+    }),
     presentation: {
       version: 1,
       layout: "table",
