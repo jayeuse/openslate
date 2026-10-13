@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+from operations.sample.packs import get_pack
+
 if __package__:
     from .caddy_runtime import GATEWAY_PORT, DisposableCaddy
     from .fullstack_environment import RUNNER_API_PORT, RUNNER_CONCURRENCY_LIMIT, api_environment
@@ -256,7 +258,12 @@ def main() -> int:
         credentials = json.loads((sample_run / "credentials.json").read_text(encoding="utf-8"))
         fixture = _write_private(
             private / "smoke-fixture.json",
-            {"runId": run_id, "baseURL": WEB, "roles": smoke_identities(credentials, admin)},
+            {
+                "runId": run_id,
+                "baseURL": WEB,
+                "workspaceName": get_pack(ORGANIZATION).identity.workspace_name,
+                "roles": smoke_identities(credentials, admin),
+            },
         )
         stop_process_group(processes.pop())
         start_api(api_env)

@@ -18,9 +18,12 @@ export default async function signIn(config: FullConfig) {
       await page.getByLabel("Email", { exact: true }).fill(identity.email);
       await page.getByLabel("Password").fill(identity.password);
       await page.getByRole("button", { name: "Sign in" }).click();
-      await expect(page.getByLabel("OpenSlate workspace")).toBeVisible({
-        timeout: 20_000,
-      });
+      await expect(
+        page.getByRole("link", {
+          name: `${fixture.workspaceName} workspace`,
+          exact: true,
+        }),
+      ).toBeVisible();
       await context.storageState({ path: stateFile(role) });
       await context.close();
     }

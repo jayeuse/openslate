@@ -9,6 +9,7 @@ type Identity = Readonly<{ email: string; password: string; name?: string }>;
 type SmokeFixture = Readonly<{
   runId: string;
   baseURL: string;
+  workspaceName: string;
   roles: Readonly<Record<SmokeRole, Identity>>;
 }>;
 
@@ -41,6 +42,8 @@ export function smokeFixture(): SmokeFixture {
   if (
     value.runId !== runId ||
     typeof value.baseURL !== "string" ||
+    typeof value.workspaceName !== "string" ||
+    value.workspaceName.trim().length === 0 ||
     !roles ||
     !SMOKE_ROLES.every((role) => isIdentity(roles[role]))
   )
@@ -61,8 +64,14 @@ export function asRole(role: SmokeRole) {
 }
 
 export async function openWorkspace(page: Page, path: string) {
+  const fixture = smokeFixture();
   await page.goto(path);
-  await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  await expect(
+    page.getByRole("link", {
+      name: `${fixture.workspaceName} workspace`,
+      exact: true,
+    }),
+  ).toBeVisible();
 }
 
 export { base as test, expect };

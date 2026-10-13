@@ -131,10 +131,9 @@ test("A seeded Board post shows its attachment and downloads it @boards", async 
   if (!found)
     throw new Error("Harbor Small seeds a published post with an attachment");
 
-  await openWorkspace(
-    page,
-    `/boards?board=${encodeURIComponent(found.boardId)}&section=posts&post=${encodeURIComponent(found.postId)}`,
-  );
+  const postsPath = `/boards?board=${encodeURIComponent(found.boardId)}&section=posts`;
+  await openWorkspace(page, postsPath);
+  await page.goto(`${postsPath}&post=${encodeURIComponent(found.postId)}`);
   const reader = page.getByRole("dialog", { name: found.title });
   await expect(reader).toBeVisible();
   const attachments = reader.getByRole("region", { name: "Post attachments" });

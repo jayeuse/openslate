@@ -9,7 +9,9 @@ test("Access people finds a seeded person and opens their details @access", asyn
   await page
     .getByRole("searchbox", { name: "Search people" })
     .fill("Ana Castillo");
-  await page.getByRole("button", { name: /^Ana Castillo/ }).click();
+  await page
+    .getByRole("button", { name: "Manage Ana Castillo", exact: true })
+    .click();
   await expect(page.getByRole("dialog")).toContainText("Service Triage");
 });
 
