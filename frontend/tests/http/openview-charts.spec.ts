@@ -1123,14 +1123,15 @@ test("a transient saved Chart list failure keeps the applied Chart and offers a 
   listFails = true;
   await picker.click();
   await expect(page.getByRole("listbox")).toBeVisible();
-  // The open picker focuses its search input.
   const failedSearch = page.waitForResponse(
     (response) =>
       response.url().includes("/api/charts?") &&
       response.url().includes("search=week") &&
       response.status() === 503,
   );
-  await page.keyboard.type("week");
+  await page
+    .getByRole("combobox", { name: "Search saved chart", exact: true })
+    .fill("week");
   await failedSearch;
   await expect(
     page.getByText("Saved Charts are unavailable. Retry the list.", {
