@@ -7,7 +7,7 @@ The guard compares a base revision with the working tree. For test files it:
 - refuses new skips, retries, sleeps, long timeouts, suppressions, and loose matchers;
 - refuses a changed snapshot unless a ledger row records that it was reviewed.
 
-Timing values are allowed when the same line carries a `measured:` note.
+Inline reasons and measurement notes do not authorize forbidden patterns.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ _TS_CONFIG_FILES: Final = frozenset(
     {"frontend/playwright.config.ts", "frontend/playwright.fullstack.config.ts"}
 )
 _SNAPSHOT: Final = re.compile(r"(-snapshots/|__snapshots__/|\.snap$|\.aria\.yml$)")
-_MEASURED: Final = re.compile(r"measured:\s*\S")
 _DEFAULT_TIMEOUT_MS: Final = 5_000
 
 _PY_ASSERTIONS: Final = (
@@ -47,9 +46,9 @@ _PY_FORBIDDEN: Final = {
         r"pytest\.mark\.(skip|skipif|xfail|flaky)\b|pytest\.(skip|xfail|importorskip)\("
     ),
     "rerun": re.compile(r"--reruns|\breruns\s*="),
-    # A suppression is allowed only with a reason after its codes on the same line.
-    "suppression without reason": re.compile(
-        r"#\s*(noqa|type:\s*ignore)\b(:\s*[A-Z0-9, ]+|\[[\w, -]+\])?\s*$"
+    # No noqa reason grants approval; preserve the existing type-ignore rule.
+    "suppression": re.compile(
+        r"#\s*noqa\b|#\s*type:\s*ignore\b(:\s*[A-Z0-9, ]+|\[[\w, -]+\])?\s*$"
     ),
     "tautology": re.compile(r"^\s*assert\s+True\b"),
 }
@@ -57,9 +56,8 @@ _PY_TIMING: Final = {"sleep": re.compile(r"\b(time|asyncio)\.sleep\(")}
 _TS_FORBIDDEN: Final = {
     "skip or fixme": re.compile(r"\btest(\.describe)?\.(skip|fixme|fail)\("),
     "fixed wait": re.compile(r"\bwaitForTimeout\("),
-    # ESLint takes a reason after "--"; TypeScript suppressions are never allowed.
-    "suppression without reason": re.compile(
-        r"eslint-disable(-next-line|-line)?(?![^\n]*--\s*\S)|@ts-(ignore|expect-error|nocheck)"
+    "suppression": re.compile(
+        r"eslint-disable(-next-line|-line)?|@ts-(ignore|expect-error|nocheck)"
     ),
     "loose matcher": re.compile(r"\.(toBeTruthy|toBeFalsy|toBeDefined)\(\)|expect\.anything\(\)"),
     "retry": re.compile(r"\bretries\s*:\s*[1-9]"),
@@ -113,8 +111,6 @@ def _pattern_hits(path: str, lines: list[str]) -> Counter[str]:
     for line in lines:
         for name, pattern in forbidden.items():
             hits[name] += len(pattern.findall(line))
-        if _MEASURED.search(line):
-            continue
         for name, pattern in timing.items():
             hits[name] += len(pattern.findall(line))
         if _is_ts_test(path):

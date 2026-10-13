@@ -203,19 +203,32 @@ class AnalyzeTests(unittest.TestCase):
                     violations = self.analyze([change(path, added=[line])])
                     self.assertEqual(len(violations), 1, violations)
 
-    def test_suppression_with_an_inline_reason_is_allowed(self):
+    def test_suppression_with_an_inline_reason_is_rejected(self):
         for path, line in (
+            (
+                "backend/tests/a/test_x.py",
+                "    value = call()  # noqa - explained here",
+            ),
             (
                 "backend/tests/a/test_x.py",
                 "    assert x  # noqa: PT017 - either race outcome is valid",
             ),
             (
                 "frontend/tests/http/a.spec.ts",
+                "/* eslint-disable playwright/no-nth-methods -- the grid has no labels */",
+            ),
+            (
+                "frontend/tests/http/a.spec.ts",
+                "useGrid(); // eslint-disable-line playwright/no-nth-methods -- no labels",
+            ),
+            (
+                "frontend/tests/http/a.spec.ts",
                 "// eslint-disable-next-line playwright/no-nth-methods -- the grid has no labels",
             ),
         ):
-            with self.subTest(line=line):
-                self.assertEqual(self.analyze([change(path, added=[line])]), [])
+            with self.subTest(path=path, line=line):
+                violations = self.analyze([change(path, added=[line])])
+                self.assertEqual(len(violations), 1, violations)
 
     def test_existing_forbidden_pattern_that_only_moves_is_not_new(self):
         line = "test.skip(browserName !== 'chromium', 'Chromium only');"
@@ -224,16 +237,28 @@ class AnalyzeTests(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
-    def test_measured_marker_allows_a_timing_value(self):
-        violations = self.analyze(
-            [
-                change(
-                    "frontend/tests/fullstack/a.spec.ts",
-                    added=["test.setTimeout(120_000); // measured: seeding takes 95 s on CI"],
-                )
-            ]
-        )
-        self.assertEqual(violations, [])
+    def test_measured_marker_does_not_allow_timing_or_retries(self):
+        for path, line in (
+            ("backend/tests/a/test_x.py", "    time.sleep(0.5)  # measured: setup latency"),
+            ("backend/tests/a/test_x.py", "    await asyncio.sleep(0.5)  # measured: latency"),
+            (
+                "frontend/tests/http/a.spec.ts",
+                "await page.waitForTimeout(100); // measured: animation duration",
+            ),
+            (
+                "frontend/tests/fullstack/a.spec.ts",
+                "test.setTimeout(120_000); // measured: seeding takes 95 s on CI",
+            ),
+            ("frontend/tests/http/a.spec.ts", "test.slow(); // measured: takes 10 s on CI"),
+            (
+                "frontend/tests/http/a.spec.ts",
+                "await expect(row).toBeVisible({ timeout: 15_000 }); // measured: load latency",
+            ),
+            ("frontend/playwright.config.ts", "  retries: 2, // measured: load failures"),
+        ):
+            with self.subTest(path=path, line=line):
+                violations = self.analyze([change(path, added=[line])])
+                self.assertEqual(len(violations), 1, violations)
 
     def test_short_timeouts_are_allowed(self):
         violations = self.analyze(
