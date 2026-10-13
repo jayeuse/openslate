@@ -14,7 +14,7 @@ from app.systems.manage.audit.models import SecurityEvent
 
 
 @pytest.fixture
-def world(integration_owner_db, request):
+def world(integration_owner_db):
     owner = integration_owner_db.get_bind().engine
     runtime = get_engine()
     users = []
@@ -85,14 +85,16 @@ def world(integration_owner_db, request):
                 db.delete(row)
             db.commit()
 
-    request.addfinalizer(cleanup)  # noqa: PT021 - runs even if add_users() below fails
-    add_users()
-    return SimpleNamespace(
-        owner=owner,
-        runtime=runtime,
-        users=users,
-        events=events,
-        add_users=add_users,
-        add_sessions=add_sessions,
-        proofs=proofs,
-    )
+    try:
+        add_users()
+        yield SimpleNamespace(
+            owner=owner,
+            runtime=runtime,
+            users=users,
+            events=events,
+            add_users=add_users,
+            add_sessions=add_sessions,
+            proofs=proofs,
+        )
+    finally:
+        cleanup()

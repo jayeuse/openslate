@@ -318,21 +318,25 @@ def test_downgrade_cannot_drop_a_fact_committed_after_its_initial_read(
 
             monkeypatch.setattr(connection, "exec_driver_sql", read_then_wait)
             monkeypatch.setattr(module, "op", operation)
+            error = None
             try:
                 module.downgrade()
-                return "ddl_completed"
-            except RuntimeError as error:
-                assert "Cannot discard captured" in str(error)  # noqa: PT017 - either race outcome
-                return "refused_captured_fact"
+            except RuntimeError as caught_error:
+                error = caught_error
             finally:
                 # Roll back this actual DDL so only the owned test data need cleanup.
                 transaction.rollback()
+            if error is not None:
+                assert "Cannot discard captured" in str(error)
+                return "refused_captured_fact"
+            return "ddl_completed"
 
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(downgrade)
             assert guard_read.wait(5), "Migration never reached its real captured-fact query"
             outcome = None
+            error = None
             try:
                 with engine.begin() as connection:
                     table = "identity_sessions" if fact == "ip" else "identity_mfa_observations"
@@ -363,11 +367,13 @@ def test_downgrade_cannot_drop_a_fact_committed_after_its_initial_read(
                             {"id": migration_user, "provider": uuid4()},
                         )
                 outcome = "fact_committed"
-            except OperationalError as error:
-                assert error.orig.sqlstate == "55P03"  # noqa: PT017 - either race outcome
-                outcome = "writer_refused_by_table_lock"
+            except OperationalError as caught_error:
+                error = caught_error
             finally:
                 writer_finished.set()
+            if error is not None:
+                assert error.orig.sqlstate == "55P03"
+                outcome = "writer_refused_by_table_lock"
             result = pending.result(timeout=5)
         assert not (outcome == "fact_committed" and result == "ddl_completed"), (
             "A committed fact crossed the guard read and was dropped by real DDL",
