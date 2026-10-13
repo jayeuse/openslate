@@ -12,6 +12,9 @@ from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import PhaseExecutionContext, SamplePhaseActionError
 from operations.sample.phases.design import execute_design_phase_action
 from operations.sample.phases.plan import phase_version_documents, plan_phases
+from tests.operations.sample.phases.sample_phase_http_helpers import (
+    sample_login_response as _login_response,
+)
 from tests.operations.sample.sample_datasets import sample_dataset
 
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
@@ -21,19 +24,6 @@ CHECKPOINT_ID = "fc550514-f60a-4e3b-b483-880eed498014"
 LIVE_NEW_MODULE_ID = "b28882a9-4d5d-4542-8da9-2cd540dd98c5"
 LIVE_TITLE_FIELD_ID = "99125bd9-da1f-4916-a361-1e14251ae113"
 LIVE_ADDED_FIELD_ID = "7008e198-fd42-4881-836e-4d6303b6537b"
-
-
-def _login_response(request: httpx.Request) -> httpx.Response | None:
-    if request.url.path != "/api/auth/login":
-        return None
-    return httpx.Response(
-        200,
-        headers=[
-            ("Set-Cookie", "openslate_csrf=fixture-csrf; Path=/; SameSite=Lax"),
-            ("Set-Cookie", "openslate_access=fixture; Path=/; HttpOnly; SameSite=Lax"),
-        ],
-        json={"ok": True},
-    )
 
 
 def _dataset():
