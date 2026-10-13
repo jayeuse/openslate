@@ -3,6 +3,7 @@ import Papa from "papaparse";
 import { expect, signedInSession, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
+  sendChartInvalidation,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { pageOf, wirePagination } from "../helpers/pagination";
@@ -973,10 +974,7 @@ test("saved picker refuses current source without using cached metadata or downs
     page.getByText("Private selected value", { exact: true }).first(),
   ).toBeVisible();
   denied = true;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page.getByText("Private selected value", { exact: true }),
   ).toHaveCount(0);
@@ -1023,10 +1021,7 @@ test("saved picker list refusal withdraws cached names and applied data", async 
     page.getByText("Private applied value", { exact: true }).first(),
   ).toBeVisible();
   denied = true;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page.getByText("Private applied value", { exact: true }),
   ).toHaveCount(0);
@@ -1289,10 +1284,7 @@ for (const priorApply of [false, true]) {
     try {
       await aggregate.started;
       refused = true;
-      await sendOpenViewEvent(page, "invalidate", {
-        entity: "charts",
-        module_id: moduleId,
-      });
+      await sendChartInvalidation(page, moduleId);
       await expect.poll(() => refusalReads).toBeGreaterThan(0);
       await expect(
         page.getByRole("button", { name: "Retry saved Chart", exact: true }),

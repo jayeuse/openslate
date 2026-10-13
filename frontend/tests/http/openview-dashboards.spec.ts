@@ -7,6 +7,7 @@ import {
 } from "@playwright/test";
 import {
   installOpenViewEventSource,
+  sendChartInvalidation,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import {
@@ -1743,10 +1744,7 @@ test("Add from saved chart and reference edit keep XOR while current definitions
     .getByRole("button", { name: "Apply widget changes", exact: true })
     .click();
   await expect(edit).toBeHidden();
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect
     .poll(() => api.batches.at(-1)?.queries.at(-1))
     .toMatchObject({ dimension: { field_id: regionFieldId } });
@@ -1822,10 +1820,7 @@ test("one refused saved Chart clears its entire aggregate cohort until explicit 
   expect(api.batches).toHaveLength(batches);
   const afterRefusal = reads;
   denied = false;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await page.getByRole("button", { name: "Refresh now", exact: true }).click();
   expect(reads).toBe(afterRefusal);
   await page
@@ -2225,10 +2220,7 @@ test("Dashboard saved picker preview refuses a changed source and saves referenc
     dialog.getByRole("table", { name: "Draft preview values", exact: true }),
   ).toContainText("Private draft result");
   refused = true;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     dialog.getByText("Private draft result", { exact: true }),
   ).toHaveCount(0);
@@ -2519,10 +2511,7 @@ for (const fault of [
     const fields = api.fieldReads.length;
     const originalReads = reads;
     refused = true;
-    await sendOpenViewEvent(page, "invalidate", {
-      entity: "charts",
-      module_id: moduleId,
-    });
+    await sendChartInvalidation(page, moduleId);
     await expect.poll(() => reads).toBeGreaterThan(originalReads);
     await expect(
       page.getByRole("table", { name: /Complete data/ }),
@@ -2626,10 +2615,7 @@ test("Chart invalidation refreshes its current query while preserving a dirty Da
   await finishDashboardDialog(settings);
   revision = 2;
   const before = queries;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page.getByRole("cell", { name: "New region data", exact: true }),
   ).toBeVisible();
@@ -2866,14 +2852,8 @@ test("paired Board and Dashboard follow one Chart revision without source writes
     await boardSettings.getByLabel("Pin this widget", { exact: true }).check();
     revision = 2;
     await Promise.all([
-      sendOpenViewEvent(page, "invalidate", {
-        entity: "charts",
-        module_id: moduleId,
-      }),
-      sendOpenViewEvent(boardPage, "invalidate", {
-        entity: "charts",
-        module_id: moduleId,
-      }),
+      sendChartInvalidation(page, moduleId),
+      sendChartInvalidation(boardPage, moduleId),
     ]);
     await expect(
       page.getByRole("cell", { name: "Revised shared Chart", exact: true }),

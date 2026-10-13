@@ -301,6 +301,7 @@ Counts include shared helpers. Repeated windows are distinct repeated sequences 
 | F4: fetch mock support | 114,267 | 114,076 | 1,235 | 1,204 | Fourteen installers share support while retaining synchronous/async failures, responder arguments, capture identity and restoration; test bodies unchanged |
 | F5: Sandbox field inputs | 114,076 | 114,029 | 1,204 | 1,181 | Fifteen equivalent Text/Select field objects, including null defaults and fresh option arrays; assertions and malformed inputs retained |
 | F2: field and Board wire inputs | 114,029 | 113,980 | 1,181 | 1,164 | Sixty equivalent objects (39 fields, 21 Boards); explicit non-defaults, nested identities, malformed inputs and literal expectations retained |
+| F7: Chart invalidation support | 113,980 | 113,945 | 1,164 | 1,164 | Sixteen identical event payloads share one intention-named helper; page/module arguments, awaits and paired delivery remain unchanged; direct dialog locators retained |
 
 ## 10. Exit criteria
 

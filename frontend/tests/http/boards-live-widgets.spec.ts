@@ -1,6 +1,7 @@
 import { expect, test, type Page, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
+  sendChartInvalidation,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
@@ -1830,10 +1831,7 @@ for (const fault of [
     const before = downstream.length;
     const originalReads = chartReads;
     refused = true;
-    await sendOpenViewEvent(page, "invalidate", {
-      entity: "charts",
-      module_id: moduleId,
-    });
+    await sendChartInvalidation(page, moduleId);
     await expect.poll(() => chartReads).toBeGreaterThan(originalReads);
     await expect(
       page
@@ -1927,10 +1925,7 @@ test("Board records Chart refusal stops both field metadata and record rows", as
   ).toBeVisible();
   const before = reads.length;
   refused = true;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page
       .getByRole("region", { name: "Record summaries", exact: true })
@@ -2016,10 +2011,7 @@ test("Board Chart hints and readable department move preserve dirty and pending 
   await settings.getByLabel("Size", { exact: true }).selectOption("S");
   await settings.getByLabel("Pin this widget", { exact: true }).check();
   revision = 2;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page
       .getByText("Current Board region", { exact: true })
@@ -2044,10 +2036,7 @@ test("Board Chart hints and readable department move preserve dirty and pending 
       settings.getByRole("button", { name: "Save settings", exact: true }),
     ).toBeDisabled();
     revision = 3;
-    await sendOpenViewEvent(page, "invalidate", {
-      entity: "charts",
-      module_id: moduleId,
-    });
+    await sendChartInvalidation(page, moduleId);
     await expect(
       page
         .getByText("Pending Board region", { exact: true })
@@ -2223,10 +2212,7 @@ for (const replacement of ["board", "source", "account"] as const) {
       ).length;
       held = true;
       try {
-        await sendOpenViewEvent(page, "invalidate", {
-          entity: "charts",
-          module_id: moduleId,
-        });
+        await sendChartInvalidation(page, moduleId);
         await gate.started;
         if (replacement === "board") {
           await page
@@ -2274,10 +2260,7 @@ for (const replacement of ["board", "source", "account"] as const) {
           page.getByText("Old private source refusal", { exact: true }),
         ).toHaveCount(0);
         const fresh = page.waitForResponse("**/api/records/aggregate-snapshot");
-        await sendOpenViewEvent(page, "invalidate", {
-          entity: "charts",
-          module_id: moduleId,
-        });
+        await sendChartInvalidation(page, moduleId);
         await fresh;
         await expect(
           page

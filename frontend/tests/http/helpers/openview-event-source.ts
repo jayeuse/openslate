@@ -99,3 +99,13 @@ export async function sendOpenViewEvent(
     { eventType: type, eventData: data },
   );
 }
+
+export function sendChartInvalidation(
+  page: Page,
+  moduleId: string,
+): Promise<void> {
+  return sendOpenViewEvent(page, "invalidate", {
+    entity: "charts",
+    module_id: moduleId,
+  });
+}
