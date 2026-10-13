@@ -822,7 +822,9 @@ async function exerciseConnectedBoard(
   await page.getByRole("link", { name: "Posts", exact: true }).click();
   await page.getByRole("button", { name: "New post" }).click();
   await page.getByLabel("Title", { exact: true }).fill(postTitle);
-  await page.getByLabel("Message").fill("Supplier review is complete.");
+  await page
+    .getByLabel("Message", { exact: true })
+    .fill("Supplier review is complete.");
   const [createdPost] = await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -891,7 +893,9 @@ async function exerciseConnectedBoard(
   });
   await page.getByRole("button", { name: "New post", exact: true }).click();
   await postManager.getByLabel("Title", { exact: true }).fill(secondPostTitle);
-  await postManager.getByLabel("Message").fill("Supplier terms changed.");
+  await postManager
+    .getByLabel("Message", { exact: true })
+    .fill("Supplier terms changed.");
   const [secondPostCreated] = await Promise.all([
     page.waitForResponse(
       (response) =>
