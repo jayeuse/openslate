@@ -247,10 +247,10 @@ class PrepushTests(unittest.TestCase):
         prefix, _, stage = prepush.STACK_READY_MARKER.partition(": ")
         # The runner prints this line as each stage's command starts.
         self.assertIn(f'print(f"{prefix}: {{stage}}", flush=True)', source)
-        self.assertEqual(source.count(f'stage = "{stage}"'), 1)
+        self.assertEqual(source.count(f'timed("{stage}")'), 1)
         order = [
-            source.index('stage = "migrations"'),
-            source.index(f'stage = "{stage}"'),
+            source.index('timed("migrations")'),
+            source.index(f'timed("{stage}")'),
             source.index('"backend regression and coverage gate"'),
         ]
         self.assertEqual(order, sorted(order))
