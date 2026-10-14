@@ -6012,9 +6012,7 @@ for (const current of [
     await expect(
       failure.getByRole("button", { name: "Retry catalog", exact: true }),
     ).toBeVisible();
-    await expect(page.getByText(current.detail, { exact: true })).toHaveCount(
-      0,
-    );
+    await expect(page.getByText(current.detail)).toHaveCount(0);
   });
 }
 
