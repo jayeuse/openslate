@@ -813,3 +813,108 @@ test("empty refreshed later page displays the authoritative zero range", async (
     page.getByText("Showing 0–0 of 0 jobs", { exact: true }),
   ).toBeVisible();
 });
+
+for (const state of ["registry", "unconfirmed"] as const) {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    for (const theme of ["light", "dark"] as const) {
+      test(`Jobs ${state} fits ${viewport.width}x${viewport.height} in ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.emulateMedia({
+          colorScheme: theme,
+          reducedMotion: "reduce",
+        });
+        await page.route("**/api/users/*/preferences", (route) =>
+          route.fulfill({
+            json: {
+              user_id: new URL(route.request().url()).pathname.split("/")[3],
+              theme,
+              appearance: { motion: "reduce", keyboard_shortcuts: true },
+            },
+          }),
+        );
+        const api = await installJobs(
+          page,
+          state === "unconfirmed" ? { reply: "lost" } : {},
+        );
+        await openJobs(page);
+        if (state === "unconfirmed") {
+          const reread = page.waitForRequest(
+            (request) =>
+              request.method() === "GET" &&
+              new URL(request.url()).pathname === "/api/jobs",
+          );
+          await retry(page, "Nightly backup").click();
+          await expect(
+            page.getByRole("alert").filter({ hasText: "unconfirmed" }),
+          ).toBeVisible();
+          await reread;
+          expect(api.posts).toHaveLength(1);
+          await expect(
+            page.getByRole("button", {
+              name: "Check retry result",
+              exact: true,
+            }),
+          ).toBeEnabled();
+        } else {
+          const breadcrumb = page.getByRole("navigation", {
+            name: "Breadcrumb",
+            exact: true,
+          });
+          await expect(
+            breadcrumb.getByRole("link", { name: "Manage", exact: true }),
+          ).toHaveAttribute("href", "/manage?view=organization");
+          await expect(
+            breadcrumb.getByText("Jobs", { exact: true }),
+          ).toBeVisible();
+
+          await expect(
+            page.getByRole("link", { name: "Jobs", exact: true }),
+          ).toBeVisible();
+          const table = page.getByRole("table", { name: "Jobs", exact: true });
+          await expect(table.getByRole("row")).toHaveCount(7);
+          await expect(table.getByRole("row").nth(1)).toContainText(
+            "Nightly backup",
+          );
+          await expect(table.getByRole("row").nth(2)).toContainText(
+            "Weekly Report",
+          );
+          await expect(retry(page, "Weekly Report")).toBeVisible();
+          await expect(retry(page, "Meeting post")).toBeVisible();
+          await expect(retry(page, "Closed Report")).toHaveCount(0);
+          const future = table
+            .getByRole("row")
+            .filter({ hasText: "Future registry work" });
+          await expect(future).toContainText("Waiting external");
+          await expect(future).toContainText("Not recorded");
+          await expect(
+            page.getByRole("link", { name: "View all backups", exact: true }),
+          ).toBeVisible();
+        }
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.setViewportSize(viewport);
+        await expect(page.locator("html")).toHaveClass(
+          theme === "dark" ? /dark/ : /^(?!.*dark)/,
+        );
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          );
+        });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        ).toBe(true);
+        await expect(
+          page.locator('[data-slot="loading-region"][aria-busy="true"]'),
+        ).toHaveCount(0);
+      });
+    }
+  }
+}
