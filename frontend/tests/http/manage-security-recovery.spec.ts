@@ -96,6 +96,33 @@ test("Back up now queues real history, cancels without writes, and preserves pol
   ).toBeVisible();
 });
 
+test("Backup request name validation and cancel restore focus without any local snapshot mutation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  await page.goto("/manage?view=backup");
+  const opener = page.getByRole("button", { name: "Back up now", exact: true });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Back up now", exact: true });
+  const name = dialog.getByLabel("Backup name", { exact: true });
+  const submit = dialog.getByRole("button", {
+    name: "Back up now",
+    exact: true,
+  });
+  await name.fill(" ");
+  await submit.click();
+  await expect(name).toHaveAttribute("aria-invalid", "true");
+  await expect(dialog).toContainText("Enter a backup name");
+  expect(backup.queueRequests).toEqual([]);
+  await name.fill("Preserved name");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(opener).toBeFocused();
+  expect(backup.queueRequests).toEqual([]);
+});
+
 test("Backup schedule saves revisioned real policy and keeps cancelled drafts without simulation", async ({
   page,
 }) => {
