@@ -559,3 +559,47 @@ for (const surface of [
     expect(api.writes).toEqual([]);
   });
 }
+
+for (const surface of [
+  "access",
+  "posts",
+  "openview",
+  "calendar",
+  "platform",
+] as const) {
+  for (const theme of ["light", "dark"] as const) {
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      test(`Person card populated ${surface} fits ${viewport.width}x${viewport.height} in ${theme}`, async ({
+        page,
+      }) => {
+        const api = await installPersonCardApi(page, surface, "admin");
+        api.theme = theme;
+        await page.setViewportSize(viewport);
+        await visit(page, api, surface);
+        await trigger(page).first().click();
+        await expectMemberCard(page);
+        await expect
+          .poll(() =>
+            page.evaluate(() =>
+              document.documentElement.classList.contains("dark"),
+            ),
+          )
+          .toBe(theme === "dark");
+        const bounds = await card(page).boundingBox();
+        expect(bounds).not.toBeNull();
+        expect(bounds!.x).toBeGreaterThanOrEqual(0);
+        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+          )
+          .toBe(true);
+      });
+    }
+  }
+}
