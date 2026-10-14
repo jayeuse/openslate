@@ -5350,8 +5350,7 @@ test("export history uses complete global total and downloads both boolean varia
     return route.fulfill({
       contentType: "application/json",
       headers: {
-        "Content-Disposition":
-          'attachment; filename="owned-sandbox-history.json"',
+        "Content-Disposition": 'attachment; filename="owned-history-51.json"',
       },
       json: include === "true" ? bundle : document,
     });
@@ -5384,7 +5383,7 @@ test("export history uses complete global total and downloads both boolean varia
     page.waitForEvent("download"),
     dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
   ]);
-  expect(without.suggestedFilename()).toBe("owned-sandbox-history.json");
+  expect(without.suggestedFilename()).toBe("owned-history-51.json");
   const withoutPath = await without.path();
   if (!withoutPath) throw new Error("A completed download is required");
   const withoutHistory: unknown = JSON.parse(
@@ -5397,7 +5396,7 @@ test("export history uses complete global total and downloads both boolean varia
     page.waitForEvent("download"),
     dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
   ]);
-  expect(withHistory.suggestedFilename()).toBe("owned-sandbox-history.json");
+  expect(withHistory.suggestedFilename()).toBe("owned-history-51.json");
   const withPath = await withHistory.path();
   if (!withPath) throw new Error("A completed download is required");
   const exported: unknown = JSON.parse(await readFile(withPath, "utf8"));
