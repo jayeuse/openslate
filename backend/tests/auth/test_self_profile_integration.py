@@ -88,12 +88,24 @@ def test_self_partial_clear_and_noop_preserve_omissions_and_do_not_audit_reads(p
     assert len(audits(world)) == 2
 
 
-def test_self_profile_rejects_unapproved_fields_and_bounds_without_writes(policy_world):
-    # The other refused bodies (account fields and length bounds) are rows of the stack-free
-    # SelfProfileUpdate table in tests/users/test_user_request_schemas.py.
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"user_id": "actor"},
+        {"role": "admin"},
+        {"email": "changed@example.test"},
+        {"username": "changed"},
+        {"access": []},
+        {"sponsor_user_id": None},
+        {"phone": "x" * 33},
+        {"bio": "x" * 281},
+        {"display_name": "x" * 201},
+    ],
+)
+def test_self_profile_rejects_unapproved_fields_and_bounds_without_writes(policy_world, values):
     world = policy_world
     before = world.client.get("/api/auth/me", headers=world.headers()).json()
-    refused = world.client.patch(PATH, headers=world.headers(), json={"role": "admin"})
+    refused = world.client.patch(PATH, headers=world.headers(), json=values)
     assert refused.status_code == 422, refused.text
     assert world.client.get("/api/auth/me", headers=world.headers()).json() == before
     assert audits(world) == []
