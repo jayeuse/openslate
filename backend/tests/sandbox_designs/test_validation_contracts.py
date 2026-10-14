@@ -58,6 +58,74 @@ def test_schema_rejects_a_document_with_more_than_5000_total_fields() -> None:
         SandboxDocument.model_validate(payload)
 
 
+def test_validation_enforces_mapping_requiredness_ranges_steps_dates_and_text_lengths() -> None:
+    payload = _payload()
+    modules = payload["design"]["modules"]
+    source = modules[0]
+    target = modules[1]
+    source["fields"] = [
+        {
+            "id": "source-number",
+            "name": "Source number",
+            "type": "Integer",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "integer", "defaultValue": 0, "min": 0, "max": 10, "step": 2},
+        },
+        {
+            "id": "source-date",
+            "name": "Source date",
+            "type": "Date",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "date", "defaultValue": None, "earliest": "2024-01-01"},
+        },
+        {
+            "id": "source-text",
+            "name": "Source text",
+            "type": "Text",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "text", "defaultValue": "", "maxLength": 80},
+        },
+    ]
+    target["fields"] = [
+        {
+            "id": "target-number",
+            "name": "Target number",
+            "type": "Number",
+            "required": True,
+            "closed": False,
+            "config": {"kind": "number", "defaultValue": None, "min": 1, "step": 3},
+        },
+        {
+            "id": "target-date",
+            "name": "Target date",
+            "type": "Date",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "date", "defaultValue": None, "earliest": "2024-02-01"},
+        },
+        {
+            "id": "target-text",
+            "name": "Target text",
+            "type": "Long text",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "long-text", "defaultValue": "", "maxLength": 40},
+        },
+    ]
+    payload["design"]["relationships"][0]["fieldMappings"] = [
+        {"sourceFieldId": "source-number", "targetFieldId": "target-number"},
+        {"sourceFieldId": "source-date", "targetFieldId": "target-date"},
+        {"sourceFieldId": "source-text", "targetFieldId": "target-text"},
+    ]
+
+    codes = {issue.code for issue in validate_document(payload)}
+
+    assert "relationship.mapping_incompatible" in codes
+
+
 _MAPPING_SOURCE_FIELDS = [
     {
         "id": "source-number",
