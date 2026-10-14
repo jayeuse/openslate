@@ -729,3 +729,55 @@ for (const row of factRows)
   test(`security event sentence: ${row.name}`, () => {
     expect(securityEventSentence(event(row.patch), names)).toBe(row.sentence);
   });
+
+// Keep the original email-stage bodies and sentence patterns separate from
+// the generic named type rows.
+for (const row of [
+  {
+    stage: "provider_accepted",
+    event: {
+      id: "00000000-0000-4000-8000-000000000700",
+      occurred_at: "2026-10-06T12:00:00Z",
+      event_type: "identity.email_change_request",
+      outcome: "success",
+      source: "identity.email_change",
+      operation_id: operation,
+      actor_id: mara,
+      subject_id: mara,
+      labels: {},
+      fingerprint: null,
+      reason: null,
+      request_id: null,
+      request_method: "POST",
+      request_path: "/api/auth/login",
+      metadata: { stage: "provider_accepted" },
+    },
+    sentence: /email change.*requested/i,
+  },
+  {
+    stage: "local_admission",
+    event: {
+      id: "00000000-0000-4000-8000-000000000701",
+      occurred_at: "2026-10-06T11:00:00Z",
+      event_type: "identity.email_change_confirmed",
+      outcome: "success",
+      source: "identity.email_change",
+      operation_id: operation,
+      actor_id: mara,
+      subject_id: mara,
+      labels: {},
+      fingerprint: null,
+      reason: null,
+      request_id: null,
+      request_method: "POST",
+      request_path: "/api/auth/login",
+      metadata: { stage: "local_admission" },
+    },
+    sentence: /confirmed email.*(?:saved|synchronized)/i,
+  },
+] as const)
+  test(`security event email stage: ${row.stage}`, () => {
+    expect(securityEventSentence(row.event, new Map([[mara, "Mara"]]))).toMatch(
+      row.sentence,
+    );
+  });
