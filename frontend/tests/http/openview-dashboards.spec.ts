@@ -16,6 +16,7 @@ import {
   type SignedInIdentity,
 } from "./helpers/test";
 import { gate as requestGate, type Gate as RequestGate } from "./helpers/gate";
+import { hideDevOverlay } from "./helpers/test-styles";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import {
   wireBoard,
@@ -1543,6 +1544,29 @@ test("grid uses thirds halves full rows and full-width phone tiles with keyboard
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   await expect(page.getByRole("article")).toHaveCount(4);
   await expect(page.getByRole("table", { name: "Live records" })).toBeVisible();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await hideDevOverlay(page);
+  const checkLayout = async () => {
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect(page.getByRole("article")).toHaveCount(4);
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+    }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+  };
+  await checkLayout();
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await checkLayout();
+  await page.evaluate(() => document.documentElement.classList.remove("dark"));
   const widths = async () =>
     page
       .getByRole("article")
