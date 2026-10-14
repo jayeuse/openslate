@@ -6,6 +6,7 @@ import {
   type Locator,
   type Page,
 } from "./helpers/test";
+import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import {
   created,
   fixtureId,
@@ -654,3 +655,118 @@ test("an older membership Retry cannot clear a newer continuation refusal", asyn
   await expect(benGroups).toContainText("Z membership 00");
   await expect(cyGroups).toContainText("A unrelated 0");
 });
+
+for (const mode of ["light", "dark"] as const) {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`membership matrix: partial row at ${viewport.width} px in ${mode}`, async ({
+      page,
+    }) => {
+      const { api } = await membershipsFixture(page, 27);
+      const lastGroup = membershipId(226);
+      api.groups.set(
+        lastGroup,
+        group(
+          lastGroup,
+          "Z membership 26",
+          [ids.ben],
+          [
+            {
+              department_id: membershipId(400),
+              department_name: "Beyond-catalog department",
+              module_id: null,
+              level: "read",
+            },
+          ],
+        ),
+      );
+      await page.goto("/access?view=people");
+      const groups = await column(peopleRow(page), "Groups");
+      const departments = await column(peopleRow(page), "Departments");
+      await expect(groups).toContainText("25 of 27 groups");
+      await expect(departments).toContainText("Departments not fully loaded");
+      await expect(departments).not.toContainText("None");
+      await page.evaluate(applyAppearancePreferences, {
+        mode,
+        reduceMotion: true,
+      });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.setViewportSize(viewport);
+      const people = page.getByRole(viewport.width === 390 ? "list" : "table", {
+        name: "People",
+        exact: true,
+      });
+      const row = people
+        .getByRole(viewport.width === 390 ? "listitem" : "row")
+        .filter({ hasText: "Ben Cruz" });
+      const more = row.getByRole("button", {
+        name: "Load more groups",
+        exact: true,
+      });
+      await more.scrollIntoViewIfNeeded();
+      await expect(more).toBeVisible();
+      await expect(row).toContainText("25 of 27 groups");
+      await expect(row).toContainText("Departments not fully loaded");
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+    });
+
+    test(`membership matrix: completed offpage sheet at ${viewport.width} px in ${mode}`, async ({
+      page,
+    }) => {
+      const { api } = await membershipsFixture(page, 27);
+      for (let index = 0; index < 30; index += 1) {
+        const id = membershipId(500 + index);
+        api.users.set(
+          id,
+          person({
+            id,
+            username: `a-first-${index}`,
+            display_name: `A first ${index}`,
+          }),
+        );
+      }
+      await page.goto(`/access?view=people&user=${ids.ben}`);
+      const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+      await expect(sheet).toBeVisible();
+      await expect(sheet).toContainText("25 of 27 groups");
+      await expect(sheet).not.toContainText("Not in any group yet");
+      await sheet
+        .getByRole("button", { name: "Load more groups", exact: true })
+        .click();
+      await expect(
+        sheet.getByRole("link", { name: "Z membership 26", exact: true }),
+      ).toBeVisible();
+      await page.evaluate(applyAppearancePreferences, {
+        mode,
+        reduceMotion: true,
+      });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.setViewportSize(viewport);
+      const lastGroup = sheet.getByRole("link", {
+        name: "Z membership 26",
+        exact: true,
+      });
+      await lastGroup.scrollIntoViewIfNeeded();
+      await expect(lastGroup).toBeInViewport();
+      await expect(
+        sheet.getByRole("button", { name: "Load more groups", exact: true }),
+      ).toHaveCount(0);
+      expect(
+        await sheet.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth,
+        ),
+      ).toBe(true);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+    });
+  }
+}
