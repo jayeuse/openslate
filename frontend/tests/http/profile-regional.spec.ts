@@ -119,67 +119,89 @@ test("Profile Regional confirms personal choices with partial writes", async ({
   ).toBeChecked();
 });
 
-test("Profile Regional rejects an invalid IANA timezone and restores explicit organization inheritance", async ({
-  page,
-}) => {
-  const api = await installProfileApi(page);
-  Object.assign(api.appearance, {
-    timezone: "America/Los_Angeles",
-    date_format: "ymd",
-    time_format: "24h",
-    week_start: "sunday",
-  });
-  const workspaceRequests: string[] = [];
-  page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/api/workspace")
-      workspaceRequests.push(request.method());
-  });
-  await page.goto("/profile#regional");
-  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
-    "America/Los_Angeles",
-  );
-  const sessions = page.getByRole("list", {
-    name: "Active sessions",
-    exact: true,
-  });
-  // Personal date and time choices format the session list.
-  await expect(sessions).toContainText("2026-09-30");
-  await expect(sessions).toContainText("17:30");
-  await page.getByLabel("Timezone", { exact: true }).fill("+08:00");
-  await page
-    .getByRole("button", { name: "Save timezone", exact: true })
-    .click();
-  await expect(
-    page.getByRole("alert").filter({ hasText: /IANA/i }),
-  ).toBeVisible();
-  expect(api.writes).toEqual([]);
-  await page
-    .getByRole("button", { name: "Use organization timezone", exact: true })
-    .click();
-  await expect.poll(() => api.appearance.timezone).toBeNull();
-  await expect(page.getByLabel("Date format", { exact: true })).toBeEnabled();
-  for (const label of ["Date format", "Time format", "First day of the week"]) {
-    await page.getByLabel(label, { exact: true }).selectOption("organization");
-    await expect(page.getByLabel(label, { exact: true })).toHaveValue(
-      "organization",
+for (const [dateFormat, timeFormat] of [
+  ["mdy", "12h"],
+  ["ymd", "24h"],
+] as const) {
+  test(`Profile Regional rejects an invalid IANA timezone and restores explicit organization inheritance from ${dateFormat}/${timeFormat}`, async ({
+    page,
+  }) => {
+    const api = await installProfileApi(page);
+    Object.assign(api.appearance, {
+      timezone: "America/Los_Angeles",
+      date_format: dateFormat,
+      time_format: timeFormat,
+      week_start: "sunday",
+    });
+    const workspaceRequests: string[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/workspace")
+        workspaceRequests.push(request.method());
+    });
+    await page.goto("/profile#regional");
+    await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue(
+      "America/Los_Angeles",
     );
-  }
-  await page.reload();
-  await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue("");
-  for (const label of ["Date format", "Time format", "First day of the week"])
-    await expect(page.getByLabel(label, { exact: true })).toHaveValue(
-      "organization",
-    );
-  await expect(
-    page.getByLabel("Start page after sign-in", { exact: true }),
-  ).toHaveValue("automatic");
-  await expect(
-    page.getByRole("switch", { name: "Reduce motion" }),
-  ).not.toBeChecked();
-  await expect(sessions).toContainText(/Oct 1, 2026.*8:30\sAM/);
-  // Personal choices never write the organization's settings.
-  expect(workspaceRequests.every((method) => method === "GET")).toBe(true);
-});
+    const sessions = page.getByRole("list", {
+      name: "Active sessions",
+      exact: true,
+    });
+    if (dateFormat === "ymd") {
+      // Personal date and time choices format the session list.
+      await expect(sessions).toContainText("2026-09-30");
+      await expect(sessions).toContainText("17:30");
+    }
+    await page.getByLabel("Timezone", { exact: true }).fill("+08:00");
+    await page
+      .getByRole("button", { name: "Save timezone", exact: true })
+      .click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: /IANA/i }),
+    ).toBeVisible();
+    expect(api.writes).toEqual([]);
+    await page
+      .getByRole("button", { name: "Use organization timezone", exact: true })
+      .click();
+    await expect.poll(() => api.appearance.timezone).toBeNull();
+    await expect(page.getByLabel("Date format", { exact: true })).toBeEnabled();
+    for (const label of [
+      "Date format",
+      "Time format",
+      "First day of the week",
+    ]) {
+      await page
+        .getByLabel(label, { exact: true })
+        .selectOption("organization");
+      await expect(page.getByLabel(label, { exact: true })).toHaveValue(
+        "organization",
+      );
+    }
+    expect(api.appearance).toEqual({
+      motion: "system",
+      keyboard_shortcuts: true,
+      timezone: null,
+      date_format: "organization",
+      time_format: "organization",
+      week_start: "organization",
+      start_page: "automatic",
+    });
+    await page.reload();
+    await expect(page.getByLabel("Timezone", { exact: true })).toHaveValue("");
+    for (const label of ["Date format", "Time format", "First day of the week"])
+      await expect(page.getByLabel(label, { exact: true })).toHaveValue(
+        "organization",
+      );
+    await expect(
+      page.getByLabel("Start page after sign-in", { exact: true }),
+    ).toHaveValue("automatic");
+    await expect(
+      page.getByRole("switch", { name: "Reduce motion" }),
+    ).not.toBeChecked();
+    await expect(sessions).toContainText(/Oct 1, 2026.*8:30\sAM/);
+    // Personal choices never write the organization's settings.
+    expect(workspaceRequests.every((method) => method === "GET")).toBe(true);
+  });
+}
 
 test("Profile Regional failed save keeps confirmed values and Retry does not repeat mutations", async ({
   page,
