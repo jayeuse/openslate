@@ -124,6 +124,60 @@ def test_validation_rejects_unsafe_reference_type_and_disconnected_relationship(
     assert "trigger.value_type_invalid" in codes
 
 
+def test_validation_reports_structural_duplicates_missing_layout_and_self_links() -> None:
+    payload = sample_document().model_dump(by_alias=True, mode="json")
+    design = payload["design"]
+    design["departments"].append(deepcopy(design["departments"][0]))
+    duplicated_module = deepcopy(design["modules"][0])
+    duplicated_module["fields"].append(deepcopy(duplicated_module["fields"][0]))
+    design["modules"].append(duplicated_module)
+    design["modules"][2]["departmentId"] = "missing-department"
+    design["relationships"][0]["fieldMappings"] = [
+        {"sourceFieldId": "missing-source", "targetFieldId": "missing-target"}
+    ]
+    self_link = deepcopy(design["relationships"][0])
+    self_link.update(
+        {
+            "id": "self-link",
+            "sourceModuleId": "sample-requests",
+            "targetModuleId": "sample-requests",
+            "fieldMappings": [],
+        }
+    )
+    design["relationships"].extend([self_link, deepcopy(self_link)])
+    del design["layout"]["sample-customers"]
+    design["layout"]["unknown-layout"] = {
+        "x": 0,
+        "y": 0,
+        "width": 100,
+        "height": 100,
+    }
+    payload["triggers"].append(deepcopy(payload["triggers"][0]))
+    scenario = {
+        "id": "duplicate-scenario",
+        "name": "Duplicate scenario",
+        "records": [],
+        "links": [],
+    }
+    payload["scenarios"] = [scenario, deepcopy(scenario)]
+
+    codes = {issue.code for issue in validate_document(payload)}
+
+    assert {
+        "module.department_missing",
+        "relationship.source_field_missing",
+        "relationship.target_field_missing",
+        "layout.entity_missing",
+        "department.id_duplicate",
+        "module.id_duplicate",
+        "relationship.id_duplicate",
+        "trigger.id_duplicate",
+        "scenario.id_duplicate",
+        "field.id_duplicate",
+        "relationship.self_link",
+    } <= codes
+
+
 def _duplicate_department(design: dict[str, Any], _payload: dict[str, Any]) -> None:
     design["departments"].append(deepcopy(design["departments"][0]))
 
