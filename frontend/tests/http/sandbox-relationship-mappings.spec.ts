@@ -1225,7 +1225,7 @@ test("the bound department outline reviews blockers and reopens with explicit co
 test("an organization template replaces the empty draft only after confirmation", async ({
   page,
 }) => {
-  await openAuthenticatedSandbox(page, initialDesign);
+  const sandbox = await openAuthenticatedSandbox(page, initialDesign);
 
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
   await page.getByRole("menuitem", { name: "Start from a template" }).click();
@@ -1243,12 +1243,15 @@ test("an organization template replaces the empty draft only after confirmation"
     .getByRole("button", { name: "Use Inventory & procurement" })
     .click();
 
-  // The template's size and content rules are owned by
-  // isolated/sandbox/organization-templates.
   await expect(dialog).toBeHidden();
   await expect(
     page.getByText("Procurement", { exact: true }).first(),
   ).toBeVisible();
+  const document = sandbox.document();
+  expect(document.design.departments.length).toBeGreaterThanOrEqual(3);
+  expect(document.design.modules.length).toBeGreaterThanOrEqual(6);
+  expect(document.triggers.length).toBeGreaterThanOrEqual(3);
+  expect(document.scenarios).toEqual([]);
 });
 
 test("a detailed template remains usable when moving from Triggers to Test", async ({
