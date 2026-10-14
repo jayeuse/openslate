@@ -4769,6 +4769,41 @@ test("History pages and server-searches later versions while retaining inspectio
   await expect(page.getByLabel("Compare first version")).toHaveValue(
     versions[26].id,
   );
+  for (const mode of ["light", "dark"] as const) {
+    await page.evaluate((value) => {
+      document.documentElement.classList.toggle("dark", value === "dark");
+    }, mode);
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+      });
+      for (const label of [
+        "All versions",
+        "Checkpoints",
+        "Published versions",
+        "Imported versions",
+      ]) {
+        await expect
+          .poll(() =>
+            timeline
+              .getByRole("button", { name: label, exact: true })
+              .evaluate(
+                (element) => element.scrollWidth <= element.clientWidth,
+              ),
+          )
+          .toBe(true);
+      }
+    }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+  }
 });
 
 test("History clears a missing compared version after a transient lookup and never redisplays its old snapshot", async ({
