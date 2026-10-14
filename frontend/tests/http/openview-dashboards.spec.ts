@@ -4111,11 +4111,53 @@ test("restoring at the current URL does not suppress a later Dashboard re-select
 test("a pending Dashboard deep link is cleared when switching to archived list", async ({
   page,
 }) => {
+  const pagePrefetch = requestGate();
+  const navigation = requestGate();
+  let pagePrefetchStarted = false;
+  const prefetchRoute = (url: URL) =>
+    url.pathname.startsWith("/openview/") &&
+    url.pathname.endsWith(".__PAGE__.txt");
+  const navigationRoute = (url: URL) => url.pathname === "/openview.txt";
+  const prefetchDelivered = page.waitForEvent("requestfinished", {
+    predicate: (request) =>
+      request.method() === "GET" && prefetchRoute(new URL(request.url())),
+  });
+  await page.route(prefetchRoute, async (route) => {
+    if (route.request().method() === "GET") {
+      pagePrefetchStarted = true;
+      pagePrefetch.signalStarted();
+      await pagePrefetch.wait;
+    }
+    await route.continue();
+  });
+  let navigationDelivered = Promise.resolve();
+  await page.route(navigationRoute, async (route) => {
+    const request = route.request();
+    if (
+      request.method() !== "GET" ||
+      !request.headers()["next-router-state-tree"] ||
+      request.headers()["next-router-prefetch"]
+    ) {
+      await route.continue();
+      return;
+    }
+    pagePrefetch.release();
+    navigation.signalStarted();
+    navigationDelivered = navigationDelivered.then(async () => {
+      await navigation.wait;
+      await route.continue();
+      const response = await request.response();
+      await response?.finished();
+    });
+    await navigationDelivered;
+  });
   const api = await installDashboardApi(page, dashboard({ widgets: [] }));
   const gate = api.holdNextDashboardGet();
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   try {
-    await gate.started;
+    await test.step("wait for the held Dashboard detail request", async () => {
+      await gate.started;
+    });
     const routeResponse = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return (
@@ -4125,13 +4167,31 @@ test("a pending Dashboard deep link is cleared when switching to archived list",
     });
     // The deep link is still pending when the list view changes.
     await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
-    await page.getByRole("button", { name: "Show archived" }).click();
-    const newDialog = await openNewDashboardDialog(page);
+    // Keep real navigation data pending until the original dialog opens.
+    await test.step("wait for the held page prefetch request", async () => {
+      await expect
+        .poll(() => pagePrefetchStarted, {
+          message: "OpenView PAGE prefetch did not enter its gate",
+        })
+        .toBe(true);
+    });
+    await test.step("show archived and await navigation entry and prefetch delivery", async () => {
+      await page.getByRole("button", { name: "Show archived" }).click();
+      await navigation.started;
+      await prefetchDelivered;
+    });
+    const newDialog = await test.step("open the New Dashboard dialog", () =>
+      openNewDashboardDialog(page));
+    navigation.release();
     const dashboardName = newDialog.getByLabel("Dashboard name");
-    await dashboardName.fill("Draft after changing the list view");
-    await finishDashboardDialog(newDialog);
-    gate.release();
-    await routeResponse;
+    await test.step("fill and confirm the Dashboard draft", async () => {
+      await dashboardName.fill("Draft after changing the list view");
+      await finishDashboardDialog(newDialog);
+    });
+    await test.step("release the late Dashboard detail and await its response", async () => {
+      gate.release();
+      await routeResponse;
+    });
     await expect(page).toHaveURL("/openview?section=dashboards");
     await expect(
       page.getByRole("heading", {
@@ -4140,6 +4200,8 @@ test("a pending Dashboard deep link is cleared when switching to archived list",
     ).toBeVisible();
   } finally {
     gate.release();
+    pagePrefetch.release();
+    navigation.release();
   }
   await expect(
     page.getByRole("heading", { name: "Draft after changing the list view" }),
@@ -5206,6 +5268,112 @@ test("Cancel discards a new Dashboard draft and returns to the selected Dashboar
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   expect(api.writes).toHaveLength(0);
+});
+
+test("Cancel during a pending Dashboard clear does not block a later new draft", async ({
+  page,
+}) => {
+  const pagePrefetch = requestGate();
+  const firstClear = requestGate();
+  const prefetchRoute = (url: URL) =>
+    url.pathname.startsWith("/openview/") &&
+    url.pathname.endsWith(".__PAGE__.txt");
+  let pagePrefetchStarted = false;
+  let pagePrefetchDelivered = false;
+  let firstClearStarted = false;
+  page.on("requestfinished", (request) => {
+    if (request.method() === "GET" && prefetchRoute(new URL(request.url())))
+      pagePrefetchDelivered = true;
+  });
+  await page.route(prefetchRoute, async (route) => {
+    if (route.request().method() === "GET") {
+      pagePrefetchStarted = true;
+      pagePrefetch.signalStarted();
+      await pagePrefetch.wait;
+    }
+    await route.continue();
+  });
+  await page.route(
+    (url) => url.pathname === "/openview.txt",
+    async (route) => {
+      const request = route.request();
+      if (
+        request.method() === "GET" &&
+        request.headers()["next-router-state-tree"] &&
+        !request.headers()["next-router-prefetch"]
+      ) {
+        const hasDashboardId = new URL(request.url()).searchParams.has(
+          "dashboard",
+        );
+        const hold = !hasDashboardId && !firstClearStarted;
+        if (hold) {
+          firstClearStarted = true;
+          firstClear.signalStarted();
+          pagePrefetch.release();
+          await firstClear.wait;
+        }
+      }
+      await route.continue();
+    },
+  );
+  try {
+    await installDashboardApi(page, dashboard());
+    await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+    await expect(
+      page.getByRole("heading", { name: "Operations" }),
+    ).toBeVisible();
+    await test.step("hold the real PAGE prefetch before the first New action", async () => {
+      await expect
+        .poll(() => pagePrefetchStarted, {
+          message: "OpenView PAGE prefetch did not enter its gate",
+        })
+        .toBe(true);
+    });
+    const firstDialog =
+      await test.step("open New with only its first clear pending", async () => {
+        const dialog = await openNewDashboardDialog(page);
+        await expect
+          .poll(() => firstClearStarted, {
+            message: "The first no-ID Dashboard clear did not enter its gate",
+          })
+          .toBe(true);
+        await expect
+          .poll(() => pagePrefetchDelivered, {
+            message: "The released PAGE prefetch was not delivered",
+          })
+          .toBe(true);
+        return dialog;
+      });
+    await test.step("Cancel while the first clear is still held", async () => {
+      await firstDialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(firstDialog).toBeHidden();
+      await expect(
+        page.getByRole("heading", { name: "Operations" }),
+      ).toBeVisible();
+    });
+    const draftName = "Draft after a pending Cancel";
+    await test.step("reopen New and confirm a distinct in-memory draft", async () => {
+      const dialog = await openNewDashboardDialog(page);
+      await dialog.getByLabel("Dashboard name").fill(draftName);
+      await finishDashboardDialog(dialog);
+    });
+    await test.step("the later clear removes the saved ID from the URL", async () => {
+      await expect.soft(page).toHaveURL("/openview?section=dashboards");
+    });
+    await test.step("the confirmed draft remains visible", async () => {
+      await expect
+        .soft(page.getByRole("heading", { name: draftName }))
+        .toBeVisible();
+    });
+    await test.step("the confirmed draft can be saved", async () => {
+      await expect
+        .soft(page.getByRole("button", { name: "Save Dashboard", exact: true }))
+        .toBeEnabled();
+    });
+  } finally {
+    pagePrefetch.release();
+    firstClear.release();
+  }
 });
 
 test("a Dashboard department picker searches beyond its first page and resolves the saved label", async ({

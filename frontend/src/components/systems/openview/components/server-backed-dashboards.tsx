@@ -527,7 +527,8 @@ export default function ServerBackedDashboards() {
   );
 
   function updateDashboardUrl(id?: string) {
-    if (!id) setRouteClearPending(Boolean(routeDashboardId));
+    if (!id && routeClearPending) return;
+    setRouteClearPending(!id && Boolean(routeDashboardId));
     router.push(
       serializeOpenViewUrl({ section: "dashboards", dashboard: id }) as Route,
       { scroll: false },
