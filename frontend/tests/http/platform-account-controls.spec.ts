@@ -421,6 +421,62 @@ test("associates missing and short password errors with only their input", async
   expect(attempts).toBe(0);
 });
 
+test("moves a short-password error to the current field after a denied change", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/sessions", (route) =>
+    route.fulfill({ json: [currentSession] }),
+  );
+  let changes = 0;
+  await page.route("**/api/auth/password/change", (route) => {
+    changes += 1;
+    return route.fulfill({ status: 403, json: { detail: "Rejected" } });
+  });
+  await openAccount(page);
+  const current = page.getByLabel("Current password", { exact: true });
+  const next = page.getByLabel("New password", { exact: true });
+  await current.fill("current test password");
+  await next.fill("short");
+  await page
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Use 12 to 128 characters." }),
+  ).toBeVisible();
+  await expect(next).toHaveAttribute("aria-invalid", "true");
+  await expect(next).toHaveAttribute("aria-describedby", "new-password-error");
+  await expect(current).toHaveAttribute("aria-invalid", "false");
+  expect(await current.getAttribute("aria-describedby")).toBeNull();
+  expect(changes).toBe(0);
+  await next.fill("new test password 123");
+  await page
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "The current password was not accepted." }),
+  ).toBeVisible();
+  await expect(current).toHaveAttribute("aria-invalid", "true");
+  await expect(current).toHaveAttribute(
+    "aria-describedby",
+    "current-password-error",
+  );
+  await expect(next).toHaveAttribute("aria-invalid", "false");
+  await expect(next).toHaveAttribute(
+    "aria-describedby",
+    "new-password-guidance",
+  );
+  await expect(current).toHaveValue("");
+  await expect(next).toHaveValue("");
+  await expect(
+    page.getByText("Use 12 to 128 characters.", {
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  expect(changes).toBe(1);
+});
+
 test("keeps password and session controls reachable on mobile with full device descriptions", async ({
   page,
 }) => {
