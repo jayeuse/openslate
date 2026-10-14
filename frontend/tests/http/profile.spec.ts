@@ -835,3 +835,54 @@ test("Profile entry honors explicit Platform section precedence and Your profile
     page.getByRole("button", { name: "Your profile", exact: true }).first(),
   ).toBeVisible();
 });
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`Profile failed save keeps preview, draft and current session at ${viewport.width}x${viewport.height} in ${theme}`, async ({
+      page,
+    }) => {
+      const api = await installProfileApi(page);
+      api.patchStatus = 503;
+      api.theme = theme;
+      await page.setViewportSize(viewport);
+      await page.goto("/profile");
+      await expect(
+        page.getByLabel("Display name", { exact: true }),
+      ).toHaveValue("Maya Chen");
+      await expect(
+        page.getByLabel("Start page after sign-in", { exact: true }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("list", { name: "Active sessions", exact: true }),
+      ).toContainText("Firefox on Android");
+      await page
+        .getByLabel("Phone", { exact: true })
+        .fill("Retained phone draft");
+      await page
+        .getByRole("button", { name: "Save identity", exact: true })
+        .click();
+      await expect(
+        page
+          .getByRole("alert")
+          .filter({ hasText: "Profile could not be saved" }),
+      ).toBeVisible();
+      await expect(page.getByLabel("Phone", { exact: true })).toHaveValue(
+        "Retained phone draft",
+      );
+      await expect(page.locator("html")).toHaveClass(
+        theme === "dark" ? /dark/ : /^(?!.*\bdark\b).*$/,
+      );
+      await expect(
+        page.getByRole("region", { name: "Appearance preview", exact: true }),
+      ).toContainText("Equipment request");
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+    });
+  }
+}
