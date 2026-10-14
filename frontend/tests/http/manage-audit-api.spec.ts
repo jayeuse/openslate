@@ -652,6 +652,17 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
       "retry succeeded",
     );
     await expect(downloadCsv).toBeEnabled();
+
+    const recoveredDownloadStarted = page.waitForEvent("download");
+    await downloadCsv.click();
+    const recoveredDownload = await recoveredDownloadStarted;
+    const recoveredCsvPath = testInfo.outputPath("audit-recovered.csv");
+    await recoveredDownload.saveAs(recoveredCsvPath);
+    const recoveredCsv = await readFile(recoveredCsvPath, "utf8");
+    expect(recoveredCsv.trimEnd().split(/\r?\n/)).toHaveLength(124);
+    expect(recoveredCsv).toContain("retry succeeded");
+    expect(recoveredCsv).toBe(api.exportBodies[1]);
+    expect(downloads).toBe(2);
   } finally {
     retryHold.release();
   }
