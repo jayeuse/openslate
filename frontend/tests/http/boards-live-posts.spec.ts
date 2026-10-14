@@ -9,6 +9,7 @@ import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
 import { pageOf } from "../helpers/pagination";
 import { wireBoard, wireWorkspace } from "../helpers/wire";
 
@@ -64,6 +65,59 @@ function versionRow(history: Locator, number: number) {
     has: history
       .page()
       .getByRole("button", { name: new RegExp(`Version ${number}`) }),
+  });
+}
+
+async function expectPostAppearanceMatrix(
+  page: Page,
+  assertState: () => Promise<void>,
+) {
+  const previous = await page.evaluate(() => ({
+    mode: document.documentElement.classList.contains("dark")
+      ? ("dark" as const)
+      : ("light" as const),
+    reduceMotion: document.documentElement.dataset.motion === "reduced",
+  }));
+  try {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate(applyAppearancePreferences, {
+        mode,
+        reduceMotion: true,
+      });
+      const originalViewport = page.viewportSize();
+      const originalScrollY = await page.evaluate(() => window.scrollY);
+      try {
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
+          await assertState();
+        }
+      } finally {
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+      }
+    }
+  } finally {
+    await page.evaluate(applyAppearancePreferences, previous);
+  }
+}
+
+async function expectPostMotionMatrix(page: Page, anchor?: Locator) {
+  await page.evaluate(() => document.fonts.ready);
+  await expectPostAppearanceMatrix(page, async () => {
+    if (anchor) {
+      await anchor.evaluate((element) =>
+        element.scrollIntoView({ block: "center", behavior: "instant" }),
+      );
+      await expect(anchor).toBeInViewport();
+    }
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-motion",
+      "reduced",
+    );
   });
 }
 
@@ -675,6 +729,11 @@ test("off-page post authors keep their labels through picker search, reader, and
 }) => {
   const api = await installPostBrowserApi(page);
   const label = "Zora published author";
+  const expectLabelAppearance = async (visibleLabel: Locator) => {
+    await expectPostAppearanceMatrix(page, async () => {
+      await expect(visibleLabel).toBeVisible();
+    });
+  };
   api.setAuthorChoices([
     ...Array.from({ length: 26 }, (_, index) => ({
       id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
@@ -727,6 +786,7 @@ test("off-page post authors keep their labels through picker search, reader, and
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(feed.getByText(label, { exact: true })).toBeVisible();
+  await expectLabelAppearance(feed.getByText(label, { exact: true }));
   await feed
     .getByRole("article")
     .filter({
@@ -739,6 +799,7 @@ test("off-page post authors keep their labels through picker search, reader, and
     exact: true,
   });
   await expect(reader.getByText(label, { exact: true })).toBeVisible();
+  await expectLabelAppearance(reader.getByText(label, { exact: true }));
   await reader.getByRole("button", { name: "Edited", exact: true }).click();
   const history = page.getByRole("dialog", {
     name: "Edit history",
@@ -872,6 +933,13 @@ test("local card history keeps its eligible author after a held feed refresh rep
     await expect(versionRow(history, 1)).toContainText("Avery");
     await expect(history).not.toContainText("Author unavailable");
     expect(feedReads - readsBeforeRefresh).toBe(1);
+    await expectPostAppearanceMatrix(page, async () => {
+      const version = versionRow(history, 2);
+      await version.scrollIntoViewIfNeeded();
+      await expect(version).toContainText("Avery");
+      await expect(version.getByText("Avery")).toBeInViewport();
+      await expect(history).not.toContainText("Author unavailable");
+    });
   } finally {
     releaseFeed();
   }
@@ -1520,6 +1588,7 @@ for (const dirty of [false, true]) {
       await expect(
         editor.getByRole("button", { name: "Save draft", exact: true }),
       ).toBeDisabled();
+      await expectPostMotionMatrix(page, notice);
     } else {
       await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
         "Remote working draft",
@@ -1953,6 +2022,10 @@ test.describe("local post expiry", () => {
     await expect(
       reopened.getByLabel("Expires on", { exact: true }),
     ).toHaveValue("2035-06-02T12:30");
+    await expectPostMotionMatrix(
+      page,
+      reopened.getByLabel("Expires on", { exact: true }),
+    );
     await reopened.getByRole("checkbox", { name: "Pin to top" }).uncheck();
     await reopened.getByLabel("Expires on", { exact: true }).fill("");
     await reopened
@@ -2110,6 +2183,7 @@ test("source-returned expired publication shows expiry in the feed and reader", 
   });
   await expect(feed.getByText("Expired", { exact: true })).toBeVisible();
   await expect(feed.getByText(/Expired on.*Jun 2, 2035/)).toBeVisible();
+  await expectPostMotionMatrix(page);
   await feed.getByRole("button", { name: "Open post", exact: true }).click();
   await expect(
     page.getByRole("dialog", { name: browserPost.title }),
@@ -2142,6 +2216,7 @@ for (const replacement of ["draft", "scheduled"] as const) {
       exact: true,
     });
     await expect(confirmation).toContainText("scheduled replacement");
+    await expectPostMotionMatrix(page);
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
