@@ -104,6 +104,13 @@ test("Profile Regional confirms personal choices with partial writes", async ({
     { appearance: { timezone: "America/Los_Angeles" } },
     { appearance: { start_page: "boards" } },
   ]);
+  await page.getByLabel("Text size", { exact: true }).selectOption("125");
+  await page
+    .getByLabel("Page spacing", { exact: true })
+    .selectOption("compact");
+  await expect(
+    page.getByRole("region", { name: "Appearance preview", exact: true }),
+  ).toContainText("Equipment request");
   await page.reload();
   await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
     "dmy",
