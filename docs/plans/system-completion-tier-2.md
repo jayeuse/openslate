@@ -953,6 +953,8 @@ Before you stop, record a checkpoint in the run record: the branch, HEAD, change
 
 ### 11.5 Servers
 
+> **Testing-workflow replacement:** The server instructions below are historical, not the current HTTP test setup. [Testing Architecture](../architecture/16-testing-architecture.md) and [root `AGENTS.md`](../../AGENTS.md) replace them: mocked HTTP journeys default to the static export through the test-only ASGI entry over production `StaticSite`, without the application API or Supabase stack. `next dev` remains daily development or the same HTTP project's explicit `PLAYWRIGHT_HTTP_SERVER=dev` opt-in. Process ownership and cleanup restrictions still apply.
+
 `next dev` allows only one dev server in each checkout, because the server holds a lock in `frontend/.next/`. The Playwright `http` project starts its own `next dev` on port 3104 through `npm run dev` with the synthetic environment.
 
 1. Do not keep the real frontend (`npm run dev`, port 3000) running while Playwright tests run.
@@ -985,6 +987,8 @@ Each covered operation needs an executor and a check of its status, response sha
 Keep credentials and passphrases private. Do not fabricate request journals or audit rows, and do not insert sample data directly into the database.
 
 ### 11.7 Final verification (owner-owned S33)
+
+> **Testing-workflow replacement:** S33 ownership and the report requirements remain unchanged. The concurrency and gate-timing instructions below are historical; current execution follows [root `AGENTS.md`](../../AGENTS.md) and [Testing Architecture](../architecture/16-testing-architecture.md): focused repair, one stable affected batch, then the canonical `python3 scripts/prepush.py --base <base-ref> --serial` only right before a push. The local backend gate runs its stack-free unit lane before three integration stacks; never overlap backend and frontend heavy lanes or reduce concurrency without a measured failure. No-push boundaries, assertions, required scenarios, 90% coverage thresholds, isolation and cleanup still apply.
 
 The owner performs final testing, this full-branch review and final gate, and owns fixes found during final acceptance. The implementation agent must not run `scripts/prepush.py`, the final full coverage gate, or the full-branch acceptance review. Larger relevant tests, including fullstack or smoke scenarios when needed to verify an active slice, are permitted under section 11.2; they do not count as performing or completing S33. Per-slice tests, static checks, and independent slice reviews remain required.
 

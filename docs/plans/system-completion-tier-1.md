@@ -655,6 +655,8 @@ Before you stop, record a checkpoint in the run record: the branch, HEAD, change
 
 ### 11.5 Servers
 
+> **Testing-workflow replacement:** The server instructions below are historical, not the current HTTP test setup. [Testing Architecture](../architecture/16-testing-architecture.md) and [root `AGENTS.md`](../../AGENTS.md) replace them: mocked HTTP journeys default to the static export through the test-only ASGI entry over production `StaticSite`, without the application API or Supabase stack. `next dev` remains daily development or the same HTTP project's explicit `PLAYWRIGHT_HTTP_SERVER=dev` opt-in. Process ownership and cleanup restrictions still apply.
+
 `next dev` allows only one dev server in each checkout, because the server holds a lock in `frontend/.next/`. The Playwright `http` project starts its own `next dev` on port 3104 through `npm run dev` with the synthetic environment.
 
 Follow these rules:
@@ -680,6 +682,8 @@ Include actual host backup and encrypted export delivery from a proven source in
 Keep credentials, MFA material, and passphrases private. Do not fabricate request journals or audit rows, use provider-admin or direct database insertion as sample population, weaken instance or filesystem guards, or classify failed requests as successful route coverage. Run the two Small profiles separately with the guarded reset between them; Standard remains outside this run.
 
 ### 11.7 Hardware-appropriate Final verification (owner-approved October 7)
+
+> **Testing-workflow replacement:** The worker/stack defaults and gate timing below are historical execution guidance. Follow [root `AGENTS.md`](../../AGENTS.md) and [Testing Architecture](../architecture/16-testing-architecture.md): focused repair, one stable affected batch, and `python3 scripts/prepush.py --base <base-ref> --serial` only right before a push. The local backend gate runs its stack-free unit lane before three integration stacks; never overlap backend and frontend heavy lanes, and do not reduce concurrency without a measured failure. Owner/no-push boundaries, assertions, required checks, 90% coverage thresholds, isolation and cleanup remain in force.
 
 The owner authorized adapting execution to this development machine while retaining assertions, all required suites/scenarios, the 90% coverage thresholds, isolation, cleanup guards and the no-push boundary. The owner separately removed the mandatory ten-minute test/pre-push gate requirement: total duration alone no longer fails a complete passing gate and requires no timing exception. Individual hang/deadline protections remain meaningful and intact.
 

@@ -97,7 +97,7 @@ Slices 4, 5 and 6 are independent after slice 3. Run them one at a time in the s
 2. `uv run alembic upgrade head` and `uv run alembic check` pass on the owned Supabase instance (from `backend/`).
 3. A database query finds no constraint, index, trigger or function name that contains a removed or renamed table name.
 4. The affected architecture documents and `AGENTS.md` lines describe the new behavior (section 6).
-5. The canonical gate `python3 scripts/prepush.py --base <base-ref>` passes once for the pull request, with the backend 90% coverage threshold.
+5. **Testing-workflow replacement:** The former once-per-pull-request gate instruction is historical. Follow [root `AGENTS.md`](../../AGENTS.md) and [Testing Architecture](../architecture/16-testing-architecture.md): focused repair and one stable affected batch, then `python3 scripts/prepush.py --base <base-ref> --serial` only right before a push. Backend coverage retains both 90% overall and changed-line gates; local coverage runs the stack-free unit lane before three integration stacks, with no overlapping frontend/backend heavy lanes.
 6. For UI changes: screenshots at 1440×900 and 390×844, then a `ui-reviewer` pass, per `CLAUDE.md`.
 7. The acceptance criteria of the slice pass with recorded evidence.
 
