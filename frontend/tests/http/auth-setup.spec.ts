@@ -6,6 +6,8 @@ import {
   test,
 } from "./helpers/test";
 
+test.use({ trace: "off", screenshot: "off", video: "off" });
+
 // Account setup and recovery are for signed-out people.
 test.beforeEach(async ({ page }) => {
   await signedOut(page);
@@ -184,5 +186,51 @@ test("recovery requests email and confirms a fragment only on submission", async
   ).toBeVisible();
   expect(completions).toEqual([
     { token_hash: "recovery-proof", password: "a long recovery password" },
+  ]);
+});
+
+// Keep the original member/no-access tuple separate from administrator landings.
+test("login accepts email and does not send a username field", async ({
+  page,
+}) => {
+  let authenticated = false;
+  const requests: unknown[] = [];
+  await page.route("**/api/auth/login", async (route) => {
+    authenticated = true;
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: { authenticated: true, setup_required: false },
+    });
+  });
+  await page.route("**/api/auth/session", async (route) => {
+    await route.fulfill({
+      json: authenticated
+        ? {
+            authenticated: true,
+            user_id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8",
+            setup_required: false,
+          }
+        : { authenticated: false },
+    });
+  });
+  await page.route("**/api/auth/refresh", (route) =>
+    route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
+  );
+  await page.route("**/api/auth/me", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8",
+        role: "member",
+        access: [],
+      },
+    });
+  });
+  await page.goto("/login");
+  await page.getByLabel("Email", { exact: true }).fill("member@example.test");
+  await page.getByLabel("Password").fill("a long login password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/openview$/);
+  expect(requests).toEqual([
+    { email: "member@example.test", password: "a long login password" },
   ]);
 });
