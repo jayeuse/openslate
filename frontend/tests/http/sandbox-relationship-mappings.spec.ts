@@ -1935,14 +1935,33 @@ async function openConnectModules(page: Page) {
   return page.getByRole("dialog", { name: "Connect modules" });
 }
 
-// Publishing is owned by "a successful Publish plays the look's title
-// signature once"; a relationship to another department publishes the same way.
-test("a relationship can target a module in another department", async ({
+test("a relationship can target a module in another department and publish", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page, {
     ...configuredSandboxDesign,
     rules: [],
+  });
+  const published: unknown[] = [];
+  await page.route("**/api/sandbox/publications", (route) => {
+    published.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "00000000-0000-4000-8000-000000000711",
+        version: {
+          id: "00000000-0000-4000-8000-000000000712",
+          sequence: 1,
+          kind: "published",
+          label: "Published",
+        },
+        documentRevision: 2,
+        documentHash: "b".repeat(64),
+        impactDigest: "c".repeat(64),
+        publishedAt: "2026-10-04T00:00:00Z",
+      }),
+    });
   });
   const dialog = await openConnectModules(page);
   const target = dialog.getByLabel("Target module");
@@ -1975,6 +1994,15 @@ test("a relationship can target a module in another department", async ({
     });
   // A link to another department is not an item that needs attention.
   await expect(page.getByText(/need attention/)).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const review = page.getByRole("dialog", { name: "Review and publish" });
+  await review.getByLabel("Your password").fill("local password");
+  await review.getByRole("button", { name: "Publish changes" }).click();
+  await expect(
+    page.getByText("Your changes are now published to the live workspace."),
+  ).toBeVisible();
+  expect(published).toHaveLength(1);
 });
 
 test("leaving Connect modules after choosing another department saves nothing", async ({
