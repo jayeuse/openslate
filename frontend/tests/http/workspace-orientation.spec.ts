@@ -174,6 +174,9 @@ test("125 percent text scales the resizable sidebar and keeps resize units and s
   await expect
     .poll(() => sidebar.evaluate((el) => el.getBoundingClientRect().width))
     .toBeCloseTo(baseline * 1.25, 0);
+  await expect(
+    page.getByRole("heading", { name: "Your profile", exact: true }),
+  ).toHaveCSS("font-size", "37.5px");
   // Page headings scale with the text size, like the sidebar.
   await expect
     .poll(async () => (await headingSize()) / headingBaseline)
