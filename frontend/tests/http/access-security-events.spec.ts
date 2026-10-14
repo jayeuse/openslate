@@ -556,8 +556,7 @@ test("Events cold unavailable and detail failure offer explicit recovery with no
 });
 
 // The other unsupported facts (naive times, non-UUID people, unknown fields)
-// and the detail identity guard are isolated rows in
-// isolated/access/security-events-api.spec.ts.
+// are isolated rows in isolated/access/security-events-api.spec.ts.
 test("Events malformed invalid outcome response is unavailable rather than trusted", async ({
   page,
 }) => {
@@ -578,6 +577,34 @@ test("Events malformed invalid outcome response is unavailable rather than trust
     .getByRole("button", { name: "Retry security events", exact: true })
     .click();
   await expect(eventRows(page).getByText(/sign-in was accepted/)).toBeVisible();
+});
+
+test("Events detail identity mismatch cannot show another event's facts", async ({
+  page,
+}) => {
+  await mockSecurityEvents(page);
+  await openFeed(page);
+  let malformedDetail = true;
+  await page.route(`**/api/security-events/${securityEvent(1).id}`, (route) =>
+    malformedDetail
+      ? route.fulfill({
+          headers: { "Cache-Control": "no-store" },
+          json: securityEvent(2),
+        })
+      : route.fallback(),
+  );
+  const dialog = await details(page, "Sign-in failure");
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Details could not be loaded",
+  );
+  await expect(dialog).not.toContainText("198.51.100.42");
+  malformedDetail = false;
+  await dialog
+    .getByRole("button", { name: "Retry event details", exact: true })
+    .click();
+  await expect(dialog).toContainText(
+    "Sign-in failures from this address during this hour",
+  );
 });
 
 for (const role of ["member", "guest", "manager"] as const) {
