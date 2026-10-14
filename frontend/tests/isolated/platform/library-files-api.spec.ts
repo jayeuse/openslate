@@ -26,6 +26,18 @@ const labels = { [ids.user]: "Mara Santos" };
 type Request = Parameters<typeof listLibraryFiles>[1];
 type Row = { name: string; request?: Request; body: Record<string, unknown> };
 
+// Only the transferred rows use the original HTTP journey's 23-byte files.
+const transferredFirst = libraryFileWire({
+  expected_size: 23,
+  actual_size: 23,
+});
+const transferredSecond = {
+  ...transferredFirst,
+  id: ids.otherFile,
+  creator_id: ids.otherUser,
+  created_at: "2026-10-02T08:00:00Z",
+};
+
 // The first six rows are the pages the list journey used to send, unchanged:
 // the journey shows two active files (one labelled creator) at limit 25.
 const refused: Row[] = [
@@ -34,14 +46,14 @@ const refused: Row[] = [
     body: {
       items: [
         {
-          ...first,
+          ...transferredFirst,
           filename: "Foreign private file.pdf",
           department_id: ids.otherDepartment,
         },
       ],
       pagination: pagination(2),
       creator_labels: labels,
-      storage_used_bytes: 72,
+      storage_used_bytes: 69,
     },
   },
   {
@@ -49,54 +61,54 @@ const refused: Row[] = [
     body: {
       items: [
         {
-          ...first,
+          ...transferredFirst,
           filename: "Foreign private file.pdf",
           purpose: "record_attachment",
-          record_id: ids.module,
+          record_id: "62000000-0000-4000-8000-000000000001",
         },
       ],
       pagination: pagination(2),
       creator_labels: labels,
-      storage_used_bytes: 72,
+      storage_used_bytes: 69,
     },
   },
   {
     name: "a creator label for a person with no file on the page",
     body: {
-      items: [first, second],
+      items: [transferredFirst, transferredSecond],
       pagination: pagination(2),
       creator_labels: {
         ...labels,
         "63000000-0000-4000-8000-000000000999": "Private unrelated person",
       },
-      storage_used_bytes: 72,
+      storage_used_bytes: 69,
     },
   },
   {
     name: "a count above both the rows and the total",
     body: {
-      items: [first, second],
+      items: [transferredFirst, transferredSecond],
       pagination: { ...pagination(2), count: 3 },
       creator_labels: labels,
-      storage_used_bytes: 72,
+      storage_used_bytes: 69,
     },
   },
   {
     name: "a flipped has_more",
     body: {
-      items: [first, second],
+      items: [transferredFirst, transferredSecond],
       pagination: { ...pagination(2), has_more: true },
       creator_labels: labels,
-      storage_used_bytes: 72,
+      storage_used_bytes: 69,
     },
   },
   {
     name: "the same file twice",
     body: {
-      items: [first, first],
+      items: [transferredFirst, transferredFirst],
       pagination: pagination(2),
       creator_labels: labels,
-      storage_used_bytes: 72,
+      storage_used_bytes: 69,
     },
   },
   {
