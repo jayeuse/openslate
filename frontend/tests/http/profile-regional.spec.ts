@@ -181,6 +181,35 @@ test("Profile Regional rejects an invalid IANA timezone and restores explicit or
   expect(workspaceRequests.every((method) => method === "GET")).toBe(true);
 });
 
+test("Profile Regional failed save keeps confirmed values and Retry does not repeat mutations", async ({
+  page,
+}) => {
+  const api = await installProfileApi(page);
+  api.preferencesWriteStatus = 503;
+  await page.goto("/profile#regional");
+  await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
+    "organization",
+  );
+  await page.getByLabel("Date format", { exact: true }).selectOption("ymd");
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: /Preferences could not be saved/ })
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByLabel("Date format", { exact: true })).toHaveValue(
+    "organization",
+  );
+  await expect(page.getByLabel("Date format", { exact: true })).toBeDisabled();
+  api.preferencesWriteStatus = 200;
+  await page
+    .getByRole("button", { name: "Retry preferences", exact: true })
+    .first()
+    .click();
+  await expect(page.getByLabel("Date format", { exact: true })).toBeEnabled();
+  expect(api.writes).toHaveLength(1);
+});
+
 test("confirmed Profile Regional choices reach Access people and sessions without changing expiry inputs", async ({
   page,
 }) => {
