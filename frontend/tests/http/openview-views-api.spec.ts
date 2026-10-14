@@ -4936,11 +4936,14 @@ test("stale conflict can reload the authoritative saved version without losing i
   api.makeNextPatchStale();
   await page.getByRole("button", { name: "Save changes" }).click();
 
-  // The dialog text is owned by "server-backed Views preserve edits through
-  // save, conflict, archive, restore, and module default changes".
+  // The changed-fields text is owned by "server-backed Views preserve edits
+  // through save, conflict, archive, restore, and module default changes".
   const conflictDialog = page.getByRole("dialog", {
     name: "Update saved view",
   });
+  await expect(
+    conflictDialog.getByText(/local search “my local edit”/),
+  ).toBeVisible();
   expect(api.saved().definition.search).toBe("external edit");
   await conflictDialog.getByRole("button", { name: "Reload latest" }).click();
 
