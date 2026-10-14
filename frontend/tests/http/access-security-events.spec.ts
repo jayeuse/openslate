@@ -1680,6 +1680,9 @@ test("S09: emitted event sentences use recorded facts without claiming unfinishe
     ).toBeVisible();
     await expect(eventRows(page)).not.toContainText("Other security event");
     await expect(eventRows(page)).not.toContainText(unsafeEventCanary);
+    await expect
+      .poll(() => state.reads.at(-1)?.get("event_type"))
+      .toBe(item.type);
   }
   expect(state.commands).toEqual([]);
   expect(state.security.writes).toEqual([]);
