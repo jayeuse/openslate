@@ -2,8 +2,11 @@
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 import tempfile
+import textwrap
 import tomllib
 import unittest
 from pathlib import Path
@@ -53,16 +56,95 @@ class MutationTests(unittest.TestCase):
         )
         self.assertEqual(excluded["pending"], [])
         self.assertEqual(excluded["notes"], [])
+        self.assertEqual(excluded["last_success"], "head")
         noted = mutation.select(
             self.data, {"last_success": "prior"}, "head", ["backend/tests/integration_only.py"]
         )
         self.assertEqual(noted["pending"], [])
         self.assertEqual(noted["notes"], ["unmapped test: backend/tests/integration_only.py"])
+        with self.subTest(path="backend/tests/integration_only.py"):
+            self.assertEqual(noted["last_success"], "prior")
         for path in ("backend/app/new_source.py", "backend/operations/sample/new_source.py"):
             with self.subTest(path=path):
                 source = mutation.select(self.data, {"last_success": "prior"}, "head", [path])
                 self.assertEqual(source["pending"], [])
                 self.assertEqual(source["notes"], [f"unmapped source: {path}"])
+                self.assertEqual(source["last_success"], "prior")
+
+    def test_unmapped_owner_blocks_success_until_explicitly_classified(self):
+        for path in ("backend/tests/new_owner.py", "backend/tests/integration_only.py"):
+            with self.subTest(path=path):
+                self.data["zero_hit_excluded"] = []
+                blocked = mutation.select(self.data, {"last_success": "prior"}, "head", [path])
+                self.assertEqual(blocked["pending"], [])
+                self.assertEqual(blocked["notes"], [f"unmapped test: {path}"])
+                self.assertEqual(blocked["last_success"], "prior")
+                # An explicit classification, never the filename, may exempt an owner.
+                self.data["zero_hit_excluded"] = [path.removeprefix("backend/")]
+                classified = mutation.select(self.data, blocked, "head", [path])
+                self.assertEqual(classified["pending"], [])
+                self.assertEqual(classified["notes"], [])
+                self.assertEqual(classified["last_success"], "head")
+
+    def test_successful_mapped_work_only_advances_without_unmapped_changes(self):
+        for extra, expected_success in (
+            (None, "head"),
+            ("backend/app/new_source.py", "prior"),
+            ("backend/operations/sample/new_source.py", "prior"),
+            ("backend/tests/new_owner.py", "prior"),
+        ):
+            with self.subTest(extra=extra):
+                changed = ["backend/app/known.py"] + ([extra] if extra else [])
+                state = mutation.select(self.data, {"last_success": "prior"}, "head", changed)
+                self.assertEqual(state["pending"], ["app/known.py"])
+                diagnostics = state["notes"].copy()
+                result = mutation.compare({"a": 1, "b": 1, "old": 0}, self.baseline, "full", 0)
+                self.assertTrue(result["complete"])
+                self.assertEqual(result["errors"], [])
+                mutation.finish(state, "app/known.py", result)
+                self.assertEqual(state["pending"], [])
+                self.assertEqual(state["failures"], {})
+                self.assertEqual(state["results"]["app/known.py"]["revision"], "head")
+                self.assertEqual(state["notes"], diagnostics)
+                self.assertEqual(state["last_success"], expected_success)
+
+    def test_workflow_gate_rejects_unmapped_notes_even_with_a_successful_checkpoint(self):
+        workflow = mutation.ROOT / ".github/workflows/mutation.yml"
+        gate = textwrap.dedent(workflow.read_text().rsplit("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for notes, expected_exit in (
+                ({}, 0),
+                ({"notes": []}, 0),
+                ({"notes": ["unmapped source: backend/app/new_source.py"]}, 1),
+            ):
+                with self.subTest(notes=notes):
+                    checkpoint = {
+                        "pending": [],
+                        "failures": {},
+                        "last_success": "head",
+                        "cycle": "head",
+                        **notes,
+                    }
+                    (root / "state.json").write_text(json.dumps(checkpoint))
+                    result = subprocess.run(
+                        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", gate],
+                        cwd=root,
+                        env={
+                            "PATH": os.environ["PATH"],
+                            "OUTPUT": str(root),
+                            **{
+                                key: "success"
+                                for key in ("RESTORE", "PLAN", "SYNC", "NATIVE", "UPLOAD")
+                            },
+                        },
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(
+                        result.returncode, expected_exit, result.stdout + result.stderr
+                    )
 
     def test_pending_rolls_over_at_exact_revision_and_failures_prevent_advancement(self):
         state = mutation.select(self.data, {}, "cycle", ["backend/app/unknown.py"])

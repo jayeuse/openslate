@@ -224,4 +224,4 @@ jobs:
           UPLOAD: ${{ steps.upload.outcome }}
         run: |
           test "$RESTORE" = success && test "$PLAN" = success && test "$SYNC" = success && test "$NATIVE" = success && test "$UPLOAD" = success
-          jq -e '(.pending | length) == 0 and (.failures | length) == 0 and .last_success == .cycle' "$OUTPUT/state.json"
+          jq -e '(.pending | length) == 0 and (.failures | length) == 0 and ((.notes // []) | length) == 0 and .last_success == .cycle' "$OUTPUT/state.json"

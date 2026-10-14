@@ -44,7 +44,7 @@ def select(data, state, sha, changed):
     result["notes"] = notes
     result.setdefault("last_success", None)
     result.setdefault("failures", {})
-    if not modes and not result["failures"]:
+    if not modes and not result["failures"] and not notes:
         result["last_success"] = sha
     return result
 
@@ -84,7 +84,7 @@ def finish(state, module, result):
         state["failures"].pop(module, None)
     if result["complete"] or result.get("settled"):
         state["pending"].remove(module)
-    if not state["pending"] and not state["failures"]:
+    if not state["pending"] and not state["failures"] and not state.get("notes"):
         state["last_success"] = state["cycle"]
 
 
