@@ -5217,6 +5217,115 @@ test("History older off-page metadata cannot restore a target marked missing by 
   await expect(page.getByText("Private missing-version canary")).toHaveCount(0);
 });
 
+test("a filtered 28-version history exports its complete document and snapshots", async ({
+  page,
+}, testInfo) => {
+  const versions = Array.from({ length: 28 }, (_, index) => ({
+    ...historyVersionFixture(
+      index + 1,
+      index === 0 ? "Needle checkpoint" : `Export version ${index + 1}`,
+      index < 20 ? "checkpoint" : "published",
+    ),
+    createdAt: "2026-10-01T10:00:00Z",
+  }));
+  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+  const snapshots = versions.map((version) => ({
+    id: version.id,
+    label: version.label,
+    kind: version.kind,
+    document: {
+      design: document.design,
+      triggers: document.triggers,
+      scenarios: document.scenarios,
+    },
+    published: version.kind === "published",
+    date: version.createdAt,
+  }));
+  const exports: string[] = [];
+  let writes = 0;
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname.startsWith("/api/sandbox/") &&
+      ["POST", "PUT", "PATCH", "DELETE"].includes(request.method())
+    )
+      writes += 1;
+  });
+  await page.route("**/api/sandbox/export?*", (route) => {
+    const include = new URL(route.request().url()).searchParams.get(
+      "includeVersions",
+    );
+    exports.push(include ?? "missing");
+    return route.fulfill({
+      contentType: "application/json",
+      headers: {
+        "Content-Disposition":
+          'attachment; filename="owned-sandbox-history.json"',
+      },
+      json:
+        include === "true" ? { ...document, versions: snapshots } : document,
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions },
+  );
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const { timeline } = historyRegions(page);
+  await timeline.getByLabel("Find a version").fill("Needle");
+  await expect(timeline).toContainText("1 saved version");
+  const dialog = await openImportExport(page);
+  const include = dialog.getByRole("checkbox", {
+    name: "Include version history",
+    exact: true,
+  });
+  await expect(include).toBeVisible();
+  await expect(include).not.toBeChecked();
+  await expect(
+    dialog.getByText("28 saved versions", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("Imported versions count toward the 50-version limit.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const [without] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+  ]);
+  expect(without.suggestedFilename()).toBe("owned-sandbox-history.json");
+  const withoutPath = await without.path();
+  if (!withoutPath) throw new Error("A completed download is required");
+  const withoutHistory: unknown = JSON.parse(
+    await readFile(withoutPath, "utf8"),
+  );
+  expect(withoutHistory).toEqual(document);
+  expect(withoutHistory).not.toHaveProperty("versions");
+  await include.check();
+  const [withHistory] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+  ]);
+  expect(withHistory.suggestedFilename()).toBe("owned-sandbox-history.json");
+  const withPath = await withHistory.path();
+  if (!withPath) throw new Error("A completed download is required");
+  const exported: unknown = JSON.parse(await readFile(withPath, "utf8"));
+  expect(exported).toEqual({ ...document, versions: snapshots });
+  expect(exported).toHaveProperty("versions", snapshots);
+  expect(exports).toEqual(["false", "true"]);
+  expect(writes).toBe(0);
+  expect(sandbox.documentWrites()).toBe(0);
+  expect(sandbox.document()).toEqual(document);
+  await testInfo.attach("without-history.json", {
+    path: withoutPath,
+    contentType: "application/json",
+  });
+  await testInfo.attach("with-history.json", {
+    path: withPath,
+    contentType: "application/json",
+  });
+});
+
 test("export history uses complete global total and downloads both boolean variants", async ({
   page,
 }) => {
