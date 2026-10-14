@@ -314,6 +314,81 @@ def test_validation_accepts_each_mapping_that_always_fits(
     assert _mapping_issues(source_field_id, target_field_id) == []
 
 
+def test_validation_enforces_field_formats_constraints_and_required_strings() -> None:
+    payload = _payload()
+    payload["design"]["modules"][0]["fields"] = [
+        {
+            "id": "number",
+            "name": "Number",
+            "type": "Number",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "number", "defaultValue": None, "min": 0, "max": 10, "step": 2},
+        },
+        {
+            "id": "email",
+            "name": "Email",
+            "type": "Email",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "email", "defaultValue": ""},
+        },
+        {
+            "id": "url",
+            "name": "URL",
+            "type": "URL",
+            "required": False,
+            "closed": False,
+            "config": {"kind": "url", "defaultValue": ""},
+        },
+        {
+            "id": "required-text",
+            "name": "Required text",
+            "type": "Text",
+            "required": True,
+            "closed": False,
+            "config": {"kind": "text", "defaultValue": ""},
+        },
+        {
+            "id": "date",
+            "name": "Date",
+            "type": "Date",
+            "required": False,
+            "closed": False,
+            "config": {
+                "kind": "date",
+                "defaultValue": None,
+                "earliest": "2024-01-01",
+                "latest": "2024-12-31",
+            },
+        },
+    ]
+    payload["scenarios"] = [
+        {
+            "id": "invalid-values",
+            "name": "Invalid values",
+            "records": [
+                {
+                    "id": "record",
+                    "moduleId": "sample-requests",
+                    "values": {
+                        "number": 3,
+                        "email": "invalid",
+                        "url": "ftp://example.com",
+                        "required-text": "   ",
+                        "date": "2024-02-30",
+                    },
+                }
+            ],
+            "links": [],
+        }
+    ]
+
+    codes = {issue.code for issue in validate_document(payload)}
+
+    assert "scenario.value_type_invalid" in codes
+
+
 _FORMAT_FIELDS = [
     {
         "id": "number",
