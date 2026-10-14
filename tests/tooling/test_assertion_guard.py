@@ -119,6 +119,9 @@ class AnalyzeTests(unittest.TestCase):
             "  return matched;\n"
             "}).toBe(true);\n"
         )
+        quoted_brace = 'expect(value).toBe(`${destination.replace("}", "#")}`);'
+        escaped_argument = r'expect(value).toBe(`${destination.replace("\\", "#")}`);'
+        nested_backtick = 'expect(value).toBe(`${destination.replace(`#`, "#")}`);'
         for expression, edited_expression in (
             ("expect<Result>(value).toBe(3);", "expect<Result>(value).toBe(3);"),
             (
@@ -126,6 +129,9 @@ class AnalyzeTests(unittest.TestCase):
                 "expect.poll(() => { if (ready) /a b/.test(value); return ready; }).toBe(true);",
             ),
             (closing_block, closing_block.replace("/a b/", "/a  b/")),
+            (quoted_brace, quoted_brace),
+            (escaped_argument, escaped_argument),
+            (nested_backtick, nested_backtick),
         ):
             with self.subTest(expression=expression):
                 source = expression + "\nexpect(other).toBe(4);\n"
@@ -139,6 +145,28 @@ class AnalyzeTests(unittest.TestCase):
                 self.assertIn("1 assertion(s) removed, 0 recorded", violations[0])
                 row = guard.LedgerRow(path, 1, "backend/tests/a/test_owner.py::test_owner", "D1")
                 self.assertEqual(self.analyze([item], [row]), [])
+
+    def test_flat_quoted_template_interpolation_keeps_literal_protection(self):
+        assertion = (
+            'await expect(page).toHaveURL(new RegExp(`${destination.replace("#", "#")}$`));\n'
+        )
+        for after, removals in (
+            (assertion, 0),
+            (assertion.replace('replace("#", "#")', 'replace( "#", "#" )'), 0),
+            (assertion.replace('replace("#", "#")', 'replace("#", "?")'), 1),
+            (assertion.replace('replace("#", "#")', 'replace("#", "# ")'), 1),
+            ("", 1),
+        ):
+            with self.subTest(after=after):
+                item = change(
+                    "frontend/tests/http/a.spec.ts", removed=["// before"], added=["// after"]
+                )
+                item.before_source = assertion + "// before\n"
+                item.after_source = after + "// after\n"
+                violations = self.analyze([item])
+                self.assertEqual(len(violations), removals, violations)
+                if removals:
+                    self.assertIn("1 assertion(s) removed, 0 recorded", violations[0])
 
     def test_reformatted_assertion_is_not_a_removal(self):
         violations = self.analyze(

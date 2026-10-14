@@ -156,7 +156,7 @@ def _ts_tokens(source: str) -> list[str]:
             value = "string:" + raw[1:-1]
         elif raw.startswith("`") and len(raw) > 1:
             value = re.sub(
-                r"(?<!\\)\$\{([^{}'\"`\\]*)\}",
+                r"(?<!\\)\$\{((?:[^{}'\"`\\]|'[^{}'`\\]*'|\"[^{}\"`\\]*\")*)\}",
                 lambda found: "\x00" + repr(_ts_tokens(found[1])),
                 raw,
             )
