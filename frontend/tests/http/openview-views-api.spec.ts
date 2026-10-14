@@ -6628,16 +6628,59 @@ test.describe("export journeys", () => {
         .focus();
       await page.keyboard.press("Enter");
       await dialog.getByLabel("Format", { exact: true }).selectOption("xlsx");
+      const bounds = async () => {
+        const box = await dialog.boundingBox();
+        expect(box).not.toBeNull();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(
+          page.viewportSize()!.width,
+        );
+        const cancel = dialog.getByRole("button", {
+          name: "Cancel",
+          exact: true,
+        });
+        await cancel.scrollIntoViewIfNeeded();
+        const control = await cancel.boundingBox();
+        expect(control!.height).toBeGreaterThanOrEqual(44);
+        expect(control!.y + control!.height).toBeLessThanOrEqual(
+          page.viewportSize()!.height,
+        );
+      };
+      const checkLayout = async (showLongLabel: boolean) => {
+        const originalViewport = page.viewportSize();
+        const originalScrollY = await page.evaluate(() => window.scrollY);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
+          await bounds();
+          if (showLongLabel) {
+            await dialog.evaluate((node) => {
+              node.scrollTop = 0;
+            });
+            await expect(
+              dialog.getByRole("checkbox", { name: longLabel, exact: true }),
+            ).toBeVisible();
+          }
+        }
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+      };
+      await checkLayout(true);
       api.reply({ status: 503, json: { detail: "PRIVATE_EXPORT_SENTINEL" } });
       await dialog
         .getByRole("button", { name: "Download", exact: true })
         .click();
       await expect(dialog.getByRole("alert")).toBeVisible();
+      await checkLayout(false);
       const held = api.hold();
       await dialog
         .getByRole("button", { name: "Download", exact: true })
         .click();
       await held.began;
+      await checkLayout(false);
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
       held.release();
       await held.done;
