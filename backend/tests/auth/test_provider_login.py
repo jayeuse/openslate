@@ -20,6 +20,30 @@ from app.systems.access.identity.contracts import (
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 
 
+def test_password_grant_admits_bound_application_session_without_request_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.systems.access.identity import provider_login
+
+    db = Mock(spec=Session)
+    client = Mock()
+    tokens = ProviderTokens("provider-access", "provider-refresh", uuid4(), 600)
+    issued = IssuedSession("provider-access", "local-handle", "csrf", uuid4(), False)
+    client.password_grant.return_value = tokens
+    db.get.return_value = SimpleNamespace(user_id=uuid4())
+    admit = Mock(return_value=issued)
+    monkeypatch.setattr(provider_login, "admit_provider_session", admit)
+    monkeypatch.setattr(provider_login, "append_security_event", Mock())
+
+    assert (
+        provider_login.login_with_provider(
+            db, "person@example.test", "password", client, enforce_rate_limit=False
+        )
+        is issued
+    )
+    admit.assert_called_once_with(db, tokens, client, user_agent=None, ip_address=None)
+
+
 def test_password_grant_admits_only_the_bound_application_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
