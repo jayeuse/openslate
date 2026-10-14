@@ -1988,6 +1988,39 @@ test("Dashboard previews an unsaved monthly draft and saves the exact inline ins
   await expect(
     dialog.getByRole("table", { name: "Draft preview values", exact: true }),
   ).toContainText("12.5");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await hideDevOverlay(page);
+  const checkLayout = async () => {
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+      if (viewport.width === 390) {
+        await dialog
+          .getByText("Measure", { exact: true })
+          .evaluate((element) => element.scrollIntoView({ block: "start" }));
+      } else {
+        await dialog
+          .getByRole("heading", { name: "Add widget", exact: true })
+          .scrollIntoViewIfNeeded();
+      }
+      await expect(
+        dialog.getByLabel("Calendar bucket", { exact: true }),
+      ).toHaveValue("month");
+    }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+  };
+  await checkLayout();
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await checkLayout();
   expect(api.writes).toEqual([]);
   const expected = {
     mode: "date_series",
