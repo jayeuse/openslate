@@ -2948,6 +2948,94 @@ test("paired Board and Dashboard follow one Chart revision without source writes
   }
 });
 
+for (const bucket of ["month", "year"] as const) {
+  test(`S26 referenced date series preserves its ${bucket} bucket over more than 366 days`, async ({
+    page,
+  }) => {
+    const chartId = "00000000-0000-4000-8000-000000000655";
+    const query = {
+      mode: "date_series",
+      module_id: moduleId,
+      definition: queryDefinition,
+      aggregation: "sum",
+      measure: { field_id: amountFieldId, expected_type: "decimal" },
+      date_field: { field_id: dateFieldId, expected_type: "date" },
+      from_date: "2020-01-01",
+      to_date: "2022-12-31",
+      bucket,
+    };
+    const api = await installDashboardApi(
+      page,
+      dashboard({
+        widgets: [
+          {
+            id: dashboardWidgetId,
+            position: 0,
+            widget_type: "chart",
+            size: "S",
+            chart_id: chartId,
+            config: null,
+            created_at: timestamp,
+            updated_at: timestamp,
+          },
+        ],
+      }),
+    );
+    await page.route(`**/api/charts/${chartId}`, (route) =>
+      route.fulfill({
+        json: {
+          id: chartId,
+          department_id: departmentId,
+          module_id: moduleId,
+          name: "Long calendar window",
+          chart_type: "line",
+          query,
+          revision: 1,
+          is_deleted: false,
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      }),
+    );
+    const calls: unknown[] = [];
+    const dates =
+      bucket === "month"
+        ? Array.from({ length: 36 }, (_, month) =>
+            new Date(Date.UTC(2020, month, 1)).toISOString().slice(0, 10),
+          )
+        : ["2020-01-01", "2021-01-01", "2022-01-01"];
+    await page.route("**/api/records/aggregate-snapshot*", (route) => {
+      calls.push(snapshotRequest(route));
+      return fulfillSnapshot(route, {
+        json: {
+          items: dates.map((day, index) => ({
+            key: day,
+            label: day,
+            value: index === 0 ? null : 8,
+            record_count: index === 0 ? 0 : 2,
+          })),
+          pagination: {
+            limit: dates.length,
+            offset: 0,
+            count: dates.length,
+            total: dates.length,
+            has_more: false,
+          },
+        },
+      });
+    });
+    await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+    await expect(
+      page.getByRole("table", { name: /Complete data/ }),
+    ).toBeVisible();
+    expect(calls.at(-1)).toEqual(query);
+    await expect(
+      page.getByRole("cell", { name: "—", exact: true }),
+    ).toBeVisible();
+    expect(api.writes).toEqual([]);
+  });
+}
+
 test("Dashboard invalidation updates its saved name and widget without reloading", async ({
   page,
 }) => {
