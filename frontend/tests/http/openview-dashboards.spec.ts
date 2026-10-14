@@ -3701,7 +3701,7 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
     exact: true,
   });
   const measure = addDialog.getByLabel("Numeric measure");
-  // AR27 pending: the original initial blank Numeric measure value assertion.
+  await expect(measure).toHaveValue("");
   await measure.selectOption(amountFieldId);
   await expect(addChart).toBeEnabled();
   await addWidgetFromDialog(addDialog);
@@ -3862,7 +3862,7 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
     exact: true,
   });
   const measure = addDialog.getByLabel("Numeric measure");
-  // AR27 pending: the original initial blank Numeric measure value assertion.
+  await expect(measure).toHaveValue("");
   await measure.selectOption(scoreFieldId);
   await addDialog
     .getByLabel("Group by", { exact: true })
