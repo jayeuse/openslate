@@ -68,16 +68,19 @@ jobs:
       - id: plan
         name: Select from last success or the recorded anchor; pin unfinished cycles
         run: |
-          python3 scripts/mutation.py plan
+          cp scripts/mutation.py "$RUNNER_TEMP/mutation-controller.py"
+          python3 "$RUNNER_TEMP/mutation-controller.py" plan
           cycle=$(jq -r .cycle "$OUTPUT/state.json")
           git checkout --detach "$cycle"
           printf 'run=%s attempt=%s trigger=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" > "$OUTPUT/run.txt"
           printf 'tested-cycle=%s tree=%s\n' "$cycle" "$(git rev-parse HEAD^{tree})" >> "$OUTPUT/run.txt"
-      - uses: actions/setup-python@v7
+      - id: python
+        uses: actions/setup-python@v7
         timeout-minutes: 2
         with:
           python-version: "3.14"
-      - uses: astral-sh/setup-uv@v10.1.0
+      - id: uv
+        uses: astral-sh/setup-uv@v10.1.0
         timeout-minutes: 2
         with:
           version: "0.12.x"
@@ -85,8 +88,27 @@ jobs:
           cache-dependency-glob: backend/uv.lock
       - id: sync
         timeout-minutes: 5
-        run: uv sync --locked
+        run: |
+          uv sync --locked || {
+            rc=$?
+            python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure sync "$rc"
+            exit "$rc"
+          }
         working-directory: backend
+      - name: Checkpoint terminal dependency setup failure
+        if: always() && steps.plan.outcome == 'success'
+        env:
+          PYTHON_SETUP: ${{ steps.python.outcome }}
+          UV_SETUP: ${{ steps.uv.outcome }}
+          SYNC: ${{ steps.sync.outcome }}
+        run: |
+          if [ "$PYTHON_SETUP" = failure ]; then
+            python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure python 1
+          elif [ "$UV_SETUP" = failure ]; then
+            python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure uv 1
+          elif [ "$SYNC" = failure ]; then
+            python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure sync 1
+          fi
       - id: native
         name: Native mutations only; reserve fifteen minutes for reporting and upload
         shell: bash
@@ -103,7 +125,11 @@ jobs:
           }
           while module=$(jq -r '.pending[0] // empty' "$state"); [ -n "$module" ]; do
             [ "$(date +%s)" -lt "$deadline" ] || break
-            root=$(cd backend && uv run --no-sync python ../scripts/mutation.py prepare "$module")
+            root=$(python3 "$RUNNER_TEMP/mutation-controller.py" prepare "$module") || {
+              rc=$?
+              python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure prepare "$rc" "$module"
+              exit "$rc"
+            }
             meta="$root/mutants/$module.meta"
             log="$root/run.log"
             mode=$(jq -r --arg m "$module" '.modes[$m]' "$state")
@@ -134,7 +160,7 @@ jobs:
                 fi
               done < <(jq -r '.exit_code_by_key | to_entries[] | select(.value == 36 or .value == -24 or .value == 24 or .value == 152 or .value == 255) | .key' "$meta")
             fi
-            (cd backend && uv run --no-sync python ../scripts/mutation.py compare "$module" "$rc")
+            python3 "$RUNNER_TEMP/mutation-controller.py" compare "$module" "$rc"
             cycle=$(jq -r .cycle "$state")
             diffs="$GITHUB_WORKSPACE/$OUTPUT/diffs/$cycle/${module//\//__}"
             mkdir -p "$diffs"
@@ -168,6 +194,7 @@ jobs:
               jq -r '"Tested cycle: `\(.cycle)`\nLast successful complete cycle: `\(.last_success // "none")`\nSelected modules: \(.modes|length); completed this cycle: \(.results|to_entries|map(select(.value.complete))|length); pending: \(.pending|length)\nNew survivors: \([.failures[].new_survivors|length]|add // 0)\nNotes: \((.notes // [])|join("; "))\n\nFull proposed baselines and retained failures (each carries its tested revision):\n"' "$OUTPUT/state.json"
               printf '\n```json\n'
               jq '.failures' "$OUTPUT/state.json"
+              jq '{precomparison_failure, precomparison_receipts}' "$OUTPUT/state.json"
               printf '```\n\nAdopt unknown baselines only in a reviewed commit after matching item 24 classes in docs/plans/mutation-survivors.md. Never automatically accept these proposals.\n'
             else
               printf 'No usable checkpoint; setup/restore/selection failed. No last-success advancement.\n'

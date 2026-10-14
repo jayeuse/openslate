@@ -226,6 +226,74 @@ class MutationTests(unittest.TestCase):
                 self.assertIn("app/known.py", saved["failures"])
                 self.assertIsNone(saved["last_success"])
 
+    def test_precomparison_failure_requeues_without_old_credit(self):
+        for stage in ("sync", "prepare"):
+            with self.subTest(stage=stage):
+                state = mutation.select(
+                    self.data,
+                    {"last_success": "prior"},
+                    "broken",
+                    ["backend/app/known.py", "backend/app/unknown.py", "backend/tests/other.py"],
+                )
+                failed = mutation.compare({"a": 1, "old": 0}, self.baseline, "full", 0)
+                mutation.finish(state, "app/known.py", failed)
+                original = json.loads(json.dumps(state))
+                mutation.pre_failure(state, stage, 17, "broken", "app/unknown.py")
+                self.assertEqual(state["results"], original["results"])
+                self.assertEqual(state["failures"], original["failures"])
+                self.assertEqual(
+                    state["precomparison_failure"],
+                    {
+                        "stage": stage,
+                        "exit_code": 17,
+                        "revision": "broken",
+                        "module": "app/unknown.py",
+                    },
+                )
+                marked = json.loads(json.dumps(state))
+                mutation.pre_failure(state, stage, 99, "broken")
+                self.assertEqual(mutation.select(self.data, state, "broken", []), marked)
+                candidate = mutation.select(self.data, state, "repair", [])
+                self.assertEqual(candidate["cycle"], "repair")
+                self.assertEqual(
+                    candidate["pending"],
+                    ["app/known.py", "app/unknown.py", "operations/sample/other.py"],
+                )
+                self.assertEqual(candidate["results"], {})
+                self.assertEqual(candidate["last_success"], "prior")
+                self.assertEqual(candidate["failures"], original["failures"])
+                self.assertIsNone(candidate.get("precomparison_failure"))
+                self.assertEqual(candidate["precomparison_receipts"], [marked])
+                # A fresh comparison cannot overwrite the old failure's receipt.
+                passed = mutation.compare({"a": 1, "b": 1, "old": 0}, self.baseline, "full", 0)
+                mutation.finish(candidate, "app/known.py", passed)
+                self.assertEqual(candidate["results"]["app/known.py"]["revision"], "repair")
+                self.assertEqual(candidate["precomparison_receipts"], [marked])
+                self.assertEqual(
+                    candidate["precomparison_receipts"][0]["failures"]["app/known.py"]["revision"],
+                    "broken",
+                )
+                self.assertEqual(candidate["last_success"], "prior")
+
+    def test_unmarked_rollover_and_late_failure_keep_exact_revision(self):
+        # The existing 124/137 CLI test protects native exit/settled handling.
+        for outcome in ("budget", 124, 137, "report", "diff"):
+            with self.subTest(outcome=outcome):
+                state = mutation.select(
+                    self.data, {"last_success": "prior"}, "cycle", ["backend/app/unknown.py"]
+                )
+                if outcome in (124, 137):
+                    result = mutation.compare({"old": None}, None, "full", outcome)
+                    mutation.finish(state, "app/unknown.py", result)
+                elif outcome in ("report", "diff"):
+                    with self.assertRaises(ValueError):
+                        mutation.pre_failure(state, outcome, 9, "cycle", "app/unknown.py")
+                resumed = mutation.select(self.data, state, "repair", [])
+                self.assertIsNone(resumed.get("precomparison_failure"))
+                self.assertEqual(resumed["cycle"], "cycle")
+                self.assertEqual(resumed["pending"], ["app/unknown.py"])
+                self.assertEqual(resumed["last_success"], "prior")
+
     def test_scheduled_sample_preparation_includes_declared_controls_owner(self):
         backend = mutation.BACKEND
         module = "operations/sample/controls/access_verification.py"

@@ -1,6 +1,8 @@
 """Optional native mutation lane; historical seeds are not fresh mutation evidence."""
 
+import copy
 import json
+import os
 import re
 import runpy
 import shutil
@@ -8,7 +10,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = (
+    Path(os.environ["GITHUB_WORKSPACE"])
+    if os.environ.get("GITHUB_WORKSPACE")
+    else Path(__file__).resolve().parents[1]
+)
 BACKEND = ROOT / "backend"
 BASELINE = ROOT / "docs/plans/mutation-baseline.json"
 OUTPUT = BACKEND / "test-results/mutation-scheduled"
@@ -19,7 +25,9 @@ def base(data, state):
 
 
 def select(data, state, sha, changed):
-    if state.get("pending"):
+    terminal = state.get("precomparison_failure")
+    recover = terminal and terminal["revision"] == state.get("cycle") and sha != state["cycle"]
+    if (state.get("pending") or terminal) and not recover:
         return state  # Finish this exact cycle, never reuse completed work at another SHA.
     modules = data["modules"]
     recorded = set(modules) | {p for entry in modules.values() for p in entry["owners"]}
@@ -36,11 +44,20 @@ def select(data, state, sha, changed):
         if any("backend/" + f in changed for f in [p, *entry["owners"]])
     }
     modes.update({p: "full" for p in state.get("failures", {}) if p in modules})
+    if recover:
+        for path in state["pending"]:
+            modes.setdefault(path, state["modes"][path])
     if not state.get("last_success"):
         for path, entry in modules.items():
             if entry["baseline"] and entry["baseline"]["survivors"]:
                 modes.setdefault(path, "rescan")
     result = dict(state, cycle=sha, modes=modes, pending=sorted(modes), results={})
+    if recover:
+        receipt = copy.deepcopy(
+            {key: value for key, value in state.items() if key != "precomparison_receipts"}
+        )
+        result["precomparison_receipts"] = [*state.get("precomparison_receipts", []), receipt]
+        result.pop("precomparison_failure")
     result["notes"] = notes
     result.setdefault("last_success", None)
     result.setdefault("failures", {})
@@ -84,8 +101,26 @@ def finish(state, module, result):
         state["failures"].pop(module, None)
     if result["complete"] or result.get("settled"):
         state["pending"].remove(module)
-    if not state["pending"] and not state["failures"] and not state.get("notes"):
+    if (
+        not state["pending"]
+        and not state["failures"]
+        and not state.get("notes")
+        and not state.get("precomparison_failure")
+    ):
         state["last_success"] = state["cycle"]
+
+
+def pre_failure(state, stage, exit_code, revision, module=None):
+    if stage not in ("python", "uv", "sync", "prepare") or exit_code == 0:
+        raise ValueError("only terminal dependency setup or preparation failures may be marked")
+    if not state.get("pending") or state["cycle"] != revision:
+        raise ValueError("pre-comparison failure must belong to pending work at the exact cycle")
+    if module is not None and module not in state["pending"]:
+        raise ValueError("failed preparation module must be pending")
+    state.setdefault(
+        "precomparison_failure",
+        dict(stage=stage, exit_code=exit_code, revision=revision, module=module),
+    )
 
 
 def prepare(state, module):
@@ -117,13 +152,21 @@ def prepare(state, module):
 
 def main():
     command, *args = sys.argv[1:]
-    if command not in ("plan", "prepare", "compare"):
-        raise ValueError("use plan, prepare MODULE, or compare MODULE EXIT_CODE")
+    if command not in ("plan", "prepare", "compare", "pre-failure"):
+        raise ValueError(
+            "use plan, prepare MODULE, compare MODULE EXIT_CODE, "
+            "or pre-failure STAGE EXIT_CODE [MODULE]"
+        )
     OUTPUT.mkdir(parents=True, exist_ok=True)
     checkpoint = OUTPUT / "state.json"
-    data = json.loads(BASELINE.read_text())
     state = json.loads(checkpoint.read_text()) if checkpoint.exists() else {}
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    if command == "pre-failure":
+        stage, code, *module = args
+        pre_failure(state, stage, int(code), sha, *module)
+        checkpoint.write_text(json.dumps(state, indent=2) + "\n")
+        return  # Does not depend on a working manifest, helper or installed environment.
+    data = json.loads(BASELINE.read_text())
     if command == "plan":
         diff = ["git", "diff", "--name-only", "--no-renames", base(data, state), sha]
         changed = subprocess.check_output(diff, cwd=ROOT, text=True).splitlines()
@@ -132,7 +175,12 @@ def main():
         module = args[0]
         if module not in state["pending"] or state["cycle"] != sha:
             raise ValueError("module must be pending at the exact tested cycle revision")
-        root = prepare(state, module)
+        try:
+            root = prepare(state, module)
+        except (Exception, SystemExit):
+            pre_failure(state, "prepare", 1, sha, module)
+            checkpoint.write_text(json.dumps(state, indent=2) + "\n")
+            raise  # Only this preparation boundary, not comparison or reporting errors.
         if command == "prepare":
             print(root)
             return
