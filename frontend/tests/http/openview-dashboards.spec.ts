@@ -5212,6 +5212,40 @@ test("a Dashboard department picker searches beyond its first page and resolves 
   await dialog
     .getByLabel("Dashboard name", { exact: true })
     .fill("Dispatch dashboard");
+  const departmentTrigger = dialog.getByLabel("Department", { exact: true });
+  await departmentTrigger.focus();
+  await departmentTrigger.press("Enter");
+  const searchInput = page.getByRole("combobox", {
+    name: "Search department",
+    exact: true,
+  });
+  await expect(searchInput).toBeFocused();
+  for (const mode of ["light", "dark"] as const) {
+    await page.evaluate((theme) => {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }, mode);
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect(searchInput).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+    }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+  }
+  await searchInput.press("Escape");
+  await expect(departmentTrigger).toBeFocused();
   await dialog.getByRole("button", { name: "Continue", exact: true }).click();
   await page
     .getByRole("button", { name: "Save Dashboard", exact: true })
