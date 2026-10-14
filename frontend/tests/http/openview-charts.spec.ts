@@ -9,6 +9,7 @@ import {
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
 import { wireField, wireBucket } from "../helpers/wire";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const moduleId = "00000000-0000-4000-8000-000000000110";
 const departmentId = "00000000-0000-4000-8000-000000000111";
@@ -570,6 +571,42 @@ test("five calendar buckets and period wording follow the last applied query whi
       to_date: "2026-10-13",
       bucket: current.bucket,
     });
+    if (current.bucket === "week") {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await hideDevOverlay(page);
+      const checkLayout = async () => {
+        const originalViewport = page.viewportSize();
+        const originalScrollY = await page.evaluate(() => window.scrollY);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
+          await expect
+            .poll(() =>
+              page.evaluate(() => document.documentElement.scrollWidth),
+            )
+            .toBeLessThanOrEqual(viewport.width);
+          await expect(
+            page.getByLabel("Calendar bucket", { exact: true }),
+          ).toHaveValue("week");
+          await expect(
+            page
+              .getByRole("img", {
+                name: "Aggregate chart preview",
+                exact: true,
+              })
+              .locator(".recharts-label-list text"),
+          ).toHaveCount(2);
+        }
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+      };
+      await checkLayout();
+      await page.evaluate(() => document.documentElement.classList.add("dark"));
+      await checkLayout();
+    }
     previous = current;
   }
   expect(bodies).toHaveLength(5);
