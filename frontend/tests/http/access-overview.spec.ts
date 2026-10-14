@@ -511,11 +511,14 @@ test("inactivity days validate drafts, reach the API and isolate cached summarie
     .toBe(true);
   const beforeInvalidDrafts = api.summaryQueries.length;
 
-  // One draft per message; the other invalid drafts are the isolated table
-  // in isolated/access/inactive-days.spec.ts.
+  // Keep all five original submitted drafts; isolated inactive-days cases
+  // also cover the pure rule.
   for (const [value, message] of [
     ["", "Enter the number of days."],
+    ["0", "Enter a whole number from 1 to 3650."],
     ["3651", "Enter a whole number from 1 to 3650."],
+    ["1.5", "Enter a whole number from 1 to 3650."],
+    ["-1", "Enter a whole number from 1 to 3650."],
   ] as const) {
     await days.fill(value);
     await apply.click();
