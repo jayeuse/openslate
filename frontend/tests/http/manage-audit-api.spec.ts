@@ -1350,6 +1350,8 @@ for (const [personal, title] of [
       const path = testInfo.outputPath("audit-workspace-day.csv");
       await download.saveAs(path);
       const csv = await readFile(path, "utf8");
+      expect(csv).toContain('"2026-03-08T05:00:00.000Z"');
+      expect(csv).toContain('"2026-03-09T03:59:59.999Z"');
       expect(csv).toBe(api.exportBodies[0]);
       expect(api.exports).toHaveLength(1);
       expect(api.exports[0]?.searchParams.get("created_after")).toBe(
