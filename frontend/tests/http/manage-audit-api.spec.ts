@@ -542,6 +542,8 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
 }, testInfo) => {
   await page.clock.install({ time: new Date("2026-10-01T09:00:00Z") });
   const logs = makeAuditLogs(123);
+  logs[0]!.target_label = "  =SUM(1,2)";
+  logs[0]!.actor_name = 'Export person, "quoted"';
   const api = createAuditRoute(logs);
   let retryResponseGate = Promise.resolve();
   await page.route("**/api/audit-logs**", async (route) => {
@@ -598,7 +600,10 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
   const csvPath = testInfo.outputPath("audit-filtered.csv");
   await download.saveAs(csvPath);
   const csv = await readFile(csvPath, "utf8");
+  expect(csv.trimEnd().split(/\r?\n/)).toHaveLength(124);
   expect(csv).toBe(api.exportBodies[0]);
+  expect(csv).toContain('"Export person, ""quoted"""');
+  expect(csv).toContain('"\'  =SUM(1,2)"');
   expect(api.exports).toHaveLength(1);
   const exported = api.exports[0]!.searchParams;
   expect(exported.get("created_after")).toBe("2026-08-31T16:00:00.000Z");
