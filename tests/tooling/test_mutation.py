@@ -294,6 +294,86 @@ class MutationTests(unittest.TestCase):
                 self.assertEqual(resumed["pending"], ["app/unknown.py"])
                 self.assertEqual(resumed["last_success"], "prior")
 
+    def test_retirement_requires_both_revision_boundaries_and_retains_receipt(self):
+        module = "app/known.py"
+        path = "backend/app/known.py"
+        failure = {"revision": "old", "errors": ["unresolved native run"]}
+        for case in (
+            (True, True, False, False, False, False, True),
+            (True, True, True, False, False, False, False),
+            (True, True, False, True, False, False, False),
+            (True, True, True, True, False, False, False),
+            (False, True, False, False, False, False, False),
+            (True, False, False, False, False, False, False),
+            (True, True, False, False, True, False, False),
+            (True, True, False, False, False, True, True),
+        ):
+            old_source, old_entry, source, entry, unavailable, rename, retire = case
+            for unfinished in (False, True):
+                with self.subTest(case=case, unfinished=unfinished):
+                    data = json.loads(json.dumps(self.data))
+                    if not entry:
+                        del data["modules"][module]
+                    state = {
+                        "cycle": "old" if unfinished else "queue",
+                        "last_success": "prior",
+                        "results": {},
+                        "modes": {module: "full"},
+                        "pending": [module] if unfinished else [],
+                        "failures": {} if unfinished else {module: failure},
+                    }
+                    if unfinished:
+                        mutation.pre_failure(state, "sync", 1, "old", module)
+                    before = json.dumps({"modules": {module: {}} if old_entry else {}})
+                    after = json.dumps({"modules": {module: {}} if entry else {}})
+                    facts = {
+                        "old": (before, path + "\n" if old_source else ""),
+                        "head": (after, path + "\n" if source else ""),
+                    }
+                    facts["later"] = facts["head"]
+                    boundary = (
+                        subprocess.CalledProcessError(128, "git")
+                        if unavailable
+                        else lambda args, facts=facts, **_: facts[
+                            args[2].split(":")[0] if args[1] == "show" else args[3]
+                        ][args[1] == "ls-tree"]
+                    )
+                    changed = [path] + (["backend/app/renamed.py"] if rename else [])
+                    with patch.object(mutation.subprocess, "check_output", side_effect=boundary):
+                        result = mutation.select(data, state, "head", changed)
+                        self.assertEqual(
+                            result["last_success"], "head" if retire and not rename else "prior"
+                        )
+                        self.assertEqual(result["results"], {})
+                        if retire:
+                            self.assertEqual(result["failures"], {})
+                            self.assertEqual(result["pending"], [])
+                            receipt = {
+                                "module": module,
+                                "original_revision": "old",
+                                "retirement_revision": "head",
+                                "unfinished": unfinished,
+                                "failure": None if unfinished else failure,
+                            }
+                            self.assertEqual(result["retirement_receipts"], [receipt])
+                            again = mutation.select(data, result, "head", changed)
+                            self.assertEqual(again["retirement_receipts"], [receipt])
+                            self.assertEqual(again["notes"], result["notes"])
+                            if rename:
+                                self.assertEqual(
+                                    result["notes"], ["unmapped source: backend/app/renamed.py"]
+                                )
+                                later = mutation.select(data, result, "later", changed)
+                                self.assertEqual(later["notes"], result["notes"])
+                        else:
+                            self.assertEqual(
+                                result["pending"] if unfinished else result["failures"][module],
+                                [module] if unfinished else failure,
+                            )
+                            self.assertEqual(result.get("retirement_receipts", []), [])
+                            if entry:
+                                self.assertEqual(result["modes"][module], "full")
+
     def test_scheduled_sample_preparation_includes_declared_controls_owner(self):
         backend = mutation.BACKEND
         module = "operations/sample/controls/access_verification.py"

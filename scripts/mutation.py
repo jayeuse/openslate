@@ -24,14 +24,78 @@ def base(data, state):
     return state.get("last_success") or data["selection_revision"]
 
 
+def retirement_verified(module, original, candidate):
+    if not original:
+        return False
+    path = "backend/" + module
+    try:
+        before = json.loads(
+            subprocess.check_output(
+                ["git", "show", f"{original}:docs/plans/mutation-baseline.json"],
+                cwd=ROOT,
+                text=True,
+            )
+        )["modules"]
+        after = json.loads(
+            subprocess.check_output(
+                ["git", "show", f"{candidate}:docs/plans/mutation-baseline.json"],
+                cwd=ROOT,
+                text=True,
+            )
+        )["modules"]
+        old_source = subprocess.check_output(
+            ["git", "ls-tree", "--name-only", original, "--", path], cwd=ROOT, text=True
+        ).splitlines()
+        new_source = subprocess.check_output(
+            ["git", "ls-tree", "--name-only", candidate, "--", path], cwd=ROOT, text=True
+        ).splitlines()
+        return (
+            isinstance(before, dict)
+            and isinstance(after, dict)
+            and module in before
+            and path in old_source
+            and module not in after
+            and path not in new_source
+        )
+    except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError):
+        return False  # Absence is not proof when the original or candidate cannot be read.
+
+
 def select(data, state, sha, changed):
     terminal = state.get("precomparison_failure")
     recover = terminal and terminal["revision"] == state.get("cycle") and sha != state["cycle"]
     if (state.get("pending") or terminal) and not recover:
         return state  # Finish this exact cycle, never reuse completed work at another SHA.
     modules = data["modules"]
+    failures = dict(state.get("failures", {}))
+    unfinished = set(state.get("pending", [])) if recover else set()
+    retirements = {}
+    for path in sorted(set(failures) | unfinished):
+        failure = failures.get(path)
+        revision = failure.get("revision") if failure is not None else state.get("cycle")
+        if path not in modules and retirement_verified(path, revision, sha):
+            retirements[path] = copy.deepcopy(
+                dict(
+                    module=path,
+                    original_revision=revision,
+                    retirement_revision=sha,
+                    failure=failure,
+                    unfinished=path in unfinished,
+                )
+            )
+            failures.pop(path, None)
     recorded = set(modules) | {p for entry in modules.values() for p in entry["owners"]}
     recorded |= set(data.get("zero_hit_excluded", []))
+    recorded |= set(retirements)
+    recorded |= {
+        receipt["module"]
+        for receipt in state.get("retirement_receipts", [])
+        if receipt["retirement_revision"] == sha
+        or (
+            receipt["module"] not in modules
+            and retirement_verified(receipt["module"], receipt["original_revision"], sha)
+        )
+    }
     notes = []
     for path in changed:
         if path.startswith(("backend/app/", "backend/operations/sample/", "backend/tests/")):
@@ -43,15 +107,24 @@ def select(data, state, sha, changed):
         for p, entry in modules.items()
         if any("backend/" + f in changed for f in [p, *entry["owners"]])
     }
-    modes.update({p: "full" for p in state.get("failures", {}) if p in modules})
+    modes.update({p: "full" for p in failures if p in modules})
     if recover:
         for path in state["pending"]:
+            if path in retirements:
+                continue
             modes.setdefault(path, state["modes"][path])
     if not state.get("last_success"):
         for path, entry in modules.items():
             if entry["baseline"] and entry["baseline"]["survivors"]:
                 modes.setdefault(path, "rescan")
-    result = dict(state, cycle=sha, modes=modes, pending=sorted(modes), results={})
+    result = dict(
+        state, cycle=sha, modes=modes, pending=sorted(modes), results={}, failures=failures
+    )
+    if retirements:
+        result["retirement_receipts"] = [
+            *state.get("retirement_receipts", []),
+            *retirements.values(),
+        ]
     if recover:
         receipt = copy.deepcopy(
             {key: value for key, value in state.items() if key != "precomparison_receipts"}
