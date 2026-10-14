@@ -1450,3 +1450,237 @@ for (const [width, height] of [
     });
   }
 }
+
+const emittedSentenceCases: {
+  type: string;
+  sentence: string;
+  patch?: Parameters<typeof securityEvent>[1];
+}[] = [
+  {
+    type: "identity.sign_in",
+    sentence: "Mara's sign-in was accepted from 198.51.100.42.",
+  },
+  {
+    type: "identity.sign_in_failure",
+    sentence: "Failed sign-in attempts were recorded from 198.51.100.42.",
+    patch: { outcome: "failure", actor_id: null, subject_id: null },
+  },
+  {
+    type: "identity.ip_blocked",
+    sentence: "Sign-in was blocked from 198.51.100.42.",
+    patch: { outcome: "denied", actor_id: null, subject_id: null },
+  },
+  {
+    type: "identity.lockout",
+    sentence: "Sign-in was temporarily locked from 198.51.100.42.",
+    patch: { outcome: "denied", actor_id: null, subject_id: null },
+  },
+  {
+    type: "identity.password_change",
+    sentence: "Mara changed their password.",
+  },
+  {
+    type: "identity.recovery_request",
+    sentence: "A password recovery request was accepted.",
+    patch: { actor_id: null, subject_id: null },
+  },
+  {
+    type: "identity.recovery_complete",
+    sentence: "Mara completed password recovery.",
+  },
+  {
+    type: "identity.mfa.enrolled",
+    sentence: "Mara enrolled a two-step verification factor.",
+  },
+  {
+    type: "identity.mfa.verified",
+    sentence: "Mara completed two-step verification.",
+  },
+  {
+    type: "identity.mfa.removed",
+    sentence: "Mara removed a two-step verification factor.",
+  },
+  {
+    type: "identity.mfa.cancelled",
+    sentence: "Mara cancelled two-step verification setup.",
+  },
+  {
+    type: "identity.mfa.removal_incomplete",
+    sentence:
+      "Two-step verification removal for Mara was only partly completed.",
+    patch: { outcome: "partial" },
+  },
+  {
+    type: "identity.recovery",
+    sentence: "Mara requested password recovery for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "identity.mfa_reset",
+    sentence: "Mara reset two-step verification for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "identity.session_revocation",
+    sentence: "Mara ended Jay's other sessions.",
+    patch: { subject_id: mfaUserB, labels: { scope: "others" } },
+  },
+  {
+    type: "identity.local_admin_recovery",
+    sentence: "Local administrator recovery was requested for Jay.",
+    patch: { actor_id: null, subject_id: mfaUserB },
+  },
+  {
+    type: "identity.local_security_recovery",
+    sentence: "Local security recovery completed for Jay.",
+    patch: { actor_id: null, subject_id: mfaUserB },
+  },
+  {
+    type: "user.invitation",
+    sentence: "Mara invited Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.invitation_resend",
+    sentence: "Mara resent an invitation for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.invitation_revocation",
+    sentence: "Mara revoked Jay's invitation.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.invitation_acceptance",
+    sentence: "Jay accepted an invitation.",
+    patch: { actor_id: mfaUserB, subject_id: mfaUserB },
+  },
+  {
+    type: "user.authentication_activation",
+    sentence: "Mara activated authentication for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.authentication_disable",
+    sentence: "Mara disabled authentication for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "user.authentication_restore",
+    sentence: "Mara restored authentication for Jay.",
+    patch: { subject_id: mfaUserB },
+  },
+  {
+    type: "workspace.security_policy_change",
+    sentence: "Mara changed the account security policy.",
+    patch: { subject_id: null },
+  },
+  {
+    type: "security.retention",
+    sentence: "Session retention removed 4 session records.",
+    patch: {
+      actor_id: null,
+      subject_id: null,
+      metadata: {
+        scope: "identity_sessions",
+        deleted_sessions: 4,
+        retention_days: 30,
+      },
+    },
+  },
+  {
+    type: "backup.export.download",
+    sentence: "Backup export download by Mara was attempted.",
+    patch: {
+      outcome: "attempt",
+      subject_id: eventOperationId,
+      metadata: { size_bytes: 200, backup_run_id: eventOperationId },
+    },
+  },
+  {
+    type: "file.download",
+    sentence: "File download by Mara was attempted.",
+    patch: {
+      outcome: "attempt",
+      subject_id: null,
+      metadata: { file_id: eventOperationId },
+    },
+  },
+  {
+    type: "records.export.authorized",
+    sentence: "Mara was authorized to export 120 records as Excel.",
+    patch: {
+      subject_id: eventOperationId,
+      metadata: { format: "xlsx", row_count: 120, column_count: 3 },
+    },
+  },
+  {
+    type: "records.aggregate_snapshot.authorized",
+    sentence:
+      "Mara was authorized to create an aggregate snapshot with 7 buckets.",
+    patch: { subject_id: eventOperationId, metadata: { bucket_count: 7 } },
+  },
+  {
+    type: "records.aggregate_snapshots.authorized",
+    sentence:
+      "Mara was authorized to create 2 aggregate snapshots with 7 buckets.",
+    patch: {
+      subject_id: null,
+      metadata: {
+        query_count: 2,
+        bucket_count: 7,
+        module_ids: [eventOperationId, historicalPersonId],
+      },
+    },
+  },
+  {
+    type: "lifecycle.record_purge",
+    sentence: "Mara permanently deleted a record.",
+    patch: {
+      subject_id: eventOperationId,
+      metadata: { trigger_history_rows_removed: 3 },
+    },
+  },
+  {
+    type: "job.retry",
+    sentence: "Mara queued a retry for a backup job.",
+    patch: {
+      subject_id: eventOperationId,
+      metadata: { kind: "backup", result_id: historicalPersonId },
+    },
+  },
+];
+
+test("S09: emitted event sentences use recorded facts without claiming unfinished work", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  state.directory.push(
+    person({ id: mfaUserB, username: "jay", display_name: "Jay" }),
+  );
+  state.events = emittedSentenceCases.map((item, index) =>
+    securityEvent(index + 100, {
+      ...item.patch,
+      event_type: item.type,
+      occurred_at: "2026-10-06T12:00:00Z",
+      metadata: {
+        ...(item.patch?.metadata ?? { ip_address: "198.51.100.42" }),
+        internal_note: unsafeEventCanary,
+      },
+    }),
+  );
+  await page.goto("/manage?view=audit&audit=security-events");
+  const controls = await filters(page);
+  for (const item of emittedSentenceCases) {
+    await controls
+      .getByLabel("Event type", { exact: true })
+      .selectOption(item.type);
+    await expect(
+      eventRows(page).getByText(item.sentence, { exact: true }),
+    ).toBeVisible();
+    await expect(eventRows(page)).not.toContainText("Other security event");
+    await expect(eventRows(page)).not.toContainText(unsafeEventCanary);
+  }
+  expect(state.commands).toEqual([]);
+  expect(state.security.writes).toEqual([]);
+});
