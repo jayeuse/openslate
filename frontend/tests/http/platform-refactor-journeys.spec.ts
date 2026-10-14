@@ -245,6 +245,44 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
       page.getByRole("region", { name: `${name} search results` }),
     ).toHaveCount(0);
 });
+test("Administrator people results open the existing People destination and empty groups stay truthful", async ({
+  page,
+}) => {
+  await page.route("**/api/search?*", (route) => {
+    const kind = new URL(route.request().url()).searchParams.get("kind");
+    return route.fulfill({
+      json: list(
+        kind === "person"
+          ? [
+              {
+                kind: "person",
+                id: uuid(1),
+                title: "Pump operator",
+                context_label: "operator",
+                module_id: null,
+                board_id: null,
+                can_open: true,
+              },
+            ]
+          : [],
+        kind === "person" ? 1 : 0,
+        0,
+        10,
+      ),
+    });
+  });
+  await page.goto("/platform?section=search");
+  await page
+    .getByRole("searchbox", { name: "Search workspace" })
+    .fill("operator");
+  await expect(
+    page.getByRole("link", { name: "Open Pump operator", exact: true }),
+  ).toHaveAttribute("href", `/access?view=people&user=${uuid(1)}`);
+  await expect(
+    page.getByRole("region", { name: "Records search results" }),
+  ).toContainText("No matching records.");
+});
+
 test("CSV preview and import use sequential complete batches, typed defaults and row errors", async ({
   page,
 }) => {
