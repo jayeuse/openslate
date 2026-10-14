@@ -1593,6 +1593,36 @@ test("saved Chart result metadata belongs to its resolved module without replaci
   expect(metadataReads.sort()).toEqual(
     ["source", resolvedDimension, resolvedMeasure].sort(),
   );
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await hideDevOverlay(page);
+  const checkLayout = async () => {
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page
+        .getByRole("heading", { name: "Chart preview", exact: true })
+        .scrollIntoViewIfNeeded();
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+      await expect(
+        page.getByText(
+          "Resolved revenue source · Sum net revenue by Revenue segment",
+          { exact: true },
+        ),
+      ).toBeVisible();
+    }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+  };
+  await checkLayout();
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await checkLayout();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page
