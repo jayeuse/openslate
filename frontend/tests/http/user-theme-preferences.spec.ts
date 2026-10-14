@@ -894,6 +894,11 @@ test("public prepaint resolves System and device text before hydration including
   await page.route("**/_next/**/*.js*", (route) => route.abort());
   await page.goto("/login");
   await expect(page.locator("html")).toHaveClass(/dark/);
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate((node) => getComputedStyle(node).fontSize),
+    )
+    .toBe("20px");
   await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");
   await expect(page.locator("html")).toHaveAttribute(
     "data-density",
@@ -912,6 +917,11 @@ test("public prepaint resolves System and device text before hydration including
   });
   await page.reload();
   await expect(page.locator("html")).toHaveClass(/dark/);
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate((node) => getComputedStyle(node).fontSize),
+    )
+    .toBe("16px");
   await expect(page.locator("html")).toHaveAttribute("data-text-size", "100");
 });
 
@@ -930,6 +940,11 @@ test("blocked device storage still applies text and spacing without claiming per
   await page
     .getByRole("combobox", { name: "Page spacing" })
     .selectOption("spacious");
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate((el) => getComputedStyle(el).fontSize),
+    )
+    .toBe("20px");
   await expect(page.locator("html")).toHaveAttribute("data-text-size", "125");
   await expect(
     page
@@ -978,6 +993,11 @@ test("Compact spacing respects 1279 and 1280 fine-pointer admission and device s
     "112.5",
   );
   await expect(density).toHaveValue("spacious");
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate((el) => getComputedStyle(el).fontSize),
+    )
+    .toBe("18px");
   await expect(page.locator("html")).toHaveAttribute("data-text-size", "112.5");
   await expect(page.locator("html")).toHaveAttribute("class", color ?? "");
 });
