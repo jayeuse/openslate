@@ -224,9 +224,12 @@ for (const failure of [422, 503] as const) {
   });
 }
 
-// The invalid photo id and the extra key are rows of
-// isolated/shell/profile-api.spec.ts.
-for (const defect of ["missing-phone", "wrong-owner"] as const) {
+for (const defect of [
+  "missing-phone",
+  "wrong-owner",
+  "invalid-avatar",
+  "extra",
+] as const) {
   test(`Profile refuses ${defect} private self data instead of inventing nullable defaults`, async ({
     page,
   }) => {
@@ -237,7 +240,10 @@ for (const defect of ["missing-phone", "wrong-owner"] as const) {
         void omitted;
         return rest;
       }
-      return { ...body, id: profileUserB };
+      if (defect === "wrong-owner") return { ...body, id: profileUserB };
+      if (defect === "invalid-avatar")
+        return { ...body, avatar_file_id: "not-a-uuid" };
+      return { ...body, provider_secret: "Must not render" };
     };
     await page.goto("/profile");
     await expect(
@@ -248,6 +254,7 @@ for (const defect of ["missing-phone", "wrong-owner"] as const) {
     await expect(page.getByLabel("Phone", { exact: true })).not.toHaveValue(
       "+1 555 0101",
     );
+    await expect(page.getByText("Must not render")).toHaveCount(0);
     expect(api.writes).toEqual([]);
     expect(api.forbiddenReads).toEqual([]);
   });
