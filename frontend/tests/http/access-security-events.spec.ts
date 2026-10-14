@@ -1687,3 +1687,83 @@ test("S09: emitted event sentences use recorded facts without claiming unfinishe
   expect(state.commands).toEqual([]);
   expect(state.security.writes).toEqual([]);
 });
+
+test("S09: missing and malformed sentence facts keep non-success outcomes truthful", async ({
+  page,
+}) => {
+  const state = await mockSecurityEvents(page);
+  state.events = [
+    securityEvent(0, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "identity.recovery_complete",
+      outcome: "attempt",
+      metadata: {},
+    }),
+    securityEvent(1, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "identity.password_change",
+      outcome: "failure",
+      metadata: {},
+    }),
+    securityEvent(2, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "user.invitation",
+      outcome: "denied",
+      metadata: {},
+    }),
+    securityEvent(3, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "identity.mfa_reset",
+      outcome: "partial",
+      metadata: {},
+    }),
+    securityEvent(4, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "records.export.authorized",
+      metadata: {
+        row_count: true,
+        format: "constructor",
+        module_name: unsafeEventCanary,
+      },
+    }),
+    securityEvent(5, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "records.aggregate_snapshots.authorized",
+      metadata: {
+        bucket_count: -1,
+        query_count: "2",
+        module_ids: [unsafeEventCanary],
+      },
+    }),
+    securityEvent(6, {
+      actor_id: null,
+      subject_id: null,
+      event_type: "job.retry",
+      metadata: { kind: "__proto__", result_id: unsafeEventCanary },
+    }),
+  ];
+  await page.goto("/manage?view=audit&audit=security-events");
+  for (const sentence of [
+    "Password recovery for Unknown person was attempted.",
+    "Password change for Unknown person failed.",
+    "An invitation from Unknown person to Unknown person was denied.",
+    "Two-step verification reset by Unknown person for Unknown person was only partly completed.",
+    "Unknown person was authorized to export records.",
+    "Unknown person was authorized to create aggregate snapshots.",
+    "Unknown person queued a retry for a job.",
+  ])
+    await expect(
+      eventRows(page).getByText(sentence, { exact: true }),
+    ).toBeVisible();
+  await expect(eventRows(page)).not.toContainText(
+    /completed password recovery|changed their password|invited |reset two-step verification|0 records|0 buckets|__proto__|constructor/,
+  );
+  await expect(eventRows(page)).not.toContainText(unsafeEventCanary);
+  expect(state.commands).toEqual([]);
+});
