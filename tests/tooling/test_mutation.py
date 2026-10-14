@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -142,6 +143,54 @@ class MutationTests(unittest.TestCase):
                 self.assertEqual(saved["pending"], ["app/known.py"])
                 self.assertIn("app/known.py", saved["failures"])
                 self.assertIsNone(saved["last_success"])
+
+    def test_scheduled_sample_preparation_includes_declared_controls_owner(self):
+        backend = mutation.BACKEND
+        module = "operations/sample/controls/access_verification.py"
+        owners = json.loads(mutation.BASELINE.read_text())["modules"][module]["owners"]
+        self.assertTrue(owners)
+        project = (backend / "pyproject.toml").read_text()
+        helper = mutation.runpy.run_path(str(backend / "tests/sample_mutation.py"))
+        standalone_text = helper["sample_pyproject"](project)
+        standalone = tomllib.loads(standalone_text)["tool"]["mutmut"]
+        self.assertEqual(
+            standalone["only_mutate"],
+            ["operations/sample/episodes.py", "operations/sample/history.py"],
+        )
+        self.assertIn(
+            "--ignore=tests/operations/sample/controls", standalone["pytest_add_cli_args"]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            fixture_backend = Path(directory)
+            for name in helper["LINKED"]:
+                (fixture_backend / name).symlink_to(backend / name)
+            (fixture_backend / "pyproject.toml").write_text(project)
+            with patch.object(mutation, "BACKEND", fixture_backend):
+                root = mutation.prepare({"cycle": "controls-owner"}, module)
+            config = tomllib.loads((root / "pyproject.toml").read_text())["tool"]["mutmut"]
+            self.assertEqual(config["only_mutate"], [module])
+            self.assertTrue((root / module).is_file())
+            args = config["pytest_add_cli_args"]
+            self.assertIn("--no-cov", args)
+            self.assertEqual(args[args.index("-m") + 1], "not integration")
+            selected = [root / path for path in config["pytest_add_cli_args_test_selection"]]
+            ignored = [
+                root / arg.removeprefix("--ignore=") for arg in args if arg.startswith("--ignore=")
+            ]
+            self.assertIn(
+                root / "tests/operations/sample/verification/test_frontend_route_coverage.py",
+                ignored,
+            )
+            for owner in owners:
+                with self.subTest(owner=owner):
+                    path = root / owner
+                    self.assertTrue(path.is_file())
+                    self.assertTrue(any(path.is_relative_to(selection) for selection in selected))
+                    self.assertFalse(
+                        any(path.is_relative_to(exclusion) for exclusion in ignored),
+                        f"Scheduled runner excludes declared owner {owner}",
+                    )
+        self.assertEqual(helper["sample_pyproject"](project), standalone_text)
 
 
 if __name__ == "__main__":

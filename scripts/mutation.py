@@ -107,6 +107,9 @@ def prepare(state, module):
         link.symlink_to(BACKEND / name)
     text = (BACKEND / "pyproject.toml").read_text()
     text = helper["sample_pyproject"](text) if sample else helper["module_pyproject"](text, module)
+    if sample:
+        # Scheduled ownership includes controls; standalone planner runs stay narrower.
+        text = text.replace('    "--ignore=tests/operations/sample/controls",\n', "")
     text = re.sub(r"^only_mutate = .*", "only_mutate = " + json.dumps([module]), text, flags=re.M)
     (root / "pyproject.toml").write_text(text)
     return root
