@@ -3014,6 +3014,29 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   expect(
     savedNewChoice.options.find((option) => option.label === "Complete")?.id,
   ).toBe(originalIds.Complete);
+  const originalViewport = page.viewportSize();
+  const originalScrollY = await page.evaluate(() => window.scrollY);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    if (viewport.width < 640) {
+      const propertiesTab = page.getByRole("tab", {
+        name: "Properties",
+      });
+      await expect(propertiesTab).toHaveCount(1);
+      if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
+        await propertiesTab.click();
+      const showSettings = page
+        .getByLabel("Status field settings")
+        .getByRole("button", { name: "Show Status settings", exact: true });
+      if (await showSettings.isVisible()) await showSettings.click();
+    }
+  }
+  if (originalViewport) await page.setViewportSize(originalViewport);
+  await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
 });
 
 test("removing an unsaved selected choice requires an explicit new default", async ({
@@ -3087,11 +3110,40 @@ test("the Designer saves a module record title field in the current v4 draft", a
   ).toBeVisible();
   await expect(closeField).toBeDisabled();
 
+  const originalViewport = page.viewportSize();
+  const originalScrollY = await page.evaluate(() => window.scrollY);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    if (viewport.width < 640) {
+      const propertiesTab = page.getByRole("tab", {
+        name: "Properties",
+      });
+      await expect(propertiesTab).toHaveCount(1);
+      if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
+        await propertiesTab.click();
+      const showSettings = page
+        .getByLabel("Title field settings")
+        .getByRole("button", { name: "Show Title settings", exact: true });
+      if (await showSettings.isVisible()) await showSettings.click();
+    }
+  }
+  if (originalViewport) await page.setViewportSize(originalViewport);
+  await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+
   await titleSelector.selectOption("");
   await expect.poll(sandbox.documentWrites).toBe(2);
   await expect(
     titleSettings.getByText(/selected as the record title/i),
   ).toHaveCount(0);
+  const showSettings = titleSettings.getByRole("button", {
+    name: "Show Title settings",
+    exact: true,
+  });
+  if (await showSettings.isVisible()) await showSettings.click();
   await expect(closeField).toBeEnabled();
 });
 
