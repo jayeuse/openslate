@@ -127,29 +127,47 @@ test("Person card guest DTO omits private keys and nullable member values remain
   expect(api.writes).toEqual([]);
 });
 
-// The other malformed cards are rows of isolated/shell/profile-api.spec.ts.
-test("Person card rejects guest-private-key without leaking response metadata or fetching unsafe photos", async ({
-  page,
-}) => {
-  const api = await installPersonCardApi(page, "platform", "guest");
-  api.cards.set(cardTarget, {
-    ...publicCard,
-    display_name: "Private leaked name",
-    email: "private@example.test",
+for (const fault of [
+  "guest-private-key",
+  "missing-member-key",
+  "unexpected-id",
+  "external-avatar",
+  "foreign-avatar",
+] as const) {
+  test(`Person card rejects ${fault} without leaking response metadata or fetching unsafe photos`, async ({
+    page,
+  }) => {
+    const api = await installPersonCardApi(
+      page,
+      "platform",
+      fault === "guest-private-key" ? "guest" : "member",
+    );
+    const body: Record<string, unknown> = {
+      ...(fault === "guest-private-key" ? publicCard : memberCard),
+      display_name: "Private leaked name",
+    };
+    if (fault === "guest-private-key") body.email = "private@example.test";
+    if (fault === "missing-member-key") delete body.phone;
+    if (fault === "unexpected-id") body.id = cardTarget;
+    if (fault === "external-avatar")
+      body.avatar_url = "https://example.test/private.png";
+    if (fault === "foreign-avatar")
+      body.avatar_url = `/api/users/${secondViewer}/avatar`;
+    api.cards.set(cardTarget, body);
+    await visit(page, api);
+    await trigger(page).click();
+    await expect(card(page).getByRole("alert")).toContainText(
+      "Person unavailable",
+    );
+    await expect(
+      card(page).getByText(
+        /Private leaked name|private@example.test|ana@example.test/,
+      ),
+    ).toHaveCount(0);
+    expect(api.avatarReads).toEqual([]);
+    expect(api.writes).toEqual([]);
   });
-  await visit(page, api);
-  await trigger(page).click();
-  await expect(card(page).getByRole("alert")).toContainText(
-    "Person unavailable",
-  );
-  await expect(
-    card(page).getByText(
-      /Private leaked name|private@example.test|ana@example.test/,
-    ),
-  ).toHaveCount(0);
-  expect(api.avatarReads).toEqual([]);
-  expect(api.writes).toEqual([]);
-});
+}
 
 for (const status of [401, 403, 500]) {
   test(`Person card ${status} shows safe unavailability and retries only on request`, async ({
