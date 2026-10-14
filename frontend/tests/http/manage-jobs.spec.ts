@@ -748,6 +748,15 @@ test("backup readback failure cannot offer recovery POST until a fresh GET succe
     page.getByRole("button", { name: "Check retry result", exact: true }),
   ).toBeEnabled();
   expect(api.posts).toHaveLength(1);
+  await page
+    .getByRole("button", { name: "Check retry result", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Backup retry request confirmed." }),
+  ).toBeVisible();
+  expect(api.posts[1].key).toBe(api.posts[0].key);
 });
 
 test("explicit Jobs 401 loses the session and never retains protected subjects", async ({
