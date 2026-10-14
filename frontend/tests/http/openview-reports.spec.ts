@@ -11,6 +11,7 @@ import { profilePreferences } from "./helpers/profile-api";
 import { pageOf, wirePagination } from "../helpers/pagination";
 import { gate } from "./helpers/gate";
 import { wireField } from "../helpers/wire";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -2092,10 +2093,31 @@ test("member may restore an archived Report but cannot permanently delete it", a
 
 test.describe("Report last-run summary", () => {
   test.use({ timezoneId: "America/Los_Angeles" });
-  for (const state of ["none", "failed", "running"] as const) {
-    test(`${state} last run is server-authored, regional and preserves schedule policy`, async ({
+  for (const { state, theme } of [
+    { state: "none", theme: null },
+    { state: "failed", theme: "light" },
+    { state: "failed", theme: "dark" },
+    { state: "running", theme: null },
+  ] as const) {
+    test(`${state} last run is server-authored, regional and preserves schedule policy${theme === "dark" ? " (dark)" : ""}`, async ({
       page,
     }) => {
+      if (theme) {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.emulateMedia({
+          colorScheme: theme,
+          reducedMotion: "reduce",
+        });
+        await page.route("**/api/users/*/preferences", (route) =>
+          route.fulfill({
+            json: {
+              user_id: userId,
+              theme,
+              appearance: { motion: "reduce", keyboard_shortcuts: true },
+            },
+          }),
+        );
+      }
       const reader = state === "failed";
       const api = await installReportsApi(page, false, report, {
         savedSchedule: true,
@@ -2145,6 +2167,33 @@ test.describe("Report last-run summary", () => {
         await expect(page.getByLabel("Local time")).toHaveValue("16:25");
       }
       expect(api.counts().scheduleWrites).toBe(0);
+      if (state === "failed") {
+        const originalViewport = page.viewportSize();
+        const originalScrollY = await page.evaluate(() => window.scrollY);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
+          await hideDevOverlay(page);
+          await page.evaluate(async () => {
+            await document.fonts.ready;
+            await new Promise<void>((resolve) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              ),
+            );
+          });
+          expect(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= window.innerWidth,
+            ),
+          ).toBe(true);
+        }
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+      }
     });
   }
 });
