@@ -150,14 +150,34 @@ def test_workspace_security_rejects_invalid_policies_and_admin_lockout_without_w
     client, _local_id, _owner = security_workspace
     initial = client.get("/api/workspace/security").json()
     revision = initial["revision"]
-    # The other refused bodies are rows of the stack-free WorkspaceSecurityUpdate table in
-    # tests/workspace/test_workspace_security_schema.py; this route case owns the 422 status
-    # and the unchanged policy read.
-    response = client.patch(
-        "/api/workspace/security", json={"revision": revision, "session_timeout_minutes": 20}
-    )
-    assert response.status_code == 422
-    assert client.get("/api/workspace/security").json() == initial
+    invalid = [
+        {},
+        {"session_timeout_minutes": 20},
+        {"session_timeout_minutes": True},
+        {"session_timeout_minutes": None},
+        {"password_min_length": 11},
+        {"password_min_length": 129},
+        {"password_min_length": True},
+        {"password_require_number": 1},
+        {"password_require_mixed_case": "true"},
+        {"password_require_mixed_case": None},
+        {"mfa_policy": "required"},
+        {"mfa_policy": None},
+        {"ip_allow_list": None},
+        {"ip_allow_list": ["private-network"]},
+        {"ip_allow_list": ["127.0.0.1/33"]},
+        {"ip_allow_list": ["127.0.0.1/32"] * 101},
+        {"unknown": True},
+    ]
+    invalid += [
+        {field: value}
+        for field in ("session_retention_days", "security_event_retention_days")
+        for value in (None, True, False, "365", 365.0, 0, 3651)
+    ]
+    for fields in invalid:
+        response = client.patch("/api/workspace/security", json={"revision": revision, **fields})
+        assert response.status_code == 422, fields
+        assert client.get("/api/workspace/security").json() == initial
     # A forwarded header never substitutes for the resolved request client address.
     locked_out = client.patch(
         "/api/workspace/security",
