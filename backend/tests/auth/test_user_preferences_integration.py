@@ -352,10 +352,20 @@ def test_personal_regional_preferences_merge_and_do_not_change_workspace_semanti
         assert (workspace.timezone, workspace.week_start, workspace.revision) == before
 
 
-def test_personal_preferences_refuse_invalid_regional_values(preferences_client):
-    # The other regional values are rows of the stack-free UserPreferencesUpdate table in
-    # tests/users/test_user_request_schemas.py.
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("timezone", "Not/AZone"),
+        ("timezone", 1),
+        ("date_format", "locale"),
+        ("time_format", "iso"),
+        ("week_start", "tuesday"),
+        ("start_page", "profile"),
+        ("start_page", None),
+    ],
+)
+def test_personal_preferences_refuse_invalid_regional_values(preferences_client, key, value):
     client, account, path = preferences_client
     before = _state(account)
-    assert client.patch(path, json={"appearance": {"timezone": "Not/AZone"}}).status_code == 422
+    assert client.patch(path, json={"appearance": {key: value}}).status_code == 422
     assert _state(account) == before
