@@ -22,6 +22,7 @@ const mara = "00000000-0000-4000-8000-000000000001";
 const jay = "00000000-0000-4000-8000-000000000002";
 const historical = "00000000-0000-4000-8000-000000000099";
 const operation = "00000000-0000-4000-8000-000000000900";
+const unsafeEventCanary = "CONTROLLED_UNDISPLAYED_EVENT_METADATA";
 const names: PersonNames = new Map([
   [mara, "Mara"],
   [jay, "Jay"],
@@ -618,10 +619,16 @@ const factRows: {
   {
     name: "snapshots with malformed counts",
     patch: {
+      id: "00000000-0000-4000-8000-000000000705",
+      occurred_at: "2026-10-06T07:00:00Z",
       actor_id: null,
       subject_id: null,
       event_type: "records.aggregate_snapshots.authorized",
-      metadata: { bucket_count: -1, query_count: "2", module_ids: [] },
+      metadata: {
+        bucket_count: -1,
+        query_count: "2",
+        module_ids: [unsafeEventCanary],
+      },
     },
     sentence: "Unknown person was authorized to create aggregate snapshots.",
   },
@@ -648,10 +655,12 @@ const factRows: {
   {
     name: "a retry with a prototype-like kind",
     patch: {
+      id: "00000000-0000-4000-8000-000000000706",
+      occurred_at: "2026-10-06T06:00:00Z",
       actor_id: null,
       subject_id: null,
       event_type: "job.retry",
-      metadata: { kind: "__proto__" },
+      metadata: { kind: "__proto__", result_id: unsafeEventCanary },
     },
     sentence: "Unknown person queued a retry for a job.",
   },
@@ -667,6 +676,19 @@ const factRows: {
     sentence: "Password recovery for Unknown person was attempted.",
   },
   {
+    name: "a failed password change without people",
+    patch: {
+      id: "00000000-0000-4000-8000-000000000701",
+      occurred_at: "2026-10-06T11:00:00Z",
+      actor_id: null,
+      subject_id: null,
+      event_type: "identity.password_change",
+      outcome: "failure",
+      metadata: {},
+    },
+    sentence: "Password change for Unknown person failed.",
+  },
+  {
     name: "a denied invitation without people",
     patch: {
       actor_id: null,
@@ -676,6 +698,20 @@ const factRows: {
       metadata: {},
     },
     sentence: "An invitation from Unknown person to Unknown person was denied.",
+  },
+  {
+    name: "a partial two-step verification reset without people",
+    patch: {
+      id: "00000000-0000-4000-8000-000000000703",
+      occurred_at: "2026-10-06T09:00:00Z",
+      actor_id: null,
+      subject_id: null,
+      event_type: "identity.mfa_reset",
+      outcome: "partial",
+      metadata: {},
+    },
+    sentence:
+      "Two-step verification reset by Unknown person for Unknown person was only partly completed.",
   },
   {
     name: "an unknown type",
