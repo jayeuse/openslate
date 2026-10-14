@@ -2678,6 +2678,29 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   expect(readStatusField().defaultValue).toBeNull();
 });
 
+test("removing an unsaved selected choice requires an explicit new default", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  const sandbox = await openAuthenticatedSandbox(page, design);
+  await page.getByRole("button", { name: "Show Status settings" }).click();
+  const settings = page.getByLabel("Status field settings");
+  const optionsInput = settings.getByLabel("Status options");
+  await optionsInput.fill("Temporary, Open, In progress, Complete");
+  await settings
+    .getByLabel("Status default value")
+    .selectOption({ label: "Temporary" });
+  await optionsInput.fill("Open, In progress, Complete");
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect(
+    settings.getByText("Default value must match a select option."),
+  ).toBeVisible();
+  expect(sandbox.documentWrites()).toBe(0);
+  await settings.getByLabel("Status default value").selectOption("");
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+});
+
 test("the Designer saves a module record title field in the current v4 draft", async ({
   page,
 }) => {
