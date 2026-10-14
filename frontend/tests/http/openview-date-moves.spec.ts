@@ -943,6 +943,29 @@ test("Timeline shifts mixed date and datetime fields together across DST without
   });
 });
 
+test("returning a legacy timezone-free datetime to its original workspace day clears the move without a write", async ({
+  page,
+}) => {
+  const api = await installDates(page, {
+    layout: "calendar",
+    startType: "datetime",
+    start: "2026-03-07T01:15:30.123456",
+  });
+  await page.goto(url);
+  await stage(page, "2026-03-08", "Task 1", "Move date…");
+  await expect(
+    page.getByRole("button", { name: "Save changes (1)" }),
+  ).toBeVisible();
+  await stage(page, "2026-03-06", "Task 1", "Move date…");
+  await expect(
+    page.getByRole("button", { name: "Save changes (1)" }),
+  ).toHaveCount(0);
+  expect(api.batches).toEqual([]);
+  expect(api.rows.get(recordId)?.data[startId]).toBe(
+    "2026-03-07T01:15:30.123456",
+  );
+});
+
 test.describe("touch", () => {
   test.use({
     viewport: { width: 390, height: 844 },
