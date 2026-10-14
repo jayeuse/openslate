@@ -3687,6 +3687,62 @@ test("department Dashboard builder saves Count over time and reloads the complet
   });
 });
 
+test("Dashboard bar builder requires and saves a typed numeric measure for Sum", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  await page.goto("/openview?section=dashboards");
+
+  await startNewDashboardDraft(page, "Equipment totals");
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Measure", { exact: true }).selectOption("sum");
+  const addChart = addDialog.getByRole("button", {
+    name: "Add widget",
+    exact: true,
+  });
+  const measure = addDialog.getByLabel("Numeric measure");
+  // AR27 pending: the original initial blank Numeric measure value assertion.
+  await measure.selectOption(amountFieldId);
+  await expect(addChart).toBeEnabled();
+  await addWidgetFromDialog(addDialog);
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+  // AR26 pending: the original post-save Sum table visibility assertion.
+  expect(api.writes[0]?.body).toEqual({
+    department_id: departmentId,
+    position: 0,
+    name: "Equipment totals",
+    refresh_cadence: "manual",
+    widgets: [
+      {
+        widget_type: "chart",
+        size: "M",
+        chart_id: null,
+        config: {
+          version: 1,
+          chart_type: "bar",
+          query: {
+            mode: "groups",
+            module_id: moduleId,
+            definition: queryDefinition,
+            aggregation: "sum",
+            measure: {
+              field_id: amountFieldId,
+              expected_type: "decimal",
+            },
+            dimension: {
+              field_id: categoryFieldId,
+              expected_type: "select",
+            },
+          },
+        },
+      },
+    ],
+  });
+  // AR26 pending: the original first bar-Sum aggregate-request projection.
+});
+
 test("department Dashboard Pie builder saves Sum and reloads its preview and complete table", async ({
   page,
 }) => {
@@ -3778,6 +3834,91 @@ test("department Dashboard Pie builder saves Sum and reloads its preview and com
   await expect(page.getByText("Showing 1–30 of 30")).toBeVisible();
   await expect(table.locator("tbody tr")).toHaveCount(30);
   expect(api.snapshots).toHaveLength(2);
+});
+
+test("Dashboard line builder requires and saves a typed numeric measure for Average", async ({
+  page,
+}) => {
+  const api = await installDashboardApi(page);
+  await page.goto("/openview?section=dashboards");
+
+  await startNewDashboardDraft(page, "Daily scores");
+  const addDialog = await openAddWidgetDialog(page);
+  await addDialog.getByLabel("Data source").selectOption(moduleId);
+  await addDialog.getByLabel("Chart type").selectOption("line");
+  await addDialog
+    .getByLabel("Measure", { exact: true })
+    .selectOption("average");
+  const addLineChart = addDialog.getByRole("button", {
+    name: "Add widget",
+    exact: true,
+  });
+  const measure = addDialog.getByLabel("Numeric measure");
+  // AR27 pending: the original initial blank Numeric measure value assertion.
+  await measure.selectOption(scoreFieldId);
+  await addDialog
+    .getByLabel("Group by", { exact: true })
+    .selectOption(dateFieldId);
+  await addDialog
+    .getByRole("button", { name: "Date window", exact: true })
+    .click();
+  await page.getByLabel("From date", { exact: true }).fill("2024-03-01");
+  await page.getByLabel("To date", { exact: true }).fill("2024-03-02");
+  await page.keyboard.press("Escape");
+  await expect(addLineChart).toBeEnabled();
+  await addWidgetFromDialog(addDialog);
+  await page.getByRole("button", { name: "Save Dashboard" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+  const table = page.getByRole("table", {
+    name: "Complete data for Average of Score over time",
+  });
+  await expect(table).toBeVisible();
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  expect(api.writes[0]?.body).toEqual({
+    department_id: departmentId,
+    position: 0,
+    name: "Daily scores",
+    refresh_cadence: "manual",
+    widgets: [
+      {
+        widget_type: "chart",
+        size: "M",
+        chart_id: null,
+        config: {
+          version: 1,
+          chart_type: "line",
+          query: {
+            mode: "date_series",
+            module_id: moduleId,
+            definition: queryDefinition,
+            aggregation: "average",
+            measure: { field_id: scoreFieldId, expected_type: "number" },
+            date_field: { field_id: dateFieldId, expected_type: "date" },
+            from_date: "2024-03-01",
+            to_date: "2024-03-02",
+            bucket: "day",
+          },
+        },
+      },
+    ],
+  });
+  expect(api.snapshots[0]).toMatchObject({
+    mode: "date_series",
+    aggregation: "average",
+    measure: { field_id: scoreFieldId, expected_type: "number" },
+    date_field: { field_id: dateFieldId, expected_type: "date" },
+  });
+
+  await page.reload();
+  await expect(table).toBeVisible();
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  expect(api.snapshots).toHaveLength(2);
+  expect(api.snapshots[1]).toMatchObject({
+    mode: "date_series",
+    aggregation: "average",
+    measure: { field_id: scoreFieldId, expected_type: "number" },
+  });
 });
 
 test("line chart builder blocks missing, reversed, and overlong date ranges", async ({
