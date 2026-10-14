@@ -535,6 +535,46 @@ test("CSV input rejects invalid UTF-8 and a wrong width while accepting one-colu
   ).toHaveCount(0);
 });
 
+test("UTF-8 JSON byte budget splits batches even with fewer than 100 rows", async ({
+  page,
+}) => {
+  await catalog(page);
+  const requests: ImportRequest[] = [];
+  const requestBytes: number[] = [];
+  await page.route("**/api/records/import", (route) => {
+    const body = route.request().postDataJSON() as ImportRequest;
+    requests.push(body);
+    requestBytes.push(Buffer.byteLength(route.request().postData() ?? ""));
+    return route.fulfill({ json: importResult(body) });
+  });
+  await upload(
+    page,
+    `Title,Quantity\n${"é".repeat(250000)},1\n${"é".repeat(250000)},2`,
+  );
+  await page
+    .getByRole("button", { name: "Preview import", exact: true })
+    .click();
+  await expect(
+    page.getByText("2 valid rows · 0 invalid rows", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Import 2 valid rows", exact: true })
+    .click();
+  await expect(
+    page.getByText("2 records imported.", { exact: true }),
+  ).toBeVisible();
+  expect(
+    requests.map((body) => [body.mode, body.rows.map((row) => row.row_number)]),
+  ).toEqual([
+    ["preview", [2]],
+    ["preview", [3]],
+    ["import", [2]],
+    ["import", [3]],
+  ]);
+  for (const bytes of requestBytes)
+    expect(bytes).toBeLessThanOrEqual(900 * 1024);
+});
+
 test("Leaving waits for the current import receipt and never starts a later batch", async ({
   page,
 }) => {
