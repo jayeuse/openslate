@@ -837,6 +837,11 @@ test("device text and density scale pages without changing account preferences",
   });
   await page.goto("/settings/appearance");
   await expect(dark(page)).toBeEnabled();
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate((node) => getComputedStyle(node).fontSize),
+    )
+    .toBe("20px");
   const html = page.locator("html");
   const rootSize = () =>
     html.evaluate((node) => parseFloat(getComputedStyle(node).fontSize));
@@ -864,6 +869,11 @@ test("device text and density scale pages without changing account preferences",
   await page
     .getByRole("combobox", { name: "Page spacing" })
     .selectOption("compact");
+  await expect
+    .poll(() =>
+      page.locator("html").evaluate((node) => getComputedStyle(node).fontSize),
+    )
+    .toBe("18px");
   await expect(html).toHaveAttribute("data-text-size", "112.5");
   await expect.poll(async () => (await rootSize()) / standard).toBe(1.125);
   await page.reload();
