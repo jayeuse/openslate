@@ -358,6 +358,15 @@ def test_corrupt_persisted_temporal_rows_fail_closed() -> None:
             date(1, 1, 2),
             id="window-start-has-no-utc-instant",
         ),
+        # Apia skipped this local date, so its UTC window has equal bounds.
+        pytest.param(
+            _timed_event(
+                "2011-12-30T09:00:00Z", "2011-12-30T11:00:00Z", timezone_name="Pacific/Apia"
+            ),
+            date(2011, 12, 30),
+            date(2011, 12, 30),
+            id="window-date-is-skipped-in-apia",
+        ),
     ],
 )
 def test_windows_that_are_not_representable_calendar_dates_fail_closed(

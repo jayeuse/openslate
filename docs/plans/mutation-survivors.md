@@ -74,10 +74,15 @@ Do not add `pragma: no mutate`. It hides a mutant instead of explaining it.
 
 ## app/systems/boards/event_occurrences.py
 
+The `_timed_window` equality guard is reachable on skipped local dates, such as
+`Pacific/Apia` on `2011-12-30`. The public
+`test_windows_that_are_not_representable_calendar_dates_fail_closed` owner in
+`backend/tests/boards/test_event_occurrences.py` covers that boundary and kills
+the `or` to `and` and `<=` to `<` guard mutations; they are not retained survivors.
+
 - `_zone`, `not isinstance(value, str) or not value.strip()` changed to `and`: 1 mutant — equivalent: a non-string value raises `AttributeError` at `.strip()`, which `_event_spec` catches as a corrupt row, and `ZoneInfo` refuses a blank string.
 - `_event_spec`, `timezone=None` and `duration=None` on the all-day spec, and `all_day=None`, `duration_days=None` and `duration_days=1` on the timed spec: 5 mutants — equivalent: all-day expansion reads only dates and `duration_days`, timed expansion reads only instants and `duration`, and `None` is false like `False`.
 - `_event_spec`, the `.replace(tzinfo=None, fold=0)` on the local start time (without `tzinfo`, without `fold`, `fold=1`), and `_compatible_local_instant` without `fold=0`: 4 mutants — equivalent: `_compatible_local_instant` sets `tzinfo` and `fold=0` on the combined wall time, and the stored local start time already has `fold=0`, so each normalization alone gives the same instant.
-- `_timed_window`, `end is None or end <= start` changed to `end is None and end <= start`, and `end <= start` changed to `end < start`: 2 mutants — unreachable default: when the start midnight has a UTC instant, the later end midnight also has one (`date.max` takes its own branch), and a local day is never zero or less long. Kept under the owner decision of 2026-10-12: the guarantee comes from another function (`_event_spec` or `_valid_window`) and the caller, not from a type, a schema or an earlier check in `_timed_window`.
 - `_recurrence_search_start`, the all-day `duration_days - 1` changed to `+ 1`, the timed `is None` changed to `is not None`, the one-day margin changed to `None` or `2`; the expansion passing `None` as the window-start instant (two spellings); and the first daily or weekly candidate `start_date + periods * step` changed to `-`: 7 mutants — equivalent: each only starts the search earlier (at worst at or before the anchor); `add` rechecks every candidate against the window, and candidates before the real search start end before the window. Only the loop length changes.
 - `_occurrence`, `start_at is None or end_at is None` changed to `and`: 1 mutant — unreachable default: `add` passes both instants for a timed occurrence. Kept under the owner decision of 2026-10-12: the guarantee comes from another function (`_event_spec` or `_valid_window`) on a stored row, not from a type, a schema or an earlier check in the same function, and mypy needs the `None` narrowing.
 - `expand_board_event_occurrences`, timed window bounds also computed for an all-day event (`spec.all_day and False`): 1 mutant — equivalent: all-day overlap and search start read only dates.
