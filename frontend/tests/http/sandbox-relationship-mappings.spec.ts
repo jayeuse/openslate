@@ -2798,6 +2798,58 @@ test("keyboard activation on a trigger flow node focuses its editor", async ({
   await expect(condition).toBeFocused();
 });
 
+test("unsaved Service request follow-up trigger draft fits the original viewport and theme matrix", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page);
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "Flow preview" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "New trigger" }).click();
+  await page.getByLabel("Trigger name").fill("Service request follow-up");
+  await page.getByLabel("Event", { exact: true }).selectOption("field-changed");
+  const settings = page.getByRole("region", { name: "Trigger settings" });
+  await settings
+    .getByLabel("Event module")
+    .selectOption({ label: "Service requests" });
+  await settings.getByLabel("Event field").selectOption({ label: "Status" });
+  await page.getByRole("button", { name: "Add condition" }).click();
+  await settings
+    .getByLabel("Condition 1 field")
+    .selectOption({ label: "Status" });
+  await settings.getByLabel("Condition 1 operator").selectOption("=");
+  await settings
+    .getByLabel("Set field target")
+    .first()
+    .selectOption({ label: "Status" });
+  const values = settings.getByLabel("Value", { exact: true });
+  await values.first().fill("Open");
+  await values.last().fill("In progress");
+
+  const views = [
+    { width: 1440, height: 1080, theme: "light" },
+    { width: 1440, height: 1080, theme: "dark" },
+    { width: 1920, height: 1200, theme: "light" },
+    { width: 1920, height: 1200, theme: "dark" },
+    { width: 390, height: 844, theme: "light" },
+    { width: 390, height: 844, theme: "dark" },
+  ] as const;
+
+  for (const view of views) {
+    await page.setViewportSize({ width: view.width, height: view.height });
+    await page.evaluate((theme) => {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }, view.theme);
+    const widths = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      page: document.documentElement.scrollWidth,
+    }));
+    expect(widths.page).toBeLessThanOrEqual(widths.viewport);
+  }
+});
+
 test("trigger panels resize with their requested minimum widths and remain usable", async ({
   page,
 }) => {
