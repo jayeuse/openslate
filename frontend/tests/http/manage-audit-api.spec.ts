@@ -1409,6 +1409,8 @@ test("Audit export pins the opening horizon through preview retry and server CSV
 }, testInfo) => {
   await page.clock.install({ time: new Date("2026-10-01T09:00:00Z") });
   const logs = makeAuditLogs(102);
+  logs[0]!.actor_label = "import metadata";
+  logs[0]!.actor_name = "Export person";
   const api = createAuditRoute(logs);
   let failExport = true;
   let addedConcurrentEntry = false;
@@ -1468,6 +1470,8 @@ test("Audit export pins the opening horizon through preview retry and server CSV
   const csvPath = testInfo.outputPath("audit-pinned.csv");
   await download.saveAs(csvPath);
   const csv = await readFile(csvPath, "utf8");
+  expect(csv.trimEnd().split(/\r?\n/)).toHaveLength(103);
+  expect(csv).toContain("Export person");
   expect(csv).toBe(api.exportBodies[0]);
   expect(
     exportRequests.filter((url) => url.pathname === "/api/audit-logs/export"),
