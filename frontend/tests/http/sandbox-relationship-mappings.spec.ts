@@ -1312,6 +1312,20 @@ test("a rejected template replacement stays open with its recoverable error", as
   );
 });
 
+test("an empty Sandbox can create Finance as its first department", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, initialDesign);
+
+  await page.getByRole("button", { name: "Add department" }).click();
+  await page.getByLabel("Department name").fill("Finance");
+  await page.getByRole("button", { name: "Create department" }).click();
+
+  await expect(
+    page.getByText("Finance", { exact: true }).first(),
+  ).toBeVisible();
+});
+
 test("an empty trigger list explains how to start and offers no save", async ({
   page,
 }) => {
