@@ -1,11 +1,15 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  departmentSchema,
   groupAccessEntrySchema,
   groupSchema,
   invitationCreateSchema,
   invitationSettingsSchema,
   memberCandidateSchema,
+  moduleSchema,
+  pageSchema,
+  sessionSchema,
   userAccessSchema,
   userPatchSchema,
   userSchema,
@@ -61,9 +65,13 @@ import {
   updateAccessUser,
 } from "../../../src/components/systems/access/state/api";
 import {
+  department,
   group,
   ids,
   memberCandidate,
+  accessModule,
+  pageOf,
+  session,
   user,
   workspace,
 } from "../access/fixtures";
@@ -371,6 +379,13 @@ describeContracts("Access", [
       }),
   },
 ]);
+
+test("responses shaped like the current backend models parse", () => {
+  expect(sessionSchema.parse(session)).toEqual(session);
+  expect(departmentSchema.parse(department)).toEqual(department);
+  expect(moduleSchema.parse(accessModule)).toEqual(accessModule);
+  expect(pageSchema(groupSchema).parse(pageOf([group])).items).toHaveLength(1);
+});
 
 // The generated cases above only prove that the adapters accept what the
 // backend declares. These schema checks own the refusals that generation
