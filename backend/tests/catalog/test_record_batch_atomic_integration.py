@@ -226,13 +226,50 @@ def test_compound_outer_commit_failure_confirms_nothing_and_rolls_back_all_items
         assert effects(world.db, row) == ([], [], [])
 
 
-def test_compound_invalid_envelope_is_422_before_even_valid_items_write(batch_world):
-    """One HTTP case; test_record_import_rules.py owns every compound envelope rule."""
-
+@pytest.mark.parametrize(
+    "bad_envelope",
+    [
+        "empty",
+        "too_many",
+        "duplicate",
+        "mixed",
+        "missing_value",
+        "missing_field",
+        "extra_change",
+        "extra_item",
+        "numeric_revision",
+        "naive_revision",
+        "date_revision",
+    ],
+)
+def test_compound_invalid_envelope_is_422_before_even_valid_items_write(batch_world, bad_envelope):
     world = batch_world
     row = create(world, "Keep")
     change = compound(row, (world.fields["title"].id, "Refused"))
-    change.update(field_id=str(world.fields["title"].id), value="Mixed")
+    if bad_envelope == "empty":
+        change["changes"] = []
+    elif bad_envelope == "too_many":
+        change["changes"] += [
+            {"field_id": str(world.fields[name].id), "value": None} for name in ("date", "datetime")
+        ]
+    elif bad_envelope == "duplicate":
+        change["changes"].append(
+            {"field_id": str(world.fields["title"].id).upper(), "value": "Duplicate"}
+        )
+    elif bad_envelope == "mixed":
+        change.update(field_id=str(world.fields["title"].id), value="Mixed")
+    elif bad_envelope in {"missing_value", "missing_field"}:
+        change["changes"][0].pop("value" if bad_envelope == "missing_value" else "field_id")
+    elif bad_envelope == "extra_change":
+        change["changes"][0]["data"] = {}
+    elif bad_envelope == "extra_item":
+        change["data"] = {}
+    else:
+        change["revision"] = {
+            "numeric_revision": 1,
+            "naive_revision": "2026-10-03T00:00:00",
+            "date_revision": "2026-10-03",
+        }[bad_envelope]
     response = submit(world, [item(row, world.fields["title"].id, "Also refused"), change])
     assert response.status_code == 422, response.text
     assert world.client.get(f"/api/records/{row['id']}").json() == row
