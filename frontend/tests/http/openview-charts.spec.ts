@@ -639,6 +639,66 @@ test("a month series refuses more than 366 buckets and accepts a calendar window
   ]);
 });
 
+for (const current of [
+  {
+    bucket: "year",
+    from: "2020-02-10",
+    to: "2027-12-31",
+    keys: [
+      "2020-01-01",
+      "2021-01-01",
+      "2022-01-01",
+      "2023-01-01",
+      "2024-01-01",
+      "2025-01-01",
+      "2026-01-01",
+      "2027-01-01",
+    ],
+  },
+]) {
+  test(`Unit A ${current.bucket} series accepts a calendar window longer than 366 days`, async ({
+    page,
+  }) => {
+    await editorCatalog(page);
+    const bodies: unknown[] = [];
+    await page.route("**/api/records/aggregate-snapshot", (route) => {
+      bodies.push(route.request().postDataJSON());
+      return route.fulfill({ json: calendarSnapshot(current.keys) });
+    });
+    await page.goto("/openview?section=charts");
+    await page.getByLabel("Chart type", { exact: true }).selectOption("line");
+    await page
+      .getByLabel("Calendar bucket", { exact: true })
+      .selectOption(current.bucket);
+    await page
+      .getByRole("button", { name: "Date window", exact: true })
+      .click();
+    await page.getByLabel("From date", { exact: true }).fill(current.from);
+    await page.getByLabel("To date", { exact: true }).fill(current.to);
+    await page.keyboard.press("Escape");
+    await page
+      .getByRole("button", { name: "Apply chart", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("table", { name: "Complete aggregate data", exact: true })
+        .getByRole("row"),
+    ).toHaveCount(current.keys.length + 1);
+    expect(bodies).toEqual([
+      {
+        mode: "date_series",
+        module_id: moduleId,
+        definition,
+        aggregation: "count",
+        date_field: { field_id: dateId, expected_type: "date" },
+        from_date: current.from,
+        to_date: current.to,
+        bucket: current.bucket,
+      },
+    ]);
+  });
+}
+
 test("incomplete, reversed and over-limit grouped windows send nothing and keep the 366-day boundary", async ({
   page,
 }) => {
