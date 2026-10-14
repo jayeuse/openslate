@@ -3708,7 +3708,11 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
   await page.getByRole("button", { name: "Save Dashboard" }).click();
 
   await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
-  // AR26 pending: the original post-save Sum table visibility assertion.
+  await expect(
+    page.getByRole("table", {
+      name: "Complete data for Sum of Amount by Category",
+    }),
+  ).toBeVisible();
   expect(api.writes[0]?.body).toEqual({
     department_id: departmentId,
     position: 0,
@@ -3740,7 +3744,11 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
       },
     ],
   });
-  // AR26 pending: the original first bar-Sum aggregate-request projection.
+  expect(api.snapshots[0]).toMatchObject({
+    mode: "groups",
+    aggregation: "sum",
+    measure: { field_id: amountFieldId, expected_type: "decimal" },
+  });
 });
 
 test("department Dashboard Pie builder saves Sum and reloads its preview and complete table", async ({
