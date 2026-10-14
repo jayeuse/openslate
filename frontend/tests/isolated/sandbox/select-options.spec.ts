@@ -222,6 +222,39 @@ test("select default: a renamed default choice keeps the default", () => {
   );
 });
 
+test("select default: a renamed default after a four-choice reorder keeps its ID", () => {
+  const reorderedField: Field = {
+    ...field,
+    options: "Complete, id-open, Open, In progress",
+    config: { kind: "select", defaultValue: "id-open", options: reordered },
+  };
+  expect(
+    buildField(
+      reorderedField,
+      draft("Complete, id-open, Active, In progress", "id-open"),
+    ),
+  ).toEqual({
+    id: "sample-field-Status",
+    name: "Status",
+    description: "",
+    type: "Select",
+    required: false,
+    value: "id-open",
+    options: "Complete, id-open, Active, In progress",
+    closed: false,
+    config: {
+      kind: "select",
+      defaultValue: "id-open",
+      options: [
+        { id: "id-complete", label: "Complete" },
+        { id: "id-inserted", label: "id-open" },
+        { id: "id-open", label: "Active" },
+        { id: "id-progress", label: "In progress" },
+      ],
+    },
+  });
+});
+
 test("select default: removing the default choice is refused", () => {
   expect(buildField(field, draft("In progress, Complete", "id-open"))).toBe(
     "Default value must match a select option.",
