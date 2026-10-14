@@ -834,10 +834,10 @@ test("independent roles and numeric limits save only changed keys, including fal
   await expect(save).toBeDisabled();
 });
 
-// The value rules (each bound, whole numbers, exponents, empty input) are the
-// isolated table in isolated/access/security-settings.spec.ts. This journey
-// keeps one invalid draft per field, to prove each field shows its own error,
-// and the exact body of the valid save.
+// Isolated settings own the value rules; this journey owns the original
+// empty-lifetime and exponent submissions, plus retention drafts submitted
+// with valid siblings, linked errors and retained values, and no writes or
+// page errors before the exact valid save body.
 test("numeric bounds and whole numbers retain invalid drafts without a request or page error", async ({
   page,
 }) => {
@@ -857,6 +857,10 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
   await policy
     .getByLabel("Total session lifetime", { exact: true })
     .selectOption("Limited");
+  await save.click();
+  await expect(
+    policy.getByLabel("Lifetime (minutes)", { exact: true }),
+  ).toHaveAttribute("aria-invalid", "true");
   await policy
     .getByLabel("Concurrent session limit", { exact: true })
     .selectOption("Limited");
@@ -882,6 +886,13 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
       invalid,
     );
   }
+  await policy
+    .getByLabel("Lockout duration (minutes)", { exact: true })
+    .fill("1e2");
+  await save.click();
+  await expect(
+    policy.getByLabel("Lockout duration (minutes)", { exact: true }),
+  ).toHaveAttribute("aria-invalid", "true");
   for (const label of [
     "Session retention (days)",
     "Security event retention (days)",
@@ -893,6 +904,24 @@ test("numeric bounds and whole numbers retain invalid drafts without a request o
   expect(pageErrors).toEqual([]);
   for (const [label, , valid] of cases)
     await policy.getByLabel(label, { exact: true }).fill(valid);
+  // Each retention field must reject its own draft while every sibling is valid.
+  for (const [label, valid] of [
+    ["Session retention (days)", "1"],
+    ["Security event retention (days)", "3650"],
+  ] as const) {
+    const field = policy.getByLabel(label, { exact: true });
+    for (const invalid of ["", "0", "-1", "1.5", "1e2", "3651"]) {
+      await field.fill(invalid);
+      await save.click();
+      await expect(field).toHaveAttribute("aria-invalid", "true");
+      await expect(field).toHaveAccessibleDescription(
+        /whole number from 1 to 3650/,
+      );
+      await expect(field).toHaveValue(invalid);
+      expect(state.writes).toEqual([]);
+    }
+    await field.fill(valid);
+  }
   await save.click();
   await expect(save).toBeDisabled();
   expect(state.writes.at(-1)?.body).toEqual({
