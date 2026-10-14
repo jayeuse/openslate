@@ -44,6 +44,21 @@ function configuredDesignWithLegacyMapping(): Design {
   return design;
 }
 
+function configuredDesignWithOffsetDateTimeBounds(): Design {
+  const design = structuredClone(configuredSandboxDesign);
+  const field = design.modules[0]?.fields[0];
+  if (!field) throw new Error("A configured field is required");
+  field.type = "Date/Time";
+  field.value = "2025-01-01T01:00:00+02:00";
+  field.config = {
+    kind: "datetime",
+    defaultValue: "2025-01-01T01:00:00+02:00",
+    earliest: "2025-01-01T01:00:00+02:00",
+    latest: "2025-01-01T00:00:00Z",
+  };
+  return design;
+}
+
 test("bound module lifecycle uses the live name and refreshes the saved design", async ({
   page,
 }) => {
@@ -2214,6 +2229,28 @@ test("closing a mapped field removes its relationship mappings", async ({
   await expect(dialog.getByText("Legacy field mappings")).toHaveCount(0);
 });
 
+test("the Designer saves offset Date/Time bounds in chronological order", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredDesignWithOffsetDateTimeBounds(),
+  );
+
+  await page
+    .getByRole("button", { name: "Show Request number settings" })
+    .click();
+  await page
+    .getByLabel("Request number field settings")
+    .getByRole("button", { name: "Save field changes" })
+    .click();
+
+  await expect.poll(sandbox.documentWrites).toBe(1);
+  await expect(
+    page.getByText("Earliest value cannot be after latest value."),
+  ).toHaveCount(0);
+});
+
 test("a failed structural save remains visibly unsaved until the shared draft is reloaded", async ({
   page,
 }) => {
@@ -2666,16 +2703,64 @@ test("editing select choices preserves IDs, even when a label matches the defaul
 
   await settings
     .getByLabel("Status options")
+    .fill(`Complete, ${idShapedLabel}, Open, In progress`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(2);
+  const reordered = readStatusField();
+  expect(reordered.options.map((option) => [option.label, option.id])).toEqual([
+    ["Complete", originalIds.Complete],
+    [idShapedLabel, insertedId],
+    ["Open", openId],
+    ["In progress", originalIds["In progress"]],
+  ]);
+
+  await settings
+    .getByLabel("Status options")
+    .fill(`Complete, ${idShapedLabel}, Active, In progress`);
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(3);
+
+  const after = readStatusField();
+  expect(after.options.find((option) => option.label === "Active")?.id).toBe(
+    openId,
+  );
+  expect(after.defaultValue).toBe(openId);
+
+  await settings
+    .getByLabel("Status options")
     .fill(`Complete, ${idShapedLabel}, In progress`);
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect(
     settings.getByText("Default value must match a select option."),
   ).toBeVisible();
-  expect(sandbox.documentWrites()).toBe(1);
+  expect(sandbox.documentWrites()).toBe(3);
   await settings.getByLabel("Status default value").selectOption("");
   await settings.getByRole("button", { name: "Save field changes" }).click();
-  await expect.poll(sandbox.documentWrites).toBe(2);
+  await expect.poll(sandbox.documentWrites).toBe(4);
   expect(readStatusField().defaultValue).toBeNull();
+
+  const optionsInput = settings.getByLabel("Status options");
+  const defaultInput = settings.getByLabel("Status default value");
+  await optionsInput.fill(
+    `Complete, ${idShapedLabel}, In progress, Draft choice`,
+  );
+  await defaultInput.selectOption({ label: "Draft choice" });
+  await optionsInput.fill(
+    `Draft choice, Complete, ${idShapedLabel}, In progress`,
+  );
+  await settings.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(5);
+  const savedNewChoice = readStatusField();
+  const draftChoiceId = savedNewChoice.options.find(
+    (option) => option.label === "Draft choice",
+  )?.id;
+  expect(draftChoiceId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\s\S])/i,
+  );
+  expect(savedNewChoice.defaultValue).toBe(draftChoiceId);
+  expect(
+    savedNewChoice.options.find((option) => option.label === "Complete")?.id,
+  ).toBe(originalIds.Complete);
 });
 
 test("removing an unsaved selected choice requires an explicit new default", async ({
