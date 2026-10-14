@@ -101,6 +101,47 @@ class PlaywrightShardTests(unittest.TestCase):
             self.files[-1], [file for bin_ in receipt["assignments"] for file in bin_["files"]]
         )
 
+    def test_empty_history_assigns_current_files_once_with_uniform_positive_weight(self):
+        self.weights = {}
+        collection = list(reversed(self.files)) + [self.files[0]]
+        plans = [self.plan(shard, collection) for shard in range(1, 7)]
+        union = [line for selection, _ in plans for line in selection.splitlines()]
+        self.assertEqual(
+            sorted(union),
+            [
+                "[http] › http/a.spec.ts",
+                "[http] › http/b.spec.ts",
+                "[http] › http/c.spec.ts",
+                "[http] › http/d.spec.ts",
+                "[http] › http/e.spec.ts",
+                "[http] › http/f.spec.ts",
+                "[http] › http/g.spec.ts",
+                "[http] › http/h.spec.ts",
+            ],
+        )
+        self.assertEqual(len(union), len(set(union)))
+        _, receipt = plans[0]
+        fallback = receipt["fallback_weight_ms"]
+        self.assertGreater(fallback, 0)
+        self.assertEqual(
+            [bin_["files"] for bin_ in receipt["assignments"]],
+            [
+                ["http/a.spec.ts", "http/g.spec.ts"],
+                ["http/b.spec.ts", "http/h.spec.ts"],
+                ["http/c.spec.ts"],
+                ["http/d.spec.ts"],
+                ["http/e.spec.ts"],
+                ["http/f.spec.ts"],
+            ],
+        )
+        self.assertEqual(
+            [bin_["weight_ms"] for bin_ in receipt["assignments"]],
+            [2 * fallback, 2 * fallback, fallback, fallback, fallback, fallback],
+        )
+        reordered_selection, reordered_receipt = self.plan()
+        self.assertEqual(reordered_selection, plans[0][0])
+        self.assertEqual(reordered_receipt["assignments"], receipt["assignments"])
+
 
 if __name__ == "__main__":
     unittest.main()

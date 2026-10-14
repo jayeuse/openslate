@@ -31,7 +31,7 @@ def main() -> None:
     seed = json.loads(args.weights.read_text(encoding="utf-8"))
     files = sorted({suite["file"] for suite in collection["suites"]})
     weights = seed["files"]
-    default = median(weights.values())
+    default = median(weights.values()) if weights else 1
     current_weights = {file: weights.get(file, default) for file in files}
     assignments = [
         {"shard": index + 1, "files": [], "weight_ms": 0} for index in range(args.shards)
