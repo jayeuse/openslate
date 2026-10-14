@@ -510,3 +510,48 @@ test("a source replaced during confirmation discards the delayed result and wait
     hold.release();
   }
 });
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`email surfaces at ${viewport.width} px in ${theme} keep enabled actions without submission`, async ({
+      page,
+    }) => {
+      const profile = await installProfileApi(page);
+      const api = await installEmailChangeApi(page, { signedOut: true });
+      profile.theme = theme;
+      await page.setViewportSize(viewport);
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+      api.authenticated = true;
+      const dialog = await openEmailRequest(page);
+      await expect(
+        dialog.getByRole("button", {
+          name: "Send confirmation emails",
+          exact: true,
+        }),
+      ).toBeEnabled();
+
+      api.authenticated = false;
+      await page.goto(
+        `${emailChangeLanding}#token_hash=${currentEmailProof}&type=email_change`,
+      );
+      await expect(confirm(page)).toBeEnabled();
+      await expectNoEmailSecrets(page);
+      // Public auth pages have no account theme provider. Set the fixture's
+      // root theme directly to inspect the same established semantic tokens.
+      await page.evaluate(
+        (dark) => document.documentElement.classList.toggle("dark", dark),
+        theme === "dark",
+      );
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      expect(api.requests).toEqual([]);
+      expect(api.completions).toEqual([]);
+    });
+  }
+}
