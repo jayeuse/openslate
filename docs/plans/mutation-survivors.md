@@ -2,7 +2,7 @@
 
 This file belongs to item 24 of [the Tier 2.5 plan](test-suite-tier-2-5.md). It lists the surviving mutants that no new test kills, with the reason. A survivor in behavior that a user, an API client, or the data depends on is killed instead, and does not appear here.
 
-Scores come from `backend/tests/app_mutation.py` (one `app/` module in its own root) or `backend/tests/sample_mutation.py` (`operations/sample`). Both run only the tests that need no stack.
+Recorded scores come from `backend/tests/app_mutation.py` (one `app/` module in its own root) or `backend/tests/sample_mutation.py` (`operations/sample`). Both run only the tests that need no stack. Item 27's machine-readable baseline is partial: 13 of 301 eligible entries are populated and 288 are null. Its stored 3,890 kills and 475 survivor names are historical inventory, not fresh scheduled mutation scores or a complete baseline. The first-run rescan covers only the recorded survivors of the 13 seeded entries, not every survivor described here. Each remaining module gets a reviewed, revision-bound baseline when its source or owner tests next change.
 
 ## Format
 
