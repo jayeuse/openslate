@@ -1,6 +1,7 @@
 import {
   exitGuarded,
   expect,
+  heldResponse,
   settleReact,
   signedInAs,
   test,
@@ -57,6 +58,213 @@ function configuredDesignWithOffsetDateTimeBounds(): Design {
     latest: "2025-01-01T00:00:00Z",
   };
   return design;
+}
+
+async function expectNoBusySandboxRegionsAtReviewSizes(
+  page: Page,
+  theme: "light" | "dark",
+) {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    // The original callback checks the applied theme before its busy predicate.
+    await expect(page.locator("html")).toHaveClass(
+      theme === "dark" ? /dark/ : /^(?!.*dark)/,
+    );
+    await expect(
+      page.locator('[data-slot="loading-region"][aria-busy="true"]'),
+    ).toHaveCount(0);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test.describe(`Sandbox zero busy loading regions in ${theme}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+      await page.route("**/api/users/*/preferences", (route) =>
+        route.fulfill({
+          json: {
+            user_id: "00000000-0000-4000-8000-000000000001",
+            theme,
+            appearance: { motion: "reduce", keyboard_shortcuts: true },
+          },
+        }),
+      );
+    });
+
+    test("incoming relationship close review", async ({ page }) => {
+      const design = configuredDesignWithLegacyMapping();
+      const relationship = design.relationships[0]!;
+      const liveId = "00000000-0000-4000-8000-000000000561";
+      const externalImpacts = [1, 2].map((endpoint) => ({
+        edge_id: "00000000-0000-4000-8000-000000000562",
+        field_id: liveId,
+        external_record_id: `00000000-0000-4000-8000-00000000056${endpoint + 2}`,
+        external_record_label: `Retained record ${endpoint}`,
+        external_module_id: "00000000-0000-4000-8000-000000000565",
+        external_module_name: "Equipment",
+        external_department_id: "00000000-0000-4000-8000-000000000566",
+        external_department_name: "Operations",
+      }));
+      await installLifecycleRoutes(
+        page,
+        { kind: "field", liveId },
+        {
+          reviews: {
+            close: () =>
+              lifecycleReview("field", liveId, "close", {
+                token: "owned-relationship-close",
+                confirmationName: "Live equipment link",
+                impact: { external_impacts: externalImpacts },
+              }),
+          },
+        },
+      );
+      await openAuthenticatedSandbox(page, design, {
+        bindings: [liveBinding("relationship", relationship.id, liveId)],
+      });
+      await page.goto(`/sandbox?module=${relationship.target}`);
+      await page
+        .getByRole("button", {
+          name: `Close incoming relationship ${relationship.name}`,
+          exact: true,
+        })
+        .click();
+      const close = page.getByRole("dialog", {
+        name: "Close relationship",
+        exact: true,
+      });
+      await expect(
+        close.getByText(
+          "1 record link will be closed. Existing records are kept.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+    });
+
+    test("filtered capacity 45 History and checkpoint review", async ({
+      page,
+    }) => {
+      await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+        versions: capacityVersions(45),
+      });
+      await page.getByRole("link", { name: "History", exact: true }).click();
+      const { timeline } = historyRegions(page);
+      await timeline.getByLabel("Find a version").fill("Needle");
+      await expect(timeline).toContainText("1 saved version");
+      const text =
+        "45 of 50 versions used. Delete the oldest unpublished checkpoints to free space.";
+      await expect(timeline.getByText(text, { exact: true })).toBeVisible();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+      const checkpoint = await openCheckpointDialog(page);
+      await expect(checkpoint.getByText(text, { exact: true })).toBeVisible();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+    });
+
+    test("filtered 28-version export after the unchecked download", async ({
+      page,
+    }) => {
+      const versions = Array.from({ length: 28 }, (_, index) => ({
+        ...historyVersionFixture(
+          index + 1,
+          index === 0 ? "Needle checkpoint" : `Export version ${index + 1}`,
+          index < 20 ? "checkpoint" : "published",
+        ),
+        createdAt: "2026-10-01T10:00:00Z",
+      }));
+      const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+      const bundle = exportBundleFixture(versions, document);
+      await page.route("**/api/sandbox/export?*", (route) =>
+        route.fulfill({
+          contentType: "application/json",
+          headers: {
+            "Content-Disposition":
+              'attachment; filename="owned-sandbox-history.json"',
+          },
+          json:
+            new URL(route.request().url()).searchParams.get(
+              "includeVersions",
+            ) === "true"
+              ? bundle
+              : document,
+        }),
+      );
+      await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+        versions,
+      });
+      await page.getByRole("link", { name: "History", exact: true }).click();
+      const { timeline } = historyRegions(page);
+      await timeline.getByLabel("Find a version").fill("Needle");
+      await expect(timeline).toContainText("1 saved version");
+      const dialog = await openImportExport(page);
+      const include = dialog.getByRole("checkbox", {
+        name: "Include version history",
+        exact: true,
+      });
+      await expect(include).not.toBeChecked();
+      await expect(
+        dialog.getByText("28 saved versions", { exact: true }),
+      ).toBeVisible();
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        dialog
+          .getByRole("button", { name: "Export JSON", exact: true })
+          .click(),
+      ]);
+      await download.path();
+      await include.check();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+    });
+
+    test("51-version export ready and held pending from Build", async ({
+      page,
+    }) => {
+      const versions = capacityVersions(50);
+      const bundle = exportBundleFixture(versions);
+      const pending = heldResponse();
+      await page.route("**/api/sandbox/export?*", async (route) => {
+        pending.enter();
+        await pending.released;
+        await route.fulfill({
+          headers: {
+            "Content-Disposition":
+              'attachment; filename="owned-history-51.json"',
+          },
+          json: bundle,
+        });
+      });
+      await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+        versions,
+      });
+      const dialog = await openImportExport(page);
+      await expect(
+        dialog.getByText("51 saved versions", { exact: true }),
+      ).toBeVisible();
+      await dialog
+        .getByRole("checkbox", { name: "Include version history", exact: true })
+        .check();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+      try {
+        await dialog
+          .getByRole("button", { name: "Export JSON", exact: true })
+          .click();
+        await pending.entered;
+        await expect(
+          dialog.getByRole("button", { name: "Exporting…", exact: true }),
+        ).toBeDisabled();
+        await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+        const completedDownload = page.waitForEvent("download");
+        pending.release();
+        await completedDownload;
+      } finally {
+        pending.release();
+      }
+    });
+  });
 }
 
 test("bound module lifecycle uses the live name and refreshes the saved design", async ({
