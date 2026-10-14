@@ -238,7 +238,7 @@ Items 1, 2, 3 and 12 established this shape; item 21 verified complete local/CI 
 
 | Workflow | Implemented shape |
 |---|---|
-| Frontend | `check`; `build` uploads `out/`; one `isolated` job; six whole-file, duration-balanced HTTP shards with two workers each. The HTTP tests serve the static export through the FastAPI test entry. Pinned Chromium installation and the lockfile-keyed browser cache remain. |
+| Frontend | `check`; `build` uploads `out/`; one `isolated` job; six whole-file, duration-balanced HTTP shards with two workers each. The HTTP tests serve the static export through the test-only ASGI entry over production `StaticSite`. Pinned Chromium installation and the lockfile-keyed browser cache remain. |
 | Backend | `quality`; a stack-free unit job with four workers; five integration-only stack shards; `coverage-gate` combines both; separate `reset-acceptance`; unified server `container` build. Durations come from the CI combine step. |
 | Both | Change classification and the item 14 ledger/forbidden-pattern guard preserve required checks. Source-consuming jobs check out the exact PR head, or the event SHA for non-PR runs. |
 | Pre-push | At push time, `python3 scripts/prepush.py --base <base-ref> --serial` runs frontend and backend lanes one after another. Frontend uses up to three local workers; backend runs its stack-free unit lane before three integration shards. Same complete behavior coverage and gates, with measured host-specific parallelism. |
