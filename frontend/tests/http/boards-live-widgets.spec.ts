@@ -50,6 +50,46 @@ const wireWidget = {
   updated_at: timestamp,
 };
 
+async function expectWidgetAppearanceMatrix(
+  page: Page,
+  assertState: (
+    viewport: { width: number; height: number },
+    mode: "light" | "dark",
+  ) => Promise<void>,
+) {
+  const previous = await page.evaluate(() => ({
+    mode: document.documentElement.classList.contains("dark")
+      ? ("dark" as const)
+      : ("light" as const),
+    reduceMotion: document.documentElement.dataset.motion === "reduced",
+  }));
+  try {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate(applyAppearancePreferences, {
+        mode,
+        reduceMotion: true,
+      });
+      const originalViewport = page.viewportSize();
+      const originalScrollY = await page.evaluate(() => window.scrollY);
+      try {
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
+          await assertState(viewport, mode);
+        }
+      } finally {
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+      }
+    }
+  } finally {
+    await page.evaluate(applyAppearancePreferences, previous);
+  }
+}
+
 async function installS26WidgetApi(page: Page, widgets: unknown[]) {
   await installOpenViewEventSource(page);
   const actor = "00000000-0000-4000-8000-000000000661";
@@ -1266,6 +1306,28 @@ test("Board query editing preserves full definition and outer name module size a
   await page.goto(`/boards?board=${boardId}`);
   const settings = await openEvidenceSettings(page, "Retained Board query");
   await settings.getByLabel("Measure", { exact: true }).selectOption("min");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  try {
+    await expectWidgetAppearanceMatrix(page, async (viewport) => {
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+      if (viewport.width === 390) {
+        await settings
+          .getByText("Chart source", { exact: true })
+          .evaluate((element) => element.scrollIntoView({ block: "start" }));
+      } else {
+        await settings
+          .getByRole("heading", { name: "Widget settings", exact: true })
+          .scrollIntoViewIfNeeded();
+      }
+      await expect(settings.getByLabel("Measure", { exact: true })).toHaveValue(
+        "min",
+      );
+    });
+  } finally {
+    await page.emulateMedia({ reducedMotion: null });
+  }
   await settings
     .getByLabel("Widget name", { exact: true })
     .fill("Minimum retained query");
@@ -1407,6 +1469,29 @@ test("later field-page denial hides all catalog names but retains the typed Boar
     settings.getByRole("button", { name: "Save settings", exact: true }),
   ).toBeDisabled();
   expect(api.writes).toEqual([]);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  try {
+    await expectWidgetAppearanceMatrix(page, async (viewport) => {
+      await page
+        .getByRole("dialog", { name: "Manage Board widgets", exact: true })
+        .getByLabel("Chart source", { exact: true })
+        .scrollIntoViewIfNeeded();
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+      await expect(
+        settings.getByRole("button", { name: "Save settings", exact: true }),
+      ).toBeDisabled();
+      for (const name of [
+        "Private catalog source",
+        "Private dimension label",
+        "Private measure label",
+      ])
+        await expect(manager).not.toContainText(name);
+    });
+  } finally {
+    await page.emulateMedia({ reducedMotion: null });
+  }
   refused = false;
   await settings
     .getByRole("button", { name: "Retry fields", exact: true })
@@ -2762,6 +2847,17 @@ test("live Board Overview renders supported group and date charts with exact val
     });
     await expectGeometryReady(phase);
   }
+  await page.evaluate(() => document.fonts.ready);
+  await expectWidgetAppearanceMatrix(page, async (viewport, mode) => {
+    await expectGeometryReady(
+      `matrix ${mode} ${viewport.width}x${viewport.height}`,
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  });
 });
 
 test("widget create and edit omit refresh even when the server returns a legacy interval", async ({
@@ -3054,4 +3150,15 @@ test("widget metadata and scoped record bursts refresh once on the shared stream
       return state().active;
     }),
   ).toBe(1);
+  await page.evaluate(() => document.fonts.ready);
+  await expectWidgetAppearanceMatrix(page, async () => {
+    await expect(
+      page.getByRole("heading", { name, exact: true }),
+    ).toBeInViewport();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  });
 });
