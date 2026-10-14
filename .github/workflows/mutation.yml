@@ -27,8 +27,9 @@ jobs:
     steps:
       - name: Start the bounded lane
         run: |
-          mkdir -p "$OUTPUT"
           echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          printf 'COMPARED=0\nDISCOVERED=0\n' >> "$GITHUB_ENV"
+          mkdir -p "$OUTPUT"
           printf 'run=%s attempt=%s trigger=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" > "$OUTPUT/run.txt"
       - uses: actions/checkout@v7
         timeout-minutes: 2
@@ -160,7 +161,11 @@ jobs:
                 fi
               done < <(jq -r '.exit_code_by_key | to_entries[] | select(.value == 36 or .value == -24 or .value == 24 or .value == 152 or .value == 255) | .key' "$meta")
             fi
+            known=$(jq -c --arg m "$module" '[.results[$m].survivors[]?, .failures[$m].survivors[]?] | unique' "$state")
             python3 "$RUNNER_TEMP/mutation-controller.py" compare "$module" "$rc"
+            COMPARED=$((COMPARED + 1))
+            DISCOVERED=$((DISCOVERED + $(jq --arg m "$module" --argjson known "$known" '(.results[$m].new_survivors - $known) | length' "$state")))
+            printf 'COMPARED=%s\nDISCOVERED=%s\n' "$COMPARED" "$DISCOVERED" >> "$GITHUB_ENV"
             cycle=$(jq -r .cycle "$state")
             diffs="$GITHUB_WORKSPACE/$OUTPUT/diffs/$cycle/${module//\//__}"
             mkdir -p "$diffs"
@@ -187,11 +192,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$OUTPUT"
-          minutes=$(awk -v start="$STARTED" -v end="$(date +%s)" 'BEGIN {printf "%.2f", (end-start)/60}')
           {
-            printf '# Optional mutation report\n\nRunner minutes: %s\n\n' "$minutes"
+            printf '# Optional mutation report\n\n'
+            printf 'Attempt %s/%s: modules checked (compared): %s; newly discovered survivors: %s\n\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${COMPARED:-0}" "${DISCOVERED:-0}"
             if [ -s "$OUTPUT/state.json" ]; then
-              jq -r '"Tested cycle: `\(.cycle)`\nLast successful complete cycle: `\(.last_success // "none")`\nSelected modules: \(.modes|length); completed this cycle: \(.results|to_entries|map(select(.value.complete))|length); pending: \(.pending|length)\nNew survivors: \([.failures[].new_survivors|length]|add // 0)\nNotes: \((.notes // [])|join("; "))\n\nFull proposed baselines and retained failures (each carries its tested revision):\n"' "$OUTPUT/state.json"
+              jq -r '"Tested cycle: `\(.cycle)`\nLast successful complete cycle: `\(.last_success // "none")`\nCumulative cycle: selected \(.modes|length); completed \(.results|to_entries|map(select(.value.complete))|length); pending \(.pending|length); retained failures \(.failures|length)\nRetained new-survivor names (cumulative): \([.failures[].new_survivors|length]|add // 0)\nNotes: \((.notes // [])|join("; "))\n\nFull proposed baselines and retained failures (each carries its tested revision):\n"' "$OUTPUT/state.json"
               printf '\n```json\n'
               jq '.failures' "$OUTPUT/state.json"
               jq '{precomparison_failure, precomparison_receipts}' "$OUTPUT/state.json"
@@ -200,6 +205,8 @@ jobs:
               printf 'No usable checkpoint; setup/restore/selection failed. No last-success advancement.\n'
             fi
           } > "$OUTPUT/report.md"
+          minutes=$(awk -v start="$STARTED" -v end="$(date +%s)" 'BEGIN {printf "%.2f", (end-start)/60}')
+          printf '\nWall minutes (first lane step through report generation; excludes upload/issue/finalization; not billing or job-total): %s\n' "$minutes" >> "$OUTPUT/report.md"
           cat "$OUTPUT/report.md" >> "$GITHUB_STEP_SUMMARY"
           if [ -d backend/test-results/mutation/scheduled ]; then
             # Do not upload the source/test symlinks or any installation environment.

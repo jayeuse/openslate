@@ -374,6 +374,49 @@ class MutationTests(unittest.TestCase):
                             if entry:
                                 self.assertEqual(result["modes"][module], "full")
 
+    def test_attempt_comparison_counters_ignore_restored_totals_and_known_names(self):
+        workflow = (mutation.ROOT / ".github/workflows/mutation.yml").read_text()
+        start = textwrap.dedent(
+            workflow.split("        run: |\n", 1)[1].split("          printf 'run=", 1)[0]
+        )
+        native = workflow.split("- id: native\n", 1)[1].split("- name: Always retain", 1)[0]
+        before, after = native.split(
+            'python3 "$RUNNER_TEMP/mutation-controller.py" compare "$module" "$rc"\n', 1
+        )
+        script = (
+            start
+            + '\nsource "$GITHUB_ENV"; echo "$COMPARED $DISCOVERED"\n'
+            + 'module=current; state="$OUTPUT/state.json"\n'
+            + before.rsplit("fi\n", 1)[1]
+            + 'cp "$OUTPUT/after.json" "$state"\n'
+            + after.split("cycle=$(", 1)[0]
+            + '\nsource "$GITHUB_ENV"; echo "$COMPARED $DISCOVERED"\n'
+        )
+        for names, expected in (
+            (["seen", "retained", "fresh"], "0 0\n1 1\n"),
+            (["seen", "retained"], "0 0\n1 0\n"),
+        ):
+            with self.subTest(names=names), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "env").write_text("COMPARED=99\nDISCOVERED=99\n")
+                (root / "state.json").write_text(
+                    '{"results":{"current":{"survivors":["seen"]}},'
+                    '"failures":{"current":{"survivors":["retained"]}}}'
+                )
+                results = {"current": {"new_survivors": names}}
+                results["restored"] = {"new_survivors": ["noise"]}
+                (root / "after.json").write_text(json.dumps({"results": results}))
+                result = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=dict(PATH=os.environ["PATH"], OUTPUT=directory, GITHUB_ENV="./env"),
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+
     def test_scheduled_sample_preparation_includes_declared_controls_owner(self):
         backend = mutation.BACKEND
         module = "operations/sample/controls/access_verification.py"
