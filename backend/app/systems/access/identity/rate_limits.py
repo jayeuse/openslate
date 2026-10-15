@@ -22,6 +22,8 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 
 LOGIN_WINDOW = timedelta(minutes=15)
 LOGIN_COOLDOWN = timedelta(minutes=15)
+LOGIN_ACCOUNT_FAILURE_LIMIT = 10
+LOGIN_SOURCE_FAILURE_LIMIT = 30
 MFA_WINDOW = timedelta(minutes=15)
 MFA_COOLDOWN = timedelta(minutes=15)
 MFA_ACCOUNT_FAILURE_LIMIT = 5
@@ -61,26 +63,28 @@ def lock_bucket(db: Session, fingerprint: str) -> IdentityRateLimitBucket | None
     return db.get(IdentityRateLimitBucket, fingerprint, with_for_update=True)
 
 
-def cleanup_expired_buckets(db: Session, *, now_value: datetime | None = None) -> int:
-    """Delete a bounded batch of buckets that cannot affect future requests."""
+def cleanup_expired_buckets(*, now_value: datetime | None = None) -> int:
+    """Commit bounded stale-bucket cleanup independently of the request transaction."""
 
     cutoff = now(now_value) - STALE_BUCKET_RETENTION
-    expired = db.scalars(
-        select(IdentityRateLimitBucket)
-        .where(
-            IdentityRateLimitBucket.window_started_at <= cutoff,
-            (IdentityRateLimitBucket.blocked_until.is_(None))
-            | (IdentityRateLimitBucket.blocked_until <= now(now_value)),
+    with AuditSession(get_engine()) as db:
+        expired = db.scalars(
+            select(IdentityRateLimitBucket)
+            .where(
+                IdentityRateLimitBucket.window_started_at <= cutoff,
+                (IdentityRateLimitBucket.blocked_until.is_(None))
+                | (IdentityRateLimitBucket.blocked_until <= now(now_value)),
+            )
+            .order_by(IdentityRateLimitBucket.window_started_at)
+            .limit(STALE_BUCKET_CLEANUP_LIMIT)
+            .with_for_update()
         )
-        .order_by(IdentityRateLimitBucket.window_started_at)
-        .limit(STALE_BUCKET_CLEANUP_LIMIT)
-        .with_for_update()
-    )
-    count = 0
-    for bucket in expired:
-        db.delete(bucket)
-        count += 1
-    return count
+        count = 0
+        for bucket in expired:
+            db.delete(bucket)
+            count += 1
+        db.commit()
+        return count
 
 
 def login_retry_after(
@@ -91,7 +95,13 @@ def login_retry_after(
     *,
     source: str | None = None,
     actor_id: UUID | None = None,
+    identifier: str | None = None,
+    source_budget: bool = False,
 ) -> int | None:
+    if identifier is not None:
+        retry = _login_budget(identifier, timestamp, source=source, source_budget=source_budget)
+        if retry is not None:
+            return retry
     if bucket is None:
         return None
     if bucket.blocked_until is not None and bucket.blocked_until > timestamp:
@@ -120,7 +130,18 @@ def record_attempt(
     threshold: int = 5,
     window: timedelta = LOGIN_WINDOW,
     cooldown: timedelta = LOGIN_COOLDOWN,
+    identifier: str | None = None,
+    source_budget: bool = False,
 ) -> IdentityRateLimitBucket:
+    if identifier is not None:
+        _login_budget(
+            identifier,
+            timestamp,
+            source=source,
+            actor_id=actor_id,
+            failed=True,
+            source_budget=source_budget,
+        )
     if policy is not None:
         window = timedelta(minutes=policy.login_window_minutes)
         cooldown = timedelta(minutes=policy.login_cooldown_minutes)
@@ -147,6 +168,70 @@ def record_attempt(
         if login and not was_blocked:
             _record_login_lockout(db, timestamp, source, actor_id)
     return bucket
+
+
+def _login_budget(
+    identifier: str,
+    timestamp: datetime,
+    *,
+    source: str | None,
+    actor_id: UUID | None = None,
+    failed: bool = False,
+    source_budget: bool = False,
+) -> int | None:
+    limits = {
+        rate_limit_fingerprint(
+            "login-account", normalize_identifier(identifier), None
+        ): LOGIN_ACCOUNT_FAILURE_LIMIT,
+    }
+    if source_budget:
+        limits[rate_limit_fingerprint("login-source", source or "", None)] = (
+            LOGIN_SOURCE_FAILURE_LIMIT
+        )
+    with AuditSession(get_engine()) as db:
+        buckets = [
+            (value, lock_bucket(db, value) if failed else db.get(IdentityRateLimitBucket, value))
+            for value in sorted(limits)
+        ]
+        retry = max(
+            (
+                ceil((item.blocked_until - timestamp).total_seconds())
+                for _, item in buckets
+                if item is not None and item.blocked_until is not None
+            ),
+            default=0,
+        )
+        if failed:
+            for value, item in buckets:
+                if (
+                    item is not None
+                    and item.blocked_until is not None
+                    and item.blocked_until > timestamp
+                ):
+                    item.attempt_count += 1
+                    continue
+                item = record_attempt(
+                    db,
+                    value,
+                    item,
+                    timestamp,
+                    threshold=limits[value],
+                    login=True,
+                    source=source,
+                    actor_id=actor_id,
+                )
+                if limits[value] == LOGIN_SOURCE_FAILURE_LIMIT and item.blocked_until is not None:
+                    item.blocked_until = item.window_started_at + LOGIN_WINDOW
+            db.commit()
+        return retry if retry > 0 else None
+
+
+def clear_login_account_budget(db: Session, identifier: str) -> None:
+    bucket = lock_bucket(
+        db, rate_limit_fingerprint("login-account", normalize_identifier(identifier), None)
+    )
+    if bucket is not None:
+        db.delete(bucket)
 
 
 def mfa_verification_retry_after(user_id: UUID, *, source: str | None) -> int | None:
@@ -177,8 +262,15 @@ def _mfa_budget(user_id: UUID, *, source: str | None, failed: bool = False) -> i
             default=0,
         )
         started_cooldown = False
-        if failed and retry_after <= 0:
+        if failed:
             for value, bucket in buckets:
+                if (
+                    bucket is not None
+                    and bucket.blocked_until is not None
+                    and bucket.blocked_until > timestamp
+                ):
+                    bucket.attempt_count += 1
+                    continue
                 bucket = record_attempt(
                     db,
                     value,
@@ -236,7 +328,7 @@ def recovery_request_permitted(
     db: Session, identifier: str, *, source: str | None, now_value: datetime | None = None
 ) -> bool:
     timestamp = now(now_value)
-    cleanup_expired_buckets(db, now_value=timestamp)
+    cleanup_expired_buckets(now_value=timestamp)
     fingerprints = sorted(
         {
             rate_limit_fingerprint("recovery-recipient", normalize_identifier(identifier), None),
@@ -266,7 +358,7 @@ def invitation_completion_permitted(
     if not enforce_rate_limit:
         return True
     timestamp = now(now_value)
-    cleanup_expired_buckets(db, now_value=timestamp)
+    cleanup_expired_buckets(now_value=timestamp)
     fingerprint = rate_limit_fingerprint("invitation-completion-source", source or "", None)
     bucket = lock_bucket(db, fingerprint)
     if bucket is not None and bucket.blocked_until is not None and bucket.blocked_until > timestamp:

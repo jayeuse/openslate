@@ -306,11 +306,11 @@ def change_password(
     fingerprint = None
     bucket = None
     if enforce_rate_limit:
-        rate_limits.cleanup_expired_buckets(db, now_value=timestamp)
+        rate_limits.cleanup_expired_buckets(now_value=timestamp)
         fingerprint = rate_limits.login_fingerprint(user.email, None)
         bucket = rate_limits.lock_bucket(db, fingerprint)
         retry_after = rate_limits.login_retry_after(
-            db, bucket, timestamp, policy, source=source, actor_id=person_id
+            db, bucket, timestamp, policy, source=source, actor_id=person_id, identifier=user.email
         )
         if retry_after is not None:
             raise IdentityRateLimited("Too many attempts", retry_after=retry_after)
@@ -327,6 +327,7 @@ def change_password(
                 login=True,
                 source=source,
                 actor_id=person_id,
+                identifier=user.email,
             )
             db.commit()
         raise InvalidCredentials("Invalid credentials") from error
@@ -342,6 +343,7 @@ def change_password(
                     login=True,
                     source=source,
                     actor_id=person_id,
+                    identifier=user.email,
                 )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
@@ -361,6 +363,7 @@ def change_password(
                     login=True,
                     source=source,
                     actor_id=person_id,
+                    identifier=user.email,
                 )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
@@ -381,6 +384,7 @@ def change_password(
                     login=True,
                     source=source,
                     actor_id=person_id,
+                    identifier=user.email,
                 )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
@@ -403,6 +407,8 @@ def change_password(
         revoke_user_sessions(db, user.id, except_session_id=current_session_id)
         if bucket is not None:
             db.delete(bucket)
+        if enforce_rate_limit:
+            rate_limits.clear_login_account_budget(db, user.email)
         audit_service.append_security_event(
             db,
             _action_event(

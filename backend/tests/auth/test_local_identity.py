@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -46,10 +46,16 @@ def test_rate_limit_cleanup_removes_only_expired_buckets() -> None:
     stale = Mock()
     db.scalars.return_value = [stale]
 
-    removed = cleanup_expired_buckets(db, now_value=datetime.now(UTC))
+    with (
+        patch("app.systems.access.identity.rate_limits.get_engine"),
+        patch("app.systems.access.identity.rate_limits.AuditSession") as sessions,
+    ):
+        sessions.return_value.__enter__.return_value = db
+        removed = cleanup_expired_buckets(now_value=datetime.now(UTC))
 
     assert removed == 1
     db.delete.assert_called_once_with(stale)
+    db.commit.assert_called_once_with()
 
 
 def test_browser_session_cookies_reach_all_api_routes_and_origin_is_exact(

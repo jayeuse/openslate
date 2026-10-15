@@ -226,7 +226,7 @@ def test_provider_password_step_up_preserves_backend_attempt_budget(
         cleanup_expired_buckets=lambda *_a, **_kw: None,
         login_fingerprint=lambda *_a: "fingerprint",
         lock_bucket=lambda *_a: blocked,
-        login_retry_after=lambda *_a: 60,
+        login_retry_after=lambda *_a, **_kw: 60,
     )
     monkeypatch.setattr(password_module, "rate_limits", budget, raising=False)
     client = Mock()

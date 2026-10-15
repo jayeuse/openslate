@@ -178,11 +178,6 @@ def verify_factor(
     )
     before_provider = _provider_actor(client, current_access, user)
     _factor(before_provider, factor_id)
-    # Keep the existing user/session order, then serialize this source until route completion.
-    # This lock has no bucket row; accounting uses independent short transactions.
-    rate_limits.lock_bucket(
-        db, rate_limits.rate_limit_fingerprint("mfa-source-guard", source or "", None)
-    )
     retry_after = rate_limits.mfa_verification_retry_after(user_id, source=source)
     if retry_after is not None:
         raise IdentityRateLimited("Too many attempts", retry_after=retry_after)

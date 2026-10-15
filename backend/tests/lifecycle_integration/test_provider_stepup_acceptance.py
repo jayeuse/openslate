@@ -1,5 +1,6 @@
 """Real Supabase password step-up through the registered lifecycle API."""
 
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -9,9 +10,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.main import create_app
-from app.systems.access.identity.rate_limits import login_fingerprint
+from app.systems.access.identity.models import IdentityRateLimitBucket
+from app.systems.access.identity.rate_limits import login_fingerprint, rate_limit_fingerprint
 from app.systems.access.users.models import User, UserRole
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
@@ -63,10 +66,17 @@ def _cleanup_stepup_rows(
     """Remove only the synthetic actor's challenge, audit, limit, and API rows."""
 
     with owner.begin() as connection:
-        connection.execute(
-            text("DELETE FROM public.identity_rate_limit_buckets WHERE fingerprint = :fingerprint"),
-            {"fingerprint": login_fingerprint(email, None)},
-        )
+        for fingerprint in (
+            login_fingerprint(email, None),
+            rate_limit_fingerprint("login-account", email, None),
+        ):
+            connection.execute(
+                text(
+                    "DELETE FROM public.identity_rate_limit_buckets "
+                    "WHERE fingerprint = :fingerprint"
+                ),
+                {"fingerprint": fingerprint},
+            )
         connection.execute(
             text(
                 "DELETE FROM public.security_events "
@@ -126,12 +136,25 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
             "confirmation_name": challenge["confirmation_name"],
         }
 
+        account_key = rate_limit_fingerprint("login-account", email, None)
+        with Session(owner) as db:
+            db.add(
+                IdentityRateLimitBucket(
+                    fingerprint=account_key,
+                    attempt_count=9,
+                    window_started_at=utc_now() - timedelta(hours=49),
+                    blocked_until=None,
+                )
+            )
+            db.commit()
         rejected = client.post(
             f"/api/modules/{module_id_path}/close",
             json={**close_payload, "password": "definitely-not-the-password"},
         )
         assert rejected.status_code == 403
         assert rejected.json()["detail"]["code"] == "invalid_credentials"
+        with Session(owner) as db:
+            assert db.get(IdentityRateLimitBucket, account_key).attempt_count == 1
         after_rejection = client.get(f"/api/modules/{module_id_path}")
         assert after_rejection.status_code == 200
         assert after_rejection.json()["is_deleted"] is False
@@ -141,6 +164,8 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
             json={**close_payload, "password": password},
         )
         assert closed.status_code == 200
+        with Session(owner) as db:
+            assert db.get(IdentityRateLimitBucket, account_key) is None
         after_close = client.get(f"/api/modules/{module_id_path}")
         assert after_close.status_code == 200
         assert after_close.json()["is_deleted"] is True

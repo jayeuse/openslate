@@ -21,7 +21,7 @@ from app.core.config.provider_instance import assert_provider_instance
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
-from app.systems.access.identity.rate_limits import login_fingerprint
+from app.systems.access.identity.rate_limits import login_fingerprint, rate_limit_fingerprint
 from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -363,6 +363,11 @@ def policy_world(monkeypatch, shared_provider_account):
         with Session(owner) as db:
             ids = [actor_id, target_id]
             fingerprints = [login_fingerprint(email, source) for source in (None, "testclient")]
+            fingerprints += [
+                rate_limit_fingerprint("login-account", email, None),
+                rate_limit_fingerprint("login-source", "testclient", None),
+                rate_limit_fingerprint("login-source", "", None),
+            ]
             if world is not None:
                 fingerprints += world.bucket_ids
             for bucket in db.scalars(

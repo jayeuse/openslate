@@ -107,11 +107,11 @@ def request_email_change(
     timestamp = utc_now()
     fingerprint, bucket = None, None
     if enforce_rate_limit:
-        rate_limits.cleanup_expired_buckets(db, now_value=timestamp)
+        rate_limits.cleanup_expired_buckets(now_value=timestamp)
         fingerprint = rate_limits.login_fingerprint(user.email, None)
         bucket = rate_limits.lock_bucket(db, fingerprint)
         retry = rate_limits.login_retry_after(
-            db, bucket, timestamp, policy, source=source, actor_id=person_id
+            db, bucket, timestamp, policy, source=source, actor_id=person_id, identifier=user.email
         )
         if retry is not None:
             raise IdentityRateLimited("Too many attempts", retry_after=retry)
@@ -158,6 +158,8 @@ def request_email_change(
         stage = "event_commit"
         if bucket is not None:
             db.delete(bucket)
+        if enforce_rate_limit:
+            rate_limits.clear_login_account_budget(db, user.email)
         audit_service.append_security_event(
             db,
             _event("email_change_request", person_id, operation_id, "success", "provider_accepted"),
@@ -179,6 +181,7 @@ def request_email_change(
                 login=True,
                 source=source,
                 actor_id=person_id,
+                identifier=user.email,
             )
             db.commit()
         raise InvalidCredentials("Invalid credentials") from error

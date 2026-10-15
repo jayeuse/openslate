@@ -2,12 +2,13 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from hashlib import sha256
 from threading import Barrier
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -205,3 +206,25 @@ def test_mfa_budget_persistence_failure_is_unavailable(budget_world):
     assert response.status_code == 503
     assert response.headers.get_list("set-cookie") == []
     assert budget(world, world.account_fingerprint) is None
+
+
+def test_mfa_source_budget_is_available_during_provider_verification(budget_world):
+    world = budget_world
+    source = "198.51.100.21"
+    available = []
+
+    def observe(request):
+        if request.url.path.endswith("/verify"):
+            with Session(world.owner) as db:
+                for namespace in ("mfa-source", "mfa-source-guard"):
+                    fingerprint = rate_limit_fingerprint(namespace, source, None)
+                    key = int.from_bytes(
+                        sha256(fingerprint.encode("ascii")).digest()[:8], signed=True
+                    )
+                    available.append(db.scalar(select(func.pg_try_advisory_xact_lock(key))))
+            return httpx.Response(400)
+        return None
+
+    world.hook = observe
+    assert verify(world, world.caller(source)).status_code == 400
+    assert available == [True, True]

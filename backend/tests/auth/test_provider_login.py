@@ -135,7 +135,15 @@ def test_wrong_password_records_rate_limit_without_creating_local_session(
         )
 
     record.assert_called_once_with(
-        db, "fingerprint", bucket, now, policy=unit_workspace_policy, login=True, source="127.0.0.1"
+        db,
+        "fingerprint",
+        bucket,
+        now,
+        policy=unit_workspace_policy,
+        login=True,
+        source="127.0.0.1",
+        identifier="person@example.test",
+        source_budget=True,
     )
     failures.assert_called_once_with(db, "identity.sign_in_failure", "127.0.0.1", now=now)
     assert all(not isinstance(call.args[0], IdentitySession) for call in db.add.call_args_list)

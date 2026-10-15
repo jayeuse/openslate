@@ -31,6 +31,10 @@ def unit_workspace_policy(request, monkeypatch: pytest.MonkeyPatch) -> Workspace
     """
     if request.node.get_closest_marker("integration") is not None:
         return
+    # Independent budget persistence and cleanup use the signed PostgreSQL journeys.
+    monkeypatch.setattr(provider_login.rate_limits, "_login_budget", lambda *_a, **_kw: None)
+    monkeypatch.setattr(provider_login.rate_limits, "clear_login_account_budget", lambda *_a: None)
+    monkeypatch.setattr(provider_login.rate_limits, "cleanup_expired_buckets", lambda **_kw: 0)
     profile = WorkspaceProfile(
         session_timeout_minutes=60,
         password_min_length=12,
