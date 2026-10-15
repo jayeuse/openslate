@@ -199,12 +199,14 @@ def validate_identity_profile(
     if expires_at is None or expires_at.tzinfo is None or expires_at <= utc_now():
         raise ProfileValidationError("Guests require a future expiration")
     sponsor = db.scalar(select(User).where(User.id == sponsor_user_id).with_for_update(of=User))
-    membership = sole_active_membership(db, sponsor.id) if isinstance(sponsor, User) else None
     if not isinstance(sponsor, User) or (
         sponsor.is_deleted
         or sponsor.status != UserStatus.ACTIVE.value
-        or membership is None
-        or membership.role == UserRole.GUEST.value
+    ):
+        raise ProfileValidationError("Guest sponsor is not an active member or administrator")
+    membership = sole_active_membership(db, sponsor.id)
+    if (
+        membership.role == UserRole.GUEST.value
         or not is_identity_eligible(sponsor, membership, now=utc_now())
     ):
         raise ProfileValidationError("Guest sponsor is not an active member or administrator")

@@ -12,10 +12,10 @@ import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.coordination import InvitationError, ProfileValidationError
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.rbac.support import add_user
+from tests.rbac.support import add_user, organization
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +59,7 @@ def _guest_payload(sponsor: User | None) -> InvitationCreate:
 
 
 def _set_guest_duration(db: Session, days: int) -> None:
-    profile = db.scalar(select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True)))
+    profile = db.get(WorkspaceProfile, organization(db).id)
     assert isinstance(profile, WorkspaceProfile)
     profile.guest_duration_days = days
     db.flush()
@@ -77,9 +77,13 @@ def test_guest_invitation_expiry_follows_the_workspace_guest_duration(
         _set_guest_duration(db, days)
         before = datetime.now(UTC)
 
-        guest = user_service.invite_user(
+        invited = user_service.invite_user(
             db, _guest_payload(sponsor), actor_id=admin.id, client=_provider()
         )
+        guest = db.scalars(select(Membership).where(
+            Membership.user_id == invited.id,
+            Membership.org_id == organization(db).id,
+        )).one()
 
         assert guest.role == UserRole.GUEST.value
         assert guest.sponsor_user_id == sponsor.id
@@ -136,10 +140,14 @@ def test_guest_invitation_naming_an_unusable_sponsor_creates_no_profile(
 def test_an_invitation_joins_only_active_groups(integration_owner_db: Session) -> None:
     db = integration_owner_db
     admin = add_user(db, role=UserRole.ADMIN)
-    active = Group(name=f"Active {uuid7().hex}")
+    org_id = organization(db).id
+    active = Group(org_id=org_id, name=f"Active {uuid7().hex}")
     # Another active group that nobody asks for.
-    other = Group(name=f"Other {uuid7().hex}")
-    deleted = Group(name=f"Deleted {uuid7().hex}", is_deleted=True, deleted_at=datetime.now(UTC))
+    other = Group(org_id=org_id, name=f"Other {uuid7().hex}")
+    deleted = Group(
+        org_id=org_id, name=f"Deleted {uuid7().hex}",
+        is_deleted=True, deleted_at=datetime.now(UTC),
+    )
     db.add_all([active, other, deleted])
     db.flush()
     label = uuid7().hex[-12:]
