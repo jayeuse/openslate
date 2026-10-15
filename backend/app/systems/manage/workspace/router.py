@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_fresh_exact_admin
 from app.core.database import get_db
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.schemas import (
@@ -76,13 +77,13 @@ def _workspace(
     shared_lock: bool = False,
     nowait: bool = False,
 ) -> WorkspaceProfile:
-    statement = select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+    statement = select(WorkspaceProfile).limit(2)
     if lock:
         statement = statement.with_for_update(read=shared_lock, nowait=nowait)
-    profile = db.scalar(statement.execution_options(populate_existing=True))
-    if not isinstance(profile, WorkspaceProfile):
+    profiles = db.scalars(statement.execution_options(populate_existing=True)).all()
+    if len(profiles) != 1:
         raise _workspace_unavailable()
-    return profile
+    return profiles[0]
 
 
 def _ready_logo(
@@ -131,7 +132,7 @@ def get_workspace(
     db: Annotated[Session, Depends(get_db)],
 ) -> WorkspaceResponse | WorkspaceGuestResponse:
     profile = _workspace(db)
-    if actor.role == "guest":
+    if sole_active_membership(db, actor.id).role == "guest":
         return WorkspaceGuestResponse.model_validate(profile)
     return WorkspaceResponse.model_validate(profile)
 

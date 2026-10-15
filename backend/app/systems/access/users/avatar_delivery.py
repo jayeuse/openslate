@@ -24,7 +24,7 @@ def _bound_avatar(db: Session, identity: CurrentIdentity, target_id: UUID) -> Fi
     actor = fresh_user(db, identity.user.id)
     target = actor if target_id == actor.id else visible_person(db, actor, target_id)
     db.refresh(target, with_for_update={"read": True, "nowait": True})
-    if not is_active_account(target):
+    if not is_active_account(db, target):
         raise error("person_not_found", "Person not found", 404)
     if target.avatar_file_id is None:
         raise error("avatar_not_found", "Avatar not found", 404)

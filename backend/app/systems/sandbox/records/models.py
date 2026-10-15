@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, text
+from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -16,6 +16,11 @@ if TYPE_CHECKING:
 class Record(BaseModel):
     __tablename__ = "records"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_records_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_records_module_id_modules", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "lifecycle_close_operation_id IS NULL OR is_deleted",
             name="ck_records_lifecycle_close_provenance",
@@ -27,11 +32,10 @@ class Record(BaseModel):
     )
     lifecycle_close_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
 
-    module_id: Mapped[UUID] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    module_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     data: Mapped[dict[str, Any]] = mapped_column(
         MutableDict.as_mutable(JSONB),
         default=dict,

@@ -12,7 +12,8 @@ from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User
 from app.systems.platform.files import service
 from app.systems.platform.files.access import authorize, error, load, parent
 from app.systems.platform.files.models import File
@@ -96,8 +97,10 @@ def list_files(
                 creator_id: display_name or username
                 for creator_id, display_name, username in (
                     db.execute(
-                        select(User.id, User.display_name, User.username).where(
+                        select(User.id, User.display_name, User.username)
+                        .join(Membership, Membership.user_id == User.id).where(
                             User.id.in_(creator_ids),
+                            Membership.org_id == sole_active_membership(db, user.id).org_id,
                             User.status == "active",
                             established_user_clause(),
                             identity_eligible_clause(),

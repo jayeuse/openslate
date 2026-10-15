@@ -12,7 +12,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings
 
 _BATCH_LIMIT = 1000
 _LOCK_KEY = 0x4F535253455353
@@ -52,10 +52,10 @@ def retain_terminal_sessions(db: Session) -> int:
             db.rollback()
             return 0
         profile = db.scalar(
-            select(WorkspaceProfile)
-            .where(WorkspaceProfile.singleton_key.is_(True))
+            select(PlatformSettings)
+            .where(PlatformSettings.singleton_key.is_(True))
             .execution_options(populate_existing=True)
-            .with_for_update(read=True, of=WorkspaceProfile)
+            .with_for_update(read=True, of=PlatformSettings)
         )
         if profile is None:
             raise SQLAlchemyError("Workspace retention policy is unavailable")

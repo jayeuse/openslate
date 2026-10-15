@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.common.dependencies.auth import CurrentIdentity
 from app.systems.access.policy.checks import require_live_session
 from app.systems.access.policy.scope import effective_levels
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.access.users.schemas import AuthMeResponse, SelfProfileUpdate, UserResponse
 from app.systems.platform.files.access import error, fresh_user
@@ -26,9 +27,11 @@ from app.systems.platform.files.quota import lock_quota
 
 def self_profile_response(db: Session, user: User) -> AuthMeResponse:
     access = effective_levels(db, user)
+    membership = sole_active_membership(db, user.id)
     return AuthMeResponse.model_validate(
         {
-            **UserResponse.model_validate(user).model_dump(),
+            **{key: getattr(user if key in User.__table__.columns else membership, key)
+               for key in UserResponse.model_fields},
             "phone": user.phone,
             "bio": user.bio,
             "avatar_file_id": user.avatar_file_id,

@@ -44,7 +44,6 @@ class User(BaseModel):
             "status IN ('pending', 'active', 'disabled')",
             name="ck_users_status",
         ),
-        CheckConstraint("role IN ('admin', 'member', 'guest')", name="ck_users_role"),
         CheckConstraint(
             "theme_preference IN ('light', 'dark', 'system')", name="ck_users_theme_preference"
         ),
@@ -69,19 +68,13 @@ class User(BaseModel):
             "ELSE false END",
             name="ck_users_appearance",
         ),
-        CheckConstraint(
-            "(role = 'guest') = (sponsor_user_id IS NOT NULL AND expires_at IS NOT NULL)",
-            name="ck_users_guest",
-        ),
     )
 
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     supabase_user_id: Mapped[UUID | None] = mapped_column(nullable=True, unique=True, index=True)
-    provider_invitation_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
 
     username: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    role: Mapped[str] = mapped_column(Text, nullable=False)
     theme_preference: Mapped[str] = mapped_column(
         Text, nullable=False, default="system", server_default=text("'system'")
     )
@@ -101,28 +94,13 @@ class User(BaseModel):
         nullable=True,
         index=True,
     )
-    sponsor_user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT", use_alter=True),
-        nullable=True,
-        index=True,
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
         default=UserStatus.PENDING.value,
         server_default=text("'pending'"),
     )
-    invitation_sent_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    invitation_accepted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
     tokens_valid_after: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    mfa_required_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
@@ -131,3 +109,52 @@ class User(BaseModel):
         if key == "email":
             return normalize_email(value)
         return normalize_username(value)
+
+
+class Membership(BaseModel):
+    """One account's organization-local role and invitation lifecycle."""
+
+    __tablename__ = "memberships"
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_memberships_org_id_id"),
+        UniqueConstraint("org_id", "user_id", name="uq_memberships_org_user"),
+        CheckConstraint("role IN ('admin', 'member', 'guest')", name="ck_memberships_role"),
+        CheckConstraint(
+            "status IN ('pending', 'active', 'disabled')", name="ck_memberships_status"
+        ),
+        CheckConstraint(
+            "(role = 'guest') = (sponsor_user_id IS NOT NULL AND expires_at IS NOT NULL)",
+            name="ck_memberships_guest",
+        ),
+    )
+
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), default=UserStatus.PENDING.value, server_default=text("'pending'"),
+        nullable=False,
+    )
+    sponsor_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invitation_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invitation_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider_invitation_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    mfa_required_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PlatformOperator(BaseModel):
+    """Installation administration identity, not an organization access grant."""
+
+    __tablename__ = "platform_operators"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_platform_operators_user_id"),)
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )

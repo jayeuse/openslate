@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -56,6 +57,11 @@ class BoardPost(BaseModel):
     __tablename__ = "board_posts"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"title", "body", "links"})
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_board_posts_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "board_id"], ["boards.org_id", "boards.id"],
+            name="fk_board_posts_board_id_boards", ondelete="RESTRICT",
+        ),
         CheckConstraint("length(btrim(title)) > 0", name="ck_board_posts_title_nonempty"),
         CheckConstraint("length(btrim(body)) > 0", name="ck_board_posts_body_nonempty"),
         CheckConstraint("length(body) <= 2000", name="ck_board_posts_body_length"),
@@ -85,9 +91,10 @@ class BoardPost(BaseModel):
         Index("ix_board_posts_author_id", "author_id"),
     )
 
-    board_id: Mapped[UUID] = mapped_column(
-        ForeignKey("boards.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    board_id: Mapped[UUID] = mapped_column(nullable=False)
     author_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -118,6 +125,11 @@ class BoardPostRevision(BaseModel):
         {"title", "body", "links", "content_fingerprint"}
     )
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_board_post_revisions_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "post_id"], ["board_posts.org_id", "board_posts.id"],
+            name="fk_board_post_revisions_post_id_board_posts", ondelete="RESTRICT",
+        ),
         UniqueConstraint(
             "post_id",
             "publication_number",
@@ -150,9 +162,10 @@ class BoardPostRevision(BaseModel):
         Index("ix_board_post_revisions_author_id", "author_id"),
     )
 
-    post_id: Mapped[UUID] = mapped_column(
-        ForeignKey("board_posts.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    post_id: Mapped[UUID] = mapped_column(nullable=False)
     publication_number: Mapped[int] = mapped_column(Integer, nullable=False)
     publication_key: Mapped[UUID] = mapped_column(nullable=False)
     content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)

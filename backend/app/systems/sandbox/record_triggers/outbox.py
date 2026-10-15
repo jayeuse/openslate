@@ -40,6 +40,7 @@ def enqueue_record_event(
         before = dict(previous)
     db.add(
         RecordTriggerEvent(
+            org_id=record.org_id,
             record_id=record.id,
             module_id=record.module_id,
             event_kind=kind,
@@ -72,6 +73,7 @@ def enqueue_child_field_event(
         return False
     db.add(
         RecordTriggerEvent(
+            org_id=record.org_id,
             record_id=record.id,
             module_id=record.module_id,
             event_kind="field-changed",
@@ -118,6 +120,7 @@ def enqueue_due_schedules(db: Session, *, now: datetime | None = None) -> int:
             .limit(1)
         )
         event = RecordTriggerEvent(
+            org_id=definition.org_id,
             module_id=definition.module_id,
             scheduled_trigger_id=definition.id,
             event_kind="schedule",

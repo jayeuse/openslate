@@ -6,11 +6,11 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.policy.checks import module_level
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes, level_for
 from app.systems.access.users.eligibility import is_active_account, is_established_user
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.access import board_level
 from app.systems.boards.attachment_models import (
@@ -52,7 +52,7 @@ def authorize(
 
     if purpose not in {"record_attachment", "library_document", "workspace_logo", "user_avatar"}:
         raise error("forbidden", "Forbidden", 403)
-    if not is_active_account(user):
+    if not is_active_account(db, user):
         raise error("forbidden", "Forbidden", 403)
     if purpose == "user_avatar":
         if creator_id is not None and creator_id != user.id:
@@ -60,7 +60,7 @@ def authorize(
         return user
     if purpose == "record_attachment":
         # A guest reads at most, so it never changes an attachment.
-        if write and user.role == UserRole.GUEST.value:
+        if write and sole_active_membership(db, user.id).role == UserRole.GUEST.value:
             raise error("forbidden", "Forbidden", 403)
         if record_id is None:
             return user
@@ -83,7 +83,7 @@ def authorize(
         if not includes(granted, required):
             raise error("forbidden", "Forbidden", 403)
         return user
-    if user.role != UserRole.ADMIN.value:
+    if sole_active_membership(db, user.id).role != UserRole.ADMIN.value:
         raise error("forbidden", "Forbidden", 403)
     return user
 
@@ -95,9 +95,8 @@ def fresh_user(db: Session, actor_id: UUID) -> User:
     if (
         user is None
         or user.is_deleted
-        or not is_identity_eligible(user)
+        or not is_active_account(db, user)
         or user.status != "active"
-        or not is_established_user(user)
     ):
         raise error("forbidden", "Forbidden", 403)
     return user
@@ -135,7 +134,7 @@ def authorize_board_file(
     lock: bool = False,
 ) -> Board:
     """The Board level decides: read to see a file, write to add or change one."""
-    if not is_established_user(user):
+    if not is_established_user(sole_active_membership(db, user.id)):
         raise error("file_not_found", "File not found", 404)
     board = board_parent(db, board_id, active=write, lock=lock)
     required = AccessLevel.WRITE if write else AccessLevel.READ

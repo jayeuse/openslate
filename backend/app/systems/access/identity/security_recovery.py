@@ -16,15 +16,15 @@ from app.core.integrations.supabase_auth import (
     get_supabase_auth_client,
 )
 from app.systems.access.identity.admin_recovery import LocalRecoveryError
-from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.mfa_observations import (
     commit_bound_observation,
     observation_started_at,
     record_observation,
 )
 from app.systems.access.identity.session_revocation import revoke_user_sessions
-from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.eligibility import established_user_clause, is_active_account
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import (
@@ -81,18 +81,19 @@ def recover_workspace_security(
             raise LocalSecurityRecoveryError("Provider administrator does not match")
         user = _administrator(db, user_id, lock=True)
         _same_binding(user, provider_id, email)
-        profile = _workspace(db)
+        profile = _workspace(db, sole_active_membership(db, user.id).org_id)
         required = {role: mfa_role_required(profile, role) for role in ("admin", "member", "guest")}
         if any(required.values()) or profile.ip_allow_list:
             for affected in db.scalars(
-                select(User)
+                select(Membership)
                 .where(
                     established_user_clause(),
-                    User.role.in_([role for role, enabled in required.items() if enabled]),
+                    Membership.role.in_([role for role, enabled in required.items() if enabled]),
+                    Membership.org_id == profile.id,
                 )
-                .order_by(User.id)
+                .order_by(Membership.user_id)
                 .execution_options(populate_existing=True)
-                .with_for_update(of=User, nowait=True)
+                .with_for_update(of=Membership, nowait=True)
             ):
                 affected.mfa_required_since = None
             profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
@@ -132,7 +133,7 @@ def recover_workspace_security(
         factors_cleared = True
         user = _administrator(db, user_id, lock=True)
         _same_binding(user, provider_id, email)
-        profile = _workspace(db)
+        profile = _workspace(db, sole_active_membership(db, user.id).org_id)
         if (
             any(mfa_role_required(profile, role) for role in ("admin", "member", "guest"))
             or profile.ip_allow_list
@@ -177,9 +178,9 @@ def _administrator(db: Session, user_id: UUID, *, lock: bool) -> User:
     user = db.scalar(query)
     if (
         user is None
-        or not is_identity_eligible(user, now=utc_now())
+        or not is_active_account(db, user, now=utc_now())
         or user.status != UserStatus.ACTIVE.value
-        or user.role != UserRole.ADMIN.value
+        or sole_active_membership(db, user.id).role != UserRole.ADMIN.value
         or user.supabase_user_id is None
     ):
         raise LocalSecurityRecoveryError("Target is not an active bound administrator")
@@ -191,10 +192,10 @@ def _same_binding(user: User, provider_id: UUID, email: str) -> None:
         raise LocalSecurityRecoveryError("Administrator binding changed during recovery")
 
 
-def _workspace(db: Session) -> WorkspaceProfile:
+def _workspace(db: Session, org_id: UUID) -> WorkspaceProfile:
     profile = db.scalar(
         select(WorkspaceProfile)
-        .where(WorkspaceProfile.singleton_key.is_(True))
+        .where(WorkspaceProfile.id == org_id)
         .execution_options(populate_existing=True)
         .with_for_update(of=WorkspaceProfile)
     )

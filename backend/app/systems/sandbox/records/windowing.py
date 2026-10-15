@@ -28,9 +28,7 @@ from app.systems.sandbox.records.query_schemas import (
 
 
 def _workspace_timezone(db: Session) -> str:
-    timezone_name = db.scalar(
-        select(WorkspaceProfile.timezone).where(WorkspaceProfile.singleton_key.is_(True))
-    )
+    timezone_name = db.scalars(select(WorkspaceProfile.timezone)).one_or_none()
     if not timezone_name:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
     try:

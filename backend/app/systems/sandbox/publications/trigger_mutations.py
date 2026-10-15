@@ -73,6 +73,7 @@ def apply_record_triggers(
             trigger_value, fields
         )
         definition = RecordTrigger(
+            org_id=modules[module_id].org_id,
             publication_id=publication_id,
             published_version_id=version_id,
             publisher_id=actor_id,
@@ -101,6 +102,7 @@ def apply_record_triggers(
         if binding is None:
             db.add(
                 SandboxBinding(
+                    org_id=definition.org_id,
                     kind="trigger",
                     sandbox_id=desired.id,
                     trigger_id=definition.id,
@@ -115,6 +117,7 @@ def apply_record_triggers(
             value_kind, literal_value, value_field_id = _value_columns(condition.value, fields)
             db.add(
                 RecordTriggerCondition(
+                    org_id=definition.org_id,
                     trigger_id=definition.id,
                     field_id=fields[
                         _field_key(condition.field.module_id, condition.field.field_id)
@@ -133,6 +136,7 @@ def apply_record_triggers(
             value_kind, literal_value, value_field_id = _value_columns(action.value, fields)
             db.add(
                 RecordTriggerAction(
+                    org_id=definition.org_id,
                     trigger_id=definition.id,
                     target_field_id=fields[
                         _field_key(action.target.module_id, action.target.field_id)

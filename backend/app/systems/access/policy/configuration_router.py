@@ -47,7 +47,8 @@ from app.systems.access.policy.service import (
     replace_group_access,
     update_group,
 )
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 
@@ -132,7 +133,7 @@ def _database_unavailable(db: Session) -> HTTPException:
 def _visible_groups(db: Session, user: User) -> ColumnElement[bool]:
     """Every group for an administrator; the groups a manager may change; else 403."""
 
-    if user.role == UserRole.ADMIN.value:
+    if sole_active_membership(db, user.id).role == UserRole.ADMIN.value:
         _exact_admin(db, user)
         return true()
     try:
@@ -147,7 +148,7 @@ def _visible_groups(db: Session, user: User) -> ColumnElement[bool]:
 def _visible_group(db: Session, user: User, group_id: UUID) -> Group:
     """One group; 404 for a manager who may not change it, as for a missing group."""
 
-    if user.role == UserRole.ADMIN.value:
+    if sole_active_membership(db, user.id).role == UserRole.ADMIN.value:
         _exact_admin(db, user)
         return get_group(db, group_id)
     try:
@@ -338,12 +339,15 @@ def list_member_candidates(
     _private(response)
     try:
         if (
-            user.role != UserRole.ADMIN.value
+            sole_active_membership(db, user.id).role != UserRole.ADMIN.value
             and db.scalar(select(Group.id).where(Group.is_deleted.is_(False), visible).limit(1))
             is None
         ):
             raise forbidden()
-        statement = select(User).where(User.role != UserRole.ADMIN.value)
+        statement = select(User).join(Membership, Membership.user_id == User.id).where(
+            Membership.role != UserRole.ADMIN.value,
+            Membership.org_id == sole_active_membership(db, user.id).org_id,
+        )
         if params.ids is not None:
             statement = statement.where(User.id.in_(params.ids))
         result = execute_standard_list(
@@ -352,10 +356,23 @@ def list_member_candidates(
             params,
             MEMBER_CANDIDATE_LIST_SPEC,
         )
+        memberships = {
+            member.user_id: member for member in db.scalars(
+                select(Membership).where(
+                    Membership.org_id == sole_active_membership(db, user.id).org_id,
+                    Membership.user_id.in_([item.id for item in result.items]),
+                )
+            )
+        }
     except SQLAlchemyError as error:
         raise _database_unavailable(db) from error
     return MemberCandidateListResponse.model_validate(
-        {"items": result.items, "pagination": result.pagination}, from_attributes=True
+        {"items": [
+            {**{key: getattr(item, key)
+                for key in ("id", "display_name", "username", "email", "status")},
+             "role": memberships[item.id].role, "expires_at": memberships[item.id].expires_at}
+            for item in result.items
+        ], "pagination": result.pagination}, from_attributes=True
     )
 
 

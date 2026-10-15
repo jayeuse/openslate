@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_admin
@@ -13,7 +14,8 @@ from app.systems.access.users.coordination import (
     InvitationError,
     InvitationNotFound,
 )
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User
 from app.systems.access.users.schemas import UserResponse
 from app.systems.access.users.service import reconcile_invitation, revoke_invitation
 
@@ -57,4 +59,8 @@ def reconcile_invite(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Unable to reconcile invitation",
         ) from error
-    return UserResponse.model_validate(profile)
+    org_id = sole_active_membership(db, admin.id).org_id
+    membership = db.scalars(select(Membership).filter_by(user_id=profile.id, org_id=org_id)).one()
+    return UserResponse(**{key: getattr(
+        profile if key in User.__table__.columns else membership, key
+    ) for key in UserResponse.model_fields})

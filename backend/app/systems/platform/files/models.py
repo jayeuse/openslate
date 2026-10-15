@@ -4,7 +4,16 @@ from datetime import datetime
 from typing import ClassVar
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, SmallInteger, String
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
@@ -13,6 +22,22 @@ from app.core.base_model import BaseModel
 class File(BaseModel):
     __tablename__ = "files"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_files_org_id_id"),
+        CheckConstraint(
+            "(purpose = 'user_avatar') = (org_id IS NULL)", name="ck_files_organization"
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "record_id"], ["records.org_id", "records.id"],
+            name="fk_files_record_id_records", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "board_id"], ["boards.org_id", "boards.id"],
+            name="fk_files_board_id_boards", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "department_id"], ["departments.org_id", "departments.id"],
+            name="fk_files_department_id_departments", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "(purpose = 'record_attachment' AND record_id IS NOT NULL "
             "AND board_id IS NULL AND department_id IS NULL) OR "
@@ -64,18 +89,13 @@ class File(BaseModel):
             "operation_id",
         }
     )
+    org_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True
+    )
     purpose: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-    record_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("records.id", ondelete="RESTRICT"),
-        nullable=True,
-        index=True,
-    )
-    board_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("boards.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
-    department_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
+    record_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    board_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    department_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     creator_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,

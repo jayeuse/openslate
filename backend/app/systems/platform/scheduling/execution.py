@@ -128,6 +128,7 @@ def _finalize_claim(
             return None
 
         run = ReportRun(
+            org_id=report.org_id,
             report_id=report.id,
             module_id=snapshot.module_id,
             idempotency_key=work.id,
@@ -143,6 +144,7 @@ def _finalize_claim(
         for position, (record_id, cells) in enumerate(snapshot.rows):
             db.add(
                 ReportRunRow(
+                    org_id=run.org_id,
                     run_id=run.id,
                     position=position,
                     record_id=record_id,

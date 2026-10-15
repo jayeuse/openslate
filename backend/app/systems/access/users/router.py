@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -32,7 +33,8 @@ from app.systems.access.users.directory import (
     directory_summary,
 )
 from app.systems.access.users.directory import UserSortField as UserSortField
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User
 from app.systems.access.users.person_visibility import visible_person
 from app.systems.access.users.schemas import (
     InvitationCreate,
@@ -72,7 +74,7 @@ def list_users(
     response: Response,
 ) -> UserListResponse:
     response.headers["Cache-Control"] = "no-store"
-    return directory_list(db, params, utc_now())
+    return directory_list(db, params, utc_now(), org_id=sole_active_membership(db, _.id).org_id)
 
 
 @router.get("/summary", response_model=UserSummaryResponse)
@@ -83,7 +85,9 @@ def user_summary(
     response: Response,
 ) -> UserSummaryResponse:
     response.headers["Cache-Control"] = "no-store"
-    return directory_summary(db, utc_now(), params.inactive_days)
+    return directory_summary(
+        db, utc_now(), params.inactive_days, org_id=sole_active_membership(db, _.id).org_id
+    )
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -91,11 +95,16 @@ def get_user(
     user_id: UUID,
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
-) -> User:
+) -> UserResponse:
     user = load_user(db, user_id)
     if user.is_deleted:
         raise not_found("User")
-    return user
+    membership = db.scalars(select(Membership).where(
+        Membership.user_id == user.id, Membership.org_id == sole_active_membership(db, _.id).org_id
+    )).one()
+    return UserResponse(**{key: getattr(
+        user if key in User.__table__.columns else membership, key
+    ) for key in UserResponse.model_fields})
 
 
 @router.get("/{user_id}/preferences", response_model=UserPreferencesResponse)
@@ -130,7 +139,7 @@ def get_person_card(
         "job_title": target.job_title,
         "avatar_url": f"/api/users/{user_id}/avatar" if target.avatar_file_id else None,
     }
-    if actor.role == "guest":
+    if sole_active_membership(db, actor.id).role == "guest":
         return PersonCardPublicResponse.model_validate(public)
     return PersonCardResponse.model_validate(
         {**public, "email": target.email, "phone": target.phone, "bio": target.bio}
@@ -205,7 +214,7 @@ def get_user_access(
     return UserAccessResponse.model_validate(
         {
             "user_id": user.id,
-            "role": user.role,
+            "role": sole_active_membership(db, user.id).role,
             "unrestricted": access.unrestricted,
             "entries": [
                 {
@@ -247,10 +256,11 @@ def create_user(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Unable to send invitation",
         ) from error
-    return InvitationResponse(
-        user=UserResponse.model_validate(user),
-        delivery="email",
-    )
+    org_id = sole_active_membership(db, admin.id).org_id
+    membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
+    return InvitationResponse(user=UserResponse(**{key: getattr(
+        user if key in User.__table__.columns else membership, key
+    ) for key in UserResponse.model_fields}))
 
 
 @router.get("/{user_id}/security", response_model=UserSecurityResponse)

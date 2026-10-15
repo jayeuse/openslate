@@ -23,6 +23,7 @@ from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.provider_sessions import resolve_provider_session
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import allowed_module_ids
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.boards.access import readable_board_ids
 from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
 from app.systems.platform.events.hub import (
@@ -253,7 +254,7 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
             user = resolved[0]
             return EventViewer(
                 user_id=user.id,
-                role=user.role,
+                role=sole_active_membership(db, user.id).role,
                 module_ids=allowed_module_ids(db, user, AccessLevel.READ),
                 board_ids=readable_board_ids(db, user),
             )

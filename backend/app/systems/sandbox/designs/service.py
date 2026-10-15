@@ -367,6 +367,7 @@ def _append_version(
     )
     snapshot, content_hash, byte_count = canonical_document(document)
     version = SandboxVersion(
+        org_id=row.org_id,
         document_id=row.id,
         sequence=sequence,
         kind=kind,

@@ -4,7 +4,7 @@ from ipaddress import ip_address
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -20,15 +20,17 @@ from app.core.integrations.supabase_auth import (
     get_supabase_auth_client,
 )
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
 from app.systems.manage.audit.service import append_security_event
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from app.systems.manage.workspace.security_policy import (
     clamp_session_deadlines,
     effective_session_expiry,
     ip_allowed,
+    load_platform_policy,
     load_workspace_policy,
     lock_policy_users,
     mfa_role_required,
@@ -43,6 +45,9 @@ from app.systems.manage.workspace.security_schemas import (
 router = APIRouter(prefix="/workspace/security", tags=["workspace"])
 SecurityActor = Annotated[User, Depends(get_current_user)]
 Database = Annotated[Session, Depends(get_db)]
+_PLATFORM_FIELDS = frozenset(PlatformSettings.__table__.columns.keys()) & (
+    WorkspaceSecurityResponse.model_fields.keys() - {"revision"}
+)
 
 
 def _unavailable() -> HTTPException:
@@ -58,11 +63,18 @@ def _unavailable() -> HTTPException:
 @router.get("", response_model=WorkspaceSecurityResponse)
 def get_workspace_security(
     actor: SecurityActor, db: Database, response: Response
-) -> WorkspaceProfile:
+) -> WorkspaceSecurityResponse:
     require_fresh_exact_admin(db, actor.id)
     response.headers["Cache-Control"] = "no-store"
     try:
-        return load_workspace_policy(db)
+        if db.scalar(select(func.count()).select_from(WorkspaceProfile)) != 1:
+            raise HTTPException(409, detail="Installation policy requires one organization")
+        profile = load_workspace_policy(db)
+        platform = load_platform_policy(db)
+        return WorkspaceSecurityResponse.model_validate({
+            field: getattr(platform if field in _PLATFORM_FIELDS else profile, field)
+            for field in WorkspaceSecurityResponse.model_fields
+        })
     except SupabaseAuthUnavailable as error:
         db.rollback()
         raise _unavailable() from error
@@ -74,7 +86,7 @@ def _factor_evidence(
     payload: WorkspaceSecurityUpdate,
     request: Request,
 ) -> ProviderAccessIdentity | None:
-    profile = load_workspace_policy(db)
+    profile = load_workspace_policy(db, org_id=sole_active_membership(db, actor.id).org_id)
     if not all(
         getattr(payload, f"mfa_require_{role}")
         if f"mfa_require_{role}" in payload.model_fields_set
@@ -119,25 +131,33 @@ def update_workspace_security(
     actor: SecurityActor,
     db: Database,
     response: Response,
-) -> WorkspaceProfile:
+) -> WorkspaceSecurityResponse:
     actor_id = actor.id
     actor = require_fresh_exact_admin(db, actor_id)
     try:
+        changed = payload.model_fields_set - {"revision"}
+        if changed & _PLATFORM_FIELDS and (
+            db.scalar(select(func.count()).select_from(WorkspaceProfile)) != 1
+        ):
+            raise HTTPException(409, detail="Installation policy requires one organization")
         claims = _factor_evidence(db, actor, payload, request)
         actor = require_fresh_exact_admin(db, actor_id)
         profile = db.scalar(
             select(WorkspaceProfile)
-            .where(WorkspaceProfile.singleton_key.is_(True))
+            .where(WorkspaceProfile.id == sole_active_membership(db, actor.id).org_id)
             .execution_options(populate_existing=True)
             .with_for_update()
         )
+        platform = db.scalar(select(PlatformSettings).where(
+            PlatformSettings.singleton_key.is_(True)
+        ).execution_options(populate_existing=True).with_for_update())
     except (SQLAlchemyError, SupabaseAuthUnavailable) as error:
         db.rollback()
         raise _unavailable() from error
     except InvalidProviderToken as error:
         db.rollback()
         raise HTTPException(401, detail="Invalid authentication credentials") from error
-    if not isinstance(profile, WorkspaceProfile):
+    if not isinstance(profile, WorkspaceProfile) or not isinstance(platform, PlatformSettings):
         db.rollback()
         raise _unavailable()
     if payload.revision != profile.revision:
@@ -150,7 +170,6 @@ def update_workspace_security(
             },
         )
     old_roles = {role: mfa_role_required(profile, role) for role in ("admin", "member", "guest")}
-    changed = payload.model_fields_set - {"revision"}
     if "ip_allow_list" in changed:
         candidate = WorkspaceProfile(ip_allow_list=payload.ip_allow_list)
         source = request.client.host if request.client is not None else None
@@ -163,14 +182,19 @@ def update_workspace_security(
                     "message": "Allow list must permit your current address",
                 },
             )
-    old_deadlines = snapshot_deadlines(profile)
+    old_deadlines = snapshot_deadlines(platform)
     actual_changes = sorted(
-        field for field in changed if getattr(profile, field) != getattr(payload, field)
+        field for field in changed if getattr(
+            platform if field in _PLATFORM_FIELDS else profile, field
+        ) != getattr(payload, field)
     )
     for field in changed:
-        setattr(profile, field, getattr(payload, field))
+        setattr(platform if field in _PLATFORM_FIELDS else profile, field, getattr(payload, field))
     profile.revision += 1
     profile.performed_by = actor.id
+    if changed & _PLATFORM_FIELDS:
+        platform.revision += 1
+        platform.performed_by = actor.id
     try:
         lock_policy_users(db, old_roles, profile, changed)
         try:
@@ -206,7 +230,7 @@ def update_workspace_security(
             db.rollback()
             raise HTTPException(401, detail="Invalid authentication credentials")
         if changed & {"session_timeout_minutes", "session_absolute_lifetime_minutes"}:
-            clamp_session_deadlines(db, old_deadlines, profile)
+            clamp_session_deadlines(db, old_deadlines, platform)
         if actual_changes:
             append_security_event(
                 db,
@@ -230,7 +254,10 @@ def update_workspace_security(
         db.rollback()
         raise _unavailable() from error
     response.headers["Cache-Control"] = "no-store"
-    return profile
+    return WorkspaceSecurityResponse.model_validate({
+        field: getattr(platform if field in _PLATFORM_FIELDS else profile, field)
+        for field in WorkspaceSecurityResponse.model_fields
+    })
 
 
 @router.get("/caller-ip", response_model=WorkspaceCallerIpResponse)

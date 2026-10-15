@@ -251,6 +251,7 @@ def link_file(
     else:
         db.add(
             BoardAttachment(
+                org_id=file.org_id,
                 board_id=board_id,
                 file_id=file_id,
                 event_id=content_id if kind == "event" else None,

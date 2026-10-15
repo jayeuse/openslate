@@ -16,7 +16,8 @@ from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import module_reader_statement
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.boards.access import managed_board_clause, visible_board_clause
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board, BoardStatus
@@ -242,7 +243,7 @@ def _records(db: Session, actor: User) -> Subquery:
 
 
 def _people(db: Session, actor: User) -> Subquery:
-    administrator = actor.role == UserRole.ADMIN.value
+    administrator = sole_active_membership(db, actor.id).role == UserRole.ADMIN.value
     title = func.coalesce(func.nullif(User.display_name, ""), User.username)
     statement = select(
         User.id.label("id"),
@@ -252,8 +253,9 @@ def _people(db: Session, actor: User) -> Subquery:
         literal(None).label("board_id"),
         literal(administrator).label("can_open"),
         func.concat_ws(" ", User.display_name, User.username).label("search_text"),
-    ).where(
+    ).join(Membership, Membership.user_id == User.id).where(
         User.status == UserStatus.ACTIVE.value,
+        Membership.status == UserStatus.ACTIVE.value,
         established_user_clause(),
         identity_eligible_clause(),
     )
@@ -262,12 +264,12 @@ def _people(db: Session, actor: User) -> Subquery:
     return statement.subquery()
 
 
-def _visible_board(actor: User) -> ColumnElement[bool]:
+def _visible_board(db: Session, actor: User) -> ColumnElement[bool]:
     return and_(
         Board.is_deleted.is_(False),
         Board.deleted_at.is_(None),
         Board.status == BoardStatus.ACTIVE.value,
-        visible_board_clause(actor),
+        visible_board_clause(db, actor),
     )
 
 
@@ -287,7 +289,7 @@ def _posts(db: Session, actor: User) -> Subquery:
         .join(Board, Board.id == BoardPost.board_id)
         .join(BoardPostRevision, display_join())
         .where(
-            _visible_board(actor),
+            _visible_board(db, actor),
             BoardPost.is_deleted.is_(False),
             BoardPost.deleted_at.is_(None),
             BoardPost.status != "archived",
@@ -297,7 +299,7 @@ def _posts(db: Session, actor: User) -> Subquery:
     )
 
 
-def _events(actor: User) -> Subquery:
+def _events(db: Session, actor: User) -> Subquery:
     return (
         select(
             BoardEvent.id.label("id"),
@@ -312,7 +314,7 @@ def _events(actor: User) -> Subquery:
         )
         .join(Board, Board.id == BoardEvent.board_id)
         .where(
-            _visible_board(actor),
+            _visible_board(db, actor),
             BoardEvent.is_deleted.is_(False),
             BoardEvent.deleted_at.is_(None),
             BoardEvent.archived.is_(False),
@@ -330,7 +332,7 @@ def search_content(db: Session, actor: User, params: SearchRequest) -> SearchRes
         case SearchKind.POST:
             candidates = _posts(db, actor)
         case SearchKind.EVENT:
-            candidates = _events(actor)
+            candidates = _events(db, actor)
     vector = func.to_tsvector("simple", candidates.c.search_text)
     query = func.plainto_tsquery("simple", params.search)
     statement = select(

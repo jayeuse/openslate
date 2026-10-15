@@ -26,7 +26,6 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
 )
 from app.systems.access.identity.contracts import InvalidCredentials, IssuedSession
-from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.mfa import MFARequired, requires_mfa
 from app.systems.access.identity.mfa_observations import (
     initialize_observation,
@@ -41,12 +40,14 @@ from app.systems.access.identity.provider_user_cache import (
     remember_provider_user,
 )
 from app.systems.access.identity.session_revocation import reconcile_session_cap, revoke_session
-from app.systems.access.users.eligibility import is_established_user
+from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserStatus
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
     ip_allowed,
+    load_platform_policy,
     load_workspace_policy,
     renewed_session_expiry,
 )
@@ -84,13 +85,12 @@ def _provider_session_exists(db: Session, user_id: UUID, session_id: UUID) -> bo
     return result.scalar_one() is True
 
 
-def _eligible_user(user: User | None, provider_user_id: UUID, now: datetime) -> bool:
+def _eligible_user(db: Session, user: User | None, provider_user_id: UUID, now: datetime) -> bool:
     return bool(
         user is not None
         and user.supabase_user_id == provider_user_id
         and user.status == UserStatus.ACTIVE.value
-        and is_identity_eligible(user, now=now)
-        and is_established_user(user)
+        and is_active_account(db, user, now=now)
     )
 
 
@@ -131,21 +131,21 @@ def admit_provider_session(
         .execution_options(populate_existing=True)
         .with_for_update(of=User)
     )
-    if user is None or not _eligible_user(user, claims.user_id, now or utc_now()):
+    if user is None or not _eligible_user(db, user, claims.user_id, now or utc_now()):
         raise InvalidCredentials("Invalid credentials")
     # The fresh provider read is serialized with admissions and binding changes.
     started_at = observation_started_at()
     provider_user = _live_provider_user(client, claims.user_id, now or utc_now())
     timestamp = now or utc_now()
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     if (
         provider_user is None
         or not provider_user.is_eligible(now=timestamp)
-        or not _eligible_user(user, claims.user_id, timestamp)
+        or not _eligible_user(db, user, claims.user_id, timestamp)
         or claims.expires_at <= timestamp
         or (user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after)
         or not _provider_session_exists(db, claims.user_id, claims.session_id)
-        or not ip_allowed(policy, ip_address)
+        or not ip_allowed(load_workspace_policy(db), ip_address)
     ):
         raise InvalidCredentials("Invalid credentials")
     assert user is not None and provider_user is not None
@@ -174,7 +174,9 @@ def admit_provider_session(
     session.expires_at = renewed_session_expiry(session, policy, timestamp)
     db.add(session)
     db.flush()
-    if not requires_mfa(policy, user, provider_user) or (
+    if not requires_mfa(
+        load_workspace_policy(db), sole_active_membership(db, user.id), provider_user
+    ) or (
         claims.assurance_level == "aal2"
         and any(
             factor.factor_type == "totp" and factor.status == "verified"
@@ -194,7 +196,7 @@ def resolve_provider_session(
     *,
     now: datetime | None = None,
     allow_aal1: bool = False,
-    policy: WorkspaceProfile | None = None,
+    policy: PlatformSettings | None = None,
 ) -> tuple[User, IdentitySession] | None:
     """Ordinary authorization resolves authority without writing observations.
 
@@ -231,7 +233,7 @@ def _resolved_provider_session(
     *,
     now: datetime | None = None,
     allow_aal1: bool = False,
-    policy: WorkspaceProfile | None = None,
+    policy: PlatformSettings | None = None,
     reuse_recent_provider: bool = False,
 ) -> tuple[User, IdentitySession, ProviderUser, datetime] | None:
     """Recheck local access, provider account and provider session for every request.
@@ -242,7 +244,7 @@ def _resolved_provider_session(
     """
 
     timestamp = now or utc_now()
-    policy = policy or load_workspace_policy(db)
+    policy = policy or load_platform_policy(db)
     session = db.scalar(
         select(IdentitySession).where(
             IdentitySession.provider_user_id == claims.user_id,
@@ -258,7 +260,7 @@ def _resolved_provider_session(
     ):
         return None
     user = db.scalar(select(User).where(User.id == session.user_id))
-    if not _eligible_user(user, claims.user_id, timestamp):
+    if not _eligible_user(db, user, claims.user_id, timestamp):
         return None
     assert user is not None
     cutoff = user.tokens_valid_after
@@ -282,9 +284,9 @@ def _resolved_provider_session(
         except InvalidRequestError:
             return None
         timestamp = now or utc_now()
-        policy = load_workspace_policy(db)
+        policy = load_platform_policy(db)
     if (
-        not _eligible_user(user, claims.user_id, timestamp)
+        not _eligible_user(db, user, claims.user_id, timestamp)
         or session.user_id != user.id
         or session.provider_user_id != claims.user_id
         or session.provider_session_id != claims.session_id
@@ -297,7 +299,9 @@ def _resolved_provider_session(
         return None
     if (
         not allow_aal1
-        and requires_mfa(policy, user, provider_user)
+        and requires_mfa(
+            load_workspace_policy(db), sole_active_membership(db, user.id), provider_user
+        )
         and (
             claims.assurance_level != "aal2"
             or not any(
@@ -325,7 +329,7 @@ def refresh_provider_session(
     """
 
     timestamp = now or utc_now()
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     if len(refresh_handle) < 32 or len(refresh_handle) > 256:
         raise InvalidCredentials("Invalid credentials")
     session = db.scalar(
@@ -368,7 +372,7 @@ def refresh_provider_session(
             _revoke_locked_session(db, session, timestamp)
             raise InvalidCredentials("Invalid credentials")
         timestamp = now or utc_now()
-        session.expires_at = renewed_session_expiry(session, load_workspace_policy(db), timestamp)
+        session.expires_at = renewed_session_expiry(session, load_platform_policy(db), timestamp)
         session.refreshed_at = timestamp
         session_id = session.id
         try:
@@ -405,7 +409,7 @@ def refresh_provider_session(
         tokens.refresh_token.encode()
     ).decode()
     session.refreshed_at = timestamp
-    session.expires_at = renewed_session_expiry(session, load_workspace_policy(db), timestamp)
+    session.expires_at = renewed_session_expiry(session, load_platform_policy(db), timestamp)
     session_id = session.id
     assert resolved is not None
     try:

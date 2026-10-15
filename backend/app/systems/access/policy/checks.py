@@ -21,7 +21,7 @@ from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
-    load_workspace_policy,
+    load_platform_policy,
 )
 
 
@@ -94,7 +94,7 @@ def require_live_session(db: Session, *, actor_id: UUID, session_id: UUID) -> No
         session is None
         or session.user_id != actor_id
         or session.revoked_at is not None
-        or effective_session_expiry(session, load_workspace_policy(db)) <= utc_now()
+        or effective_session_expiry(session, load_platform_policy(db)) <= utc_now()
     ):
         db.rollback()
         raise forbidden()
@@ -182,7 +182,7 @@ def require_fresh_module_access(
     timestamp = utc_now()
     try:
         actor = _lock_authority(db, actor_id)
-        if actor is None or not is_active_account(actor, now=timestamp):
+        if actor is None or not is_active_account(db, actor, now=timestamp):
             db.rollback()
             raise forbidden()
         granted = effective_levels(db, actor, now=timestamp).module_level(module_id)

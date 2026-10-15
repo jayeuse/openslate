@@ -182,7 +182,7 @@ def capture_report_snapshot(
                 [*fields, *([group_field] if group_field is not None else [])],
             )
             profile = db.scalar(
-                select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+                select(WorkspaceProfile).where(WorkspaceProfile.id == report.org_id)
             )
             if profile is None:
                 raise HTTPException(503, detail="Workspace configuration is unavailable")

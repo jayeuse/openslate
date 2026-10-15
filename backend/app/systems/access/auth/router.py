@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -75,7 +76,8 @@ from app.systems.access.users.acceptance import (
 )
 from app.systems.access.users.account_operations import router as account_operations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User
 from app.systems.access.users.profile import self_profile_response
 from app.systems.access.users.router import router as users_router
 from app.systems.access.users.schemas import (
@@ -274,7 +276,11 @@ def invite(
         ) from error
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to create invitation") from error
-    return InvitationResponse(user=UserResponse.model_validate(user), delivery="email")
+    org_id = sole_active_membership(db, admin.id).org_id
+    membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
+    return InvitationResponse(user=UserResponse(**{key: getattr(
+        user if key in User.__table__.columns else membership, key
+    ) for key in UserResponse.model_fields}))
 
 
 @auth_router.post("/invitations/{user_id}/resend", response_model=InvitationResponse)
@@ -288,10 +294,11 @@ def resend_invite(
         user = resend_invitation(db, user_id, actor_id=admin.id)
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to resend invitation") from error
-    return InvitationResponse(
-        user=UserResponse.model_validate(user),
-        delivery="email",
-    )
+    org_id = sole_active_membership(db, admin.id).org_id
+    membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
+    return InvitationResponse(user=UserResponse(**{key: getattr(
+        user if key in User.__table__.columns else membership, key
+    ) for key in UserResponse.model_fields}))
 
 
 @auth_router.get("/me", response_model=AuthMeResponse)

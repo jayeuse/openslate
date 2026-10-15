@@ -30,7 +30,8 @@ from app.systems.access.users.coordination import (
     validate_identity_profile,
 )
 from app.systems.access.users.invitation_provider import prepare_invitation_user
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -40,6 +41,7 @@ from app.systems.manage.audit.service import (
     append_security_event,
 )
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.security_policy import load_workspace_policy
 
 
 def _security_event(
@@ -112,8 +114,9 @@ def _other_administrator_exists(db: Session, excluded_user_id: UUID) -> bool:
         db.scalar(
             select(func.count())
             .select_from(User)
+            .join(Membership, Membership.user_id == User.id)
             .where(
-                User.role == UserRole.ADMIN.value,
+                Membership.role == UserRole.ADMIN.value,
                 User.id != excluded_user_id,
                 User.is_deleted.is_(False),
             )
@@ -121,9 +124,9 @@ def _other_administrator_exists(db: Session, excluded_user_id: UUID) -> bool:
     )
 
 
-def _guest_duration_days(db: Session) -> int:
+def _guest_duration_days(db: Session, org_id: UUID) -> int:
     value = db.scalar(
-        select(WorkspaceProfile.guest_duration_days).where(WorkspaceProfile.singleton_key.is_(True))
+        select(WorkspaceProfile.guest_duration_days).where(WorkspaceProfile.id == org_id)
     )
     if type(value) is not int or not 1 <= value <= 365:
         raise InvitationError("Invitation settings are unavailable")
@@ -164,10 +167,12 @@ def invite_user(
     try:
         if actor_id is not None:
             require_fresh_exact_admin(db, actor_id)
+        org_id = (sole_active_membership(db, actor_id).org_id if actor_id is not None
+                  else load_workspace_policy(db).id)
         role = UserRole(payload.role)
         expires_at = payload.expires_at
         if role is UserRole.GUEST and expires_at is None:
-            expires_at = utc_now() + timedelta(days=_guest_duration_days(db))
+            expires_at = utc_now() + timedelta(days=_guest_duration_days(db, org_id))
         validate_identity_profile(
             db,
             role=role,
@@ -194,20 +199,22 @@ def invite_user(
         user = User(
             email=payload.email,
             username=payload.username,
-            role=role.value,
             display_name=payload.display_name,
             job_title=payload.job_title,
-            sponsor_user_id=payload.sponsor_user_id,
-            expires_at=expires_at,
             status=UserStatus.PENDING.value,
-            invitation_sent_at=None,
-            provider_invitation_operation_id=operation_id,
         )
         db.add(user)
         db.flush()
+        membership = Membership(
+            org_id=org_id, user_id=user.id, role=role.value, status=UserStatus.PENDING.value,
+            sponsor_user_id=payload.sponsor_user_id, expires_at=expires_at,
+            provider_invitation_operation_id=operation_id,
+        )
+        db.add(membership)
         initialize_observation(db, user.id)
         for group_id in group_ids:
-            db.add(GroupMember(group_id=group_id, user_id=user.id, performed_by=actor_id))
+            db.add(GroupMember(org_id=org_id, group_id=group_id, user_id=user.id,
+                               performed_by=actor_id))
         db.commit()
     except InvitationError:
         db.rollback()
@@ -231,14 +238,16 @@ def invite_user(
         if sent.id != provider_user.id:
             raise InvitationError("Provider invitation does not match")
         db.refresh(user, with_for_update=True)
+        db.refresh(membership, with_for_update=True)
         if (
             user.is_deleted
             or user.status != UserStatus.PENDING.value
-            or user.provider_invitation_operation_id != operation_id
+            or membership.status != UserStatus.PENDING.value
+            or membership.provider_invitation_operation_id != operation_id
         ):
             raise InvitationError("Invitation is no longer pending")
         user.supabase_user_id = provider_user.id
-        user.invitation_sent_at = utc_now()
+        membership.invitation_sent_at = utc_now()
         append_security_event(
             db,
             SecurityEventIngestRequest(
@@ -268,12 +277,18 @@ def revoke_invitation(db: Session, user_id: UUID, *, actor_id: UUID) -> None:
     try:
         require_fresh_exact_admin(db, actor_id)
         profile = _lock_profile(db, user_id)
+        membership = db.scalars(select(Membership).where(
+            Membership.user_id == user_id, Membership.status == "pending",
+            Membership.org_id == sole_active_membership(db, actor_id).org_id,
+            Membership.is_deleted.is_(False),
+        ).with_for_update()).one_or_none()
         if profile is None or profile.is_deleted:
             raise InvitationNotFound("Invitation does not exist")
-        if profile.status != UserStatus.PENDING.value or profile.invitation_sent_at is None:
+        if (profile.status != UserStatus.PENDING.value or membership is None
+                or membership.invitation_sent_at is None):
             raise InvitationConflict("Invitation is no longer pending")
         timestamp = utc_now()
-        profile.invitation_sent_at = None
+        membership.invitation_sent_at = None
         profile.tokens_valid_after = token_cutoff(timestamp)
         revoke_user_sessions(db, profile.id, except_session_id=None, now=timestamp)
         append_security_event(
@@ -317,21 +332,27 @@ def resend_invitation(
     try:
         require_fresh_exact_admin(db, actor_id)
         profile = _lock_profile(db, user_id)
+        membership = db.scalars(select(Membership).where(
+            Membership.user_id == user_id, Membership.status == "pending",
+            Membership.org_id == sole_active_membership(db, actor_id).org_id,
+            Membership.is_deleted.is_(False),
+        ).with_for_update()).one_or_none()
         if (
             profile is None
             or profile.is_deleted
             or profile.status != UserStatus.PENDING.value
-            or profile.invitation_accepted_at is not None
+            or membership is None
+            or membership.invitation_accepted_at is not None
             or profile.supabase_user_id is None
-            or profile.provider_invitation_operation_id is None
+            or membership.provider_invitation_operation_id is None
         ):
             raise InvitationError("Invitation is not pending")
-        provider_user = prepare_invitation_user(provider, profile)
+        provider_user = prepare_invitation_user(provider, profile, membership)
         sent = provider.admin_send_invitation(profile.email)
         if sent.id != provider_user.id:
             raise InvitationError("Provider invitation does not match")
         profile.supabase_user_id = provider_user.id
-        profile.invitation_sent_at = utc_now()
+        membership.invitation_sent_at = utc_now()
         append_security_event(
             db,
             SecurityEventIngestRequest(
@@ -376,25 +397,34 @@ def reconcile_invitation(
         if actor_id is not None:
             require_fresh_exact_admin(db, actor_id)
         profile = _lock_profile(db, user_id)
+        org_id = (sole_active_membership(db, actor_id).org_id if actor_id is not None
+                  else load_workspace_policy(db).id)
+        membership = db.scalars(select(Membership).where(
+            Membership.user_id == user_id, Membership.org_id == org_id,
+            Membership.status == "pending", Membership.is_deleted.is_(False),
+        ).with_for_update()).one_or_none()
         if (
             profile is None
             or profile.is_deleted
             or profile.status != UserStatus.PENDING.value
-            or profile.invitation_accepted_at is not None
-            or profile.provider_invitation_operation_id is None
+            or membership is None
+            or membership.invitation_accepted_at is not None
+            or membership.provider_invitation_operation_id is None
         ):
             raise InvitationError("Invitation is not pending")
         if bootstrap:
             _lock_administrator_changes(db)
-            if profile.role != UserRole.ADMIN.value or _other_administrator_exists(db, profile.id):
+            if membership.role != UserRole.ADMIN.value or _other_administrator_exists(
+                db, profile.id
+            ):
                 raise InvitationError("Bootstrap reservation is unavailable")
-        operation_id = profile.provider_invitation_operation_id
-        provider_user = prepare_invitation_user(provider, profile)
+        operation_id = membership.provider_invitation_operation_id
+        provider_user = prepare_invitation_user(provider, profile, membership)
         sent = provider.admin_send_invitation(profile.email)
         if sent.id != provider_user.id:
             raise InvitationError("Provider invitation does not match")
         profile.supabase_user_id = provider_user.id
-        profile.invitation_sent_at = utc_now()
+        membership.invitation_sent_at = utc_now()
         append_security_event(
             db,
             SecurityEventIngestRequest(

@@ -37,7 +37,7 @@ from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
-    load_workspace_policy,
+    load_platform_policy,
     session_expiry_expression,
 )
 
@@ -156,7 +156,7 @@ def list_sessions(
     db: Annotated[Session, Depends(get_db)],
 ) -> list[AdminSessionResponse]:
     identity = _require_completed_identity(identity)
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     sessions = db.scalars(
         select(IdentitySession)
         .where(
@@ -189,7 +189,7 @@ def list_admin_sessions(
     response: Response,
 ) -> AdminSessionCollectionResponse:
     _require_admin(identity, db)
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     statement = (
         select(IdentitySession)
         .join(User, User.id == IdentitySession.user_id)
@@ -334,7 +334,7 @@ def list_user_sessions(
 ) -> AdminSessionListResponse:
     _require_admin(identity, db)
     target = load_user(db, user_id)
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     result = execute_standard_list(
         db,
         select(IdentitySession).where(

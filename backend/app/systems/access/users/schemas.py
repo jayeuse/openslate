@@ -3,7 +3,13 @@ from typing import Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+)
 
 from app.common.listing import StandardListResponse
 from app.common.normalization import normalize_email, normalize_username
@@ -29,7 +35,6 @@ class UserResponse(BaseModel):
     performed_by: UUID | None
 
     model_config = ConfigDict(from_attributes=True)
-
 
 class DirectoryRowResponse(UserResponse):
     active_session_count: int = Field(ge=0)

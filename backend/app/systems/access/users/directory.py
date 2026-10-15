@@ -20,7 +20,7 @@ from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import (
     DirectoryRowResponse,
     UserListResponse,
@@ -28,7 +28,7 @@ from app.systems.access.users.schemas import (
     UserSummaryResponse,
 )
 from app.systems.manage.workspace.security_policy import (
-    load_workspace_policy,
+    load_platform_policy,
     session_expiry_expression,
 )
 from app.systems.sandbox.departments.models import Department
@@ -77,13 +77,14 @@ _SORT_FIELDS = {
     UserSortField.CREATED_AT: cast(ColumnElement[Any], User.created_at),
     UserSortField.UPDATED_AT: cast(ColumnElement[Any], User.updated_at),
     UserSortField.NAME: _NAME,
-    UserSortField.EXPIRES_AT: cast(ColumnElement[Any], User.expires_at),
+    UserSortField.EXPIRES_AT: cast(ColumnElement[Any], Membership.expires_at),
 }
 
 
 def _active_account(now: datetime) -> ColumnElement[bool]:
     return and_(
-        User.status == "active", identity_eligible_clause(now=now), established_user_clause()
+        User.status == "active", Membership.status == "active",
+        identity_eligible_clause(now=now), established_user_clause()
     )
 
 
@@ -108,7 +109,7 @@ def _mfa_predicate(kind: str, now: datetime) -> ColumnElement[bool]:
         if kind == "without"
         else ~known
     )
-    return and_(User.role == "admin", _active_account(now), evidence)
+    return and_(Membership.role == "admin", _active_account(now), evidence)
 
 
 def _history_predicate(kind: str, now: datetime, inactive_days: int) -> ColumnElement[bool]:
@@ -123,24 +124,27 @@ def _history_predicate(kind: str, now: datetime, inactive_days: int) -> ColumnEl
     return and_(_active_account(now), condition)
 
 
-def _filtered_users(params: UserListRequest, now: datetime) -> Select[tuple[User]]:
-    statement = select(User)
+def _filtered_users(params: UserListRequest, now: datetime, org_id: UUID) -> Select[tuple[User]]:
+    statement = select(User).join(Membership, Membership.user_id == User.id).where(
+        Membership.org_id == org_id
+    )
     if params.ids is not None:
         statement = statement.where(User.id.in_(params.ids))
     if params.role is not None:
-        statement = statement.where(User.role == params.role.value)
+        statement = statement.where(Membership.role == params.role.value)
     if params.status is not None:
         if params.status == "expired":
-            condition = User.expires_at <= now
+            condition = Membership.expires_at <= now
         elif params.status == "ending":
             condition = and_(
-                User.status.in_(("active", "pending")),
-                User.expires_at > now,
-                User.expires_at <= now + timedelta(days=14),
+                Membership.status.in_(("active", "pending")),
+                Membership.expires_at > now,
+                Membership.expires_at <= now + timedelta(days=14),
             )
         else:
             condition = and_(
-                User.status == params.status, or_(User.expires_at.is_(None), User.expires_at > now)
+                Membership.status == params.status,
+                or_(Membership.expires_at.is_(None), Membership.expires_at > now)
             )
         statement = statement.where(User.is_deleted.is_(False), condition)
     membership = (
@@ -159,7 +163,7 @@ def _filtered_users(params: UserListRequest, now: datetime) -> Select[tuple[User
             if params.group_id == "none"
             else membership.where(Group.id == params.group_id).exists()
         )
-        statement = statement.where(User.role != "admin", condition)
+        statement = statement.where(Membership.role != "admin", condition)
     if params.department_id is not None:
         granted = (
             membership.join(GroupAccess, GroupAccess.group_id == Group.id)
@@ -171,7 +175,7 @@ def _filtered_users(params: UserListRequest, now: datetime) -> Select[tuple[User
             )
             .exists()
         )
-        statement = statement.where(User.role != "admin", granted)
+        statement = statement.where(Membership.role != "admin", granted)
     if params.mfa is not None:
         statement = statement.where(_mfa_predicate(params.mfa, now))
     if params.history is not None:
@@ -179,7 +183,9 @@ def _filtered_users(params: UserListRequest, now: datetime) -> Select[tuple[User
     return statement
 
 
-def directory_list(db: Session, params: UserListRequest, now: datetime) -> UserListResponse:
+def directory_list(
+    db: Session, params: UserListRequest, now: datetime, *, org_id: UUID
+) -> UserListResponse:
     # An explicit ID lookup resolves archived selections as well as live people.
     if params.ids is not None and params.deleted is DeletedFilter.EXCLUDE:
         params = params.model_copy(update={"deleted": DeletedFilter.INCLUDE})
@@ -200,8 +206,14 @@ def directory_list(db: Session, params: UserListRequest, now: datetime) -> UserL
         ),
         deleted_field=cast(ColumnElement[bool], User.is_deleted),
     )
-    result = execute_standard_list(db, _filtered_users(params, now), params, spec)
-    policy = load_workspace_policy(db)
+    result = execute_standard_list(db, _filtered_users(params, now, org_id), params, spec)
+    policy = load_platform_policy(db)
+    memberships = {
+        member.user_id: member for member in db.scalars(
+            select(Membership).where(Membership.org_id == org_id,
+                                     Membership.user_id.in_([item.id for item in result.items]))
+        )
+    }
     count = (
         select(func.count())
         .where(
@@ -229,15 +241,18 @@ def directory_list(db: Session, params: UserListRequest, now: datetime) -> UserL
                 IdentityMfaObservation.last_sign_in_at,
                 IdentityMfaObservation.last_active_at,
             )
+            .join(Membership, Membership.user_id == User.id)
             .outerjoin(IdentityMfaObservation, IdentityMfaObservation.user_id == User.id)
-            .where(User.id.in_([item.id for item in result.items]))
+            .where(User.id.in_([item.id for item in result.items]), Membership.org_id == org_id)
         ).mappings()
     }
     return UserListResponse(
         items=[
             DirectoryRowResponse.model_validate(
                 {
-                    **UserResponse.model_validate(item).model_dump(),
+                    **{key: getattr(item if key in User.__table__.columns
+                                    else memberships[item.id], key)
+                       for key in UserResponse.model_fields},
                     "active_session_count": metadata[item.id]["active_session_count"],
                     "mfa_verified_totp": metadata[item.id]["mfa_verified_totp"],
                     "mfa_observed_at": metadata[item.id]["mfa_observed_at"],
@@ -251,14 +266,17 @@ def directory_list(db: Session, params: UserListRequest, now: datetime) -> UserL
     )
 
 
-def directory_summary(db: Session, now: datetime, inactive_days: int = 30) -> UserSummaryResponse:
+def directory_summary(
+    db: Session, now: datetime, inactive_days: int = 30, *, org_id: UUID
+) -> UserSummaryResponse:
     counts = db.execute(
         select(
             func.count().filter(_mfa_predicate("without", now)),
             func.count().filter(_mfa_predicate("unknown", now)),
             func.count().filter(_history_predicate("no-recorded-sign-in", now, inactive_days)),
             func.count().filter(_history_predicate("inactive", now, inactive_days)),
-        ).select_from(User)
+        ).select_from(User).join(Membership, Membership.user_id == User.id)
+        .where(Membership.org_id == org_id)
     ).one()
     return UserSummaryResponse(
         admins_without_mfa=counts[0],

@@ -34,6 +34,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.coordination import advance_token_cutoff
 from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.access.users.schemas import (
     UserMfaResetResponse,
@@ -49,6 +50,7 @@ from app.systems.manage.audit.service import (
 )
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
+    load_platform_policy,
     load_workspace_policy,
 )
 
@@ -123,7 +125,7 @@ def checkpoint(
             IdentitySession, actor.session_id, with_for_update=True, populate_existing=True
         )
         now = utc_now()
-        policy = load_workspace_policy(db)
+        policy = load_platform_policy(db)
         if not self_continuation and (
             session is None
             or session.user_id != admin.id
@@ -148,7 +150,9 @@ def checkpoint(
                 raise refusal(
                     401, "security_identity_changed", "Your session must be verified again."
                 )
-            if requires_mfa(policy, admin, observed) and (
+            if requires_mfa(
+                load_workspace_policy(db), sole_active_membership(db, admin.id), observed
+            ) and (
                 actor.claims.assurance_level != "aal2"
                 or not any(
                     factor.factor_type == "totp" and factor.status == "verified"
@@ -172,7 +176,7 @@ def checkpoint(
                 "security_binding_changed",
                 "This person's sign-in identity changed. Reload before continuing.",
             )
-        eligible = is_active_account(target)
+        eligible = is_active_account(db, target)
         if mutation and not eligible:
             raise refusal(
                 409, "security_target_ineligible", "This person is not eligible for this action."

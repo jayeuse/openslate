@@ -112,7 +112,8 @@ def replace_board_groups(
             row.level = level.value
             changed = True
     for group_id, level in wanted.items():
-        db.add(BoardGroup(board_id=board.id, group_id=group_id, level=level.value))
+        db.add(BoardGroup(org_id=board.org_id, board_id=board.id,
+                          group_id=group_id, level=level.value))
         changed = True
     if changed:
         board.revision += 1

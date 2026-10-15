@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.policy.scope import allowed_module_ids
 from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.boards.access import board_level
 from app.systems.boards.models import Board
@@ -20,9 +21,9 @@ def visible_person(db: Session, actor: User, target_id: UUID) -> User:
     target = db.scalar(
         select(User).where(User.id == target_id).execution_options(populate_existing=True)
     )
-    if target is None or not is_active_account(actor) or not is_active_account(target):
+    if target is None or not is_active_account(db, actor) or not is_active_account(db, target):
         raise error("person_not_found", "Person not found", 404)
-    if actor.role == "admin":
+    if sole_active_membership(db, actor.id).role == "admin":
         return target
     actor_modules = allowed_module_ids(db, actor, AccessLevel.READ)
     target_modules = allowed_module_ids(db, target, AccessLevel.READ)

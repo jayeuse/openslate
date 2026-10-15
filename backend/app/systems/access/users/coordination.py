@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.users.eligibility import established_user_clause, is_established_user
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 
 
 class InvitationError(RuntimeError):
@@ -87,18 +88,21 @@ def lock_user(db: Session, user_id: UUID) -> User:
 def active_admin_count(db: Session, *, durable: bool = False) -> int:
     try:
         expiry_condition = (
-            User.expires_at.is_(None)
+            Membership.expires_at.is_(None)
             if durable
-            else or_(User.expires_at.is_(None), User.expires_at > utc_now())
+            else or_(Membership.expires_at.is_(None), Membership.expires_at > utc_now())
         )
         return int(
             db.scalar(
                 select(func.count())
                 .select_from(User)
+                .join(Membership, Membership.user_id == User.id)
                 .where(
                     User.is_deleted.is_(False),
                     User.status == UserStatus.ACTIVE.value,
-                    User.role == UserRole.ADMIN.value,
+                    Membership.role == UserRole.ADMIN.value,
+                    Membership.status == UserStatus.ACTIVE.value,
+                    Membership.is_deleted.is_(False),
                     established_user_clause(),
                     expiry_condition,
                 )
@@ -110,13 +114,14 @@ def active_admin_count(db: Session, *, durable: bool = False) -> int:
         raise unavailable("Unable to evaluate administrator membership") from error
 
 
-def is_active_admin(user: User) -> bool:
+def is_active_admin(user: User, membership: Membership) -> bool:
     return bool(
         not user.is_deleted
         and user.status == UserStatus.ACTIVE.value
-        and is_identity_eligible(user)
-        and is_established_user(user)
-        and user.role == UserRole.ADMIN.value
+        and membership.status == UserStatus.ACTIVE.value
+        and is_identity_eligible(user, membership)
+        and is_established_user(membership)
+        and membership.role == UserRole.ADMIN.value
     )
 
 
@@ -135,6 +140,7 @@ def advance_token_cutoff(user: User) -> None:
 def ensure_projected_admin_remains(
     db: Session,
     user: User,
+    membership: Membership,
     *,
     destination_role: str,
     destination_status: str,
@@ -143,13 +149,13 @@ def ensure_projected_admin_remains(
     expiry_requested: bool = False,
 ) -> None:
     now = utc_now()
-    was_active_admin = is_active_admin(user)
-    projected_expiry = destination_expires_at if expiry_requested else user.expires_at
+    was_active_admin = is_active_admin(user, membership)
+    projected_expiry = destination_expires_at if expiry_requested else membership.expires_at
     will_be_active_admin = bool(
         not destination_deleted
         and destination_status == UserStatus.ACTIVE.value
         and (projected_expiry is None or projected_expiry > now)
-        and is_established_user(user, status_value=destination_status)
+        and is_established_user(membership, status_value=destination_status)
         and destination_role == UserRole.ADMIN.value
     )
     if not (was_active_admin or will_be_active_admin):
@@ -157,7 +163,7 @@ def ensure_projected_admin_remains(
     projected = active_admin_count(db) - int(was_active_admin) + int(will_be_active_admin)
     if projected < 1:
         raise conflict("Cannot remove the last active admin")
-    was_durable_admin = was_active_admin and user.expires_at is None
+    was_durable_admin = was_active_admin and membership.expires_at is None
     will_be_durable_admin = will_be_active_admin and projected_expiry is None
     if (was_durable_admin and not will_be_durable_admin) or (
         expiry_requested and will_be_active_admin and not will_be_durable_admin
@@ -193,10 +199,12 @@ def validate_identity_profile(
     if expires_at is None or expires_at.tzinfo is None or expires_at <= utc_now():
         raise ProfileValidationError("Guests require a future expiration")
     sponsor = db.scalar(select(User).where(User.id == sponsor_user_id).with_for_update(of=User))
+    membership = sole_active_membership(db, sponsor.id) if isinstance(sponsor, User) else None
     if not isinstance(sponsor, User) or (
         sponsor.is_deleted
         or sponsor.status != UserStatus.ACTIVE.value
-        or sponsor.role == UserRole.GUEST.value
-        or not is_identity_eligible(sponsor, now=utc_now())
+        or membership is None
+        or membership.role == UserRole.GUEST.value
+        or not is_identity_eligible(sponsor, membership, now=utc_now())
     ):
         raise ProfileValidationError("Guest sponsor is not an active member or administrator")

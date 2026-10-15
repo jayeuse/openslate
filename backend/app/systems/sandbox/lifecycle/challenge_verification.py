@@ -59,7 +59,8 @@ def record_failure(
     challenge.verification_lease_id = None
     challenge.verification_lease_expires_at = None
     challenge.updated_at = timestamp
-    db.add(LifecycleRateLimitFailure(actor_id=challenge.actor_id, occurred_at=timestamp))
+    db.add(LifecycleRateLimitFailure(org_id=challenge.org_id,
+                                     actor_id=challenge.actor_id, occurred_at=timestamp))
     db.flush()
     bucket = _refresh_failure_bucket(db, challenge.actor_id, timestamp)
     if bucket.attempt_count >= 5:

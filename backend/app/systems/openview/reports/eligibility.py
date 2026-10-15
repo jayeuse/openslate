@@ -16,4 +16,4 @@ def capture_run_eligible_users(db: Session, report: Report, run_id: UUID) -> Non
     """
 
     for user_id in sorted(module_reader_ids(db, report.module_id), key=str):
-        db.add(ReportRunEligibleUser(run_id=run_id, user_id=user_id))
+        db.add(ReportRunEligibleUser(org_id=report.org_id, run_id=run_id, user_id=user_id))

@@ -170,6 +170,7 @@ def create_relationship(
         raise RelationshipConflict("Target already has a relationship source")
 
     edge = RelationshipEdge(
+        org_id=source.org_id,
         field_id=field.id,
         source_record_id=source.id,
         target_record_id=target.id,
@@ -277,6 +278,7 @@ def assign_relationship(
         current.is_deleted = True
         current.deleted_at = datetime.now(UTC)
     replacement = RelationshipEdge(
+        org_id=locked_source.org_id,
         field_id=field_id,
         source_record_id=source_record_id,
         target_record_id=target.id,

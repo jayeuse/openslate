@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -25,6 +26,11 @@ class ReportSchedule(BaseModel):
 
     __tablename__ = "report_schedules"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_report_schedules_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "report_id"], ["reports.org_id", "reports.id"],
+            name="fk_report_schedules_report_id_reports", ondelete="RESTRICT",
+        ),
         CheckConstraint("revision > 0", name="ck_report_schedules_revision_positive"),
         CheckConstraint(
             "cadence IN ('daily', 'weekly', 'monthly')",
@@ -48,9 +54,10 @@ class ReportSchedule(BaseModel):
         Index("ix_report_schedules_due", "enabled", "next_due_at", "id"),
     )
 
-    report_id: Mapped[UUID] = mapped_column(
-        ForeignKey("reports.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    report_id: Mapped[UUID] = mapped_column(nullable=False)
     enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )

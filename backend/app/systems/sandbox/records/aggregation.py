@@ -42,9 +42,9 @@ from app.systems.sandbox.records.query_schemas import (
 
 
 def _workspace_timezone(db: Session) -> tuple[str, ZoneInfo]:
-    timezone_name = db.scalar(
-        select(WorkspaceProfile.timezone).where(WorkspaceProfile.singleton_key.is_(True))
-    )
+    timezone_name = db.scalars(
+        select(WorkspaceProfile.timezone)
+    ).one_or_none()
     if not timezone_name:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
     try:
@@ -54,9 +54,7 @@ def _workspace_timezone(db: Session) -> tuple[str, ZoneInfo]:
 
 
 def _workspace_week_start(db: Session) -> str:
-    value = db.scalar(
-        select(WorkspaceProfile.week_start).where(WorkspaceProfile.singleton_key.is_(True))
-    )
+    value = db.scalars(select(WorkspaceProfile.week_start)).one_or_none()
     if value not in {"monday", "sunday"}:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
     return str(value)

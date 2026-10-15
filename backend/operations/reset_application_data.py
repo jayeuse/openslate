@@ -230,6 +230,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         assert_provider_instance(
             values, database_url=migration_url, expected_user="openslate_owner"
         )
+        # TEMPORARY: removed in S15
+        raise ResetError(
+            "Application data reset is unavailable until S15 organization reset support"
+        )
         connection = connect(
             _psycopg_database_url(
                 migration_url,

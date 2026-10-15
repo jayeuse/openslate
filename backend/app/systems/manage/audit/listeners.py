@@ -220,6 +220,14 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             after = snapshot["after"]
 
         entity_type = inspect(change.instance).mapper.local_table.name
+        org_id = (change.instance.id if entity_type == "organizations"
+                  else getattr(change.instance, "org_id", None))
+        if entity_type in {"files", "in_app_notifications"}:
+            proof = after if after is not None else before
+            if proof is not None:
+                proof["org_id"] = str(org_id) if org_id is not None else None
+                discriminator = "purpose" if entity_type == "files" else "kind"
+                proof[discriminator] = getattr(change.instance, discriminator)
         invalidation = event_for_entity(
             _event_entity(change.instance, entity_type),
             getattr(change.instance, "id", None),
@@ -230,6 +238,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
         if invalidation is not None:
             invalidations.append(invalidation)
         audit_log = AuditLog(
+            org_id=org_id,
             action=change.action,
             entity_type=entity_type,
             entity_id=getattr(change.instance, "id", None),

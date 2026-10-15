@@ -20,12 +20,17 @@ from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import resolve_provider_session, validate_csrf
 from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.security_failures import append_committed_failure
 from app.systems.manage.audit.service import SecurityEventPersistenceError
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
+from app.systems.manage.workspace.security_policy import (
+    ip_allowed,
+    load_platform_policy,
+    load_workspace_policy,
+)
 
 _bearer = HTTPBearer(auto_error=False)
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -91,7 +96,7 @@ def _resolve_identity(
         # One read of the workspace policy serves the MFA and the address checks.
         policy = load_workspace_policy(db)
         resolved = resolve_provider_session(
-            db, claims, client, allow_aal1=allow_aal1, policy=policy
+            db, claims, client, allow_aal1=allow_aal1, policy=load_platform_policy(db)
         )
     except MFARequired as error:
         raise HTTPException(
@@ -191,28 +196,34 @@ def require_fresh_exact_admin(
         raise HTTPException(status_code=503, detail="Unable to reload administrator") from error
     if (
         not isinstance(actor, User)
-        or actor.role != UserRole.ADMIN.value
-        or not is_active_account(actor)
+        or not is_active_account(db, actor)
+        or sole_active_membership(db, actor.id).role != UserRole.ADMIN.value
     ):
         raise _forbidden(db)
     return actor
 
 
-def require_admin(user: Annotated[User, Depends(get_current_user)]) -> User:
+def require_admin(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> User:
     """Allow only an administrator.
 
     Administrators alone change the schema, users, invitations and group access.
     Department managers change group members through ``policy/delegation.py`` instead.
     """
 
-    if user.role != UserRole.ADMIN.value:
+    if sole_active_membership(db, user.id).role != UserRole.ADMIN.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return user
 
 
-def require_non_guest(user: Annotated[User, Depends(get_current_user)]) -> User:
+def require_non_guest(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> User:
     """Allow administrators and members. A guest is limited to reading."""
 
-    if user.role == UserRole.GUEST.value:
+    if sole_active_membership(db, user.id).role == UserRole.GUEST.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return user

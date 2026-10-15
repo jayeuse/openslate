@@ -26,7 +26,8 @@ from app.core.database.session import AuditSession, get_engine
 from app.core.middleware.request_context import get_current_request_context
 from app.core.observability import log_event
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.audit.models import (
     AuditAction,
     AuditLog,
@@ -111,7 +112,7 @@ def readable_audit_entries(db: Session, reader: User) -> ColumnElement[bool]:
 
 
 def _reader_conditions(db: Session, reader: User | None) -> list[ColumnElement[bool]]:
-    if reader is None or reader.role == UserRole.ADMIN.value:
+    if reader is None or sole_active_membership(db, reader.id).role == UserRole.ADMIN.value:
         return []
     return [readable_audit_entries(db, reader)]
 
@@ -200,7 +201,8 @@ def active_actor_names(db: Session, performed_by_ids: Iterable[UUID | None]) -> 
     if not actor_ids:
         return {}
     actors = db.execute(
-        select(User.id, User.display_name, User.username).where(
+        select(User.id, User.display_name, User.username)
+        .join(Membership, Membership.user_id == User.id).where(
             User.id.in_(actor_ids),
             User.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),

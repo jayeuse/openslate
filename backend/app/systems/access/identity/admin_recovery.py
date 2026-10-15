@@ -14,8 +14,9 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
-from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.session_revocation import revoke_user_sessions
+from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -54,9 +55,9 @@ def recover_local_admin(
     )
     if (
         user is None
-        or not is_identity_eligible(user, now=timestamp)
+        or not is_active_account(db, user, now=timestamp)
         or user.status != UserStatus.ACTIVE.value
-        or user.role != UserRole.ADMIN.value
+        or sole_active_membership(db, user.id).role != UserRole.ADMIN.value
         or user.supabase_user_id is None
     ):
         db.rollback()

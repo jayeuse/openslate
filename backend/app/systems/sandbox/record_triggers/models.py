@@ -12,6 +12,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -30,6 +31,28 @@ class RecordTrigger(BaseModel):
 
     __tablename__ = "record_triggers"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_record_triggers_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "publication_id"],
+            ["sandbox_publications.org_id", "sandbox_publications.id"],
+            name="fk_record_triggers_publication_id_sandbox_publications", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "published_version_id"], ["sandbox_versions.org_id", "sandbox_versions.id"],
+            name="fk_record_triggers_published_version_id_sandbox_versions", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_record_triggers_module_id_modules", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "trigger_field_id"], ["fields.org_id", "fields.id"],
+            name="fk_record_triggers_trigger_field_id_fields", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "trigger_value_field_id"], ["fields.org_id", "fields.id"],
+            name="fk_record_triggers_trigger_value_field_id_fields", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "event_kind IN ('record-created', 'field-changed', 'threshold-crossed', 'schedule')",
             name="ck_record_triggers_event_kind",
@@ -52,18 +75,15 @@ class RecordTrigger(BaseModel):
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"trigger_literal_value"})
 
-    publication_id: Mapped[UUID] = mapped_column(
-        ForeignKey("sandbox_publications.id", ondelete="RESTRICT"), nullable=False, index=True
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    published_version_id: Mapped[UUID] = mapped_column(
-        ForeignKey("sandbox_versions.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    publication_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    published_version_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     publisher_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT", use_alter=True), nullable=False, index=True
     )
-    module_id: Mapped[UUID] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    module_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
@@ -75,15 +95,11 @@ class RecordTrigger(BaseModel):
         Integer, nullable=False, default=0, server_default=text("0")
     )
     event_kind: Mapped[str] = mapped_column(String(24), nullable=False)
-    trigger_field_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("fields.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
+    trigger_field_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     trigger_operator: Mapped[str | None] = mapped_column(String(2), nullable=True)
     trigger_value_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     trigger_literal_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    trigger_value_field_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("fields.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
+    trigger_value_field_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     schedule_frequency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     schedule_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     schedule_weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -103,6 +119,26 @@ class TriggerEventState(StrEnum):
 class RecordTriggerEvent(BaseModel):
     __tablename__ = "record_trigger_events"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_record_trigger_events_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "record_id"], ["records.org_id", "records.id"],
+            name="fk_record_trigger_events_record_id_records", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_record_trigger_events_module_id_modules", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "scheduled_trigger_id"], ["record_triggers.org_id", "record_triggers.id"],
+            name="fk_record_trigger_events_scheduled_trigger_id_record_triggers",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "root_event_id"],
+            ["record_trigger_events.org_id", "record_trigger_events.id"],
+            name="fk_record_trigger_events_root_event_id_record_trigger_events",
+            ondelete="RESTRICT", use_alter=True,
+        ),
         CheckConstraint("depth >= 0 AND depth <= 10", name="ck_record_trigger_events_depth"),
         CheckConstraint(
             "action_budget >= 0 AND action_budget <= 100",
@@ -145,23 +181,17 @@ class RecordTriggerEvent(BaseModel):
         Index("ix_record_trigger_events_due", "state", "next_attempt_at", "id"),
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"values", "previous_values"})
-    record_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("records.id", ondelete="RESTRICT"), index=True
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    module_id: Mapped[UUID] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    scheduled_trigger_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("record_triggers.id", ondelete="RESTRICT"), index=True
-    )
+    record_id: Mapped[UUID | None] = mapped_column(index=True)
+    module_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    scheduled_trigger_id: Mapped[UUID | None] = mapped_column(index=True)
     event_kind: Mapped[str] = mapped_column(String(24), nullable=False)
     changed_field_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     values: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     previous_values: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    root_event_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("record_trigger_events.id", ondelete="RESTRICT", use_alter=True),
-        index=True,
-    )
+    root_event_id: Mapped[UUID | None] = mapped_column(index=True)
     depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     action_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     schedule_upper_record_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
@@ -185,6 +215,15 @@ class RecordTriggerEvent(BaseModel):
 class RecordTriggerRun(BaseModel):
     __tablename__ = "record_trigger_runs"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_record_trigger_runs_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"], ["record_trigger_events.org_id", "record_trigger_events.id"],
+            name="fk_record_trigger_runs_event_id_record_trigger_events", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "trigger_id"], ["record_triggers.org_id", "record_triggers.id"],
+            name="fk_record_trigger_runs_trigger_id_record_triggers", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "state IN ('succeeded', 'skipped', 'suspended', 'failed')",
             name="ck_record_trigger_runs_state",
@@ -194,14 +233,11 @@ class RecordTriggerRun(BaseModel):
         ),
         Index("ix_record_trigger_runs_created", "created_at", "id"),
     )
-    event_id: Mapped[UUID] = mapped_column(
-        ForeignKey("record_trigger_events.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    trigger_id: Mapped[UUID] = mapped_column(
-        ForeignKey("record_triggers.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
+    event_id: Mapped[UUID] = mapped_column(nullable=False)
+    trigger_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
@@ -211,6 +247,19 @@ class RecordTriggerCondition(BaseModel):
 
     __tablename__ = "record_trigger_conditions"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_record_trigger_conditions_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "trigger_id"], ["record_triggers.org_id", "record_triggers.id"],
+            name="fk_record_trigger_conditions_trigger_id_record_triggers", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "field_id"], ["fields.org_id", "fields.id"],
+            name="fk_record_trigger_conditions_field_id_fields", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "value_field_id"], ["fields.org_id", "fields.id"],
+            name="fk_record_trigger_conditions_value_field_id_fields", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "operator IN ('>', '>=', '<', '<=', '=', '!=')",
             name="ck_record_trigger_conditions_operator",
@@ -230,21 +279,16 @@ class RecordTriggerCondition(BaseModel):
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"literal_value"})
 
-    trigger_id: Mapped[UUID] = mapped_column(
-        ForeignKey("record_triggers.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    field_id: Mapped[UUID] = mapped_column(
-        ForeignKey("fields.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    trigger_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    field_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     operator: Mapped[str] = mapped_column(String(2), nullable=False)
     value_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     literal_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    value_field_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("fields.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
+    value_field_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
 
 
 class RecordTriggerAction(BaseModel):
@@ -252,6 +296,19 @@ class RecordTriggerAction(BaseModel):
 
     __tablename__ = "record_trigger_actions"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_record_trigger_actions_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "trigger_id"], ["record_triggers.org_id", "record_triggers.id"],
+            name="fk_record_trigger_actions_trigger_id_record_triggers", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "target_field_id"], ["fields.org_id", "fields.id"],
+            name="fk_record_trigger_actions_target_field_id_fields", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "value_field_id"], ["fields.org_id", "fields.id"],
+            name="fk_record_trigger_actions_value_field_id_fields", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "kind = 'set-field'", name="ck_record_trigger_actions_supported_kind"
         ),
@@ -270,18 +327,13 @@ class RecordTriggerAction(BaseModel):
     )
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"literal_value"})
 
-    trigger_id: Mapped[UUID] = mapped_column(
-        ForeignKey("record_triggers.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    target_field_id: Mapped[UUID] = mapped_column(
-        ForeignKey("fields.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    trigger_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    target_field_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     kind: Mapped[str] = mapped_column(String(24), nullable=False, default="set-field")
     value_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     literal_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    value_field_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("fields.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
+    value_field_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)

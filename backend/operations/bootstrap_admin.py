@@ -28,7 +28,7 @@ from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.access.users.service import invite_user, reconcile_invitation
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
@@ -73,8 +73,8 @@ def _invitation(email: str, username: str) -> InvitationCreate:
 
 
 def _validate_schema(db: AuditSession) -> None:
-    """Touch the local profile table, including its role column."""
-    db.scalar(select(User.id, User.role).limit(1))
+    """Touch the account and membership schema before provisioning."""
+    db.scalar(select(User.id, Membership.role).join(Membership).limit(1))
 
 
 def _matching_profile(db: AuditSession, invitation: InvitationCreate) -> User | None:
@@ -93,25 +93,34 @@ def _admin_assignment_count(db: AuditSession, *, excluded_user_id: UUID | None =
     statement = (
         select(func.count())
         .select_from(User)
-        .where(User.is_deleted.is_(False), User.role == UserRole.ADMIN.value)
+        .join(Membership, Membership.user_id == User.id)
+        .where(User.is_deleted.is_(False), Membership.is_deleted.is_(False),
+               Membership.role == UserRole.ADMIN.value)
     )
     if excluded_user_id is not None:
         statement = statement.where(User.id != excluded_user_id)
     return int(db.scalar(statement) or 0)
 
 
-def _is_exact_admin_reservation(user: User, invitation: InvitationCreate) -> bool:
+def _is_exact_admin_reservation(db: AuditSession, user: User, invitation: InvitationCreate) -> bool:
+    membership = db.scalars(select(Membership).where(
+        Membership.user_id == user.id, Membership.status == UserStatus.PENDING.value,
+        Membership.is_deleted.is_(False),
+    ).limit(2)).all()
+    if len(membership) != 1:
+        return False
+    reservation = membership[0]
     try:
         normalized_email = normalize_email(user.email)
         normalized_username = normalize_username(user.username)
     except ValueError:
         return False
     return bool(
-        user.role == UserRole.ADMIN.value
+        reservation.role == UserRole.ADMIN.value
         and user.status == UserStatus.PENDING.value
         and not user.is_deleted
-        and user.provider_invitation_operation_id is not None
-        and user.invitation_accepted_at is None
+        and reservation.provider_invitation_operation_id is not None
+        and reservation.invitation_accepted_at is None
         and normalized_email == invitation.email
         and normalized_username == invitation.username
     )
@@ -124,7 +133,7 @@ def _provision(settings: Settings, invitation: InvitationCreate) -> BootstrapRes
         existing_profile = _matching_profile(db, invitation)
 
         if existing_profile is not None:
-            if _is_exact_admin_reservation(existing_profile, invitation):
+            if _is_exact_admin_reservation(db, existing_profile, invitation):
                 if not _admin_assignment_count(db, excluded_user_id=existing_profile.id):
                     reconcile_invitation(db, existing_profile.id, actor_id=None, bootstrap=True)
                     return BootstrapResult(

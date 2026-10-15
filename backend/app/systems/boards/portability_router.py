@@ -23,6 +23,7 @@ from app.systems.access.policy.checks import (
     require_module_access,
 )
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardScope, BoardStatus, BoardWidget
 from app.systems.boards.portability import (
@@ -257,7 +258,7 @@ def _bundle_from_board(
             )
         if mutation:
             if read_ids:
-                require_admin(actor)
+                require_admin(actor, db)
             else:
                 actor = require_fresh_exact_admin(db, actor.id)
                 require_live_session(db, actor_id=actor.id, session_id=identity.session_id)
@@ -378,8 +379,9 @@ def _bundle_from_board(
     return bundle, resolved
 
 
-def _create_project_board(db: Session, resolved: ResolvedBoardConfiguration) -> Board:
+def _create_project_board(db: Session, resolved: ResolvedBoardConfiguration, org_id: UUID) -> Board:
     board = Board(
+        org_id=org_id,
         scope=BoardScope.PROJECT.value,
         name=resolved.board.name,
         description=resolved.board.description,
@@ -391,6 +393,7 @@ def _create_project_board(db: Session, resolved: ResolvedBoardConfiguration) -> 
         for position, spec in enumerate(resolved.widgets):
             db.add(
                 BoardWidget(
+                    org_id=board.org_id,
                     board_id=board.id,
                     position=position,
                     name=spec.name,
@@ -442,7 +445,8 @@ def import_board_configuration(
         try:
             bundle = parse_portable_board(raw)
             actor = require_fresh_exact_admin(db, actor.id)
-            board = _create_project_board(db, resolve_portable_board(db, bundle))
+            board = _create_project_board(db, resolve_portable_board(db, bundle),
+                                          sole_active_membership(db, actor.id).org_id)
         except PortabilityError as error:
             raise _http_error(error) from error
     response.headers["Location"] = f"/api/boards/{board.id}"
@@ -459,7 +463,7 @@ def duplicate_board(
         try:
             bundle, resolved = _bundle_from_board(db, board_id, actor, identity, mutation=True)
             resolved.board.name = f"{bundle.configuration.name[:193]} (copy)"
-            board = _create_project_board(db, resolved)
+            board = _create_project_board(db, resolved, sole_active_membership(db, actor.id).org_id)
         except PortabilityError as error:
             raise _http_error(error) from error
     response.headers["Location"] = f"/api/boards/{board.id}"

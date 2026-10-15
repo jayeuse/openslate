@@ -14,7 +14,7 @@ from app.core.base_model import utc_now
 from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import module_reader_ids
-from app.systems.access.users.eligibility import is_established_user
+from app.systems.access.users.eligibility import is_active_account
 from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access import visible_board_clause
 from app.systems.boards.event_models import BoardEvent
@@ -83,7 +83,7 @@ def queue_report_occurrence(
 
     instant = _utc_instant(scheduled_for)
     report = db.scalar(select(Report).where(Report.id == report_id).with_for_update())
-    if report_source(db, report, lock=True) is None:
+    if report is None or report_source(db, report, lock=True) is None:
         raise ValueError("Report is unavailable for scheduling")
     existing = db.scalar(
         select(ScheduledWork).where(
@@ -95,6 +95,7 @@ def queue_report_occurrence(
     if existing is not None:
         return existing
     work = ScheduledWork(
+        org_id=report.org_id,
         kind=WorkKind.REPORT_RUN,
         report_id=report_id,
         scheduled_for=instant,
@@ -302,6 +303,7 @@ def _notify_work(
         if notice is None:
             db.add(
                 InAppNotification(
+                    org_id=work.org_id,
                     work_id=work.id,
                     recipient_id=recipient_id,
                     kind=kind,
@@ -330,7 +332,7 @@ def current_user_notification_query(
         or user.is_deleted
         or user.deleted_at is not None
         or user.status != UserStatus.ACTIVE.value
-        or not is_established_user(user)
+        or not is_active_account(db, user)
     ):
         return select(InAppNotification).where(false())
     report_ids = (
@@ -381,7 +383,7 @@ def current_user_notification_query(
             Board.is_deleted.is_(False),
             Board.deleted_at.is_(None),
             Board.status == BoardStatus.ACTIVE,
-            visible_board_clause(user),
+            visible_board_clause(db, user),
         )
     )
     post_ids = (
@@ -411,7 +413,7 @@ def current_user_notification_query(
             Board.is_deleted.is_(False),
             Board.deleted_at.is_(None),
             Board.status == BoardStatus.ACTIVE,
-            visible_board_clause(user),
+            visible_board_clause(db, user),
             or_(
                 BoardPostRevision.expires_at.is_(None),
                 BoardPostRevision.expires_at > utc_now(),

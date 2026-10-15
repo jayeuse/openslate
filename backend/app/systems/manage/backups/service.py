@@ -55,10 +55,10 @@ def installation_id(db: Session) -> str:
 
 
 def workspace(db: Session, *, lock: bool = False) -> WorkspaceProfile:
-    statement = select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+    statement = select(WorkspaceProfile)
     if lock:
         statement = statement.with_for_update().execution_options(populate_existing=True)
-    row = db.scalar(statement)
+    row = db.scalars(statement).one_or_none()
     if row is None:
         raise BackupStateError("backup_unavailable")
     return row

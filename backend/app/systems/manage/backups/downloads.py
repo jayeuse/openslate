@@ -35,7 +35,7 @@ from app.systems.manage.backups import service
 from app.systems.manage.backups.models import BackupExportOperation
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
-    load_workspace_policy,
+    load_platform_policy,
 )
 
 EXPORT_GROUP = 10001
@@ -205,7 +205,7 @@ def locked_identity(db: Session, request: Request) -> tuple[CurrentIdentity, dat
         or (actor.tokens_valid_after is not None and claims.issued_at < actor.tokens_valid_after)
     ):
         raise HTTPException(401, detail="Invalid authentication credentials")
-    expiry = min(effective_session_expiry(session, load_workspace_policy(db)), claims.expires_at)
+    expiry = min(effective_session_expiry(session, load_platform_policy(db)), claims.expires_at)
     if expiry <= now:
         raise HTTPException(401, detail="Invalid authentication credentials")
     return identity, expiry

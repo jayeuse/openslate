@@ -18,7 +18,7 @@ from app.systems.access.identity.models import IdentityRateLimitBucket
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
 from app.systems.manage.audit.service import append_security_event
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings
 
 LOGIN_WINDOW = timedelta(minutes=15)
 LOGIN_COOLDOWN = timedelta(minutes=15)
@@ -91,7 +91,7 @@ def login_retry_after(
     db: Session,
     bucket: IdentityRateLimitBucket | None,
     timestamp: datetime,
-    profile: WorkspaceProfile,
+    profile: PlatformSettings,
     *,
     source: str | None = None,
     actor_id: UUID | None = None,
@@ -123,7 +123,7 @@ def record_attempt(
     bucket: IdentityRateLimitBucket | None,
     timestamp: datetime,
     *,
-    policy: WorkspaceProfile | None = None,
+    policy: PlatformSettings | None = None,
     login: bool = False,
     source: str | None = None,
     actor_id: UUID | None = None,

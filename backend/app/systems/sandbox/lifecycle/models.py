@@ -3,7 +3,17 @@ from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
@@ -32,6 +42,7 @@ class LifecycleConfirmationChallenge(Base):
     __tablename__ = "lifecycle_confirmation_challenges"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_lifecycle_confirmation_challenges_org_id_id"),
         CheckConstraint(
             "operation IN ('close', 'purge')",
             name="ck_lifecycle_challenges_operation",
@@ -62,6 +73,9 @@ class LifecycleConfirmationChallenge(Base):
         ),
     )
 
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7
     )
@@ -110,6 +124,8 @@ class LifecycleRateLimitBucket(Base):
     __tablename__ = "lifecycle_rate_limit_buckets"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_lifecycle_rate_limit_buckets_org_id_id"),
+        UniqueConstraint("org_id", "actor_id", name="uq_lifecycle_rate_limit_buckets_actor_id"),
         CheckConstraint(
             "attempt_count >= 0 AND attempt_count <= 5",
             name="ck_lifecycle_buckets_attempt_count_nonnegative",
@@ -121,6 +137,9 @@ class LifecycleRateLimitBucket(Base):
         ),
     )
 
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7
     )
@@ -128,7 +147,6 @@ class LifecycleRateLimitBucket(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
-        unique=True,
     )
     attempt_count: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0"), nullable=False
@@ -154,6 +172,7 @@ class LifecycleRateLimitFailure(Base):
     __tablename__ = "lifecycle_rate_limit_failures"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_lifecycle_rate_limit_failures_org_id_id"),
         Index(
             "ix_lifecycle_rate_limit_failures_actor_occurred",
             "actor_id",
@@ -161,6 +180,9 @@ class LifecycleRateLimitFailure(Base):
         ),
     )
 
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7
     )

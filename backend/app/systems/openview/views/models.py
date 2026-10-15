@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -28,6 +29,11 @@ class SavedView(BaseModel):
     __tablename__ = "saved_views"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"definition", "presentation"})
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_saved_views_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_saved_views_module_id_modules", ondelete="RESTRICT",
+        ),
         CheckConstraint("revision > 0", name="ck_saved_views_revision"),
         UniqueConstraint("id", "module_id", name="uq_saved_views_id_module"),
         Index(
@@ -37,9 +43,10 @@ class SavedView(BaseModel):
             postgresql_where=text("is_default AND NOT is_deleted"),
         ),
     )
-    module_id: Mapped[UUID] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"), nullable=False, index=True
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    module_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     is_default: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False

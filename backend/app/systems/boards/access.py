@@ -24,12 +24,13 @@ from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.scope import effective_levels, includes, rank
 from app.systems.access.users.eligibility import established_user_clause, is_active_account
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.boards.models import Board, BoardGroup, BoardScope
 
 
-def _capped(user: User, level: AccessLevel | None) -> AccessLevel | None:
-    if level is not None and user.role == UserRole.GUEST.value:
+def _capped(role: str, level: AccessLevel | None) -> AccessLevel | None:
+    if level is not None and role == UserRole.GUEST.value:
         return AccessLevel.READ
     return level
 
@@ -56,9 +57,10 @@ def project_level(db: Session, user: User, board_id: UUID) -> AccessLevel | None
 def board_level(db: Session, user: User, board: Board) -> AccessLevel | None:
     """Return the user's level on the Board, or None when the user cannot read it."""
 
-    if not is_active_account(user) or board.is_deleted or board.deleted_at is not None:
+    if not is_active_account(db, user) or board.is_deleted or board.deleted_at is not None:
         return None
-    if user.role == UserRole.ADMIN.value:
+    role = sole_active_membership(db, user.id).role
+    if role == UserRole.ADMIN.value:
         return AccessLevel.MANAGE
     if board.scope == BoardScope.COMPANY.value:
         return AccessLevel.READ
@@ -69,9 +71,9 @@ def board_level(db: Session, user: User, board: Board) -> AccessLevel | None:
         level = access.department_level(board.department_id)
         if level is None and board.department_id in access.module_departments.values():
             level = AccessLevel.READ
-        return _capped(user, level)
+        return _capped(role, level)
     if board.scope == BoardScope.PROJECT.value:
-        return _capped(user, project_level(db, user, board.id))
+        return _capped(role, project_level(db, user, board.id))
     return None
 
 
@@ -79,12 +81,12 @@ def has_level(db: Session, user: User, board: Board, required: AccessLevel) -> b
     return includes(board_level(db, user, board), required)
 
 
-def visible_board_clause(user: User) -> ColumnElement[bool]:
+def visible_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     """SQL form of ``board_level(...) is not None`` over each ``boards`` row."""
 
-    if not is_active_account(user):
+    if not is_active_account(db, user):
         return false()
-    if user.role == UserRole.ADMIN.value:
+    if sole_active_membership(db, user.id).role == UserRole.ADMIN.value:
         return true()
     memberships = (
         select(GroupMember.group_id)
@@ -114,16 +116,16 @@ def visible_board_clause(user: User) -> ColumnElement[bool]:
 def readable_board_ids(db: Session, user: User) -> frozenset[UUID] | None:
     """Snapshot live readable Boards; None denotes an active administrator."""
 
-    if not is_active_account(user):
+    if not is_active_account(db, user):
         return frozenset()
-    if user.role == UserRole.ADMIN.value:
+    if sole_active_membership(db, user.id).role == UserRole.ADMIN.value:
         return None
     return frozenset(
         db.scalars(
             select(Board.id).where(
                 Board.is_deleted.is_(False),
                 Board.deleted_at.is_(None),
-                visible_board_clause(user),
+                visible_board_clause(db, user),
             )
         ).all()
     )
@@ -132,10 +134,13 @@ def readable_board_ids(db: Session, user: User) -> frozenset[UUID] | None:
 def managed_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     """SQL form of ``board_level(...) == manage`` without one query per Board."""
 
-    if not is_active_account(user) or user.role == UserRole.GUEST.value:
+    if not is_active_account(db, user):
+        return false()
+    role = sole_active_membership(db, user.id).role
+    if role == UserRole.GUEST.value:
         return false()
     live = and_(Board.is_deleted.is_(False), Board.deleted_at.is_(None))
-    if user.role == UserRole.ADMIN.value:
+    if role == UserRole.ADMIN.value:
         return live
     departments = effective_levels(db, user).managed_department_ids() or frozenset()
     projects = (
@@ -164,11 +169,13 @@ def managed_board_clause(db: Session, user: User) -> ColumnElement[bool]:
 
 def _active_accounts() -> Select[tuple[UUID]]:
     timestamp = utc_now()
-    return select(User.id).where(
+    return select(User.id).join(Membership, Membership.user_id == User.id).where(
         User.status == UserStatus.ACTIVE.value,
         User.is_deleted.is_(False),
         User.deleted_at.is_(None),
-        or_(User.expires_at.is_(None), User.expires_at > timestamp),
+        Membership.status == UserStatus.ACTIVE.value,
+        Membership.is_deleted.is_(False),
+        or_(Membership.expires_at.is_(None), Membership.expires_at > timestamp),
         established_user_clause(),
     )
 
@@ -181,7 +188,7 @@ def board_reader_ids(db: Session, board: Board) -> frozenset[UUID]:
 
     if board.is_deleted or board.deleted_at is not None:
         return frozenset()
-    admins: Any = User.role == UserRole.ADMIN.value
+    admins: Any = Membership.role == UserRole.ADMIN.value
     statement = _active_accounts()
     if board.scope == BoardScope.COMPANY.value:
         return frozenset(db.scalars(statement).all())

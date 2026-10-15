@@ -29,7 +29,7 @@ from app.systems.manage.audit import service as audit_service
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
-from app.systems.manage.workspace.security_policy import load_workspace_policy
+from app.systems.manage.workspace.security_policy import load_platform_policy, load_workspace_policy
 
 
 class EmailChangeConflict(Exception):
@@ -103,7 +103,7 @@ def request_email_change(
         raise InvalidCredentials("Invalid credentials")
     if email == user.email or db.scalar(select(User.id).where(User.email == email)) is not None:
         raise EmailChangeConflict("Email address is unavailable")
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     timestamp = utc_now()
     fingerprint, bucket = None, None
     if enforce_rate_limit:

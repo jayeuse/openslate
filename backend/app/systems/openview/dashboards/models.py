@@ -8,9 +8,11 @@ from uuid import UUID
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -24,6 +26,11 @@ class Dashboard(BaseModel):
 
     __tablename__ = "dashboards"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_dashboards_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "department_id"], ["departments.org_id", "departments.id"],
+            name="fk_dashboards_department_id_departments", ondelete="RESTRICT",
+        ),
         CheckConstraint("length(btrim(name)) > 0", name="ck_dashboards_name_nonempty"),
         CheckConstraint("revision > 0", name="ck_dashboards_revision_positive"),
         CheckConstraint(
@@ -34,9 +41,10 @@ class Dashboard(BaseModel):
         Index("ix_dashboards_department_position", "department_id", "position"),
     )
 
-    department_id: Mapped[UUID] = mapped_column(
-        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    department_id: Mapped[UUID] = mapped_column(nullable=False)
     position: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0"), nullable=False
     )
@@ -60,6 +68,15 @@ class DashboardWidget(BaseModel):
     __tablename__ = "dashboard_widgets"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"config"})
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_dashboard_widgets_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "dashboard_id"], ["dashboards.org_id", "dashboards.id"],
+            name="fk_dashboard_widgets_dashboard_id_dashboards", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "chart_id"], ["charts.org_id", "charts.id"],
+            name="fk_dashboard_widgets_chart_id_charts", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "widget_type IN ('summary', 'workload', 'records', 'chart')",
             name="ck_dashboard_widgets_type",
@@ -83,9 +100,10 @@ class DashboardWidget(BaseModel):
         ),
     )
 
-    dashboard_id: Mapped[UUID] = mapped_column(
-        ForeignKey("dashboards.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    dashboard_id: Mapped[UUID] = mapped_column(nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     widget_type: Mapped[str] = mapped_column(
         String(20), default="chart", server_default=text("'chart'"), nullable=False
@@ -93,9 +111,7 @@ class DashboardWidget(BaseModel):
     size: Mapped[str] = mapped_column(
         String(1), default="M", server_default=text("'M'"), nullable=False
     )
-    chart_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("charts.id", ondelete="RESTRICT"), nullable=True
-    )
+    chart_id: Mapped[UUID | None] = mapped_column(nullable=True)
     config: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )

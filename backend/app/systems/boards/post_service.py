@@ -167,6 +167,7 @@ def publish_locked(
         + 1
     )
     published = BoardPostRevision(
+        org_id=item.org_id,
         id=uuid7(),
         post_id=item.id,
         publication_number=number,
@@ -185,10 +186,12 @@ def publish_locked(
     # triggers read this revision, so it must reach the database first.
     db.flush()
     for file_id in attachment_file_ids:
-        db.add(BoardPostRevisionAttachment(revision_id=published.id, file_id=file_id))
+        db.add(BoardPostRevisionAttachment(org_id=item.org_id,
+                                           revision_id=published.id, file_id=file_id))
     for link in current_record_links:
         db.add(
             BoardPostRevisionRecordLink(
+                org_id=item.org_id,
                 revision_id=published.id,
                 record_id=link.record_id,
                 module_id=link.module_id,

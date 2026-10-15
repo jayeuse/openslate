@@ -28,7 +28,7 @@ from app.systems.manage.audit.security_failures import (
     canonical_source,
 )
 from app.systems.manage.audit.service import append_security_event
-from app.systems.manage.workspace.security_policy import load_workspace_policy
+from app.systems.manage.workspace.security_policy import load_platform_policy
 
 
 def login_with_provider(
@@ -45,7 +45,7 @@ def login_with_provider(
     """Exchange a password, then admit only a bound local user and provider session."""
 
     timestamp = now or utc_now()
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     fingerprint: str | None = None
     bucket = None
     if enforce_rate_limit:

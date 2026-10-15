@@ -275,9 +275,7 @@ def export_snapshot(
             fields = validate_definition(
                 snapshot, payload.module_id, payload.definition, reader=reader
             )
-            profile = snapshot.scalar(
-                select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
-            )
+            profile = snapshot.scalars(select(WorkspaceProfile)).one_or_none()
             if profile is None:
                 raise HTTPException(503, detail="Workspace configuration is unavailable")
             if not payload.definition.columns and not payload.include_record_id:

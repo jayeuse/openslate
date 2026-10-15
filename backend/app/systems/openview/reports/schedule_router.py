@@ -83,7 +83,7 @@ def _fresh_manager(db: Session, actor_id: UUID, report: Report) -> None:
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if actor is None or not is_active_account(actor) or actor.deleted_at is not None:
+    if actor is None or not is_active_account(db, actor) or actor.deleted_at is not None:
         raise forbidden()
     require_module_access(db, actor, report.module_id, AccessLevel.MANAGE)
 
@@ -212,6 +212,7 @@ def create_report_schedule(
     if payload.enabled:
         _require_runnable(db, report)
     policy = ReportSchedule(
+        org_id=report.org_id,
         report_id=report.id,
         enabled=payload.enabled,
         cadence=payload.cadence,

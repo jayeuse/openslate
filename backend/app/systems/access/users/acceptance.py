@@ -10,7 +10,8 @@ from uuid6 import uuid7
 from app.common.normalization import normalize_email
 from app.core.base_model import utc_now
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.access.users.service import (
     _lock_administrator_changes,
     _lock_profile,
@@ -107,7 +108,17 @@ def accept_verified_invitation(
             operation_id, user_id, "verified email does not match invitation"
         )
         raise InvitationError("Verified email does not match invitation")
-    if profile.status == UserStatus.ACTIVE.value and profile.invitation_accepted_at is not None:
+    memberships = db.scalars(select(Membership).where(
+        Membership.user_id == user_id, Membership.status == "pending",
+        Membership.is_deleted.is_(False),
+    ).with_for_update()).all() if profile.status == "pending" else [
+        sole_active_membership(db, user_id)
+    ]
+    if len(memberships) != 1:
+        db.rollback()
+        raise InvitationError("Invitation is not pending")
+    membership = memberships[0]
+    if profile.status == UserStatus.ACTIVE.value and membership.invitation_accepted_at is not None:
         db.rollback()
         _security_event(
             event_type="user.invitation_acceptance",
@@ -117,13 +128,14 @@ def accept_verified_invitation(
             subject_id=user_id,
         )
         return profile
-    if profile.status != UserStatus.PENDING.value or profile.invitation_sent_at is None:
+    if profile.status != UserStatus.PENDING.value or membership.invitation_sent_at is None:
         db.rollback()
         record_invitation_acceptance_failure(operation_id, user_id, "invitation is not pending")
         raise InvitationError("Invitation is not pending")
     profile.status = UserStatus.ACTIVE.value
-    profile.invitation_accepted_at = utc_now()
-    accepted_mfa_episode(db, profile, profile.invitation_accepted_at)
+    membership.status = UserStatus.ACTIVE.value
+    membership.invitation_accepted_at = utc_now()
+    accepted_mfa_episode(db, membership, membership.invitation_accepted_at)
     try:
         inviter_id = (
             db.scalar(
@@ -133,12 +145,12 @@ def accept_verified_invitation(
                     SecurityEvent.outcome == SecurityEventOutcome.SUCCESS,
                     SecurityEvent.source == "users.service",
                     SecurityEvent.subject_id == profile.id,
-                    SecurityEvent.operation_id == profile.provider_invitation_operation_id,
+                    SecurityEvent.operation_id == membership.provider_invitation_operation_id,
                 )
                 .order_by(SecurityEvent.occurred_at, SecurityEvent.id)
                 .limit(1)
             )
-            if profile.provider_invitation_operation_id is not None
+            if membership.provider_invitation_operation_id is not None
             else None
         )
         notify_invitation_accepted(db, profile, inviter_id)

@@ -10,9 +10,9 @@ from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.core.database.session import AuditSession
-from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.eligibility import is_established_user
+from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.boards.access import has_level
 from app.systems.boards.models import Board, BoardStatus
@@ -128,11 +128,11 @@ def _current_actor(db: Session, actor_id: UUID) -> User | None:
         or actor.is_deleted
         or actor.deleted_at is not None
         or actor.status != UserStatus.ACTIVE.value
-        or not is_established_user(actor)
+        or not is_active_account(db, actor)
     ):
         return None
     # A scheduled post publishes only while its author may still change content.
-    if actor.role == UserRole.GUEST.value or not is_identity_eligible(actor):
+    if sole_active_membership(db, actor.id).role == UserRole.GUEST.value:
         return None
     return actor
 

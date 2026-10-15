@@ -19,7 +19,8 @@ from app.systems.access.policy.schemas import (
     GroupCreate,
     GroupUpdate,
 )
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 
@@ -143,11 +144,14 @@ def _active_users(db: Session, user_ids: tuple[UUID, ...]) -> set[UUID]:
         return set()
     rows = db.scalars(
         select(User)
+        .join(Membership, Membership.user_id == User.id)
         .where(
             User.id.in_(user_ids),
             User.is_deleted.is_(False),
             User.status == UserStatus.ACTIVE.value,
-            or_(User.expires_at.is_(None), User.expires_at > datetime.now(UTC)),
+            Membership.status == UserStatus.ACTIVE.value,
+            Membership.is_deleted.is_(False),
+            or_(Membership.expires_at.is_(None), Membership.expires_at > datetime.now(UTC)),
         )
         .order_by(User.id)
         .with_for_update()
@@ -160,11 +164,14 @@ def _pending_users(db: Session, user_ids: set[UUID]) -> set[UUID]:
         return set()
     rows = db.scalars(
         select(User)
+        .join(Membership, Membership.user_id == User.id)
         .where(
             User.id.in_(user_ids),
             User.is_deleted.is_(False),
             User.status == UserStatus.PENDING.value,
-            or_(User.expires_at.is_(None), User.expires_at > datetime.now(UTC)),
+            Membership.status == UserStatus.PENDING.value,
+            Membership.is_deleted.is_(False),
+            or_(Membership.expires_at.is_(None), Membership.expires_at > datetime.now(UTC)),
         )
         .order_by(User.id)
         .with_for_update()
@@ -176,7 +183,8 @@ def _refuse_administrators(db: Session, user_ids: set[UUID]) -> None:
     if user_ids and db.scalar(
         select(func.count())
         .select_from(User)
-        .where(User.id.in_(user_ids), User.role == UserRole.ADMIN.value)
+        .join(Membership, Membership.user_id == User.id)
+        .where(User.id.in_(user_ids), Membership.role == UserRole.ADMIN.value)
     ):
         raise conflict("Administrators have access everywhere and are not group members")
 
@@ -216,7 +224,8 @@ def replace_group_members(
             db.delete(item)
     for user_id in desired:
         if user_id not in existing_ids:
-            db.add(GroupMember(group_id=row.id, user_id=user_id, performed_by=actor_id))
+            db.add(GroupMember(org_id=row.org_id, group_id=row.id,
+                               user_id=user_id, performed_by=actor_id))
     db.flush()
     notify_access_changes(db, before)
     return True
@@ -224,7 +233,8 @@ def replace_group_members(
 
 def create_group(db: Session, payload: GroupCreate, actor_id: UUID) -> Group:
     try:
-        row = Group(name=payload.name, description=payload.description, performed_by=actor_id)
+        row = Group(org_id=sole_active_membership(db, actor_id).org_id,
+                    name=payload.name, description=payload.description, performed_by=actor_id)
         db.add(row)
         db.flush()
         replace_group_members(db, row, payload.member_ids, actor_id)
@@ -420,6 +430,7 @@ def replace_group_access(
             if (department_id, module_id) not in existing:
                 db.add(
                     GroupAccess(
+                        org_id=row.org_id,
                         group_id=row.id,
                         department_id=department_id,
                         module_id=module_id,

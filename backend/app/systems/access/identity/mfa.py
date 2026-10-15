@@ -22,7 +22,6 @@ from app.core.integrations.supabase_auth import (
 from app.core.integrations.supabase_mfa import SupabaseMfaClient, TotpEnrollment
 from app.systems.access.identity import rate_limits
 from app.systems.access.identity.contracts import IdentityRateLimited, InvalidCredentials
-from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.mfa_observations import (
     commit_bound_observation,
     observation_started_at,
@@ -36,14 +35,16 @@ from app.systems.access.identity.session_revocation import (
     revoke_session,
     revoke_user_sessions,
 )
-from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
+    load_platform_policy,
     load_workspace_policy,
     mfa_enrollment_deadline,
     mfa_role_required,
@@ -59,7 +60,7 @@ class MFAFactorUnavailable(RuntimeError):
     """The current provider identity has no matching TOTP factor."""
 
 
-def requires_mfa(profile: WorkspaceProfile, user: User, provider_user: ProviderUser) -> bool:
+def requires_mfa(profile: WorkspaceProfile, user: Membership, provider_user: ProviderUser) -> bool:
     if any(
         factor.factor_type == "totp" and factor.status == "verified"
         for factor in provider_user.factors
@@ -93,22 +94,22 @@ def mfa_status(
     if (
         user.supabase_user_id != claims.user_id
         or user.status != UserStatus.ACTIVE.value
-        or not is_identity_eligible(user, now=timestamp)
-        or not is_established_user(user)
+        or not is_active_account(db, user, now=timestamp)
         or session is None
         or not _same_session(claims, session)
         or session.revoked_at is not None
-        or effective_session_expiry(session, policy) <= timestamp
+        or effective_session_expiry(session, load_platform_policy(db)) <= timestamp
         or claims.expires_at <= timestamp
         or (user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after)
     ):
         raise InvalidCredentials("Invalid credentials")
-    policy_required = mfa_role_required(policy, user.role)
-    since = user.mfa_required_since if policy_required else None
+    membership = sole_active_membership(db, user.id)
+    policy_required = mfa_role_required(policy, membership.role)
+    since = membership.mfa_required_since if policy_required else None
     result = {
         "user_id": user.id,
         "assurance_level": claims.assurance_level,
-        "required": requires_mfa(policy, user, provider_user),
+        "required": requires_mfa(policy, membership, provider_user),
         "policy_required": policy_required,
         "required_since": since,
         "enrollment_deadline": mfa_enrollment_deadline(policy, since),
@@ -184,7 +185,7 @@ def verify_factor(
     before_policy = load_workspace_policy(db)
     current_claims = client.verify_access_token(current_access)
     was_blocked = current_claims.assurance_level == "aal1" and requires_mfa(
-        before_policy, user, before_provider
+        before_policy, sole_active_membership(db, user.id), before_provider
     )
     try:
         tokens = SupabaseMfaClient(client).challenge_and_verify(current_access, factor_id, code)
@@ -217,7 +218,7 @@ def verify_factor(
         raise SupabaseAuthUnavailable("Unable to confirm MFA verification") from error
     timestamp = utc_now()
     try:
-        policy = load_workspace_policy(db)
+        policy = load_platform_policy(db)
     except SupabaseAuthUnavailable:
         _invalidate_after_rotation(db, user_id, session_id, client, tokens.access_token)
         raise
@@ -311,13 +312,12 @@ def _locked_context(
     )
     session = db.get(IdentitySession, session_id, with_for_update=True, populate_existing=True)
     timestamp = utc_now()
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     if (
         user is None
         or session is None
         or user.status != UserStatus.ACTIVE.value
-        or not is_identity_eligible(user, now=timestamp)
-        or not is_established_user(user)
+        or not is_active_account(db, user, now=timestamp)
         or session.user_id != user_id
         or session.provider_user_id != user.supabase_user_id
         or session.revoked_at is not None

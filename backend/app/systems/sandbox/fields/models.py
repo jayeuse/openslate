@@ -2,7 +2,17 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -33,6 +43,15 @@ class FieldType(StrEnum):
 class Field(BaseModel):
     __tablename__ = "fields"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_fields_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_fields_module_id_modules", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "relationship_target_module_id"], ["modules.org_id", "modules.id"],
+            name="fk_fields_relationship_target_module_id_modules", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "lifecycle_close_operation_id IS NULL OR is_deleted",
             name="ck_fields_lifecycle_close_provenance",
@@ -75,11 +94,10 @@ class Field(BaseModel):
     )
     lifecycle_close_operation_id: Mapped[UUID | None] = mapped_column(nullable=True)
 
-    module_id: Mapped[UUID] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    module_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     type: Mapped[FieldType] = mapped_column(String(20), nullable=False)
     required: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
@@ -96,10 +114,7 @@ class Field(BaseModel):
         server_default=text("'{}'::jsonb"),
         nullable=False,
     )
-    relationship_target_module_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"),
-        nullable=True,
-    )
+    relationship_target_module_id: Mapped[UUID | None] = mapped_column(nullable=True)
     relationship_multiple_targets: Mapped[bool | None] = mapped_column(nullable=True)
     relationship_multiple_sources: Mapped[bool | None] = mapped_column(nullable=True)
     module: Mapped["Module"] = relationship(

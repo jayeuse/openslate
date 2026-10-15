@@ -40,7 +40,11 @@ APPLICATION_TABLES = (
     "lifecycle_confirmation_challenges",
     "lifecycle_rate_limit_buckets",
     "lifecycle_rate_limit_failures",
+    "memberships",
     "modules",
+    "organizations",
+    "platform_operators",
+    "platform_settings",
     "record_trigger_actions",
     "record_trigger_conditions",
     "record_trigger_events",
@@ -63,7 +67,6 @@ APPLICATION_TABLES = (
     "security_events",
     "update_statuses",
     "users",
-    "workspace_profiles",
 )
 NON_PRESERVED_TABLES = tuple(
     table
@@ -74,11 +77,14 @@ NON_PRESERVED_TABLES = tuple(
         "backup_policies",
         "backup_runs",
         "boards",
+        "memberships",
+        "organizations",
+        "platform_operators",
+        "platform_settings",
         "sandbox_documents",
         "sandbox_versions",
         "update_statuses",
         "users",
-        "workspace_profiles",
     }
 )
 DELETE_ORDER = (
@@ -186,7 +192,8 @@ LOCK TABLE public.alembic_version, public.audit_logs,
  public.identity_rate_limit_buckets, public.identity_sessions,
  public.identity_mfa_observations,
  public.lifecycle_confirmation_challenges, public.lifecycle_rate_limit_buckets,
- public.lifecycle_rate_limit_failures, public.modules, public.records,
+  public.lifecycle_rate_limit_failures, public.memberships, public.modules, public.records,
+  public.organizations, public.platform_operators, public.platform_settings,
  public.report_run_eligible_users, public.report_run_rows, public.report_runs,
  public.record_trigger_actions, public.record_trigger_conditions,
  public.record_trigger_events, public.record_trigger_runs, public.record_triggers,
@@ -195,7 +202,7 @@ LOCK TABLE public.alembic_version, public.audit_logs,
  public.sandbox_bindings, public.sandbox_documents, public.sandbox_publications,
  public.sandbox_test_runs, public.sandbox_versions,
  public.saved_views, public.scheduled_work,
- public.security_events, public.users, public.workspace_profiles
+  public.security_events, public.users
  IN ACCESS EXCLUSIVE MODE NOWAIT
 """
 

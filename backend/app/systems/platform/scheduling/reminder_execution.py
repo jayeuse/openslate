@@ -202,6 +202,7 @@ def finalize_reminder_claim(
     )
     notices = [
         InAppNotification(
+            org_id=event.org_id,
             work_id=work.id,
             recipient_id=recipient_id,
             kind=NotificationKind.EVENT_REMINDER,

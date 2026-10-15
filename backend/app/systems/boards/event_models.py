@@ -10,10 +10,12 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -30,6 +32,11 @@ class BoardEvent(BaseModel):
         {"title", "details", "location", "links"}
     )
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_board_events_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "board_id"], ["boards.org_id", "boards.id"],
+            name="fk_board_events_board_id_boards", ondelete="RESTRICT",
+        ),
         CheckConstraint("length(btrim(title)) > 0", name="ck_board_events_title_nonempty"),
         CheckConstraint("length(details) <= 4000", name="ck_board_events_details_length"),
         CheckConstraint(
@@ -61,9 +68,10 @@ class BoardEvent(BaseModel):
         Index("ix_board_events_author_id", "author_id"),
     )
 
-    board_id: Mapped[UUID] = mapped_column(
-        ForeignKey("boards.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    board_id: Mapped[UUID] = mapped_column(nullable=False)
     author_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

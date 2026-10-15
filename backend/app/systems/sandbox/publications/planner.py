@@ -284,7 +284,7 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     blockers.extend(close_blockers(db, by_kind, desired_ids, document, snapshot=snapshot))
     blockers.extend(hierarchy_close_blockers(document))
     blockers.extend(unmanaged_field_blockers(db, by_kind, document))
-    profile = db.scalar(select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True)))
+    profile = db.scalars(select(WorkspaceProfile)).one_or_none()
     if profile is None:
         blockers.append(
             PublicationBlocker(

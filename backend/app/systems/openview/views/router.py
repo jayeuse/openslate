@@ -21,6 +21,7 @@ from app.core.database import get_db
 from app.systems.access.policy.checks import require_module_access
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import EffectiveAccess, effective_levels, includes
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.openview.views.access import visible_to
 from app.systems.openview.views.catalog import router as catalog_router
@@ -292,6 +293,7 @@ def create_view(
     if payload.is_default:
         _clear_default(db, payload.module_id, keep=None)
     view = SavedView(
+        org_id=sole_active_membership(db, user.id).org_id,
         module_id=payload.module_id,
         name=payload.name,
         is_default=payload.is_default,

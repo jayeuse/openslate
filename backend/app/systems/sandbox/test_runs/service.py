@@ -66,6 +66,7 @@ def create_run(
         result=result_payload,
     )
     run = SandboxTestRun(
+        org_id=document_row.org_id,
         document_id=document_row.id,
         document_revision=document_row.revision,
         document_hash=document_row.content_hash,
