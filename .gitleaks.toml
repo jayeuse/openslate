@@ -1,0 +1,23 @@
+# Gitleaks configuration for the pre-commit hook and the CI secret-scan job.
+# Extends the default ruleset; the allowlist matches exact placeholder values only,
+# never whole files, so a real secret added beside a fixture is still reported.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test and sample-pack placeholders that are not credentials"
+regexTarget = "secret"
+regexes = [
+  # Gitleaks also decodes base64, so each base64 fixture is listed with its decoded form.
+  # RFC 6455 sample WebSocket nonce.
+  '''^dGhlIHNhbXBsZSBub25jZQ==$''',
+  '''^the sample nonce$''',
+  # SMTP encryption-key test fixture.
+  '''^MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=$''',
+  '''^0123456789abcdef0123456789abcdef$''',
+  # Sample-pack actor keys such as internal_pending_01.
+  '''^internal_[a-z]+_\d{2}$''',
+  # Fixed temporary password in RBAC route tests.
+  '''^temporary-secret-123$''',
+]
