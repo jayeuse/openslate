@@ -242,6 +242,7 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
     _grant(db, board, reader, "view")
     now = datetime.now(UTC)
     early_parent = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="B visible",
@@ -252,6 +253,7 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
         updated_at=now - timedelta(days=2),
     )
     later_parent_with_draft = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Private unpublished edit",
@@ -269,6 +271,7 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
     ):
         db.add(
             BoardPostRevision(
+                org_id=parent.org_id,
                 post_id=parent.id,
                 publication_number=1,
                 publication_key=uuid7(),
@@ -309,6 +312,7 @@ def test_default_post_order_is_pinned_first_before_paging(
     ):
         timestamp = now - timedelta(days=age)
         item = BoardPost(
+            org_id=board.org_id,
             board_id=board.id,
             author_id=owner.id,
             title=title,
@@ -324,6 +328,7 @@ def test_default_post_order_is_pinned_first_before_paging(
         db.flush()
         db.add(
             BoardPostRevision(
+                org_id=item.org_id,
                 post_id=item.id,
                 publication_number=1,
                 publication_key=uuid7(),

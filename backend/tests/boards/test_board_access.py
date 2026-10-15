@@ -180,8 +180,10 @@ def test_readers_and_members_without_a_group_cannot_change_board_content(
     reader, no_group, author = member(db), member(db), member(db)
     make_group_access(db, [reader], department, level=AccessLevel.READ)
     make_group_access(db, [author], department, level=AccessLevel.WRITE)
-    item = BoardPost(board_id=board.id, author_id=author.id, title="Mine", body="Body")
+    item = BoardPost(org_id=board.org_id, board_id=board.id,
+                     author_id=author.id, title="Mine", body="Body")
     widget = BoardWidget(
+        org_id=board.org_id,
         board_id=board.id,
         module_id=module.id,
         name="Tile",
@@ -232,7 +234,8 @@ def test_managers_pin_change_tiles_and_change_the_posts_of_others(
     writer, other_writer, manager = member(db), member(db), member(db)
     make_group_access(db, [writer, other_writer], department, level=AccessLevel.WRITE)
     make_group_access(db, [manager], department, level=AccessLevel.MANAGE)
-    item = BoardPost(board_id=board.id, author_id=other_writer.id, title="Theirs", body="Body")
+    item = BoardPost(org_id=board.org_id, board_id=board.id,
+                     author_id=other_writer.id, title="Theirs", body="Body")
     db.add(item)
     db.flush()
     root = f"/api/boards/{board.id}"

@@ -18,6 +18,7 @@ pytestmark = pytest.mark.integration
 
 def _post(db: Session, board: Board, author: User, *, status: str = "draft") -> BoardPost:
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="Private working title",
@@ -31,6 +32,7 @@ def _post(db: Session, board: Board, author: User, *, status: str = "draft") -> 
     if status == "published":
         db.add(
             BoardPostRevision(
+                org_id=item.org_id,
                 post_id=item.id,
                 publication_number=1,
                 publication_key=uuid7(),
