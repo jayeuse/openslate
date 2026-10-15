@@ -78,10 +78,11 @@ def test_two_saves_with_the_same_if_match_keep_only_the_winner(
         connection.execute(
             text(
                 "INSERT INTO public.fields "
-                "(id, module_id, name, type, required, position, config, is_deleted) "
-                "VALUES (:id, :module_id, :name, 'text', false, 0, '{}'::jsonb, false)"
+                "(id, org_id, module_id, name, type, required, position, config, is_deleted) "
+                "VALUES (:id, :org_id, :module_id, :name, 'text', false, 0, '{}'::jsonb, false)"
             ),
-            {"id": label_id, "module_id": graph.target_module_id, "name": f"Label {label_id}"},
+            {"id": label_id, "org_id": fixture.org_id,
+             "module_id": graph.target_module_id, "name": f"Label {label_id}"},
         )
     try:
         with Session(fixture.runtime_engine) as database:
@@ -155,14 +156,15 @@ def test_two_link_creates_on_one_source_resolve_to_one_outcome(
         connection.execute(
             text(
                 "INSERT INTO public.fields "
-                "(id, module_id, name, type, required, position, config, "
+                "(id, org_id, module_id, name, type, required, position, config, "
                 "relationship_target_module_id, relationship_multiple_targets, "
                 "relationship_multiple_sources, is_deleted) VALUES "
-                "(:id, :module_id, :name, 'relationship', false, 3, '{}'::jsonb, "
+                "(:id, :org_id, :module_id, :name, 'relationship', false, 3, '{}'::jsonb, "
                 ":target_module_id, true, true, false)"
             ),
             {
                 "id": field_id,
+                "org_id": fixture.org_id,
                 "module_id": graph.source_module_id,
                 "name": f"Many {field_id}",
                 "target_module_id": graph.target_module_id,

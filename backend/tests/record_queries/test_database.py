@@ -153,6 +153,7 @@ def test_select_contains_and_or_logic_and_allowlisted_search(query_db):
         "options": [*select_field.config["options"], {"id": _option_id("end"), "label": "end"}]
     }
     text_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Summary",
         type="text",
@@ -276,6 +277,7 @@ def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fi
 ) -> None:
     module, selected_field, _ = setup_rows(query_db, "text", [])
     filter_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Filter value",
         type="text",
@@ -284,6 +286,7 @@ def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fi
         config={},
     )
     sort_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Sort value",
         type="text",
@@ -292,6 +295,7 @@ def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fi
         config={},
     )
     hidden_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Unselected value",
         type="text",
@@ -307,6 +311,7 @@ def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fi
     sort_key = str(sort_field.id)
     hidden_key = str(hidden_field.id)
     explicit_null = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={
             selected_key: None,
@@ -317,6 +322,7 @@ def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fi
         performed_by=None,
     )
     missing_key = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={filter_key: "include", sort_key: "a", hidden_key: "private"},
         is_deleted=True,
@@ -324,6 +330,7 @@ def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fi
     )
     nested_value = {"items": [1, {"value": None}]}
     nested_record = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={
             selected_key: nested_value,
@@ -333,6 +340,7 @@ def test_projection_preserves_record_metadata_json_values_and_unselected_sort_fi
         },
     )
     excluded = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={selected_key: "excluded", filter_key: "exclude", sort_key: "0"},
     )
