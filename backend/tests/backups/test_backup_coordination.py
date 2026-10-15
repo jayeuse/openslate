@@ -12,16 +12,16 @@ from sqlalchemy.orm import Session
 from app.core.config.instance import instance_target_for_process
 from app.core.database.session import AuditSession
 from app.main import create_app
-from app.systems.access.users.models import UserRole
+from app.systems.access.users.models import Membership, UserRole
 from app.systems.manage.backups import service
 from app.systems.manage.backups.models import BackupPolicy, BackupRun
 from app.systems.manage.backups.schemas import InspectCommand
-from app.systems.manage.workspace.models import PlatformSettings
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from operations.backup_state import coordinated_session, execute
 from operations.reset.models import _RESET_ADVISORY_LOCK_KEY
 from tests.conftest import guarded_create_engine
 from tests.race_support import backend_pid, join, start, wait_until_blocked_by
-from tests.rbac.support import _client, add_user
+from tests.rbac.support import _client, add_user, organization
 
 pytestmark = pytest.mark.integration
 
@@ -66,12 +66,14 @@ def test_absent_backup_policy_creation_is_serialized_by_installation_settings() 
 
 def test_concurrent_lost_response_replay_commits_only_one_request() -> None:
     engine = guarded_create_engine(os.environ["TEST_DATABASE_URL"])
+    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     actor = None
     created_policy = False
     try:
         with AuditSession(engine, expire_on_commit=False) as db:
             created_policy = db.scalar(select(BackupPolicy.id)) is None
             actor = add_user(db, role=UserRole.ADMIN)
+            org_id = organization(db).id
             db.commit()
         gate, key = Barrier(3), uuid4().hex
 
@@ -96,19 +98,30 @@ def test_concurrent_lost_response_replay_commits_only_one_request() -> None:
             rows = db.scalars(select(BackupRun).where(BackupRun.requester_id == actor.id)).all()
             assert len(rows) == 1 and rows[0].state == "queued"
     finally:
-        with AuditSession(engine) as db:
-            for run in db.scalars(
-                select(BackupRun).where(BackupRun.requester_id == actor.id)
-            ).all():
-                db.delete(run)
+        with Session(owner) as db:
+            if actor is not None:
+                for run in db.scalars(
+                    select(BackupRun).where(BackupRun.requester_id == actor.id)
+                ).all():
+                    db.delete(run)
             if created_policy:
                 policy = db.scalar(select(BackupPolicy))
                 if policy is not None:
                     db.delete(policy)
             if actor is not None:
+                db.connection().execute(text("DELETE FROM audit_logs WHERE org_id = :id"),
+                                        {"id": org_id})
+                for membership in db.scalars(select(Membership).where(
+                    Membership.user_id == actor.id
+                )):
+                    db.delete(membership)
+                db.flush()
                 db.delete(db.get(type(actor), actor.id))
+                db.flush()
+                db.delete(db.get(WorkspaceProfile, org_id))
             db.commit()
         engine.dispose()
+        owner.dispose()
 
 
 def test_reset_lock_claim_commit_exact_reconciliation_and_rollback() -> None:
@@ -117,12 +130,14 @@ def test_reset_lock_claim_commit_exact_reconciliation_and_rollback() -> None:
     assert target is not None
     instance = target.instance_id
     engine = guarded_create_engine(runtime)
+    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     actor = None
     created_policy = False
     try:
         with AuditSession(engine, expire_on_commit=False) as db:
             created_policy = db.scalar(select(BackupPolicy.id)) is None
             actor = add_user(db, role=UserRole.ADMIN)
+            org_id = organization(db).id
             run = service.queue_manual(db, instance, actor.id, "Coordinated", uuid4().hex)
             db.commit()
             run_id = run.id
@@ -201,7 +216,7 @@ def test_reset_lock_claim_commit_exact_reconciliation_and_rollback() -> None:
             )
             observer.rollback()
     finally:
-        with AuditSession(engine) as db:
+        with Session(owner) as db:
             if actor is not None:
                 for run in db.scalars(
                     select(BackupRun).where(BackupRun.requester_id == actor.id)
@@ -212,6 +227,16 @@ def test_reset_lock_claim_commit_exact_reconciliation_and_rollback() -> None:
                 if policy is not None:
                     db.delete(policy)
             if actor is not None:
+                db.connection().execute(text("DELETE FROM audit_logs WHERE org_id = :id"),
+                                        {"id": org_id})
+                for membership in db.scalars(select(Membership).where(
+                    Membership.user_id == actor.id
+                )):
+                    db.delete(membership)
+                db.flush()
                 db.delete(db.get(type(actor), actor.id))
+                db.flush()
+                db.delete(db.get(WorkspaceProfile, org_id))
             db.commit()
         engine.dispose()
+        owner.dispose()

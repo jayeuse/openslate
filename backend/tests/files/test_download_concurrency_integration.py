@@ -67,7 +67,9 @@ def committed_logo(guarded_db):
         )
         db.add(file)
         db.flush()
-        profile = db.scalar(select(WorkspaceProfile).with_for_update())
+        profile = db.scalar(select(WorkspaceProfile).where(
+            WorkspaceProfile.id == org_id
+        ).with_for_update())
         profile_snapshot = {
             column.key: getattr(profile, column.key)
             for column in inspect(WorkspaceProfile).column_attrs
@@ -78,7 +80,9 @@ def committed_logo(guarded_db):
         yield engine, actor_id, file_id, content
     finally:
         with AuditSession(engine) as db:
-            profile = db.scalar(select(WorkspaceProfile).with_for_update())
+            profile = db.scalar(select(WorkspaceProfile).where(
+                WorkspaceProfile.id == org_id
+            ).with_for_update())
             # Restore the snapshot's actor as well: AuditSession otherwise replaces
             # performed_by during flush, even when that attribute was assigned explicitly.
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(

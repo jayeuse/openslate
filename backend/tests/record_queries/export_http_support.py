@@ -78,9 +78,10 @@ class ExportWorld:
 
     def role(self, role: str) -> None:
         with Session(self.owner) as db:
-            actor = db.get(User, self.actor_id)
+            actor = sole_active_membership(db, self.actor_id)
             assert actor is not None
             if role == "guest":
+                db.info["rbac_organization"] = db.get(WorkspaceProfile, actor.org_id)
                 sponsor = add_user(db)
                 self.sponsor_id = sponsor.id
                 actor.sponsor_user_id = sponsor.id
@@ -200,8 +201,10 @@ def export_world(fake_provider_account) -> Iterator[ExportWorld]:
             )
         if world is not None and world.sponsor_id is not None:
             with Session(owner) as db:
-                actor = db.get(User, actor_id)
+                actor = sole_active_membership(db, actor_id)
                 actor.role, actor.sponsor_user_id, actor.expires_at = "member", None, None
+                db.flush()
+                db.delete(sole_active_membership(db, world.sponsor_id))
                 db.flush()
                 db.delete(db.get(User, world.sponsor_id))
                 db.commit()

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.systems.access.identity.models import IdentityMfaObservation
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import AuditLog
 from tests.access.user_security_support import open_security_world
 
@@ -385,6 +385,11 @@ def test_pending_profile_creation_initializes_unknown_even_when_provider_invitat
         with Session(world.owner) as db:
             user = db.scalar(select(User).where(User.email == email))
             if user is not None:
+                for membership in db.scalars(select(Membership).where(
+                    Membership.user_id == user.id
+                )):
+                    db.delete(membership)
+                db.flush()
                 db.delete(user)
                 db.commit()
 
