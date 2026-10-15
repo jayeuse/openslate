@@ -48,8 +48,7 @@ def try_commit_login_denial(db: Session) -> bool:
 
 def anonymous_rate_limits_enabled() -> bool:
     settings = get_settings()
-    seeding = getattr(settings, "e2e_seeding_without_anonymous_limits", False)
-    return not (is_relaxed_development(settings) or seeding)
+    return not (is_relaxed_development(settings) or settings.e2e_seeding_without_anonymous_limits)
 
 
 def _verified_action(
@@ -365,7 +364,7 @@ def change_password(
                 )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
-        locked = db.get(User, user.id, with_for_update=True)
+        locked = db.get(User, user.id, with_for_update=True, populate_existing=True)
         if (
             locked is None
             or locked.supabase_user_id != temporary.user_id

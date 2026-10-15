@@ -1,4 +1,4 @@
-"""The department OpenView API is mounted, and nothing personal is left in it."""
+"""Nothing personal is left in the department OpenView API (routes, parameters, schemas)."""
 
 from app.main import app
 
@@ -21,17 +21,6 @@ def _mounted() -> set[tuple[str, str]]:
         for path, operations in app.openapi()["paths"].items()
         for method in operations
     }
-
-
-def test_department_dashboard_routes_are_registered() -> None:
-    assert {
-        ("/api/dashboards", "GET"),
-        ("/api/dashboards", "POST"),
-        ("/api/dashboards/{dashboard_id}", "GET"),
-        ("/api/dashboards/{dashboard_id}", "PATCH"),
-        ("/api/dashboards/{dashboard_id}", "DELETE"),
-        ("/api/dashboards/{dashboard_id}/restore", "POST"),
-    } <= _mounted()
 
 
 def test_openview_has_no_personal_routes_or_owner_and_audience_fields() -> None:

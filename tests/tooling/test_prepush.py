@@ -34,6 +34,14 @@ class PrepushTests(unittest.TestCase):
         )
         self.assertLess(names.index("backend-coverage"), names.index(reset.name))
 
+    def test_test_guard_runs_first_against_the_base_for_any_test_lane(self):
+        plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
+        guard = plan.steps[0]
+        self.assertEqual(guard.name, "test-guard")
+        self.assertEqual(guard.command, ("python3", "scripts/assertion_guard.py"))
+        self.assertEqual((guard.cwd, guard.phase), (".", "fast"))
+        self.assertTrue(guard.needs_base)
+
     def test_local_backend_coverage_runs_parallel_shards_and_combines_them(self):
         plan = prepush.build_plan(all_gate_scope(), Path("/repo"))
         coverage = next(step for step in plan.steps if step.name == "backend-coverage")
@@ -79,7 +87,8 @@ class PrepushTests(unittest.TestCase):
         self.assertLess(names.index("frontend-check"), names.index("frontend-tests"))
         self.assertLess(names.index("frontend-check"), names.index("frontend-browser-install"))
         self.assertLess(names.index("frontend-browser-install"), names.index("frontend-tests"))
-        self.assertLess(names.index("frontend-tests"), names.index("frontend-build"))
+        # The browser tests run against the static export that the build writes.
+        self.assertLess(names.index("frontend-build"), names.index("frontend-tests"))
         self.assertLess(names.index("backend-ruff"), names.index("backend-coverage"))
         self.assertLess(names.index("backend-mypy"), names.index("backend-coverage"))
         self.assertIn("../scripts", plan.steps[names.index("backend-ruff")].command)
@@ -238,10 +247,10 @@ class PrepushTests(unittest.TestCase):
         prefix, _, stage = prepush.STACK_READY_MARKER.partition(": ")
         # The runner prints this line as each stage's command starts.
         self.assertIn(f'print(f"{prefix}: {{stage}}", flush=True)', source)
-        self.assertEqual(source.count(f'stage = "{stage}"'), 1)
+        self.assertEqual(source.count(f'timed("{stage}")'), 1)
         order = [
-            source.index('stage = "migrations"'),
-            source.index(f'stage = "{stage}"'),
+            source.index('timed("migrations")'),
+            source.index(f'timed("{stage}")'),
             source.index('"backend regression and coverage gate"'),
         ]
         self.assertEqual(order, sorted(order))

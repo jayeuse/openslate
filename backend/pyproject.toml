@@ -26,10 +26,14 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.169.0",
+    "mutmut>=3.8.0",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "pytest-randomly>=5.0.0",
     "pytest-split>=0.10",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.16.7",
     "types-defusedxml>=0.7.0.20260504",
 ]
@@ -42,17 +46,48 @@ manager = [
 package = false
 
 [tool.pytest.ini_options]
-addopts = "--cov=app --cov-report=term-missing --cov-fail-under=90"
+# Random order (pytest-randomly) is opt-in for a manual run, never the gates:
+# `uv run pytest -p randomly ...` turns it back on (plan item 10).
+addopts = "-p no:randomly --cov=app --cov-report=term-missing --cov-fail-under=90"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["integration: requires a PostgreSQL test database"]
+
+[tool.mutmut]
+# Mutation testing is the safety net for test consolidation (tdd-workflow
+# references/consolidation.md). It is never part of the push gate. Scope each
+# run to the modules under review with `only_mutate`, never the whole app.
+source_paths = ["app/"]
+also_copy = ["operations/", "migrations/", "alembic.ini"]
+# Mutation runs cover app/ modules whose owner tests need no stack. Repository tooling
+# tests (tests/operations) and the email-template route read files outside the copy in
+# backend/mutants, so they stay out of mutation runs. The sample-data engine in
+# operations/sample has its own root and table: `uv run python tests/sample_mutation.py run`.
+pytest_add_cli_args = [
+    "--no-cov",
+    "-q",
+    "-m",
+    "not integration",
+    "--ignore=tests/operations",
+    "--ignore=tests/auth/test_email_templates.py",
+]
+# Fork children would inherit pooled database connections.
+process_isolation = "forkserver"
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "PT"]
+# PT006/PT007/PT018 are layout preferences. PT011/PT012 are enforced since item 10
+# of the Tier 2.5 plan (docs/plans/test-suite-tier-2-5.md): give pytest.raises a
+# specific exception or `match=`, and keep only the raising statement in its block.
+ignore = ["PT006", "PT007", "PT018"]
+
+[tool.ruff.lint.per-file-ignores]
+# Repository tooling tests use unittest on purpose (stdlib-only runner).
+"../tests/tooling/**" = ["PT009", "PT027"]
 
 [tool.mypy]
 python_version = "3.12"

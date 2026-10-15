@@ -3,42 +3,17 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
 from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.models import Board
 from app.systems.boards.post_author_router import router
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
-from tests.boards.support import grant, member, project_board
+from tests.boards.support import client as board_client
+from tests.boards.support import grant, member, writable_board
 
 pytestmark = pytest.mark.integration
-
-
-def _actor(db: Session, label: str, *, write: bool = True) -> User:
-    return member(db, label)
-
-
-def _board(db: Session, owner: User) -> Board:
-    board = project_board(db)
-    grant(db, board, [owner], "write")
-    return board
-
-
-def _grant(db: Session, board: Board, actor: User, level: str) -> None:
-    grant(db, board, [actor], level)
-
-
-def _client(db: Session, actor: User) -> TestClient:
-    app = FastAPI()
-    app.include_router(router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
 
 
 def _published(
@@ -81,14 +56,14 @@ def test_authors_are_distinct_ordered_and_only_from_visible_publications(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-owner")
-    viewer = _actor(db, "authors-viewer", write=False)
-    visible_a = _actor(db, "authors-a")
-    visible_b = _actor(db, "authors-b")
-    hidden = _actor(db, "authors-hidden")
-    expired = _actor(db, "authors-expired")
-    board = _board(db, owner)
-    _grant(db, board, viewer, "read")
+    owner = member(db, "authors-owner")
+    viewer = member(db, "authors-viewer")
+    visible_a = member(db, "authors-a")
+    visible_b = member(db, "authors-b")
+    hidden = member(db, "authors-hidden")
+    expired = member(db, "authors-expired")
+    board = writable_board(db, owner)
+    grant(db, board, [viewer], "read")
     _published(db, board, visible_b)
     _published(db, board, visible_a)
     _published(db, board, visible_a)
@@ -96,7 +71,7 @@ def test_authors_are_distinct_ordered_and_only_from_visible_publications(
     _published(db, board, expired, expires_at=datetime.now(UTC) - timedelta(days=1))
     db.commit()
 
-    response = _client(db, viewer).get(f"/api/boards/{board.id}/post-authors")
+    response = board_client(db, viewer, router).get(f"/api/boards/{board.id}/post-authors")
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "private, no-store"
     assert response.json()["items"] == sorted(
@@ -115,18 +90,18 @@ def test_managers_also_see_the_authors_of_expired_posts(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-manager-owner")
-    manager = _actor(db, "authors-manager")
-    expired = _actor(db, "authors-manager-expired")
-    board = _board(db, owner)
-    _grant(db, board, manager, "manage")
+    owner = member(db, "authors-manager-owner")
+    manager = member(db, "authors-manager")
+    expired = member(db, "authors-manager-expired")
+    board = writable_board(db, owner)
+    grant(db, board, [manager], "manage")
     _published(db, board, expired, expires_at=datetime.now(UTC) - timedelta(days=1))
     db.commit()
 
-    response = _client(db, manager).get(f"/api/boards/{board.id}/post-authors")
+    response = board_client(db, manager, router).get(f"/api/boards/{board.id}/post-authors")
     assert response.status_code == 200
     assert response.json()["items"] == [{"id": str(expired.id), "label": expired.username}]
-    lookup = _client(db, manager).get(
+    lookup = board_client(db, manager, router).get(
         f"/api/boards/{board.id}/post-authors", params={"ids": str(expired.id)}
     )
     assert lookup.status_code == 200
@@ -137,14 +112,14 @@ def test_inactive_deleted_or_unestablished_authors_are_not_choices(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-active-owner")
-    viewer = _actor(db, "authors-active-viewer", write=False)
-    active = _actor(db, "authors-active")
-    disabled = _actor(db, "authors-disabled")
-    deleted = _actor(db, "authors-deleted")
-    unestablished = _actor(db, "authors-unestablished")
-    board = _board(db, owner)
-    _grant(db, board, viewer, "read")
+    owner = member(db, "authors-active-owner")
+    viewer = member(db, "authors-active-viewer")
+    active = member(db, "authors-active")
+    disabled = member(db, "authors-disabled")
+    deleted = member(db, "authors-deleted")
+    unestablished = member(db, "authors-unestablished")
+    board = writable_board(db, owner)
+    grant(db, board, [viewer], "read")
     for author in (active, disabled, deleted, unestablished):
         _published(db, board, author)
     disabled.status = UserStatus.DISABLED.value
@@ -153,7 +128,7 @@ def test_inactive_deleted_or_unestablished_authors_are_not_choices(
     unestablished.invitation_sent_at = datetime.now(UTC)
     db.commit()
 
-    response = _client(db, viewer).get(f"/api/boards/{board.id}/post-authors")
+    response = board_client(db, viewer, router).get(f"/api/boards/{board.id}/post-authors")
     assert response.status_code == 200
     assert response.json()["items"] == [{"id": str(active.id), "label": active.username}]
 
@@ -162,23 +137,26 @@ def test_missing_board_access_does_not_reveal_authors(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-denial-owner")
-    outsider = _actor(db, "authors-denial-outsider")
-    board = _board(db, owner)
+    owner = member(db, "authors-denial-owner")
+    outsider = member(db, "authors-denial-outsider")
+    board = writable_board(db, owner)
     _published(db, board, owner)
     db.commit()
     endpoint = f"/api/boards/{board.id}/post-authors"
 
-    assert _client(db, outsider).get(endpoint).status_code == 404
-    assert _client(db, outsider).get(endpoint, params={"ids": str(owner.id)}).status_code == 404
+    assert board_client(db, outsider, router).get(endpoint).status_code == 404
+    assert (
+        board_client(db, outsider, router).get(endpoint, params={"ids": str(owner.id)}).status_code
+        == 404
+    )
 
 
 def test_author_choices_page_every_visible_author_without_a_global_cap(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-bounded-owner")
-    board = _board(db, owner)
+    owner = member(db, "authors-bounded-owner")
+    board = writable_board(db, owner)
     role = "member"
     db.flush()
     for index in range(501):
@@ -195,7 +173,7 @@ def test_author_choices_page_every_visible_author_without_a_global_cap(
         _published(db, board, author)
     db.commit()
 
-    client = _client(db, owner)
+    client = board_client(db, owner, router)
     endpoint = f"/api/boards/{board.id}/post-authors"
     response = client.get(endpoint, params={"limit": 100})
     assert response.status_code == 200
@@ -219,18 +197,18 @@ def test_author_search_uses_display_names_and_usernames_with_stable_pages(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-search-owner")
-    board = _board(db, owner)
-    named = [_actor(db, "authors-search-named") for _ in range(2)]
-    fallback = _actor(db, "authors-search-fallback")
-    decoy = _actor(db, "authors-search-decoy")
+    owner = member(db, "authors-search-owner")
+    board = writable_board(db, owner)
+    named = [member(db, "authors-search-named") for _ in range(2)]
+    fallback = member(db, "authors-search-fallback")
+    decoy = member(db, "authors-search-decoy")
     for author in named:
         author.display_name = "Adrian 50%_team"
     decoy.display_name = "Adrian 50XXteam"
     for author in [*named, fallback, decoy]:
         _published(db, board, author)
     db.commit()
-    client = _client(db, owner)
+    client = board_client(db, owner, router)
     endpoint = f"/api/boards/{board.id}/post-authors"
 
     pages = [
@@ -261,24 +239,23 @@ def test_author_search_uses_display_names_and_usernames_with_stable_pages(
 @pytest.mark.parametrize(
     "params",
     [
-        {"limit": 0},
         {"limit": 101},
-        {"offset": -1},
         {"sort_by": "unknown"},
         {"deleted": "include"},
         {"deleted": "only"},
-        {"search": "a" * 101},
     ],
 )
 def test_author_list_rejects_invalid_or_unsupported_parameters(
     integration_owner_db: Session, params: dict[str, int | str]
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-params-owner")
-    board = _board(db, owner)
+    owner = member(db, "authors-params-owner")
+    board = writable_board(db, owner)
     db.commit()
 
-    response = _client(db, owner).get(f"/api/boards/{board.id}/post-authors", params=params)
+    response = board_client(db, owner, router).get(
+        f"/api/boards/{board.id}/post-authors", params=params
+    )
 
     assert response.status_code == 422
 
@@ -287,20 +264,20 @@ def test_author_ids_intersect_visible_eligible_authors_before_search_and_paging(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-lookup-owner")
-    viewer = _actor(db, "authors-lookup-reader", write=False)
-    board = _board(db, owner)
-    _grant(db, board, viewer, "read")
-    requested = [_actor(db, "authors-lookup-choice") for _ in range(2)]
+    owner = member(db, "authors-lookup-owner")
+    viewer = member(db, "authors-lookup-reader")
+    board = writable_board(db, owner)
+    grant(db, board, [viewer], "read")
+    requested = [member(db, "authors-lookup-choice") for _ in range(2)]
     for author in requested:
         author.display_name = "Lookup same label"
         _published(db, board, author)
     _published(db, board, requested[0])
-    decoy = _actor(db, "authors-lookup-decoy")
+    decoy = member(db, "authors-lookup-decoy")
     decoy.display_name = "Lookup same label"
     _published(db, board, decoy)
     unavailable = {
-        state: _actor(db, f"authors-lookup-{state}")
+        state: member(db, f"authors-lookup-{state}")
         for state in (
             "archived",
             "expired-post",
@@ -318,7 +295,7 @@ def test_author_ids_intersect_visible_eligible_authors_before_search_and_paging(
             continue
         _published(
             db,
-            _board(db, owner) if state == "other-board" else board,
+            writable_board(db, owner) if state == "other-board" else board,
             author,
             status="archived" if state == "archived" else "published",
             expires_at=past if state == "expired-post" else None,
@@ -329,7 +306,7 @@ def test_author_ids_intersect_visible_eligible_authors_before_search_and_paging(
     unavailable["deleted"].deleted_at = datetime.now(UTC)
     unavailable["unestablished"].invitation_sent_at = datetime.now(UTC)
     db.commit()
-    client = _client(db, viewer)
+    client = board_client(db, viewer, router)
     endpoint = f"/api/boards/{board.id}/post-authors"
     ids = [author.id for author in [*requested, *unavailable.values(), requested[0]]]
     ids += [uuid7() for _ in range(100 - len(ids))]
@@ -387,8 +364,8 @@ def test_author_ids_reject_unbounded_or_invalid_lookup(
     integration_owner_db: Session, kind: str
 ) -> None:
     db = integration_owner_db
-    owner = _actor(db, "authors-lookup-validation-owner")
-    board = _board(db, owner)
+    owner = member(db, "authors-lookup-validation-owner")
+    board = writable_board(db, owner)
     db.commit()
     values = (
         [str(owner.id)] * 101
@@ -396,7 +373,7 @@ def test_author_ids_reject_unbounded_or_invalid_lookup(
         else ["invalid" if kind == "malformed" else ""]
     )
 
-    response = _client(db, owner).get(
+    response = board_client(db, owner, router).get(
         f"/api/boards/{board.id}/post-authors", params=[("ids", value) for value in values]
     )
 

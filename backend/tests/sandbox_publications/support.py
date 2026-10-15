@@ -1,6 +1,8 @@
 """Shared fixtures and assertions for publication integration tests."""
 
 from hashlib import sha256
+from typing import Protocol
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,7 +17,59 @@ from app.systems.sandbox.publications.executor import apply_publication, request
 from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.rules import _field_key
+from app.systems.sandbox.publications.schemas import PublicationResponse
 from tests.sandbox_designs.fixtures import sample_document
+
+
+class Saved(Protocol):
+    """The saved draft a review approved: a document response or a test's own record."""
+
+    @property
+    def revision(self) -> int: ...
+
+    @property
+    def content_hash(self) -> str: ...
+
+
+class Reviewed(Protocol):
+    """The digests of the publication review (``publication_plan``)."""
+
+    @property
+    def impact_digest(self) -> str: ...
+
+    @property
+    def live_state_digest(self) -> str: ...
+
+
+def publish_saved(
+    db: Session,
+    actor_id: UUID,
+    saved: Saved,
+    review: Reviewed,
+    *,
+    token_digest: str,
+    idempotency_key: str,
+    note: str | None = None,
+) -> PublicationResponse:
+    """Apply the reviewed draft as the publication route does after its password check."""
+
+    return apply_publication(
+        db,
+        actor_id=actor_id,
+        expected_revision=saved.revision,
+        impact_digest=review.impact_digest,
+        expected_live_state_digest=review.live_state_digest,
+        preview_token_digest=token_digest,
+        idempotency_key=idempotency_key,
+        fingerprint=request_fingerprint(
+            expected_revision=saved.revision,
+            document_hash=saved.content_hash,
+            impact_digest=review.impact_digest,
+            preview_token_digest=token_digest,
+            note=note,
+        ),
+        note=note,
+    )
 
 
 def actor(db: Session) -> User:
@@ -52,23 +106,13 @@ def publish_structure(
         document=document,
     )
     preview = publication_plan(db, saved.document)
-    token_digest = sha256(f"preview-{publisher.id}".encode()).hexdigest()
-    apply_publication(
+    publish_saved(
         db,
-        actor_id=publisher.id,
-        expected_revision=saved.revision,
-        impact_digest=preview.impact_digest,
-        expected_live_state_digest=preview.live_state_digest,
-        preview_token_digest=token_digest,
+        publisher.id,
+        saved,
+        preview,
+        token_digest=sha256(f"preview-{publisher.id}".encode()).hexdigest(),
         idempotency_key=f"publication-{publisher.id}",
-        fingerprint=request_fingerprint(
-            expected_revision=saved.revision,
-            document_hash=saved.content_hash,
-            impact_digest=preview.impact_digest,
-            preview_token_digest=token_digest,
-            note=None,
-        ),
-        note=None,
     )
     return publisher, document
 
@@ -83,23 +127,13 @@ def publish_revision(db: Session, publisher: User, document: SandboxDocument, su
     )
     preview = publication_plan(db, saved.document)
     assert not preview.blockers
-    token_digest = sha256(f"preview-{suffix}-{publisher.id}".encode()).hexdigest()
-    apply_publication(
+    publish_saved(
         db,
-        actor_id=publisher.id,
-        expected_revision=saved.revision,
-        impact_digest=preview.impact_digest,
-        expected_live_state_digest=preview.live_state_digest,
-        preview_token_digest=token_digest,
+        publisher.id,
+        saved,
+        preview,
+        token_digest=sha256(f"preview-{suffix}-{publisher.id}".encode()).hexdigest(),
         idempotency_key=f"publication-{suffix}-{publisher.id}",
-        fingerprint=request_fingerprint(
-            expected_revision=saved.revision,
-            document_hash=saved.content_hash,
-            impact_digest=preview.impact_digest,
-            preview_token_digest=token_digest,
-            note=None,
-        ),
-        note=None,
     )
 
 

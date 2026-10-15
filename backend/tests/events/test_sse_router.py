@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from uuid6 import uuid7
 
@@ -269,9 +269,9 @@ def test_cookie_event_principal_checks_browser_origin_before_stream(
     if allowed:
         assert get_event_principal(request, None) == EventPrincipal("cookie")
     else:
-        with pytest.raises(Exception) as error:
+        with pytest.raises(HTTPException, match="Invalid authentication credentials") as error:
             get_event_principal(request, None)
-        assert getattr(error.value, "status_code", None) == 401
+        assert error.value.status_code == 401
 
 
 def test_bearer_event_principal_does_not_require_browser_origin(monkeypatch) -> None:

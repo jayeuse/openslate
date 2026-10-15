@@ -1,13 +1,9 @@
 """Real provider MFA lifecycle and application-session guarantees."""
 
-import base64
 import hashlib
-import hmac
-import struct
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Event
-from time import time
 from uuid import UUID, uuid4
 
 import httpx
@@ -28,17 +24,10 @@ from app.systems.access.identity.provider_user_cache import forget_provider_user
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.auth.test_provider_auth_integration import provider_account  # noqa: F401
+from tests.auth.totp_support import totp
 
+pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
-
-
-def _totp(secret: str, offset: int = 0) -> str:
-    key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
-    digest = hmac.new(key, struct.pack(">Q", int(time() + offset) // 30), hashlib.sha1).digest()
-    index = digest[-1] & 15
-    number = (struct.unpack(">I", digest[index : index + 4])[0] & 0x7FFFFFFF) % 1_000_000
-    return f"{number:06d}"
 
 
 def _mfa_session_state(owner, local_id, handle):
@@ -64,7 +53,7 @@ def _mfa_session_state(owner, local_id, handle):
 
 
 def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
-    provider_account,  # noqa: F811
+    provider_account,
     monkeypatch,
 ):
     email, password, provider_id, local_id, owner = provider_account
@@ -117,11 +106,11 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         )
         assert (
             browser.post(
-                f"/api/auth/mfa/factors/{uuid4()}/verification", json={"code": _totp(seed)}
+                f"/api/auth/mfa/factors/{uuid4()}/verification", json={"code": totp(seed)}
             ).status_code
             == 404
         )
-        valid_codes = {_totp(seed, offset) for offset in (-60, -30, 0, 30, 60)}
+        valid_codes = {totp(seed, offset) for offset in (-60, -30, 0, 30, 60)}
         invalid_code = next(
             f"{number:06d}" for number in range(10) if f"{number:06d}" not in valid_codes
         )
@@ -133,7 +122,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         )
         before = _mfa_session_state(owner, local_id, handle)
         verified = browser.post(
-            f"/api/auth/mfa/factors/{factor_id}/verification", json={"code": _totp(seed)}
+            f"/api/auth/mfa/factors/{factor_id}/verification", json={"code": totp(seed)}
         )
         assert verified.status_code == 200
         assert verified.json() == {"verified": True, "access_token": None}
@@ -190,7 +179,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         assert enrollment.status_code == 201
         factor_id, seed = enrollment.json()["id"], enrollment.json()["totp"]["secret"]
         verification = f"/api/auth/mfa/factors/{factor_id}/verification"
-        assert browser.post(verification, json={"code": _totp(seed)}).status_code == 200
+        assert browser.post(verification, json={"code": totp(seed)}).status_code == 200
         with Session(owner) as db:
             profile = db.scalar(select(WorkspaceProfile))
             profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
@@ -219,7 +208,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         assert bearer.post("/api/auth/logout").status_code == 204
         assert (
             pending.post(
-                f"/api/auth/mfa/factors/{factor_id}/verification", json={"code": _totp(seed)}
+                f"/api/auth/mfa/factors/{factor_id}/verification", json={"code": totp(seed)}
             ).status_code
             == 200
         )
@@ -265,7 +254,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
                 verification = pool.submit(
                     duplicates[0].post,
                     f"/api/auth/mfa/factors/{factor_id}/verification",
-                    json={"code": _totp(seed)},
+                    json={"code": totp(seed)},
                 )
                 assert entered.wait(10), "Verification must reach the locked provider boundary"
                 removal = pool.submit(

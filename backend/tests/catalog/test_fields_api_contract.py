@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database import get_db
-from app.main import app
 from app.systems.sandbox.departments.router import router as departments_router
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.modules.router import router as modules_router
@@ -30,16 +29,6 @@ REMOVED_SCHEMA_PATHS = (
     "/api/fields/{field_id}/restore",
     "/api/modules/{module_id}/fields/reorder",
 )
-
-
-def test_schema_catalog_routes_are_read_only_in_the_application_contract() -> None:
-    paths = app.openapi()["paths"]
-
-    assert {path: set(paths[path]) for path in SCHEMA_ROUTES} == SCHEMA_ROUTES
-    assert not set(REMOVED_SCHEMA_PATHS) & set(paths)
-    assert set(paths["/api/records"]) == {"get", "post"}
-    assert set(paths["/api/records/{record_id}"]) == {"get", "patch", "delete"}
-    assert set(paths["/api/records/{record_id}/restore"]) == {"post"}
 
 
 @pytest.mark.parametrize(
@@ -70,7 +59,9 @@ def test_removed_schema_write_routes_are_not_served(method, path, body) -> None:
             key: (
                 [identifier]
                 if isinstance(value, list)
-                else identifier if value == "{id}" else value
+                else identifier
+                if value == "{id}"
+                else value
             )
             for key, value in body.items()
         }
@@ -151,9 +142,7 @@ def _catalog_rejection_client(db: Session) -> TestClient:
 def test_closed_record_rejects_patch() -> None:
     db = Mock(spec=Session)
     db.get.return_value = SimpleNamespace(is_deleted=True, module_id=uuid7())
-    response = _catalog_rejection_client(db).patch(
-        f"/api/records/{uuid7()}", json={"data": {}}
-    )
+    response = _catalog_rejection_client(db).patch(f"/api/records/{uuid7()}", json={"data": {}})
     assert response.status_code == 409
     assert response.json()["detail"] == "Record is deleted"
     db.commit.assert_not_called()

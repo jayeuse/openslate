@@ -1,6 +1,5 @@
 """Saved Chart queries remain field-purge dependencies through real HTTP/PG journeys."""
 
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -8,6 +7,10 @@ import pytest
 from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.fields.models import Field
 from tests.charts.chart_route_support import chart_world as chart_world
+from tests.lifecycle_integration.lifecycle_integration_support import (
+    close_field,
+    patch_password_boundary,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -38,38 +41,6 @@ def _query(world, location):
     return "records", {"module_id": str(world.module.id), "definition": definition}, world.label
 
 
-def _password_boundary(world, monkeypatch):
-    class PasswordClient:
-        def __init__(self, _db):
-            pass
-
-        def verify_password(self, _email, _password):
-            return world.users["admin"].id
-
-    monkeypatch.setattr(
-        "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-        PasswordClient,
-    )
-    monkeypatch.setattr(
-        "app.systems.sandbox.lifecycle.router.get_settings",
-        lambda: SimpleNamespace(lifecycle_purge_enabled=True),
-    )
-
-
-def _close(client, field):
-    preview = client.post(f"/api/fields/{field.id}/close/preview")
-    assert preview.status_code == 200, preview.text
-    response = client.post(
-        f"/api/fields/{field.id}/close",
-        json={
-            "token": preview.json()["token"],
-            "confirmation_name": field.name,
-            "password": "owned chart lifecycle password",
-        },
-    )
-    assert response.status_code == 200, response.text
-
-
 @pytest.mark.parametrize(
     "location",
     [
@@ -87,13 +58,13 @@ def test_retained_chart_query_blocks_every_typed_field_reference(
     chart_world, monkeypatch, location
 ):
     world = chart_world
-    _password_boundary(world, monkeypatch)
+    patch_password_boundary(monkeypatch, lambda: world.users["admin"].id, purge_enabled=True)
     kind, query, field = _query(world, location)
     with world.client("admin") as client:
         created = client.post("/api/charts", json=world.body(kind=kind, query=query))
         assert created.status_code == 201, created.text
         chart = created.json()
-        _close(client, field)
+        close_field(client, field)
         preview = client.post(f"/api/fields/{field.id}/purge/preview")
         assert preview.status_code == 200, preview.text
         impact = preview.json()["impact"]
@@ -101,6 +72,13 @@ def test_retained_chart_query_blocks_every_typed_field_reference(
         assert {item["entity_id"] for item in blockers} == {chart["id"]}
         assert blockers[0]["field_id"] == str(field.id)
         assert blockers[0]["module_id"] == str(world.module.id)
+        # The blocker names the Chart and the Field it conflicts with, and where they live.
+        assert blockers[0]["entity_type"] == "charts"
+        assert blockers[0]["conflicting_entity_type"] == "fields"
+        assert blockers[0]["conflicting_entity_id"] == str(field.id)
+        assert blockers[0]["field_name"] == field.name
+        assert blockers[0]["module_name"] == world.module.module_name
+        assert blockers[0]["department_id"] == str(world.module.department_id)
         assert any(
             row["entity_type"] == "charts" and row["entity_id"] == chart["id"]
             for row in impact["rows"]
@@ -125,14 +103,14 @@ def test_archived_query_still_blocks_then_restore_and_repair_preserve_chart(
     chart_world, monkeypatch
 ):
     world = chart_world
-    _password_boundary(world, monkeypatch)
+    patch_password_boundary(monkeypatch, lambda: world.users["admin"].id, purge_enabled=True)
     with world.client("admin") as client:
         created = client.post("/api/charts", json=world.body())
         assert created.status_code == 201, created.text
         chart = created.json()
         archived = client.delete(f"/api/charts/{chart['id']}?revision={chart['revision']}")
         assert archived.status_code == 204
-        _close(client, world.label)
+        close_field(client, world.label)
         preview = client.post(f"/api/fields/{world.label.id}/purge/preview")
         assert preview.status_code == 200
         assert any(

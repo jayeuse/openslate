@@ -3,15 +3,12 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import event, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
 from app.systems.access.users.models import User
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
@@ -27,16 +24,9 @@ from app.systems.platform.scheduling.post_execution import (
     finalize_post_claim,
 )
 from tests.boards.support import board_group
+from tests.boards.support import client as board_client
 
 pytestmark = pytest.mark.integration
-
-
-def _client(db: Session, actor: User) -> TestClient:
-    app = FastAPI()
-    app.include_router(router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
 
 
 def _subject(db: Session) -> tuple[TestClient, Board, User]:
@@ -56,7 +46,7 @@ def _subject(db: Session) -> tuple[TestClient, Board, User]:
     db.flush()
     board_group(db, board, [actor], "write")
     db.commit()
-    return _client(db, actor), board, actor
+    return board_client(db, actor, router), board, actor
 
 
 def _create(client: TestClient, board: Board) -> tuple[str, str]:
@@ -74,8 +64,12 @@ def _create(client: TestClient, board: Board) -> tuple[str, str]:
 
 
 def _schedule(
-    client: TestClient, root: str, item_id: str, board_revision: int,
-    item_revision: int, when: datetime,
+    client: TestClient,
+    root: str,
+    item_id: str,
+    board_revision: int,
+    item_revision: int,
+    when: datetime,
 ) -> dict[str, int | str]:
     result = client.post(
         f"{root}/{item_id}/schedule",
@@ -131,7 +125,8 @@ def test_schedule_creates_one_due_work_and_supersede_cancels_the_old_occurrence(
 
 @pytest.mark.parametrize("mutation", ["patch", "publish", "archive"])
 def test_mutating_scheduled_post_resolves_pending_work(
-    integration_owner_db: Session, mutation: str,
+    integration_owner_db: Session,
+    mutation: str,
 ) -> None:
     db = integration_owner_db
     client, board, _ = _subject(db)
@@ -184,7 +179,7 @@ def test_stale_schedule_denial_does_not_create_or_cancel_work(
     )
     db.add(outsider)
     db.commit()
-    forbidden = _client(db, outsider).post(
+    forbidden = board_client(db, outsider, router).post(
         f"{root}/{item_id}/schedule",
         json={
             "board_revision": first["board_revision"],
@@ -216,9 +211,7 @@ def test_edit_cancels_an_already_claimed_publication_before_finalization(
     assert _work(db, item_id)[0].state == WorkState.CANCELED
     assert finalize_post_claim(db, claim, now=publish_at) is None
     revisions = db.scalars(
-        select(BoardPostRevision).where(
-            BoardPostRevision.post_id == item_id
-        )
+        select(BoardPostRevision).where(BoardPostRevision.post_id == item_id)
     ).all()
     assert revisions == []
 

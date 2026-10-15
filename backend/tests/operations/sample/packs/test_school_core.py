@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from operations.sample.packs import get_pack
-from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
 def test_school_pack_exposes_the_approved_standard_record_budget() -> None:
@@ -13,8 +13,7 @@ def test_school_pack_exposes_the_approved_standard_record_budget() -> None:
 
 
 def test_school_offline_dates_keep_finance_and_enrolment_events_ordered() -> None:
-    pack = get_pack("school")
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30), organization=pack)
+    dataset = sample_dataset(pack="school")
     records = {record.logical_id: record for record in dataset.records}
     design = dataset.document["design"]
     assert isinstance(design, dict)

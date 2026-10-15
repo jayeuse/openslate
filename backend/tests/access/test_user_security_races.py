@@ -13,7 +13,7 @@ from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
-from tests.access.test_user_security_http_integration import world as _world_fixture
+from tests.access.user_security_support import open_security_world
 from tests.fake_provider_support import fake_provider as fake_provider
 from tests.fake_provider_support import owned_account
 
@@ -27,7 +27,7 @@ def provider_account(fake_provider):
 
 @pytest.fixture
 def world(provider_account, monkeypatch):
-    yield from _world_fixture.__wrapped__(provider_account, monkeypatch)
+    yield from open_security_world(provider_account, monkeypatch)
 
 
 def post(world, action="recovery", body=None, *, self_target=False, aal="aal2"):

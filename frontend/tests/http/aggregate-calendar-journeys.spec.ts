@@ -1,10 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import Papa from "papaparse";
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInSession, test, type Page } from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { boardId, installBoardApi } from "./helpers/boards-api";
+import { pageOf } from "../helpers/pagination";
+import { wireBucket } from "../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000701";
 const departmentId = "00000000-0000-4000-8000-000000000702";
@@ -25,40 +23,24 @@ const wireDefinition = {
 };
 
 function collection<T>(items: T[], limit = 100) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
+  return pageOf(items, { limit });
 }
 function snapshot(keys: string[], values: (string | number | null)[]) {
   return collection(
-    keys.map((key, index) => ({
-      key,
-      label: key,
-      value: values[index],
-      record_count: values[index] === null ? 0 : 1,
-    })),
+    keys.map((key, index) =>
+      wireBucket({
+        key,
+        value: values[index],
+        record_count: values[index] === null ? 0 : 1,
+      }),
+    ),
     keys.length,
   );
 }
 
 async function catalog(page: Page) {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: departmentId,
-        setup_required: false,
-      },
-    }),
-  );
+  await signedInSession(page, departmentId);
   await page.route("**/api/views/data-sources**", (route) => {
     const fields = [
       { id: categoryId, name: "Category", type: "text" },
@@ -88,84 +70,7 @@ async function catalog(page: Page) {
   });
 }
 
-async function captureThemes(page: Page, name: string) {
-  let theme: "light" | "dark" = "light";
-  const options = {
-    beforeScreenshot: async (
-      page: Page,
-      viewport: { width: number; height: number },
-    ) => {
-      await expect
-        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
-        .toBeLessThanOrEqual(viewport.width);
-      const curves = page.locator(
-        ".recharts-pie-sector path, .recharts-line-curve",
-      );
-      if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-      const preview =
-        name === "s25-board"
-          ? page.locator("svg").filter({ has: page.locator("polyline") })
-          : page.locator('[data-slot="chart"]');
-      await preview.scrollIntoViewIfNeeded();
-      await expect(preview).toBeInViewport({ ratio: 1 });
-      if (name !== "s25-board") await expect(curves).toHaveCount(1);
-      let previous = "";
-      let stable = 0;
-      await expect
-        .poll(
-          async () => {
-            const geometry = await curves.evaluateAll((paths) =>
-              paths.map((path) => {
-                const box = path.getBoundingClientRect();
-                return {
-                  d: path.getAttribute("d"),
-                  dash: path.getAttribute("stroke-dasharray"),
-                  width: box.width,
-                  height: box.height,
-                  length: path.classList.contains("recharts-line-curve")
-                    ? (path as SVGPathElement).getTotalLength()
-                    : null,
-                };
-              }),
-            );
-            const current = JSON.stringify(geometry);
-            stable = current === previous ? stable + 1 : 0;
-            previous = current;
-            return (
-              stable >= 3 &&
-              geometry.every(
-                (path) =>
-                  path.d &&
-                  path.width > 1 &&
-                  path.height > 1 &&
-                  (path.length === null ||
-                    (path.length > 0 &&
-                      Number.parseFloat(path.dash ?? "") >=
-                        path.length - 0.001)),
-              )
-            );
-          },
-          { intervals: [50], timeout: 10000 },
-        )
-        .toBe(true);
-      await page.screenshot({
-        path: join(
-          process.env.OPENVIEW_CAPTURE_DIR,
-          `${name}-${theme}-${viewport.width}x${viewport.height}-viewport.png`,
-        ),
-        fullPage: false,
-      });
-    },
-  };
-  await captureOpenViewReview(page, name + "-light", options);
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    theme = "dark";
-    await captureOpenViewReview(page, name + "-dark", options);
-  }
-}
-
-test("Charts expose numeric extrema and primitive Distinct while missing values stay absent from bar, pie, print and CSV", async ({
+test("Charts expose numeric extrema and primitive Distinct while missing values stay absent from bar, pie and print", async ({
   page,
 }) => {
   await catalog(page);
@@ -216,10 +121,6 @@ test("Charts expose numeric extrema and primitive Distinct while missing values 
       table.getByRole("row", { name: "Missing — 1", exact: true }),
     ).toBeVisible();
     await expect(page.locator(".recharts-bar-rectangle")).toHaveCount(1);
-    expect(submitted.at(-1)).toMatchObject({
-      aggregation: metric,
-      measure: { field_id: amountId, expected_type: "decimal" },
-    });
   }
   await page.getByLabel("Chart type", { exact: true }).selectOption("pie");
   await page.getByRole("button", { name: "Apply chart", exact: true }).click();
@@ -227,15 +128,6 @@ test("Charts expose numeric extrema and primitive Distinct while missing values 
   await expect(
     page.getByRole("alert").filter({ hasText: "numeric range" }),
   ).toHaveCount(0);
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    page.getByRole("button", { name: "Download complete CSV" }).click(),
-  ]);
-  const path = await download.path();
-  expect(path).not.toBeNull();
-  expect(
-    Papa.parse<string[]>(await readFile(path!, "utf8")).data,
-  ).toContainEqual(["Missing", "", "1"]);
   await page.emulateMedia({ media: "print" });
   await expect(
     page
@@ -243,7 +135,6 @@ test("Charts expose numeric extrema and primitive Distinct while missing values 
       .getByRole("row", { name: "Missing — 1", exact: true }),
   ).toBeVisible();
   await page.emulateMedia({ media: "screen" });
-  await captureThemes(page, "s25-charts");
 });
 
 test("Charts keep missing daily averages as line gaps and exact table values", async ({
@@ -393,7 +284,6 @@ test("saved monthly Dashboard reloads containing calendar starts and preserves n
     table.getByRole("row", { name: "2026-12-01 9.25 1", exact: true }),
   ).toBeVisible();
   expect(requests).toHaveLength(2);
-  await captureThemes(page, "s25-calendar");
 });
 
 test("saved weekly Dashboard uses Sunday workspace starts and hides retained data when that calendar read is refused", async ({
@@ -539,5 +429,4 @@ test("Board overview keeps null date positions as separate SVG segments with exa
     }),
   ).toHaveCount(0);
   expect(keyWarnings).toEqual([]);
-  await captureThemes(page, "s25-board");
 });

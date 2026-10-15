@@ -12,7 +12,7 @@ from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.platform.scheduling.models import InAppNotification
-from tests.platform_scheduling.test_notification_routes import _client
+from tests.platform_scheduling.support import notification_client as _client
 from tests.rbac.support import add_user
 
 pytestmark = pytest.mark.integration

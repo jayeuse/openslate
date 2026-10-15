@@ -1,6 +1,5 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, heldResponse, test, type Page } from "./helpers/test";
 import {
-  deferred,
   installLogoApi,
   logoFile,
   oldLogoId,
@@ -30,6 +29,12 @@ const header = (page: Page) =>
   page.getByRole("complementary", { name: "Primary sidebar" });
 const patches = (api: Awaited<ReturnType<typeof installLogoApi>>) =>
   api.writes.filter(({ path }) => path === "/workspace");
+const field = (page: Page, name: string) =>
+  page.getByLabel(name, { exact: true });
+const look = (page: Page) =>
+  page.getByRole("radiogroup", { name: "Organization look" });
+const radio = (page: Page, name: string) =>
+  look(page).getByRole("radio", { name: new RegExp(`^${name}`) });
 
 test("Logo draft stays local until settings save, then saved header and removal use the committed brand", async ({
   page,
@@ -68,8 +73,8 @@ test("Logo draft stays local until settings save, then saved header and removal 
   await expect(
     page.getByText("Organization settings saved.", { exact: true }),
   ).toBeVisible();
-  const committed = api.workspace.logo_file_id;
-  expect(committed).not.toBeNull();
+  // The fake File API names its first reservation with this id.
+  const committed = "44444444-4444-4444-8444-000000000001";
   expect(patches(api)[0].body).toEqual({
     revision: 4,
     display_name: "Harbor Operations",
@@ -93,9 +98,12 @@ test("Logo draft stays local until settings save, then saved header and removal 
     }),
   ).toBeVisible();
   expect(patches(api)[1].body).toEqual({ revision: 5, logo_file_id: null });
-  expect(api.files.get(committed!)?.state).toBe("purged");
+  expect(api.files.get(committed)?.state).toBe("purged");
   const bounds = await header(page)
-    .getByRole("img")
+    .getByRole("img", {
+      name: `Harbor Operations mark: ${fullMark}`,
+      exact: true,
+    })
     .evaluate((element) => ({
       width: element.clientWidth,
       scroll: element.scrollWidth,
@@ -187,10 +195,9 @@ test("Logo selection is discarded without reserving a File or changing the saved
   expect(api.writes).toEqual([]);
 });
 
+// The size limits are rows of isolated/shell/workspace-logo-api.spec.ts.
 for (const [name, buffer, mimeType] of [
   ["vector.svg", Buffer.from("<svg/>"), "image/svg+xml"],
-  ["large.png", Buffer.alloc(2 * 1024 * 1024 + 1), "image/png"],
-  ["empty.png", Buffer.alloc(0), "image/png"],
 ] as const) {
   test(`Logo rejects ${name} before reservation and preserves other settings drafts`, async ({
     page,
@@ -407,9 +414,9 @@ test("Logo retained-candidate refusal rechecks the session before any further pu
     page.getByText(/Workspace settings changed\. The latest values are loaded/),
   ).toBeVisible();
   const sessionsBeforeRefusal = api.sessionReads;
-  const gate = deferred();
+  const gate = heldResponse();
   api.onSession = async (route) => {
-    await gate.promise;
+    await gate.released;
     await route.fulfill({
       json: { authenticated: true, user_id: api.actor, setup_required: false },
     });
@@ -448,6 +455,7 @@ for (const role of ["member", "guest"] as const) {
     const api = await installLogoApi(page);
     api.role = role;
     api.workspace.logo_file_id = oldLogoId;
+    api.workspace.theme = "stockroom";
     api.files.set(oldLogoId, logoFile(oldLogoId));
     await page.goto("/manage?view=organization");
     await expect(
@@ -468,63 +476,83 @@ for (const role of ["member", "guest"] as const) {
     await expect(
       page.getByRole("note", { name: "Organization data", exact: true }),
     ).toContainText("Only an administrator can change these settings.");
+    // Profile fields are read-only, and a guest reply carries no contacts.
+    await expect(field(page, "Legal name")).toHaveValue("Harbor Services Ltd");
+    await expect(field(page, "Legal name")).toBeDisabled();
+    await expect(field(page, "Description")).toBeDisabled();
+    if (role === "guest") {
+      await expect(field(page, "Contact email")).toHaveCount(0);
+      await expect(field(page, "Contact phone")).toHaveCount(0);
+      await expect(field(page, "Postal address")).toHaveCount(0);
+    } else {
+      await expect(field(page, "Contact email")).toHaveValue(
+        "contact@example.test",
+      );
+      await expect(field(page, "Contact email")).toBeDisabled();
+    }
+    // The saved look shows; a pointer click on another look changes nothing.
+    await expect(radio(page, "Stockroom")).toBeChecked();
+    await expect(radio(page, "Whiteboard")).toBeDisabled();
+    const whiteboard = (await look(page)
+      .locator("label")
+      .filter({ hasText: "Whiteboard" })
+      .boundingBox())!;
+    await page.mouse.click(
+      whiteboard.x + whiteboard.width / 2,
+      whiteboard.y + whiteboard.height / 2,
+    );
+    await expect(radio(page, "Stockroom")).toBeChecked();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-theme",
+      "stockroom",
+    );
     await expect(save(page)).toHaveCount(0);
     expect(api.lists).toEqual([]);
     expect(api.writes).toEqual([]);
   });
 }
 
-for (const invalid of [
-  "media type",
-  "oversize bytes",
-  "missing no-store",
-  "missing nosniff",
-] as const) {
-  test(`Logo invalid inline ${invalid} falls back to saved mark and explicitly retries`, async ({
-    page,
-  }) => {
-    const api = await installLogoApi(page);
-    api.workspace.logo_file_id = oldLogoId;
-    api.files.set(oldLogoId, logoFile(oldLogoId));
-    api.onLogo = (route) =>
-      route.fulfill({
-        contentType: invalid === "media type" ? "image/svg+xml" : "image/png",
-        headers: {
-          "Cache-Control":
-            invalid === "missing no-store" ? "public" : "no-store",
-          "X-Content-Type-Options":
-            invalid === "missing nosniff" ? "" : "nosniff",
-        },
-        body:
-          invalid === "oversize bytes"
-            ? Buffer.alloc(2 * 1024 * 1024 + 1)
-            : png,
-      });
-    await page.goto("/manage?view=organization");
-    await expect(
-      header(page).getByRole("img", {
-        name: "Harbor Services mark: HS",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(
-      header(page).getByRole("img", {
-        name: "Harbor Services logo",
-        exact: true,
-      }),
-    ).toHaveCount(0);
-    api.onLogo = null;
-    await header(page)
-      .getByRole("button", { name: "Retry logo", exact: true })
-      .click();
-    await expect(
-      header(page).getByRole("img", {
-        name: "Harbor Services logo",
-        exact: true,
-      }),
-    ).toBeVisible();
-  });
-}
+// The size and header faults are rows of
+// isolated/shell/workspace-logo-api.spec.ts.
+test("Logo invalid inline media type falls back to saved mark and explicitly retries", async ({
+  page,
+}) => {
+  const api = await installLogoApi(page);
+  api.workspace.logo_file_id = oldLogoId;
+  api.files.set(oldLogoId, logoFile(oldLogoId));
+  api.onLogo = (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      },
+      body: png,
+    });
+  await page.goto("/manage?view=organization");
+  await expect(
+    header(page).getByRole("img", {
+      name: "Harbor Services mark: HS",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    header(page).getByRole("img", {
+      name: "Harbor Services logo",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  api.onLogo = null;
+  await header(page)
+    .getByRole("button", { name: "Retry logo", exact: true })
+    .click();
+  await expect(
+    header(page).getByRole("img", {
+      name: "Harbor Services logo",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
 
 test("Logo bytes from a superseded binding cannot replace the current saved brand", async ({
   page,
@@ -533,11 +561,11 @@ test("Logo bytes from a superseded binding cannot replace the current saved bran
   const api = await installLogoApi(page);
   api.workspace.logo_file_id = oldLogoId;
   api.files.set(oldLogoId, logoFile(oldLogoId));
-  const gate = deferred();
-  const reading = deferred();
+  const gate = heldResponse();
+  const reading = heldResponse();
   api.onLogo = async (route) => {
     reading.release();
-    await gate.promise;
+    await gate.released;
     await route
       .fulfill({
         contentType: "image/png",
@@ -551,7 +579,7 @@ test("Logo bytes from a superseded binding cannot replace the current saved bran
   };
   try {
     await page.goto("/manage?view=organization");
-    await reading.promise;
+    await reading.released;
     const current = "77777777-7777-4777-8777-777777777777";
     api.files.set(current, logoFile(current));
     api.workspace.logo_file_id = current;
@@ -583,11 +611,11 @@ test("Logo pending upload blocks duplicate Save and departure without publishing
   page,
 }) => {
   const api = await installLogoApi(page);
-  const gate = deferred();
-  const uploading = deferred();
+  const gate = heldResponse();
+  const uploading = heldResponse();
   api.onUpload = async (route) => {
     uploading.release();
-    await gate.promise;
+    await gate.released;
     const id = new URL(route.request().url()).pathname.split("/")[3];
     const file = logoFile(id);
     api.files.set(id, file);
@@ -597,7 +625,7 @@ test("Logo pending upload blocks duplicate Save and departure without publishing
     await page.goto("/manage?view=organization");
     await pick(page);
     await save(page).click();
-    await uploading.promise;
+    await uploading.released;
     await expect(save(page)).toBeDisabled();
     await header(page)
       .getByRole("link", { name: "Harbor Services workspace", exact: true })
@@ -627,11 +655,11 @@ test("Logo delayed admitted B receipt cannot replace newer C brand, theme or rev
   const api = await installLogoApi(page);
   api.workspace.logo_file_id = oldLogoId;
   api.files.set(oldLogoId, logoFile(oldLogoId));
-  const admitted = deferred();
-  const release = deferred();
+  const admitted = heldResponse();
+  const release = heldResponse();
   api.onPatch = async (route, receipt) => {
     admitted.release();
-    await release.promise;
+    await release.released;
     await route.fulfill({ json: receipt });
   };
   try {
@@ -641,7 +669,7 @@ test("Logo delayed admitted B receipt cannot replace newer C brand, theme or rev
       .getByLabel("Organization name", { exact: true })
       .fill("Admitted B");
     await save(page).click();
-    await admitted.promise;
+    await admitted.released;
     const current = "88888888-8888-4888-8888-888888888888";
     api.files.set(current, logoFile(current));
     api.workspace = {
@@ -766,19 +794,26 @@ test("Logo privacy curtain conceals a selected preview and restores only the sam
   page,
 }) => {
   const api = await installLogoApi(page);
+  await page.addInitScript(() =>
+    localStorage.setItem("openslate-org-theme", "slate"),
+  );
   await page.goto("/manage?view=organization");
+  // One session check conceals three drafts: a contact, a look and a logo.
+  await field(page, "Contact email").fill("retained@example.com");
+  await expect(radio(page, "Stockroom")).toBeEnabled();
+  await look(page).locator("label").filter({ hasText: "Stockroom" }).click();
   await pick(page);
-  const gate = deferred();
-  const requested = deferred();
+  const gate = heldResponse();
+  const requested = heldResponse();
   api.onSession = async (route) => {
     requested.release();
-    await gate.promise;
+    await gate.released;
     await route.fulfill({
       json: { authenticated: true, user_id: api.actor, setup_required: false },
     });
   };
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await requested.promise;
+  await requested.released;
   const curtain = page.getByRole("dialog", {
     name: "Session verification",
     exact: true,
@@ -787,6 +822,11 @@ test("Logo privacy curtain conceals a selected preview and restores only the sam
   await expect(
     page.getByRole("img", { name: "Harbor Services logo", exact: true }),
   ).toHaveCount(0);
+  await expect(field(page, "Contact email")).toHaveCount(0);
+  await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
+  expect(
+    await page.evaluate(() => localStorage.getItem("openslate-org-theme")),
+  ).toBe("slate");
   gate.release();
   await expect(curtain).toBeHidden();
   await expect(
@@ -795,6 +835,11 @@ test("Logo privacy curtain conceals a selected preview and restores only the sam
       exact: true,
     }),
   ).toBeVisible();
+  await expect(field(page, "Contact email")).toHaveValue(
+    "retained@example.com",
+  );
+  await expect(radio(page, "Stockroom")).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "stockroom");
   expect(api.writes).toEqual([]);
 });
 
@@ -802,18 +847,18 @@ test("Logo late upload cannot commit settings after the verified account changes
   page,
 }) => {
   const api = await installLogoApi(page);
-  const gate = deferred();
-  const uploaded = deferred();
+  const gate = heldResponse();
+  const uploaded = heldResponse();
   api.onUpload = async (route) => {
     uploaded.release();
-    await gate.promise;
+    await gate.released;
     const id = new URL(route.request().url()).pathname.split("/")[3];
     await route.fulfill({ json: logoFile(id) }).catch(() => undefined);
   };
   await page.goto("/manage?view=organization");
   await pick(page);
   await save(page).click();
-  await uploaded.promise;
+  await uploaded.released;
   api.actor = "66666666-6666-4666-8666-666666666666";
   api.workspace.display_name = "Second verified account";
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));

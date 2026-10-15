@@ -4,7 +4,6 @@ from secrets import token_urlsafe
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.config import get_settings
@@ -13,6 +12,9 @@ from app.main import create_app
 from app.systems.access.users.models import User, UserRole
 
 from .support import _make_event, _payload_values, _SecurityEventDatabase, _user
+
+# Fixed, so parametrized test IDs are the same in every process.
+_PATH_ID = "0190a000-0000-7000-8000-000000000001"
 
 SERVER_KEY = token_urlsafe(32)
 WRONG_SERVER_KEY = token_urlsafe(32)
@@ -66,7 +68,7 @@ def test_exact_admin_can_list_detail_and_bounded_export(api: FastAPI) -> None:
     [
         "/api/security-events",
         "/api/security-events/export",
-        f"/api/security-events/{uuid7()}",
+        f"/api/security-events/{_PATH_ID}",
     ],
 )
 def test_non_admin_cannot_list_detail_or_export_security_events(api: FastAPI, path: str) -> None:
@@ -146,3 +148,36 @@ def test_internal_security_event_ingestion_validates_before_persisting(api: Fast
     assert response.status_code == 422
     assert database.events == []
     assert database.committed is False
+
+
+@pytest.mark.parametrize(
+    ("params", "location", "error"),
+    [
+        ({"event_type": ""}, ["query", "event_type"], "string_too_short"),
+        ({"event_type": "x" * 101}, ["query", "event_type"], "string_too_long"),
+        ({"outcome": "unknown"}, ["query", "outcome"], "enum"),
+        ({"person_id": "not-a-uuid"}, ["query", "person_id"], "uuid_parsing"),
+        ({"occurred_after": "2030-04-05T00:00:00"}, ["query", "occurred_after"], "timezone_aware"),
+        (
+            {"occurred_before": "2030-04-05T00:00:00"},
+            ["query", "occurred_before"],
+            "timezone_aware",
+        ),
+        ({"deleted": "only"}, ["query", "deleted"], "value_error"),
+    ],
+)
+def test_feed_rejects_invalid_filters_before_reading_events(
+    api: FastAPI, params: dict[str, str], location: list[str], error: str
+) -> None:
+    # The inverted date range keeps its HTTP row in test_feed_integration.py, through a
+    # real administrator session.
+    database = _SecurityEventDatabase([_make_event()])
+    client = _configure_api(api, user=_user(UserRole.ADMIN), database=database)
+
+    response = client.get("/api/security-events", params=params)
+
+    assert response.status_code == 422
+    assert [(item["loc"], item["type"]) for item in response.json()["detail"]] == [
+        (location, error)
+    ]
+    assert database.items_statement is None

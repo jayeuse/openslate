@@ -97,9 +97,13 @@ def test_platform_wire_imports_searches_exports_disposes_and_restores(
     results = []
     try:
         if fault != "none":
-            with pytest.raises((SamplePhaseActionError, SampleWriteOutcomeUnknown)) as caught:
+
+            def run_controls() -> None:
                 for action in selected:
                     results.append(execute_control_action(action, dataset, context))
+
+            with pytest.raises((SamplePhaseActionError, SampleWriteOutcomeUnknown)) as caught:
+                run_controls()
             assert getattr(caught.value, "step", None) != selected[1].key
             preference_steps = {
                 "theme_owner": "read_original_theme",

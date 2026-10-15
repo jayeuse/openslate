@@ -267,17 +267,10 @@ def test_mfa_summary_is_global_and_its_card_predicates_are_the_same_rows(directo
         }
 
 
-@pytest.mark.parametrize(
-    "params",
-    [
-        {"status": "invented"},
-        {"group_id": "invalid"},
-        {"department_id": "invalid"},
-        {"mfa": "invented"},
-        {"sort_by": "last_active_at"},
-    ],
-)
-def test_directory_rejects_unlisted_filters_without_history_fields(directory_world, params):
+# The other refused filters are rows of the stack-free table in
+# tests/access/test_list_request_schemas.py; this route case owns the HTTP 422.
+def test_directory_rejects_unlisted_filters_without_history_fields(directory_world):
+    params = {"status": "invented"}
     assert directory_world.world.client.get("/api/users", params=params).status_code == 422
 
 
@@ -388,11 +381,11 @@ def test_recorded_history_summary_and_drilldowns_use_the_same_known_population(d
     )
 
 
+# The other refused values are rows of the stack-free table in
+# tests/access/test_list_request_schemas.py; each route keeps one HTTP 422 case.
 @pytest.mark.parametrize("path", ["/api/users", "/api/users/summary"])
-@pytest.mark.parametrize("value", ["0", "3651", "true", "false", "1.5", "30.0"])
-def test_recorded_history_days_reject_noninteger_and_out_of_range_queries(
-    directory_world, path, value
-):
+def test_recorded_history_days_reject_noninteger_and_out_of_range_queries(directory_world, path):
+    value = "true"
     assert (
         directory_world.world.client.get(path, params={"inactive_days": value}).status_code == 422
     )

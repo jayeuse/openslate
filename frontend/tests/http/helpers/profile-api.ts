@@ -1,8 +1,8 @@
-import { expect, type Page } from "./test";
+import { expect, heldResponse, quietEventSource, type Page } from "./test";
 
 declare global {
   interface Window {
-    observeS21PhotoRevocation: (url: string) => Promise<void>;
+    observeProfilePhotoRevocation: (url: string) => Promise<void>;
   }
 }
 
@@ -70,28 +70,30 @@ export function profileSelf(
   };
 }
 
+/**
+ * `heldResponse` under the names the email-change helpers use: the handler
+ * calls `start()` and awaits `waiting`; the test awaits `begun`.
+ */
 export function profileGate() {
-  let release = () => {};
-  let start = () => {};
-  const waiting = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const begun = new Promise<void>((resolve) => {
-    start = resolve;
-  });
-  return { waiting, begun, release: () => release(), start: () => start() };
+  const held = heldResponse();
+  return {
+    waiting: held.released,
+    begun: held.entered,
+    release: held.release,
+    start: held.enter,
+  };
 }
 
 /** Observe the browser resource contract without suppressing native cleanup. */
 export async function observeProfilePhotoRevocations(page: Page) {
   const revoked: string[] = [];
-  await page.exposeFunction("observeS21PhotoRevocation", (url: string) => {
+  await page.exposeFunction("observeProfilePhotoRevocation", (url: string) => {
     revoked.push(url);
   });
   await page.addInitScript(() => {
     const nativeRevoke = URL.revokeObjectURL.bind(URL);
     URL.revokeObjectURL = (url) => {
-      void window.observeS21PhotoRevocation(url);
+      void window.observeProfilePhotoRevocation(url);
       nativeRevoke(url);
     };
   });
@@ -133,10 +135,10 @@ export async function installProfileApi(
       ((body: ReturnType<typeof profileSelf>) => unknown) | null,
     fileShape: null as ((body: Record<string, unknown>) => unknown) | null,
     avatarFault: null as "mime" | "oversize" | "headers" | null,
-    holdSelf: null as ReturnType<typeof profileGate> | null,
-    holdPatch: null as ReturnType<typeof profileGate> | null,
-    holdUpload: null as ReturnType<typeof profileGate> | null,
-    holdPreferences: null as ReturnType<typeof profileGate> | null,
+    holdSelf: null as ReturnType<typeof heldResponse> | null,
+    holdPatch: null as ReturnType<typeof heldResponse> | null,
+    holdUpload: null as ReturnType<typeof heldResponse> | null,
+    holdPreferences: null as ReturnType<typeof heldResponse> | null,
     appearance: {
       motion: "system",
       keyboard_shortcuts: true,
@@ -146,12 +148,7 @@ export async function installProfileApi(
     files: new Map<string, Record<string, unknown>>(),
     avatarReads: [] as string[],
   };
-  await page.addInitScript(() => {
-    class QuietEventSource extends EventTarget {
-      close() {}
-    }
-    Object.defineProperty(window, "EventSource", { value: QuietEventSource });
-  });
+  await quietEventSource(page);
   if (options.session !== false) {
     await page.route("**/api/auth/session", (route) =>
       route.fulfill({
@@ -170,8 +167,8 @@ export async function installProfileApi(
     const hold = state.holdSelf;
     state.holdSelf = null;
     if (hold) {
-      hold.start();
-      await hold.waiting;
+      hold.enter();
+      await hold.released;
     }
     await route
       .fulfill({
@@ -207,8 +204,8 @@ export async function installProfileApi(
     const hold = state.holdPatch;
     state.holdPatch = null;
     if (hold) {
-      hold.start();
-      await hold.waiting;
+      hold.enter();
+      await hold.released;
     }
     if (state.patchStatus !== 200) {
       await route
@@ -258,8 +255,8 @@ export async function installProfileApi(
     const hold = state.holdPreferences;
     state.holdPreferences = null;
     if (hold) {
-      hold.start();
-      await hold.waiting;
+      hold.enter();
+      await hold.released;
     }
     const status = write
       ? state.preferencesWriteStatus
@@ -332,8 +329,8 @@ export async function installProfileApi(
       const hold = state.holdUpload;
       state.holdUpload = null;
       if (hold) {
-        hold.start();
-        await hold.waiting;
+        hold.enter();
+        await hold.released;
       }
       if (state.uploadStatus !== 200) {
         await route

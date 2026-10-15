@@ -1,15 +1,7 @@
-import { expect, test } from "./helpers/test";
+import { expect, signedInSession, test } from "./helpers/test";
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000101",
-        setup_required: false,
-      },
-    }),
-  );
+  await signedInSession(page, "00000000-0000-4000-8000-000000000101");
 });
 
 test("Comms keeps separate conversation drafts and clears only a successfully sent message", async ({

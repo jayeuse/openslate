@@ -13,8 +13,8 @@ from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentityMfaObservation
 from app.systems.access.identity.session_retention import retain_terminal_sessions
 from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.auth.session_retention_support import world as world
 
-pytest_plugins = ("tests.auth.test_session_retention_integration",)
 pytestmark = pytest.mark.integration
 FIELDS = ("session_retention_days", "security_event_retention_days")
 

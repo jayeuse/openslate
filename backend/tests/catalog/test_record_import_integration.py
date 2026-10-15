@@ -315,46 +315,11 @@ def test_import_reports_malformed_cells_and_current_record_constraints(world: _W
     assert world.count(Record) == world.count(RecordTriggerEvent) == 0
 
 
-@pytest.mark.parametrize(
-    "defect",
-    [
-        "empty",
-        "duplicate_column",
-        "duplicate_field",
-        "range",
-        "cells",
-        "row_number",
-        "duplicate_row",
-        "limit",
-        "extra",
-        "digest",
-        "default_overlap",
-    ],
-)
-def test_import_rejects_invalid_batch_shape_without_writes(world: _World, defect: str) -> None:
+def test_import_rejects_invalid_batch_shape_without_writes(world: _World) -> None:
+    """One HTTP case; test_record_import_rules.py owns every batch shape rule."""
+
     payload = world.payload()
-    if defect == "empty":
-        payload["mapping"] = []
-    elif defect == "duplicate_column":
-        payload["mapping"][1]["column_index"] = 0
-    elif defect == "duplicate_field":
-        payload["mapping"][1]["field_id"] = payload["mapping"][0]["field_id"]
-    elif defect == "range":
-        payload["mapping"][0]["column_index"] = 3
-    elif defect == "cells":
-        payload["rows"][0]["cells"].pop()
-    elif defect == "row_number":
-        payload["rows"][0]["row_number"] = 1
-    elif defect == "duplicate_row":
-        payload["rows"][1]["row_number"] = 2
-    elif defect == "limit":
-        payload["rows"] = [{"row_number": i + 2, "cells": ["valid", "1", ""]} for i in range(101)]
-    elif defect == "extra":
-        payload["owner_id"] = str(world.admin.id)
-    elif defect == "digest":
-        payload["mode"] = "import"
-    else:
-        payload["defaults"][str(world.fields["title"].id)] = "overlap"
+    payload["mode"] = "import"
     response = world.client.post("/api/records/import", json=payload)
     assert response.status_code == 422
     assert world.count(Record) == world.count(RecordTriggerEvent) == 0

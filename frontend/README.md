@@ -8,6 +8,43 @@ FastAPI must be running for identity actions. Invitation onboarding uses the pro
 
 Frontend-specific commands and architecture are documented in the repository root [`README.md`](../README.md).
 
+## Tests and verification
+
+Playwright Test is the only frontend runner. `tests/isolated/` owns rules, adapters
+and state machines (plus an owned development-ingress fixture);
+`tests/http/` owns browser journeys with a mocked `/api`. Default HTTP tests use
+the static export in `out/` through the test-only ASGI entry over production
+`StaticSite` in [`backend/tests/static_export_server.py`](../backend/tests/static_export_server.py).
+They need the locked backend Python dependencies to serve those assets, not a
+running application API or Supabase stack. Unmocked `/api` requests return 500.
+Build first: [`playwright.config.ts`](playwright.config.ts) refuses missing or stale
+exports. `PLAYWRIGHT_HTTP_SERVER=dev` opts the same HTTP project into `next dev`
+for a local debugging loop; it is not a separate project. Daily `npm run dev`
+continues to proxy to the real local FastAPI process as described above.
+
+Run these declared scripts from `frontend/`:
+
+- `npm run check`: formatting, ESLint, strict types and theme contrast.
+- `npm run build`: production static export; prerequisite for default HTTP tests.
+- `npm test -- --project=isolated`: isolated project; no export prerequisite.
+- `npm test -- --project=http <spec> -g "<title>"`: focused mocked HTTP browser case.
+- `npm run test:section -- <section> --layer=http` and `npm run test:affected -- --base <base-ref> --layer=http`: existing scoped selectors in `scripts/run_tests.py`; both also accept `--layer=isolated`.
+- `npm test`: all retained isolated and HTTP tests (the gate's native collection).
+- `npm run test:full`: existing full selector over mapped sections, not a replacement for the gate's native collection.
+- `npm run verify`: `check` → `build` → `test`; full frontend gate/repair, not the loop after every edit.
+
+The lockfile pins Playwright and Chromium. Local tests use up to three workers;
+CI runs a separate isolated job at its default one worker and six whole-file,
+duration-balanced HTTP shards with two workers each. The HTTP shards share one
+downloaded export. UTC, `en-US` and zero retries are configured. Use focused cases during
+repair and one relevant batch once stable. Only right before a push, run the root
+`python3 scripts/prepush.py --base <base-ref> --serial`: never overlap backend and
+frontend heavy lanes or start another heavy check beside one. See
+[Testing Architecture](../docs/architecture/16-testing-architecture.md) for
+coverage, dedicated provider-reset acceptance and separate real-stack/release
+boundaries. These commands describe the configured workflow, not current-tip
+parity or hosted/deployment acceptance.
+
 Workspace pages use `/sandbox`, `/boards`, `/comms`, `/access`, `/openview`, `/manage`, and `/platform`. `/profile` owns the signed-in person's identity, security and personal preferences. OpenComms is the only route that mounts the local sample runtime.
 
 The active workspace implementation lives in `src/components/systems/`.

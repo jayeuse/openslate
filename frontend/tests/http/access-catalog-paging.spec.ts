@@ -1,8 +1,13 @@
 import { expect, test } from "./helpers/test";
-import { group, ids, listPage, mockAccessApi } from "./helpers/access-api";
+import {
+  expectNoWrites,
+  fixtureId,
+  group,
+  ids,
+  listPage,
+  mockAccessApi,
+} from "./helpers/access-api";
 
-const fixtureId = (index: number) =>
-  `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 const metadata = {
   created_at: "2026-01-10T09:00:00Z",
   updated_at: "2026-01-10T09:00:00Z",
@@ -11,7 +16,7 @@ const metadata = {
   performed_by: ids.rosa,
 };
 
-test("S08 access department and module search keeps unseen saved entries in the replacement", async ({
+test("access department and module search keeps unseen saved entries in the replacement", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -164,7 +169,7 @@ test("S08 access department and module search keeps unseen saved entries in the 
   ).toBe(true);
 });
 
-test("S08 correction catalog search refusal survives cached keys until explicit Retry", async ({
+test("catalog search refusal survives cached keys until explicit Retry", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -207,10 +212,10 @@ test("S08 correction catalog search refusal survives cached keys until explicit 
   await expect(
     sheet.getByLabel("Inventory level", { exact: true }),
   ).toBeVisible();
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
 
-test("S08 correction Access summary describes overrides without claiming module totals", async ({
+test("Access summary describes overrides without claiming module totals", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -232,5 +237,5 @@ test("S08 correction Access summary describes overrides without claiming module 
   await sheet.getByLabel("Prices level", { exact: true }).selectOption("read");
   await expect(inventory).toContainText("1 module has its own level");
   await expect(inventory).not.toContainText("1 of");
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });

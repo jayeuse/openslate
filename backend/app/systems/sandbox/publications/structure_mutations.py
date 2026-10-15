@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.access.policy.models import Group, GroupAccess
 from app.systems.boards.department_boards import sync_department_board
 from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.departments.models import Department
@@ -36,6 +37,63 @@ def sync_module_chart_departments(
             chart.department_id = department_id
             chart.revision += 1
             chart.performed_by = actor_id
+
+
+def lock_module_access(db: Session) -> None:
+    """Lock the live groups FOR SHARE, then the live module access rows FOR UPDATE.
+
+    This runs before any structure lock, in the order of every group writer and of
+    ``_lock_authority``: a member's fresh access check waits here and holds nothing
+    that the publish needs, so the publish never waits on it while holding a module.
+    """
+
+    db.execute(
+        select(Group.id)
+        .where(Group.is_deleted.is_(False))
+        .order_by(Group.id)
+        .with_for_update(read=True)
+    ).all()
+    db.execute(
+        select(GroupAccess.id)
+        .where(GroupAccess.module_id.is_not(None), GroupAccess.is_deleted.is_(False))
+        .order_by(GroupAccess.id)
+        .with_for_update()
+    ).all()
+
+
+def sync_module_access_departments(db: Session, actor_id: UUID) -> None:
+    """Move each live module access row to its module's department without committing.
+
+    It covers every module, closed ones too, so a row left behind by a move before
+    grants followed their module is repaired. Such a row can share its group and
+    module with a newer row in another department. The most recently written row
+    is the administrator's latest intent: it stays, and the older rows go.
+    """
+
+    db.flush()
+    grants = (
+        db.execute(
+            select(GroupAccess, Module.department_id)
+            .join(Module, Module.id == GroupAccess.module_id)
+            .where(GroupAccess.is_deleted.is_(False))
+            .order_by(GroupAccess.id)
+            .execution_options(populate_existing=True)
+        )
+        .tuples()
+        .all()
+    )
+    latest: dict[tuple[UUID, UUID | None], tuple[GroupAccess, UUID]] = {}
+    for grant, department_id in sorted(grants, key=lambda row: (row[0].updated_at, row[0].id)):
+        latest[(grant.group_id, grant.module_id)] = (grant, department_id)
+    kept = {id(grant) for grant, _ in latest.values()}
+    for grant, _ in grants:
+        if id(grant) not in kept:
+            db.delete(grant)
+    db.flush()
+    for grant, department_id in latest.values():
+        if grant.department_id != department_id:
+            grant.department_id = department_id
+            grant.performed_by = actor_id
 
 
 def stage_bound_names_and_positions(

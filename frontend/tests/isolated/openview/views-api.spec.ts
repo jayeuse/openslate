@@ -15,6 +15,9 @@ import {
   type OpenViewQueryDefinition,
   type OpenViewSavedView,
 } from "../../../src/components/systems/openview/adapters/views-api";
+import { wirePagination } from "../../helpers/pagination";
+import { wireField, wireRecord } from "../../helpers/wire";
+import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
 const moduleId = "00000000-0000-4000-8000-000000000001";
 const fieldId = "00000000-0000-4000-8000-000000000002";
@@ -24,25 +27,6 @@ const viewId = "00000000-0000-4000-8000-000000000005";
 const departmentId = "00000000-0000-4000-8000-000000000007";
 const timelineStartFieldId = "00000000-0000-4000-8000-000000000008";
 const timelineEndFieldId = "00000000-0000-4000-8000-000000000009";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(
-  responder: (input: RequestInfo | URL, init?: RequestInit) => Response,
-) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder(input, init));
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 const definition: OpenViewQueryDefinition = {
   version: 1,
@@ -164,13 +148,7 @@ const timelineViewResponse = {
   },
 };
 
-const pagination = {
-  limit: 20,
-  offset: 0,
-  count: 1,
-  total: 1,
-  has_more: false,
-};
+const pagination = wirePagination({ limit: 20, count: 1, total: 1 });
 
 test("maps validated catalog, saved-view, and record pages", async () => {
   const responses: unknown[] = [
@@ -196,33 +174,27 @@ test("maps validated catalog, saved-view, and record pages", async () => {
           position: 0,
           config: { choices: ["active", "retired"] },
         },
-        {
+        wireField({
           id: timelineStartFieldId,
           module_id: moduleId,
           name: "Start date",
           type: "date",
-          required: false,
           position: 1,
-          config: {},
-        },
-        {
+        }),
+        wireField({
           id: timelineEndFieldId,
           module_id: moduleId,
           name: "End date",
           type: "datetime",
-          required: false,
           position: 2,
-          config: {},
-        },
-        {
+        }),
+        wireField({
           id: userFieldId,
           module_id: moduleId,
           name: "Assignee",
           type: "user",
-          required: false,
           position: 3,
-          config: {},
-        },
+        }),
       ],
       pagination,
     },
@@ -230,17 +202,14 @@ test("maps validated catalog, saved-view, and record pages", async () => {
     viewResponse,
     {
       items: [
-        {
+        wireRecord({
           id: "00000000-0000-4000-8000-000000000006",
           module_id: moduleId,
           data: { [fieldId]: "Pump 04", [userFieldId]: eligibleUserId },
           display_values: { [userFieldId]: "Alex Reader" },
           created_at: "2026-09-23T00:00:00Z",
           updated_at: "2026-09-23T00:00:00Z",
-          deleted_at: null,
-          is_deleted: false,
-          performed_by: null,
-        },
+        }),
       ],
       pagination: { ...pagination, limit: 25 },
     },
@@ -643,15 +612,13 @@ test("rejects malformed payloads, relationship fields, and preserves conflicts",
   const relationship = installFetch(() =>
     Response.json({
       items: [
-        {
+        wireField({
           id: fieldId,
           module_id: moduleId,
           name: "Related item",
           type: "relationship",
-          required: false,
           position: 0,
-          config: {},
-        },
+        }),
       ],
       pagination,
     }),

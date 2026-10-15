@@ -8,8 +8,8 @@ from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
 from app.systems.access.users.models import User, UserStatus
-from app.systems.boards.models import Board, BoardGroup
-from app.systems.boards.post_models import BoardPost, BoardPostRevision
+from app.systems.boards.models import BoardGroup
+from app.systems.boards.post_models import BoardPostRevision
 from app.systems.boards.post_service import manager
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import Report
@@ -23,10 +23,10 @@ from app.systems.platform.scheduling.post_execution import (
 from app.systems.platform.scheduling.service import WorkClaim, claim_due_work
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
-from tests.boards.support import board_group
+from tests.platform_scheduling.support import POST_DUE as NOW
+from tests.platform_scheduling.support import post_work_subject
 
 pytestmark = pytest.mark.integration
-NOW = datetime(2026, 9, 24, 12, tzinfo=UTC)
 
 
 def _other_user(db, role: str) -> User:
@@ -41,47 +41,9 @@ def _other_user(db, role: str) -> User:
     return other
 
 
-def _subject(db):
-    role = "member"
-    actor = User(
-        email=f"post-work-{uuid7().hex}@example.test",
-        username=f"post_work_{uuid7().hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=role,
-    )
-    db.add(actor)
-    db.flush()
-    board = Board(scope="project", name="Scheduled publication")
-    db.add(board)
-    db.flush()
-    board_group(db, board, [actor], "write")
-    item = BoardPost(
-        board_id=board.id,
-        author_id=actor.id,
-        title="Scheduled notice",
-        body="Publish this content once",
-        status="scheduled",
-        publish_at=NOW,
-        revision=2,
-    )
-    db.add(item)
-    db.flush()
-    work = ScheduledWork(
-        kind="post-publish",
-        post_id=item.id,
-        source_revision=item.revision,
-        scheduling_actor_id=actor.id,
-        scheduled_for=NOW,
-        next_attempt_at=NOW,
-    )
-    db.add(work)
-    db.flush()
-    return actor, role, board, item, work
-
-
 def test_due_post_claim_publishes_one_immutable_result(integration_owner_db):
     db = integration_owner_db
-    actor, _role, board, item, work = _subject(db)
+    actor, _role, board, item, work = post_work_subject(db)
     department = Department(department_name=f"Post work {uuid7().hex}")
     db.add(department)
     db.flush()
@@ -124,11 +86,7 @@ def test_due_post_claim_publishes_one_immutable_result(integration_owner_db):
     assert finalize_post_claim(db, claims[0], now=NOW) is None
     assert claim_due_post_work(db, now=NOW) == []
     assert list(
-        db.scalars(
-            select(BoardPostRevision).where(
-                BoardPostRevision.post_id == item.id
-            )
-        )
+        db.scalars(select(BoardPostRevision).where(BoardPostRevision.post_id == item.id))
     ) == [result]
 
 
@@ -140,7 +98,7 @@ def _group_row(db, board) -> BoardGroup:
 
 def test_revoked_board_group_cancels_without_publication(integration_owner_db):
     db = integration_owner_db
-    _actor, _role, board, item, work = _subject(db)
+    _actor, _role, board, item, work = post_work_subject(db)
     claim = claim_due_post_work(db, now=NOW)[0]
     row = _group_row(db, board)
     row.is_deleted = True
@@ -155,7 +113,7 @@ def test_revoked_board_group_cancels_without_publication(integration_owner_db):
 
 def test_other_author_manager_downgraded_to_write_cannot_publish(integration_owner_db):
     db = integration_owner_db
-    actor, role, board, item, work = _subject(db)
+    actor, role, board, item, work = post_work_subject(db)
     author = _other_user(db, role)
     item.author_id = author.id
     row = _group_row(db, board)
@@ -173,8 +131,7 @@ def test_other_author_manager_downgraded_to_write_cannot_publish(integration_own
     assert work.publication_result_id is None
     assert item.displayed_publication_number is None
     assert (
-        db.scalar(select(BoardPostRevision.id).where(BoardPostRevision.post_id == item.id))
-        is None
+        db.scalar(select(BoardPostRevision.id).where(BoardPostRevision.post_id == item.id)) is None
     )
 
 
@@ -192,7 +149,7 @@ def test_other_author_manager_downgraded_to_write_cannot_publish(integration_own
 )
 def test_current_source_or_actor_denial_cancels_without_publication(integration_owner_db, change):
     db = integration_owner_db
-    actor, role, board, item, work = _subject(db)
+    actor, role, board, item, work = post_work_subject(db)
     claim = claim_due_post_work(db, now=NOW)[0]
     final_time = NOW
     if change == "board_archived":
@@ -221,18 +178,13 @@ def test_current_source_or_actor_denial_cancels_without_publication(integration_
     assert work.publication_result_id is None
     assert item.displayed_publication_number is None
     assert (
-        db.scalar(
-            select(BoardPostRevision.id).where(
-                BoardPostRevision.post_id == item.id
-            )
-        )
-        is None
+        db.scalar(select(BoardPostRevision.id).where(BoardPostRevision.post_id == item.id)) is None
     )
 
 
 def test_expired_lease_recovery_rejects_old_claim_and_current_claim_publishes(integration_owner_db):
     db = integration_owner_db
-    _actor, _role, _board, item, work = _subject(db)
+    _actor, _role, _board, item, work = post_work_subject(db)
     first = claim_due_post_work(db, now=NOW)[0]
     second = claim_due_post_work(db, now=NOW + timedelta(minutes=3))[0]
     assert second.lease_token != first.lease_token
@@ -249,7 +201,7 @@ def test_expired_lease_recovery_rejects_old_claim_and_current_claim_publishes(in
 
 def test_failed_post_claim_retries_with_backoff_and_terminal_limit(integration_owner_db):
     db = integration_owner_db
-    _actor, _role, _board, item, work = _subject(db)
+    _actor, _role, _board, item, work = post_work_subject(db)
     for attempt in range(1, 6):
         claim = claim_due_post_work(db, now=NOW)[0]
         assert work.attempt_count == attempt
@@ -272,7 +224,7 @@ def test_failed_post_claim_retries_with_backoff_and_terminal_limit(integration_o
 
 def test_canceled_or_wrong_kind_claim_cannot_publish(integration_owner_db):
     db = integration_owner_db
-    _actor, _role, _board, item, work = _subject(db)
+    _actor, _role, _board, item, work = post_work_subject(db)
     claim = claim_due_post_work(db, now=NOW)[0]
     work.state = WorkState.CANCELED
     work.lease_token = None
@@ -286,13 +238,16 @@ def test_canceled_or_wrong_kind_claim_cannot_publish(integration_owner_db):
 
 def test_rolled_back_publication_leaves_no_result_and_can_retry(integration_owner_db):
     db = integration_owner_db
-    _actor, _role, board, item, work = _subject(db)
+    _actor, _role, board, item, work = post_work_subject(db)
     claim = claim_due_post_work(db, now=NOW)[0]
-    with pytest.raises(RuntimeError, match="controlled failure"):
-        with db.begin_nested():
-            assert finalize_post_claim(db, claim, now=NOW) is not None
-            db.flush()
-            raise RuntimeError("controlled failure")
+
+    def publish_then_fail() -> None:
+        assert finalize_post_claim(db, claim, now=NOW) is not None
+        db.flush()
+        raise RuntimeError("controlled failure")
+
+    with pytest.raises(RuntimeError, match="controlled failure"), db.begin_nested():
+        publish_then_fail()
     db.refresh(work)
     db.refresh(item)
     db.refresh(board)
@@ -300,12 +255,7 @@ def test_rolled_back_publication_leaves_no_result_and_can_retry(integration_owne
     assert item.status == "scheduled" and item.displayed_publication_number is None
     assert board.revision == 1
     assert (
-        db.scalar(
-            select(BoardPostRevision.id).where(
-                BoardPostRevision.post_id == item.id
-            )
-        )
-        is None
+        db.scalar(select(BoardPostRevision.id).where(BoardPostRevision.post_id == item.id)) is None
     )
     assert fail_post_work(db, claim, now=NOW)
     assert work.state == WorkState.PENDING
@@ -315,7 +265,7 @@ def test_coordinator_rolls_back_failed_publication_then_retries_once(
     integration_owner_db, monkeypatch
 ):
     db = integration_owner_db
-    actor, _role, board, item, work = _subject(db)
+    actor, _role, board, item, work = post_work_subject(db)
     connection = db.connection()
 
     def session_factory(_engine):
@@ -348,12 +298,7 @@ def test_coordinator_rolls_back_failed_publication_then_retries_once(
     assert work.next_attempt_at == NOW + timedelta(seconds=2)
     assert item.status == "scheduled" and board.revision == 1
     assert (
-        db.scalar(
-            select(BoardPostRevision.id).where(
-                BoardPostRevision.post_id == item.id
-            )
-        )
-        is None
+        db.scalar(select(BoardPostRevision.id).where(BoardPostRevision.post_id == item.id)) is None
     )
     assert (
         db.scalar(select(InAppNotification.id).where(InAppNotification.work_id == work.id)) is None

@@ -91,7 +91,10 @@ export function NotificationBell({ accountId }: { accountId: string | null }) {
   }, [accountId, client, focusAccount, refused, suspended]);
   useEffect(() => {
     if (!accountId || refused) return;
-    const focus = () => {
+    const focus = (event: FocusEvent) => {
+      // A capture listener on window also receives every control's focus;
+      // only the window regaining focus may refresh the count.
+      if (event.target !== window) return;
       if (!isWorkspaceStreamAvailable()) setFocusAccount(accountId);
     };
     // Capture stream availability before the shell conceals the workspace;

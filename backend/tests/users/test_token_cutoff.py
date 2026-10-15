@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import cast
+
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from app.systems.access.users import coordination
 from app.systems.access.users.coordination import advance_token_cutoff, token_cutoff
 from app.systems.access.users.models import User
+from tests.property_support import PROPERTY
 
 
 def test_cutoff_drops_sub_second_precision() -> None:
@@ -37,3 +42,32 @@ def test_the_cutoff_never_moves_backwards(monkeypatch) -> None:
     )
     advance_token_cutoff(user)
     assert user.tokens_valid_after == later
+
+
+MOMENTS = st.datetimes(
+    min_value=datetime(2000, 1, 1), max_value=datetime(2100, 1, 1), timezones=st.just(UTC)
+)
+
+
+@PROPERTY
+@given(moment=MOMENTS)
+def test_the_cutoff_is_the_start_of_the_same_whole_second(moment: datetime) -> None:
+    cutoff = token_cutoff(moment)
+    assert cutoff.microsecond == 0
+    assert cutoff <= moment < cutoff + timedelta(seconds=1)
+    assert token_cutoff(cutoff) == cutoff
+
+
+@PROPERTY
+@given(previous=st.none() | MOMENTS, revoked=MOMENTS)
+def test_advancing_keeps_the_later_of_the_previous_cutoff_and_the_revocation_second(
+    previous: datetime | None, revoked: datetime
+) -> None:
+    user = cast(User, SimpleNamespace(tokens_valid_after=previous))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(coordination, "utc_now", lambda: revoked)
+        advance_token_cutoff(user)
+    assert user.tokens_valid_after is not None
+    assert user.tokens_valid_after >= token_cutoff(revoked)
+    assert previous is None or user.tokens_valid_after >= previous
+    assert user.tokens_valid_after in {previous, token_cutoff(revoked)}

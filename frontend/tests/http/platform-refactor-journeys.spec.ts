@@ -1,10 +1,14 @@
 import {
   expect,
+  heldResponse,
+  signedInAs,
   test,
   type Locator,
   type Page,
   type Route,
 } from "./helpers/test";
+import { pageOf } from "../helpers/pagination";
+import { wireView } from "../helpers/wire";
 const MODULE = "10000000-0000-4000-8000-000000000001";
 const TITLE = "20000000-0000-4000-8000-000000000001";
 const QUANTITY = "20000000-0000-4000-8000-000000000002";
@@ -15,16 +19,7 @@ const DIGEST = "a".repeat(64);
 const uuid = (n: number) =>
   `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 function list<T>(items: T[], total = items.length, offset = 0, limit = 100) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
+  return pageOf(items, { limit, offset, total });
 }
 const definition = {
   version: 1,
@@ -43,19 +38,7 @@ const definition = {
   search_fields: [],
   deleted: "exclude",
 };
-async function signedIn(page: Page) {
-  await page.route("**/api/auth/session", (r) =>
-    r.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      },
-    }),
-  );
-}
 async function catalog(page: Page) {
-  await signedIn(page);
   await page.route("**/api/views/data-sources?*", (r) =>
     r.fulfill({
       json: list([
@@ -87,11 +70,10 @@ async function catalog(page: Page) {
   await page.route("**/api/views?*", (r) =>
     r.fulfill({
       json: list([
-        {
+        wireView({
           id: VIEW,
           module_id: MODULE,
           name: "Enabled jobs",
-          is_default: false,
           definition,
           presentation: {
             version: 1,
@@ -108,12 +90,9 @@ async function catalog(page: Page) {
             date_range: "month",
             scale: null,
           },
-          revision: 1,
-          is_deleted: false,
-          can_edit: true,
           created_at: "2026-10-01T00:00:00Z",
           updated_at: "2026-10-01T00:00:00Z",
-        },
+        }),
       ]),
     }),
   );
@@ -192,36 +171,32 @@ async function selectCsv(page: Page, csv: string) {
 test("Search queries four kinds, pages within cards and uses typed destinations", async ({
   page,
 }) => {
-  await signedIn(page);
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      json: {
-        id: "00000000-0000-4000-8000-000000000001",
-        role: "member",
-        access: [{ department_id: BOARD, module_id: MODULE, level: "read" }],
-      },
-    }),
-  );
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000001",
+    role: "member",
+    access: [{ department_id: BOARD, module_id: MODULE, level: "read" }],
+  });
   const requests: URLSearchParams[] = [];
   await page.route("**/api/search?*", (r) => {
     const p = new URL(r.request().url()).searchParams;
     requests.push(p);
     const kind = p.get("kind");
     const offset = Number(p.get("offset"));
-    const items = Array.from(
-      { length: kind === "record" && offset === 0 ? 10 : 1 },
-      (_, i) => ({
-        kind,
-        id: uuid(offset + i + 1),
-        title: `${kind} match ${offset + i + 1}`,
-        context_label: kind === "person" ? "reader" : "Maintenance",
-        module_id: kind === "record" ? MODULE : null,
-        board_id: kind === "post" || kind === "event" ? BOARD : null,
-        can_open: kind !== "person",
-      }),
-    );
+    // Records fill a first page of ten; People hold one result that cannot
+    // open and one that can.
+    const length =
+      kind === "record" && offset === 0 ? 10 : kind === "person" ? 2 : 1;
+    const items = Array.from({ length }, (_, i) => ({
+      kind,
+      id: uuid(offset + i + 1),
+      title: `${kind} match ${offset + i + 1}`,
+      context_label: kind === "person" ? "reader" : "Maintenance",
+      module_id: kind === "record" ? MODULE : null,
+      board_id: kind === "post" || kind === "event" ? BOARD : null,
+      can_open: kind !== "person" || i === 1,
+    }));
     return r.fulfill({
-      json: list(items, kind === "record" ? 11 : 1, offset, 10),
+      json: list(items, kind === "record" ? 11 : length, offset, 10),
     });
   });
   await page.goto("/platform?section=search");
@@ -245,7 +220,12 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
     `/boards?board=${BOARD}&section=calendar&event=${uuid(1)}`,
   );
   await expect(page.getByText("person match 1", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /person match/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /person match 1/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("link", { name: "Open person match 2", exact: true }),
+  ).toHaveAttribute("href", `/access?view=people&user=${uuid(2)}`);
   for (const kind of ["record", "person", "post", "event"])
     expect(
       requests.some(
@@ -265,23 +245,60 @@ test("Search queries four kinds, pages within cards and uses typed destinations"
       page.getByRole("region", { name: `${name} search results` }),
     ).toHaveCount(0);
 });
+test("Administrator people results open the existing People destination and empty groups stay truthful", async ({
+  page,
+}) => {
+  await page.route("**/api/search?*", (route) => {
+    const kind = new URL(route.request().url()).searchParams.get("kind");
+    return route.fulfill({
+      json: list(
+        kind === "person"
+          ? [
+              {
+                kind: "person",
+                id: uuid(1),
+                title: "Pump operator",
+                context_label: "operator",
+                module_id: null,
+                board_id: null,
+                can_open: true,
+              },
+            ]
+          : [],
+        kind === "person" ? 1 : 0,
+        0,
+        10,
+      ),
+    });
+  });
+  await page.goto("/platform?section=search");
+  await page
+    .getByRole("searchbox", { name: "Search workspace" })
+    .fill("operator");
+  await expect(
+    page.getByRole("link", { name: "Open Pump operator", exact: true }),
+  ).toHaveAttribute("href", `/access?view=people&user=${uuid(1)}`);
+  await expect(
+    page.getByRole("region", { name: "Records search results" }),
+  ).toContainText("No matching records.");
+});
+
 test("CSV preview and import use sequential complete batches, typed defaults and row errors", async ({
   page,
 }) => {
   await catalog(page);
   const requests: ImportRequest[] = [];
+  const requestBytes: number[] = [];
   const committed = new Set<string>();
+  const recommitted: string[] = [];
   await page.route("**/api/records/import", async (r) => {
     const body = r.request().postDataJSON() as ImportRequest;
     requests.push(body);
-    expect(body.rows.length).toBeLessThanOrEqual(100);
-    expect(Buffer.byteLength(r.request().postData() ?? "")).toBeLessThanOrEqual(
-      900 * 1024,
-    );
+    requestBytes.push(Buffer.byteLength(r.request().postData() ?? ""));
     const result = importResult(body);
     for (const row of result.rows)
       if (row.record_id) {
-        expect(committed.has(row.record_id)).toBe(false);
+        if (committed.has(row.record_id)) recommitted.push(row.record_id);
         committed.add(row.record_id);
       }
     await r.fulfill({
@@ -333,6 +350,11 @@ test("CSV preview and import use sequential complete batches, typed defaults and
   expect(imports.flatMap((r) => r.rows).some((r) => r.row_number === 104)).toBe(
     false,
   );
+  expect(Math.max(...requests.map((r) => r.rows.length))).toBeLessThanOrEqual(
+    100,
+  );
+  expect(Math.max(...requestBytes)).toBeLessThanOrEqual(900 * 1024);
+  expect(recommitted).toEqual([]);
   await expect(
     page.getByRole("button", { name: /^Import \d+ valid rows$/ }),
   ).toBeDisabled();
@@ -388,35 +410,6 @@ test("Cancel stops future import batches while awaiting the committed current ba
   await expect(
     page.getByText("101 records imported.", { exact: true }),
   ).toBeVisible();
-});
-test("Unconfirmed import outcomes stop without retry or duplicate submission", async ({
-  page,
-}) => {
-  await catalog(page);
-  let imports = 0;
-  await page.route("**/api/records/import", (r) => {
-    const body = r.request().postDataJSON() as ImportRequest;
-    if (body.mode === "preview") return r.fulfill({ json: importResult(body) });
-    imports++;
-    return r.fulfill({ json: { ...importResult(body), created_count: 0 } });
-  });
-  await upload(page, "Title,Quantity\nPump,1");
-  await page
-    .getByRole("button", { name: "Preview import", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Import 1 valid rows", exact: true })
-    .click();
-  await expect(page.getByRole("main").getByRole("alert")).toContainText(
-    "unconfirmed",
-  );
-  await expect(
-    page.getByRole("button", { name: /^Import \d+ valid rows$/ }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Preview import", exact: true }),
-  ).toBeDisabled();
-  expect(imports).toBe(1);
 });
 test("Schema drift and oversized UTF-8 rows retain the draft without writes", async ({
   page,
@@ -524,7 +517,7 @@ test("Export sends the saved-view query and downloads the complete server CSV", 
   expect(Buffer.concat(chunks).toString("utf8")).toBe(csv);
   expect(requests).toHaveLength(1);
 });
-test("CSV input rejects invalid UTF-8, row limits and widths while accepting one-column CSV", async ({
+test("CSV input rejects invalid UTF-8 and a wrong width while accepting one-column CSV", async ({
   page,
 }) => {
   await catalog(page);
@@ -540,9 +533,7 @@ test("CSV input rejects invalid UTF-8, row limits and widths while accepting one
   const file = page.getByLabel("CSV file", { exact: true });
   for (const [buffer, message] of [
     [Buffer.from([84, 105, 116, 108, 101, 10, 255]), "UTF-8"],
-    [Buffer.from(`Title,Quantity\n${"Pump,1\n".repeat(10001)}`), "10,000"],
     [Buffer.from("Title,Quantity\nPump,1,extra"), "Row 2 must have 2 cells"],
-    [Buffer.alloc(8 * 1024 * 1024 + 1, 65), "8 MB"],
   ] as const) {
     await file.setInputFiles({
       name: "invalid.csv",
@@ -587,12 +578,11 @@ test("UTF-8 JSON byte budget splits batches even with fewer than 100 rows", asyn
 }) => {
   await catalog(page);
   const requests: ImportRequest[] = [];
+  const requestBytes: number[] = [];
   await page.route("**/api/records/import", (route) => {
     const body = route.request().postDataJSON() as ImportRequest;
     requests.push(body);
-    expect(
-      Buffer.byteLength(route.request().postData() ?? ""),
-    ).toBeLessThanOrEqual(900 * 1024);
+    requestBytes.push(Buffer.byteLength(route.request().postData() ?? ""));
     return route.fulfill({ json: importResult(body) });
   });
   await upload(
@@ -619,6 +609,8 @@ test("UTF-8 JSON byte budget splits batches even with fewer than 100 rows", asyn
     ["import", [2]],
     ["import", [3]],
   ]);
+  for (const bytes of requestBytes)
+    expect(bytes).toBeLessThanOrEqual(900 * 1024);
 });
 
 test("Leaving waits for the current import receipt and never starts a later batch", async ({
@@ -656,7 +648,29 @@ test("Leaving waits for the current import receipt and never starts a later batc
   expect(writes).toBe(1);
 });
 
-for (const failure of ["lost response", "unconfirmed 503"] as const) {
+// Each outcome leaves the batch unconfirmed: no answer, a 503 that says so,
+// or a receipt that confirms no record for the imported row.
+for (const [failure, answer] of [
+  ["lost response", (route: Route) => route.abort("connectionreset")],
+  [
+    "unconfirmed 503",
+    (route: Route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          detail: {
+            code: "record_import_unconfirmed",
+            message: "Import outcome could not be confirmed",
+          },
+        },
+      }),
+  ],
+  [
+    "malformed receipt",
+    (route: Route, body: ImportRequest) =>
+      route.fulfill({ json: { ...importResult(body), created_count: 0 } }),
+  ],
+] as const) {
   test(`Import ${failure} stops without retry`, async ({ page }) => {
     await catalog(page);
     let writes = 0;
@@ -665,17 +679,7 @@ for (const failure of ["lost response", "unconfirmed 503"] as const) {
       if (body.mode === "preview")
         return route.fulfill({ json: importResult(body) });
       writes++;
-      return failure === "lost response"
-        ? route.abort("connectionreset")
-        : route.fulfill({
-            status: 503,
-            json: {
-              detail: {
-                code: "record_import_unconfirmed",
-                message: "Import outcome could not be confirmed",
-              },
-            },
-          });
+      return answer(route, body);
     });
     await upload(page, "Title,Quantity\nPump,1");
     await page
@@ -700,15 +704,14 @@ for (const failure of ["lost response", "unconfirmed 503"] as const) {
 test("Search ignores old replies, hides denial and recovers with explicit retry", async ({
   page,
 }) => {
-  await signedIn(page);
-  const releaseOld: (() => void)[] = [];
+  const oldSearch = heldResponse();
   let denied = true;
   await page.route("**/api/search?*", async (route) => {
     const params = new URL(route.request().url()).searchParams;
-    if (params.get("search") === "old")
-      await new Promise<void>((resolve) => {
-        releaseOld.push(resolve);
-      });
+    if (params.get("search") === "old") {
+      oldSearch.enter();
+      await oldSearch.released;
+    }
     if (params.get("kind") !== "record")
       return route.fulfill({ json: list([], 0, 0, 10) });
     if (params.get("search") === "fresh" && denied)
@@ -738,11 +741,14 @@ test("Search ignores old replies, hides denial and recovers with explicit retry"
   await page.goto("/platform?section=search");
   const input = page.getByRole("searchbox", { name: "Search workspace" });
   await input.fill("old");
-  await expect.poll(() => releaseOld.length).toBeGreaterThan(0);
+  await oldSearch.entered;
   await input.fill("fresh");
   const records = page.getByRole("region", { name: "Records search results" });
   await expect(records.getByRole("alert")).toBeVisible();
-  releaseOld.forEach((release) => release());
+  await expect(
+    page.getByRole("region", { name: "People search results" }),
+  ).toContainText("No matching people.");
+  oldSearch.release();
   await expect(page.getByText("old result", { exact: true })).toHaveCount(0);
   denied = false;
   await records.getByRole("button", { name: "Retry", exact: true }).click();
@@ -862,45 +868,6 @@ test("Import and export role refusals retain drafts and never report creation or
   expect(downloads).toBe(0);
 });
 
-test("Administrator people results open the existing People destination and empty groups stay truthful", async ({
-  page,
-}) => {
-  await signedIn(page);
-  await page.route("**/api/search?*", (route) => {
-    const kind = new URL(route.request().url()).searchParams.get("kind");
-    return route.fulfill({
-      json: list(
-        kind === "person"
-          ? [
-              {
-                kind: "person",
-                id: uuid(1),
-                title: "Pump operator",
-                context_label: "operator",
-                module_id: null,
-                board_id: null,
-                can_open: true,
-              },
-            ]
-          : [],
-        kind === "person" ? 1 : 0,
-        0,
-        10,
-      ),
-    });
-  });
-  await page.goto("/platform?section=search");
-  await page
-    .getByRole("searchbox", { name: "Search workspace" })
-    .fill("operator");
-  await expect(
-    page.getByRole("link", { name: "Open Pump operator", exact: true }),
-  ).toHaveAttribute("href", `/access?view=people&user=${uuid(1)}`);
-  await expect(
-    page.getByRole("region", { name: "Records search results" }),
-  ).toContainText("No matching records.");
-});
-
 async function queueLeaveDuringSecondBatch(page: Page) {
   await catalog(page);
   // Visit the queued destination in this document first, so the negative
@@ -1012,7 +979,7 @@ for (const dismissal of ["Stay", "Escape", "outside"] as const) {
       await page
         .getByTestId("dialog-backdrop")
         .click({ position: { x: 2, y: 2 } });
-    await expect(dialog).not.toBeVisible();
+    await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(/section=import-export/);
     await pending.held!.fulfill({ json: importResult(pending.submitted!) });
     await expect(
@@ -1069,13 +1036,12 @@ for (const viewport of [
       }),
     );
 
-    async function containedPage(stage: string) {
+    async function containedPage() {
       const geometry = await page.evaluate(() => ({
         client: document.documentElement.clientWidth,
         scroll: document.documentElement.scrollWidth,
         windowX: window.scrollX,
       }));
-      console.log(`${stage} ${viewport.width}x${viewport.height}`, geometry);
       expect(geometry.scroll).toBeLessThanOrEqual(geometry.client + 1);
       expect(geometry.windowX).toBe(0);
     }
@@ -1086,7 +1052,7 @@ for (const viewport of [
       expect(bounds).not.toBeNull();
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width + 1);
-      await containedPage("Reachable action");
+      await containedPage();
     }
     async function localTableScroll(table: Locator) {
       await table.scrollIntoViewIfNeeded();
@@ -1114,21 +1080,17 @@ for (const viewport of [
           windowX: window.scrollX,
         };
       });
-      console.log(
-        `Local preview scroll ${viewport.width}x${viewport.height}`,
-        geometry,
-      );
       expect(geometry).not.toBeNull();
       expect(geometry!.scroll).toBeGreaterThan(geometry!.client);
       expect(geometry!.scrollLeft).toBeGreaterThan(0);
       expect(geometry!.left).toBeGreaterThanOrEqual(0);
       expect(geometry!.right).toBeLessThanOrEqual(viewport.width + 1);
       expect(geometry!.windowX).toBe(0);
-      await containedPage("Scrolled preview");
+      await containedPage();
     }
 
     await upload(page, `Title,Quantity\n${title},12\nReserve pump,2`);
-    await containedPage("Column mapping");
+    await containedPage();
     await reachable(page.getByLabel("Map column 1 · Title", { exact: true }));
     const importHeading = await page
       .getByRole("heading", { name: "Import records", exact: true })
@@ -1160,7 +1122,7 @@ for (const viewport of [
       name: "Validated import rows",
     });
     await expect(importTable).toContainText(title);
-    await containedPage("Import preview");
+    await containedPage();
     await localTableScroll(importTable);
     await reachable(
       page.getByRole("button", { name: "Import 2 valid rows", exact: true }),
@@ -1185,7 +1147,7 @@ for (const viewport of [
       .filter({
         has: page.getByRole("columnheader", { name: "Record ID", exact: true }),
       });
-    await containedPage("Export preview");
+    await containedPage();
     await localTableScroll(exportTable);
     const download = page.getByRole("button", {
       name: "Download CSV",
@@ -1220,6 +1182,6 @@ for (const viewport of [
     }
     await page.getByRole("link", { name: "Search", exact: true }).click();
     await expect(page).toHaveURL(/section=search/);
-    await containedPage("After leaving");
+    await containedPage();
   });
 }

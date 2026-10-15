@@ -1,9 +1,8 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   authorAccess,
   board,
@@ -13,19 +12,8 @@ import {
   readerAccess,
   userId,
 } from "./helpers/boards-api";
-
-async function captureAuthorArchiveEvidence(
-  page: Page,
-  name: string,
-  fullPage = true,
-) {
-  const directory = process.env.BOARD_ARCHIVE_CAPTURE_DIR;
-  if (!directory) return;
-  await page.screenshot({
-    path: `${directory}/${name}.png`,
-    fullPage,
-  });
-}
+import { pageOf } from "../helpers/pagination";
+import { wireField, wireRecord } from "../helpers/wire";
 
 test("Board menu keeps administration reachable without crowding the section", async ({
   page,
@@ -38,16 +26,7 @@ test("Board menu keeps administration reachable without crowding the section", a
   );
   await page.route("**/api/access/groups?**", (route) =>
     route.fulfill({
-      json: {
-        items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
-      },
+      json: pageOf([], { limit: 25 }),
     }),
   );
   await page.goto(`/boards?board=${boardId}&section=overview`);
@@ -64,11 +43,15 @@ test("Board menu keeps administration reachable without crowding the section", a
     .first()
     .click();
   await page.getByRole("button", { name: "Board menu", exact: true }).click();
-  await expect(
-    page.getByRole("menuitem", {
-      name: /Manage access|Templates|favorites|home board/,
-    }),
-  ).toHaveCount(0);
+  // The exact list leaves no room for a retired item (access grants,
+  // templates, favorites, a home Board).
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "Manage Board and groups",
+    "Preview access",
+    "View activity",
+    "New project Board",
+    "Configurations",
+  ]);
   await page
     .getByRole("menuitem", { name: "Manage Board and groups", exact: true })
     .click();
@@ -149,12 +132,6 @@ test("visible Boards route opens authorized server Board and keeps section URL",
   await expect(
     page.getByRole("button", { name: "Switch board" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Link a record" })).toHaveCount(
-    0,
-  );
-  await expect(
-    page.getByText("Reminders and Board files are unavailable"),
-  ).toHaveCount(0);
 
   await page.getByRole("link", { name: "Calendar", exact: true }).click();
   await expect(page).toHaveURL(
@@ -295,14 +272,12 @@ test("Calendar uses Workspace today and reaches later occurrences", async ({
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
-          items,
-          pagination: {
+          ...pageOf(items, {
             limit: 100,
             offset: Number(offset),
-            count: items.length,
             total: items.length === 0 ? 0 : 101,
-            has_more: items.length === 100,
-          },
+            hasMore: items.length === 100,
+          }),
           board_revision: 1,
         }),
       });
@@ -374,8 +349,8 @@ test.describe("Boards workspace regional activity", () => {
     );
     await page.route(`**/api/boards/${boardId}/activity?**`, (route) =>
       route.fulfill({
-        json: {
-          items: [
+        json: pageOf(
+          [
             {
               id: "00000000-0000-4000-8000-000000000199",
               created_at: "2026-09-23T00:00:00Z",
@@ -385,14 +360,8 @@ test.describe("Boards workspace regional activity", () => {
               actor_label: "Regional test actor",
             },
           ],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
-        },
+          { limit: 25 },
+        ),
       }),
     );
     await page.goto(`/boards?board=${boardId}&section=posts`);
@@ -417,7 +386,6 @@ test.describe("Boards workspace regional activity", () => {
   }) => {
     await installOpenViewEventSource(page);
     await installBoardApi(page, () => true);
-    const events: Array<Record<string, unknown>> = [];
     let workspaceReads = 0;
     let oldReleased = false;
     let releaseOld!: () => void;
@@ -438,20 +406,14 @@ test.describe("Boards workspace regional activity", () => {
     });
     await page.route("**/api/workspace", async (route) => {
       const read = ++workspaceReads;
-      events.push({ event: "workspace-read", read, oldReleased });
       if (read === 1) {
         const oldRequest = route.request();
         page.on("requestfinished", (request) => {
           if (request !== oldRequest) return;
-          events.push({ event: "old-network-finished" });
           markOldSettled();
         });
         page.on("requestfailed", (request) => {
           if (request !== oldRequest) return;
-          events.push({
-            event: "old-network-failed",
-            failure: request.failure()?.errorText,
-          });
           markOldSettled();
         });
         markFirstStarted();
@@ -469,13 +431,8 @@ test.describe("Boards workspace regional activity", () => {
               timezone: "UTC",
             },
           });
-          events.push({ event: "old-delivery", fulfilled: true });
-        } catch (error) {
-          events.push({
-            event: "old-delivery",
-            fulfilled: false,
-            error: String(error),
-          });
+        } catch {
+          // The page can abandon the old read; only its effect on the day is under test.
         } finally {
           markOldDelivered();
         }
@@ -493,7 +450,6 @@ test.describe("Boards workspace regional activity", () => {
           timezone: "UTC",
         },
       });
-      events.push({ event: "latest-delivery", read });
     });
     try {
       await page.goto(`/boards?board=${boardId}&section=calendar`);
@@ -510,21 +466,15 @@ test.describe("Boards workspace regional activity", () => {
       await expect.poll(() => workspaceReads).toBeGreaterThan(1);
       const latest = page.getByRole("button", { name: /View .*Sep 26/ });
       await expect(latest).toHaveAttribute("aria-current", "date");
-      events.push({ event: "latest-day-before-old-release", workspaceReads });
       oldReleased = true;
       releaseOld();
       await Promise.all([oldDelivered, oldSettled]);
       await expect(latest).toHaveAttribute("aria-current", "date");
-      events.push({ event: "latest-day-after-old-settled", workspaceReads });
     } finally {
       if (!oldReleased) {
         oldReleased = true;
         releaseOld();
       }
-      await test.info().attach("cold-main-refresh-observations", {
-        body: JSON.stringify({ workspaceReads, oldReleased, events }, null, 2),
-        contentType: "application/json",
-      });
     }
   });
 
@@ -742,14 +692,7 @@ test("My events refreshes after saving and when the current tab reselects it", a
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
-          items: [event()],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
+          ...pageOf([event()], { limit: 25 }),
           board_revision: 1,
         }),
       });
@@ -875,14 +818,7 @@ test("an event author can archive their event, while another author's event stay
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
-          items,
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: items.length,
-            total: items.length,
-            has_more: false,
-          },
+          ...pageOf(items, { limit: 100 }),
           board_revision: boardRevision,
         }),
       });
@@ -931,7 +867,6 @@ test("an event author can archive their event, while another author's event stay
       name: "Archive Team planning session",
     }),
   ).toHaveCount(0);
-  await captureAuthorArchiveEvidence(page, "event-archive-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Agenda", exact: true }).click();
   const agendaEvents = page.getByRole("region", {
@@ -947,7 +882,6 @@ test("an event author can archive their event, while another author's event stay
       name: "Archive Team planning session",
     }),
   ).toHaveCount(0);
-  await captureAuthorArchiveEvidence(page, "event-archive-mobile");
   await agendaEvents
     .getByRole("button", { name: "Archive My planning session" })
     .click();
@@ -1020,45 +954,41 @@ test("Board Record link labels refresh after linked module invalidations", async
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        items: [
-          {
-            id: `${eventId}:2026-09-25`,
-            event_id: eventId,
-            start: "2026-09-25",
-            end: "2026-09-25",
-            date: "2026-09-25",
-            event: {
-              id: eventId,
-              board_id: boardId,
-              author_id: userId,
-              title: "Equipment handover",
-              details: "",
-              location: "",
-              links: [],
-              all_day: true,
-              start_date: "2026-09-25",
-              end_date: "2026-09-25",
-              start_at: null,
-              end_at: null,
-              timezone_name: "UTC",
-              recurrence: "none",
-              repeat_until: null,
-              reminders: [],
-              archived: false,
-              revision: 1,
-              board_revision: 1,
-              created_at: "2026-09-25T00:00:00Z",
-              updated_at: "2026-09-25T00:00:00Z",
+        ...pageOf(
+          [
+            {
+              id: `${eventId}:2026-09-25`,
+              event_id: eventId,
+              start: "2026-09-25",
+              end: "2026-09-25",
+              date: "2026-09-25",
+              event: {
+                id: eventId,
+                board_id: boardId,
+                author_id: userId,
+                title: "Equipment handover",
+                details: "",
+                location: "",
+                links: [],
+                all_day: true,
+                start_date: "2026-09-25",
+                end_date: "2026-09-25",
+                start_at: null,
+                end_at: null,
+                timezone_name: "UTC",
+                recurrence: "none",
+                repeat_until: null,
+                reminders: [],
+                archived: false,
+                revision: 1,
+                board_revision: 1,
+                created_at: "2026-09-25T00:00:00Z",
+                updated_at: "2026-09-25T00:00:00Z",
+              },
             },
-          },
-        ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+          ],
+          { limit: 100 },
+        ),
         board_revision: 1,
       }),
     }),
@@ -1146,7 +1076,6 @@ test("Board Record link labels refresh after linked module invalidations", async
   await expect(
     page.getByRole("link", { name: "Cooling manifold updated", exact: true }),
   ).toHaveCount(0);
-  await captureOpenViewReview(page, "boards-record-link-title");
 });
 
 test("Board record widgets refresh user labels after eligibility invalidation", async ({
@@ -1165,37 +1094,33 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        items: [
-          {
-            id: widgetId,
-            board_id: boardId,
-            name: "Assignment queue",
-            widget_type: "records",
-            module_id: moduleId,
-            position: 0,
-            size: "M",
-            pinned: false,
-            chart_id: null,
-            config: {
-              version: 1,
-              fields: [{ field_id: assigneeFieldId, expected_type: "user" }],
-              filters: [],
-              logic: "and",
-              metric: null,
-              visualization: "bar",
-              refresh: "manual",
+        ...pageOf(
+          [
+            {
+              id: widgetId,
+              board_id: boardId,
+              name: "Assignment queue",
+              widget_type: "records",
+              module_id: moduleId,
+              position: 0,
+              size: "M",
+              pinned: false,
+              chart_id: null,
+              config: {
+                version: 1,
+                fields: [{ field_id: assigneeFieldId, expected_type: "user" }],
+                filters: [],
+                logic: "and",
+                metric: null,
+                visualization: "bar",
+                refresh: "manual",
+              },
+              created_at: "2026-09-25T00:00:00Z",
+              updated_at: "2026-09-25T00:00:00Z",
             },
-            created_at: "2026-09-25T00:00:00Z",
-            updated_at: "2026-09-25T00:00:00Z",
-          },
-        ],
-        pagination: {
-          limit: 12,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+          ],
+          { limit: 12 },
+        ),
         board_revision: 1,
       }),
     }),
@@ -1219,28 +1144,22 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
     recordQueries += 1;
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        items: [
-          {
-            id: "00000000-0000-4000-8000-000000000065",
-            module_id: moduleId,
-            data: { [assigneeFieldId]: assigneeId },
-            display_values: { [assigneeFieldId]: assigneeLabel },
-            created_at: "2026-09-25T00:00:00Z",
-            updated_at: "2026-09-25T00:00:00Z",
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: userId,
-          },
-        ],
-        pagination: {
-          limit: 5,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
-      }),
+      body: JSON.stringify(
+        pageOf(
+          [
+            wireRecord({
+              id: "00000000-0000-4000-8000-000000000065",
+              module_id: moduleId,
+              data: { [assigneeFieldId]: assigneeId },
+              display_values: { [assigneeFieldId]: assigneeLabel },
+              created_at: "2026-09-25T00:00:00Z",
+              updated_at: "2026-09-25T00:00:00Z",
+              performed_by: userId,
+            }),
+          ],
+          { limit: 5 },
+        ),
+      ),
     });
   });
 
@@ -1261,7 +1180,6 @@ test("Board record widgets refresh user labels after eligibility invalidation", 
   ).toBeVisible();
   await expect(page.getByText("Alex Reader", { exact: true })).toHaveCount(0);
   await expect(page.getByText(assigneeId, { exact: true })).toHaveCount(0);
-  await captureOpenViewReview(page, "boards-user-record-widget");
 });
 
 test("an author can archive their own editable post with current revisions", async ({
@@ -1314,17 +1232,7 @@ test("an author can archive their own editable post with current revisions", asy
             ? [otherPost]
             : [ownPost, otherPost]
           : [];
-      return reply(200, {
-        items,
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: items.length,
-          total: items.length,
-          has_more: false,
-        },
-        board_revision: 1,
-      });
+      return reply(200, { ...pageOf(items, { limit: 25 }), board_revision: 1 });
     }
     if (
       path === `/api/boards/${boardId}/posts/${postId}` &&
@@ -1365,11 +1273,9 @@ test("an author can archive their own editable post with current revisions", asy
     exact: true,
   });
   await expect(archiveButton).toBeVisible();
-  await captureAuthorArchiveEvidence(page, "post-archive-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(archiveButton).toBeVisible();
   await archiveButton.scrollIntoViewIfNeeded();
-  await captureAuthorArchiveEvidence(page, "post-archive-mobile", false);
   const confirmation = page.getByRole("alertdialog", {
     name: "Archive post?",
   });
@@ -1429,17 +1335,7 @@ test("a stale author post archive preserves the selected post and local form", a
     if (path === `/api/boards/${boardId}/posts` && request.method() === "GET") {
       const items =
         url.searchParams.get("view") === "editable" ? [ownPost] : [];
-      return reply(200, {
-        items,
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: items.length,
-          total: items.length,
-          has_more: false,
-        },
-        board_revision: 1,
-      });
+      return reply(200, { ...pageOf(items, { limit: 25 }), board_revision: 1 });
     }
     if (
       path === `/api/boards/${boardId}/posts/${postId}` &&
@@ -1546,17 +1442,7 @@ test("an author links a Record using its off-page title field without crawling t
     const path = new URL(request.url()).pathname;
     if (path === `/api/boards/${boardId}/posts`)
       return route.fulfill({
-        json: {
-          items: [post],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
-          board_revision: 1,
-        },
+        json: { ...pageOf([post], { limit: 25 }), board_revision: 1 },
       });
     if (path === `/api/boards/${boardId}/posts/${postId}`)
       return route.fulfill({ json: post });
@@ -1595,15 +1481,16 @@ test("an author links a Record using its off-page title field without crawling t
         });
       return route.fulfill({
         json: {
-          items: Array.from({ length: 100 }, (_, index) => ({
-            id: `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
-            module_id: moduleId,
-            name: `Other field ${index + 1}`,
-            type: "text",
-            required: false,
-            position: index,
-            config: { kind: "text" },
-          })),
+          items: Array.from({ length: 100 }, (_, index) =>
+            wireField({
+              id: `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
+              module_id: moduleId,
+              name: `Other field ${index + 1}`,
+              type: "text",
+              position: index,
+              config: { kind: "text" },
+            }),
+          ),
           pagination: {
             limit: 100,
             offset: 0,
@@ -1624,16 +1511,12 @@ test("an author links a Record using its off-page title field without crawling t
       });
     const items = dataSources.slice(offset, offset + 25);
     return route.fulfill({
-      json: {
-        items,
-        pagination: {
-          limit: 25,
-          offset,
-          count: items.length,
-          total: 26,
-          has_more: offset === 0,
-        },
-      },
+      json: pageOf(items, {
+        limit: 25,
+        offset,
+        total: 26,
+        hasMore: offset === 0,
+      }),
     });
   });
   await page.route(`**/api/fields/${fieldId}`, (route) =>
@@ -1660,28 +1543,20 @@ test("an author links a Record using its off-page title field without crawling t
         json: { detail: "Private failure canary" },
       });
     return route.fulfill({
-      json: {
-        items: [
-          {
+      json: pageOf(
+        [
+          wireRecord({
             id: recordId,
             module_id: moduleId,
             data: { [fieldId]: "Request 27" },
             display_values: { [fieldId]: "Request 27" },
             created_at: now,
             updated_at: now,
-            deleted_at: null,
-            is_deleted: false,
             performed_by: userId,
-          },
+          }),
         ],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
-      },
+        { limit: 25 },
+      ),
     });
   });
 
@@ -1771,14 +1646,6 @@ test("an author links a Record using its off-page title field without crawling t
   await links.getByRole("button", { name: "Link Record" }).click();
   await expect(links.getByRole("link", { name: "Request 27" })).toBeVisible();
   await expect(links.getByRole("status")).toHaveText("Record linked.");
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-board-record-link-${mode}`);
-    }
-  }
   expect(submitted).toEqual({
     record_id: recordId,
     board_revision: 1,

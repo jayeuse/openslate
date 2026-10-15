@@ -456,10 +456,32 @@ test("provider invitation and recovery emails complete through rendered forms", 
     email,
     "invite",
   );
+  await page.getByRole("button", { name: "Account" }).click();
+  const adminLogoutResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/logout") &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  expect((await adminLogoutResponse).status()).toBe(204);
+  await expect(page).toHaveURL(new URL("/login", browserOrigin).href);
+  const signedOutSession = await page.request.get("/api/auth/session");
+  expect(signedOutSession.status()).toBe(200);
+  expect(await signedOutSession.json()).toEqual({ authenticated: false });
+
   await openEmailActionLink(page, invitationLink, "invite");
   await page.getByLabel("Password", { exact: true }).fill(invitationPassword);
   await page.getByLabel("Confirm password").fill(invitationPassword);
+  const invitationCompletion = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/invitations/complete") &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Continue" }).click();
+  expect((await invitationCompletion).status()).toBe(204);
+  await expect(page).toHaveURL(
+    new URL("/login?completed=password", browserOrigin).href,
+  );
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
@@ -467,6 +489,12 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Password").fill(invitationPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  const invitedIdentityResponse = await page.request.get("/api/auth/me");
+  expect(invitedIdentityResponse.status()).toBe(200);
+  const invitedIdentity = (await invitedIdentityResponse.json()) as {
+    email: string;
+  };
+  expect(invitedIdentity.email).toBe(email);
 
   await page.getByRole("button", { name: "Account" }).click();
   const logoutResponse = page.waitForResponse(
@@ -501,7 +529,16 @@ test("provider invitation and recovery emails complete through rendered forms", 
     .getByLabel("New password", { exact: true })
     .fill(replacementPassword);
   await page.getByLabel("Confirm new password").fill(replacementPassword);
+  const recoveryCompletion = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/recovery/complete") &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Reset password" }).click();
+  expect((await recoveryCompletion).status()).toBe(204);
+  await expect(page).toHaveURL(
+    new URL("/login?completed=password", browserOrigin).href,
+  );
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
@@ -519,4 +556,10 @@ test("provider invitation and recovery emails complete through rendered forms", 
   await page.getByLabel("Password").fill(replacementPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByLabel("OpenSlate workspace")).toBeVisible();
+  const recoveredIdentityResponse = await page.request.get("/api/auth/me");
+  expect(recoveredIdentityResponse.status()).toBe(200);
+  const recoveredIdentity = (await recoveredIdentityResponse.json()) as {
+    email: string;
+  };
+  expect(recoveredIdentity.email).toBe(email);
 });

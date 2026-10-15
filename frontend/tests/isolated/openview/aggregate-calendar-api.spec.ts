@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { QueryClient } from "@tanstack/react-query";
 import * as analytics from "../../../src/components/systems/openview/adapters/analytics-api";
 import {
   bindOpenViewAccess,
   isOpenViewAccessDenied,
 } from "../../../src/components/systems/openview/adapters/openview-access";
 import { getOpenViewDashboard } from "../../../src/components/systems/openview/adapters/dashboards-api";
+import { wirePagination } from "../../helpers/pagination";
+import { wireBucket } from "../../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000701";
 const fieldId = "00000000-0000-4000-8000-000000000702";
@@ -43,26 +44,25 @@ function snapshot(
   values: readonly (number | string | null)[] = [],
 ) {
   return {
-    items: keys.map((key, index) => ({
-      key,
-      label: key,
-      value: values[index] ?? null,
-      record_count: index === 0 ? 1 : 0,
-    })),
-    pagination: {
+    items: keys.map((key, index) =>
+      wireBucket({
+        key,
+        value: values[index] ?? null,
+        record_count: index === 0 ? 1 : 0,
+      }),
+    ),
+    pagination: wirePagination({
       limit: Math.max(1, keys.length),
-      offset: 0,
       count: keys.length,
       total: keys.length,
-      has_more: false,
-    },
+    }),
   };
 }
 
 function mockApi(responder: (path: string, body: unknown) => Response) {
   const original = globalThis.fetch;
   const calls: { path: string; body: unknown }[] = [];
-  bindOpenViewAccess(new QueryClient());
+  bindOpenViewAccess();
   globalThis.fetch = (async (input, init) => {
     const path = String(input);
     const body: unknown = init?.body ? JSON.parse(String(init.body)) : null;

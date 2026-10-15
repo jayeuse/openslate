@@ -1,4 +1,13 @@
-import { expect, test, type Page, type Route } from "./helpers/test";
+import {
+  controlledSession,
+  expect,
+  expectNoHorizontalScroll,
+  heldResponse,
+  quietEventSource,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 import { mockAccessApi, ids, created } from "./helpers/access-api";
 import { profileSelf } from "./helpers/profile-api";
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
@@ -65,20 +74,22 @@ const anotherSession = {
   current: false,
 };
 
+// A revoked current session is signed out, so /login keeps the sign-in form
+// instead of sending a still-authenticated session to its start page. The
+// Profile route answers /api/auth/me itself.
+function accountSession(page: Page) {
+  return controlledSession(
+    page,
+    { id: accountUser, role: "admin" },
+    { identityRead: false },
+  );
+}
+
 async function openAccount(
   page: Page,
   workspaceHandler: (route: Route) => Promise<void> = (route) =>
     route.fulfill({ json: workspaceSettings }),
 ) {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      },
-    }),
-  );
   await page.route("**/api/workspace", workspaceHandler);
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({ json: profileSelf(accountUser, "admin") }),
@@ -87,31 +98,13 @@ async function openAccount(
   await expect(page).toHaveURL(/\/profile#security$/);
 }
 
-// A revoked current session is signed out, so /login keeps the sign-in form
-// instead of sending a still-authenticated session to its start page.
-async function signedOutAfter(page: Page, revoked: () => boolean) {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: revoked()
-        ? { authenticated: false }
-        : {
-            authenticated: true,
-            user_id: "00000000-0000-4000-8000-000000000001",
-            setup_required: false,
-          },
-    }),
-  );
-}
-
 test("loads own sessions and exposes a retryable denied and empty state", async ({
   page,
 }) => {
-  let releaseResponse: (() => void) | undefined;
-  const responseGate = new Promise<void>((resolve) => {
-    releaseResponse = resolve;
-  });
+  const sessionsList = heldResponse();
   await page.route("**/api/auth/sessions", async (route) => {
-    await responseGate;
+    sessionsList.enter();
+    await sessionsList.released;
     await route.fulfill({
       json: [
         currentSession,
@@ -130,7 +123,7 @@ test("loads own sessions and exposes a retryable denied and empty state", async 
     await openAccount(page);
     await request;
     await expect(page.getByText("Loading active sessions…")).toBeVisible();
-    releaseResponse?.();
+    sessionsList.release();
     await expect(
       page.getByRole("listitem").filter({ hasText: "Current session" }),
     ).toContainText("Chrome on macOS");
@@ -141,7 +134,7 @@ test("loads own sessions and exposes a retryable denied and empty state", async 
       page.getByText("Unknown device", { exact: true }),
     ).toHaveAttribute("title", "Synthetic unknown client");
   } finally {
-    releaseResponse?.();
+    sessionsList.release();
   }
 
   let sessionsDenied = true;
@@ -229,6 +222,9 @@ test("password changes send the API payload, show status-specific feedback, clea
       page.getByText(response.message, { exact: true }),
     ).toBeVisible();
     await expect(
+      page.getByRole("alert").filter({ hasText: response.message }),
+    ).toBeVisible();
+    await expect(
       page.getByText("Other sessions may have ended."),
     ).toBeVisible();
     await expect(currentPassword).toHaveValue("");
@@ -243,10 +239,14 @@ test("password changes send the API payload, show status-specific feedback, clea
       "aria-invalid",
       String(newPasswordHasError),
     );
-    expect(await currentPassword.getAttribute("aria-describedby")).toBe(
-      currentPasswordHasError ? "current-password-error" : null,
-    );
-    expect(await newPassword.getAttribute("aria-describedby")).toBe(
+    if (currentPasswordHasError)
+      await expect(currentPassword).toHaveAttribute(
+        "aria-describedby",
+        "current-password-error",
+      );
+    else await expect(currentPassword).not.toHaveAttribute("aria-describedby");
+    await expect(newPassword).toHaveAttribute(
+      "aria-describedby",
       newPasswordHasError
         ? "new-password-guidance new-password-error"
         : "new-password-guidance",
@@ -270,22 +270,17 @@ test("password changes send the API payload, show status-specific feedback, clea
 test("serializes password changes and session revocations", async ({
   page,
 }) => {
-  let releasePassword: (() => void) | undefined;
-  let releaseSession: (() => void) | undefined;
+  const passwordChange = heldResponse();
+  const sessionEnd = heldResponse();
   let activeSessions = [currentSession, otherSession];
-  const passwordGate = new Promise<void>((resolve) => {
-    releasePassword = resolve;
-  });
-  const sessionGate = new Promise<void>((resolve) => {
-    releaseSession = resolve;
-  });
   await page.route("**/api/auth/sessions**", async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({ json: activeSessions });
       return;
     }
     if (route.request().method() === "DELETE") {
-      await sessionGate;
+      sessionEnd.enter();
+      await sessionEnd.released;
       activeSessions = activeSessions.filter(
         (session) => session.id !== otherSession.id,
       );
@@ -295,7 +290,8 @@ test("serializes password changes and session revocations", async ({
     await route.fallback();
   });
   await page.route("**/api/auth/password/change", async (route) => {
-    await passwordGate;
+    passwordChange.enter();
+    await passwordChange.released;
     await route.fulfill({
       json: { authenticated: true, setup_required: false },
     });
@@ -325,7 +321,7 @@ test("serializes password changes and session revocations", async ({
         .getByRole("button", { name: "End session" }),
     ).toBeDisabled();
 
-    releasePassword?.();
+    passwordChange.release();
     await expect(
       page.getByText(
         "Password changed. Other sessions were ended; this session remains active.",
@@ -356,11 +352,11 @@ test("serializes password changes and session revocations", async ({
         includeHidden: true,
       }),
     ).toBeDisabled();
-    releaseSession?.();
+    sessionEnd.release();
     await expect(other).toHaveCount(0);
   } finally {
-    releasePassword?.();
-    releaseSession?.();
+    passwordChange.release();
+    sessionEnd.release();
   }
 });
 
@@ -376,6 +372,12 @@ test("associates missing and short password errors with only their input", async
     await route.fulfill({ status: 204 });
   });
   await openAccount(page);
+  await expect(
+    page.getByText(
+      "Your identity, sign-in security, and personal preferences. Organization settings stay in Manage.",
+      { exact: true },
+    ),
+  ).toContainText("Organization settings stay in Manage.");
 
   await page.getByLabel("Current password", { exact: true }).fill("current");
   const newPassword = page.getByLabel("New password", { exact: true });
@@ -413,7 +415,66 @@ test("associates missing and short password errors with only their input", async
     "aria-describedby",
     "new-password-guidance",
   );
+  await expect(
+    page.getByText("Use 12 to 128 characters.", { exact: true }),
+  ).toHaveCount(1);
   expect(attempts).toBe(0);
+});
+
+test("moves a short-password error to the current field after a denied change", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/sessions", (route) =>
+    route.fulfill({ json: [currentSession] }),
+  );
+  let changes = 0;
+  await page.route("**/api/auth/password/change", (route) => {
+    changes += 1;
+    return route.fulfill({ status: 403, json: { detail: "Rejected" } });
+  });
+  await openAccount(page);
+  const current = page.getByLabel("Current password", { exact: true });
+  const next = page.getByLabel("New password", { exact: true });
+  await current.fill("current test password");
+  await next.fill("short");
+  await page
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Use 12 to 128 characters." }),
+  ).toBeVisible();
+  await expect(next).toHaveAttribute("aria-invalid", "true");
+  await expect(next).toHaveAttribute("aria-describedby", "new-password-error");
+  await expect(current).toHaveAttribute("aria-invalid", "false");
+  expect(await current.getAttribute("aria-describedby")).toBeNull();
+  expect(changes).toBe(0);
+  await next.fill("new test password 123");
+  await page
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "The current password was not accepted." }),
+  ).toBeVisible();
+  await expect(current).toHaveAttribute("aria-invalid", "true");
+  await expect(current).toHaveAttribute(
+    "aria-describedby",
+    "current-password-error",
+  );
+  await expect(next).toHaveAttribute("aria-invalid", "false");
+  await expect(next).toHaveAttribute(
+    "aria-describedby",
+    "new-password-guidance",
+  );
+  await expect(current).toHaveValue("");
+  await expect(next).toHaveValue("");
+  await expect(
+    page.getByText("Use 12 to 128 characters.", {
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  expect(changes).toBe(1);
 });
 
 test("keeps password and session controls reachable on mobile with full device descriptions", async ({
@@ -423,9 +484,17 @@ test("keeps password and session controls reachable on mobile with full device d
   const otherUserAgent =
     "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0";
   let activeSessions = [
-    { ...currentSession, user_agent: currentUserAgent },
-    { ...otherSession, user_agent: otherUserAgent },
-    anotherSession,
+    {
+      ...currentSession,
+      user_agent: currentUserAgent,
+      ip_address: "198.51.100.101",
+    },
+    {
+      ...otherSession,
+      user_agent: otherUserAgent,
+      ip_address: "2001:db8::102",
+    },
+    { ...anotherSession, ip_address: null },
   ];
   const requests: Array<{ method: string; path: string }> = [];
   await page.route("**/api/auth/sessions**", async (route) => {
@@ -454,6 +523,10 @@ test("keeps password and session controls reachable on mobile with full device d
   await expect(
     page.getByText("Chrome on macOS", { exact: true }),
   ).toHaveAttribute("title", currentUserAgent);
+  const list = page.getByRole("list", { name: "Active sessions", exact: true });
+  await expect(list).toContainText("Sign-in IP: 198.51.100.101");
+  await expect(list).toContainText("Sign-in IP: 2001:db8::102");
+  await expect(list).toContainText("Sign-in IP: Unknown");
   await expect
     .poll(() =>
       page.evaluate(
@@ -500,9 +573,17 @@ test("keeps password and session controls reachable on mobile with full device d
     .getByRole("button", { name: "Confirm end session" })
     .click();
   await expect(firefox).toHaveCount(0);
+  await expect(list).not.toContainText("2001:db8::102");
   await expect(
     page.getByRole("listitem").filter({ hasText: "Current session" }),
   ).toContainText("Chrome on macOS");
+  await expect(
+    list
+      .getByRole("listitem")
+      .filter({ hasText: "Current session" })
+      .getByRole("button", { name: "End session", exact: true }),
+  ).toBeEnabled();
+  await expectNoHorizontalScroll(page);
 
   await page.getByRole("button", { name: "End all other sessions" }).click();
   await expect(confirmation).toContainText(
@@ -529,6 +610,7 @@ test("warns before ending the current session and routes to sign-in after confir
   page,
 }) => {
   const requests: string[] = [];
+  const session = await accountSession(page);
   await page.route("**/api/auth/sessions**", async (route) => {
     const request = route.request();
     if (request.method() === "GET") {
@@ -536,10 +618,10 @@ test("warns before ending the current session and routes to sign-in after confir
       return;
     }
     requests.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    session.signedIn = false;
     await route.fulfill({ status: 204 });
   });
   await openAccount(page);
-  await signedOutAfter(page, () => requests.length > 0);
 
   const current = page
     .getByRole("listitem")
@@ -566,12 +648,14 @@ test("current-session revocation clears owned drafts and attachment URLs through
   page,
 }) => {
   let revocations = 0;
+  const session = await accountSession(page);
   await page.route("**/api/auth/sessions**", async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({ json: [currentSession] });
       return;
     }
     revocations += 1;
+    session.signedIn = false;
     await route.fulfill({ status: 204 });
   });
   await page.addInitScript(() => {
@@ -594,7 +678,6 @@ test("current-session revocation clears owned drafts and attachment URLs through
     };
   });
   await openAccount(page);
-  await signedOutAfter(page, () => revocations > 0);
   await page.goto("/comms");
   await page
     .getByRole("textbox", { name: "Message", exact: true })
@@ -660,32 +743,20 @@ for (const [index, failure] of ["Access", "workspace", "Comms"].entries()) {
     page,
   }) => {
     let revocations = 0;
+    const session = await accountSession(page);
     await page.route("**/api/auth/sessions**", async (route) => {
       if (route.request().method() === "GET") {
         await route.fulfill({ json: [currentSession] });
         return;
       }
       revocations += 1;
+      session.signedIn = false;
       await route.fulfill({ status: 204 });
     });
     await openAccount(page);
     await expect(
       page.getByText("Chrome on macOS", { exact: true }),
     ).toBeVisible();
-    let endedSessionChecks = 0;
-    await page.route("**/api/auth/session", async (route) => {
-      if (revocations > 0) endedSessionChecks += 1;
-      await route.fulfill({
-        json:
-          revocations > 0
-            ? { authenticated: false }
-            : {
-                authenticated: true,
-                user_id: accountUser,
-                setup_required: false,
-              },
-      });
-    });
     await page.evaluate(
       ({ keys, failingKey }) => {
         for (const key of keys)
@@ -734,7 +805,7 @@ for (const [index, failure] of ["Access", "workspace", "Comms"].entries()) {
       page.getByRole("button", { name: "Retry clearing drafts" }),
     ).toBeVisible();
     await expect(page).toHaveURL(/\/profile#security$/);
-    expect(endedSessionChecks).toBe(0);
+    expect(session.signedOutReads).toBe(0);
     expect(revocations).toBe(1);
     for (const [keyIndex, key] of cleanupKeys.entries())
       expect(
@@ -815,74 +886,6 @@ test("failed current-session revocation keeps drafts active and restores focus a
     ).toBe("Retained before rejection");
 });
 
-test("Profile explains its account sources and associates password validation with both controls", async ({
-  page,
-}) => {
-  await page.route("**/api/auth/sessions", (route) =>
-    route.fulfill({ json: [currentSession] }),
-  );
-  let changes = 0;
-  await page.route("**/api/auth/password/change", (route) => {
-    changes += 1;
-    return route.fulfill({ status: 403, json: { detail: "Rejected" } });
-  });
-  await openAccount(page);
-  await expect(
-    page.getByRole("heading", { name: "Your profile", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(
-      "Your identity, sign-in security, and personal preferences. Organization settings stay in Manage.",
-      { exact: true },
-    ),
-  ).toContainText("Organization settings stay in Manage.");
-  await expect(
-    page.getByRole("button", { name: "Review sign-out", exact: true }),
-  ).toHaveCount(0);
-  const current = page.getByLabel("Current password", { exact: true });
-  const next = page.getByLabel("New password", { exact: true });
-  await current.fill("current test password");
-  await next.fill("short");
-  await page
-    .getByRole("button", { name: "Change password", exact: true })
-    .click();
-  await expect(
-    page.getByRole("alert").filter({ hasText: "Use 12 to 128 characters." }),
-  ).toBeVisible();
-  await expect(next).toHaveAttribute("aria-invalid", "true");
-  await expect(next).toHaveAttribute("aria-describedby", "new-password-error");
-  await expect(current).toHaveAttribute("aria-invalid", "false");
-  expect(await current.getAttribute("aria-describedby")).toBeNull();
-  expect(changes).toBe(0);
-  await next.fill("new test password 123");
-  await page
-    .getByRole("button", { name: "Change password", exact: true })
-    .click();
-  await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: "The current password was not accepted." }),
-  ).toBeVisible();
-  await expect(current).toHaveAttribute("aria-invalid", "true");
-  await expect(current).toHaveAttribute(
-    "aria-describedby",
-    "current-password-error",
-  );
-  await expect(next).toHaveAttribute("aria-invalid", "false");
-  await expect(next).toHaveAttribute(
-    "aria-describedby",
-    "new-password-guidance",
-  );
-  await expect(current).toHaveValue("");
-  await expect(next).toHaveValue("");
-  await expect(
-    page.getByText("Use 12 to 128 characters.", {
-      exact: true,
-    }),
-  ).toHaveCount(1);
-  expect(changes).toBe(1);
-});
-
 test.describe("organization-local device session dates", () => {
   test.use({ locale: "en-US", timezoneId: "America/Los_Angeles" });
 
@@ -919,12 +922,10 @@ test("keeps session controls usable while organization date settings load", asyn
   await page.route("**/api/auth/sessions", (route) =>
     route.fulfill({ json: [currentSession] }),
   );
-  let releaseWorkspace: (() => void) | undefined;
-  const workspaceGate = new Promise<void>((resolve) => {
-    releaseWorkspace = resolve;
-  });
+  const workspace = heldResponse();
   await openAccount(page, async (route) => {
-    await workspaceGate;
+    workspace.enter();
+    await workspace.released;
     await route.fulfill({ json: workspaceSettings });
   });
 
@@ -938,10 +939,10 @@ test("keeps session controls usable while organization date settings load", asyn
     await expect(
       current.getByRole("button", { name: "End session" }),
     ).toBeEnabled();
-    releaseWorkspace?.();
+    workspace.release();
     await expect(current).toContainText("Last active 1 Oct 2026, 10:00");
   } finally {
-    releaseWorkspace?.();
+    workspace.release();
   }
 });
 
@@ -977,182 +978,99 @@ test("retries failed organization date settings without disabling session contro
   await expect(current).toContainText("Last active 1 Oct 2026, 10:00");
 });
 
-test("13b: Account sign-in IP handles IPv4 IPv6 and unknown at mobile reflow while ending a session", async ({
+test("accepted Account remote-session end refreshes the cached People count", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  let sessions = [
-    { ...currentSession, ip_address: "198.51.100.101" },
-    { ...otherSession, ip_address: "2001:db8::102" },
-    { ...anotherSession, ip_address: null as string | null },
-  ];
-  await page.route("**/api/auth/sessions**", async (route) => {
-    if (route.request().method() === "GET")
-      return route.fulfill({ json: sessions });
-    const id = new URL(route.request().url()).pathname.split("/").at(-1);
-    sessions = sessions.filter((session) => session.id !== id);
-    return route.fulfill({ status: 204 });
+  // The People count column shows from the 2xl breakpoint.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  // No stream event may refresh the directory instead of the session end.
+  await quietEventSource(page);
+  // A fixed clock keeps the cached directory fresh for the whole journey, so
+  // only the accepted session end can refresh the count.
+  await page.clock.setFixedTime(new Date("2026-10-06T12:00:00Z"));
+  const api = await mockAccessApi(page);
+  const actor = api.users.get(ids.rosa)!;
+  let ownSessions = [currentSession, otherSession].map((session) => ({
+    ...session,
+    expires_at: "2099-01-01T00:00:00Z",
+  }));
+  const updateCount = () =>
+    api.monitoring.set(ids.rosa, {
+      active_session_count: ownSessions.length,
+      mfa_verified_totp: true,
+      mfa_observed_at: created,
+    });
+  updateCount();
+  api.on("GET", "/api/workspace", (route) =>
+    route.fulfill({ json: workspaceSettings }),
+  );
+  const acceptedWrites: string[] = [];
+  await page.route("**/api/auth/sessions**", (route) => {
+    const request = route.request();
+    if (request.method() === "GET") return route.fulfill({ json: ownSessions });
+    const id = new URL(request.url()).pathname.split("/").at(-1);
+    if (request.method() === "DELETE" && id === otherSession.id) {
+      ownSessions = ownSessions.filter((session) => session.id !== id);
+      acceptedWrites.push(id);
+      updateCount();
+      return route.fulfill({ status: 204, body: "" });
+    }
+    return route.fulfill({
+      status: 409,
+      json: { detail: "Unexpected session action" },
+    });
   });
-  await openAccount(page);
-  const list = page.getByRole("list", { name: "Active sessions", exact: true });
-  await expect(list).toContainText("Sign-in IP: 198.51.100.101");
-  await expect(list).toContainText("Sign-in IP: 2001:db8::102");
-  await expect(list).toContainText("Sign-in IP: Unknown");
-  await list
+  const directoryReads = () =>
+    api.listReads.filter(
+      (query) =>
+        query.get("limit") === "10" &&
+        query.get("offset") === "0" &&
+        query.get("sort_by") === "name" &&
+        query.get("deleted") === "exclude",
+    );
+  await page.goto("/access?view=people");
+  const table = page.getByRole("table", { name: "People", exact: true });
+  await expect(table).toBeVisible();
+  const row = table.getByRole("row", {
+    name: new RegExp(actor.display_name!),
+  });
+  const headings = await table.getByRole("columnheader").allTextContents();
+  const countColumn = headings.findIndex(
+    (label) => label.trim() === "Active sessions",
+  );
+  expect(countColumn).toBeGreaterThanOrEqual(0);
+  const count = row.getByRole("cell").nth(countColumn);
+  await expect(count).toHaveText("2");
+  const directoryReadsBefore = directoryReads().length;
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Your profile", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/profile$/);
+  const sessions = page.getByRole("list", {
+    name: "Active sessions",
+    exact: true,
+  });
+  await expect(sessions.getByRole("listitem")).toHaveCount(2);
+  await sessions
     .getByRole("listitem")
-    .filter({ hasText: "2001:db8::102" })
+    .filter({ hasText: "Firefox on Android" })
     .getByRole("button", { name: "End session", exact: true })
     .click();
   await page
     .getByRole("alertdialog")
     .getByRole("button", { name: "Confirm end session", exact: true })
     .click();
-  await expect(list).not.toContainText("2001:db8::102");
-  await expect(
-    list
-      .getByRole("listitem")
-      .filter({ hasText: "Current session" })
-      .getByRole("button", { name: "End session", exact: true }),
-  ).toBeEnabled();
-  expect(
-    await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth <=
-        document.documentElement.clientWidth,
-    ),
-  ).toBe(true);
-});
-
-test.describe("U4 evidence-only Account directory cache", () => {
-  test("13b U4 probe: accepted Account remote-session end refreshes the cached People count", async ({
-    page,
-  }, testInfo) => {
-    // The People count column shows from the 2xl breakpoint.
-    await page.setViewportSize({ width: 1600, height: 900 });
-    // No stream event may hide the cache follow-up under investigation.
-    await page.addInitScript(() => {
-      class QuietEventSource extends EventTarget {
-        close() {}
-      }
-      Object.defineProperty(window, "EventSource", { value: QuietEventSource });
-    });
-    const api = await mockAccessApi(page);
-    const actor = api.users.get(ids.rosa)!;
-    let ownSessions = [currentSession, otherSession].map((session) => ({
-      ...session,
-      expires_at: "2099-01-01T00:00:00Z",
-    }));
-    const updateCount = () =>
-      api.monitoring.set(ids.rosa, {
-        active_session_count: ownSessions.length,
-        mfa_verified_totp: true,
-        mfa_observed_at: created,
-      });
-    updateCount();
-    api.on("GET", "/api/workspace", (route) =>
-      route.fulfill({ json: workspaceSettings }),
-    );
-    const acceptedWrites: string[] = [];
-    await page.route("**/api/auth/sessions**", (route) => {
-      const request = route.request();
-      if (request.method() === "GET")
-        return route.fulfill({ json: ownSessions });
-      const id = new URL(request.url()).pathname.split("/").at(-1);
-      if (request.method() === "DELETE" && id === otherSession.id) {
-        ownSessions = ownSessions.filter((session) => session.id !== id);
-        acceptedWrites.push(id);
-        updateCount();
-        return route.fulfill({ status: 204, body: "" });
-      }
-      return route.fulfill({
-        status: 409,
-        json: { detail: "Unexpected probe action" },
-      });
-    });
-    let primedAt: number | null = null;
-    let elapsedToReturnMs: number | null = null;
-    let directoryReadsBefore = 0;
-    const directoryReads = () =>
-      api.listReads.filter(
-        (query) =>
-          query.get("limit") === "10" &&
-          query.get("offset") === "0" &&
-          query.get("sort_by") === "name" &&
-          query.get("deleted") === "exclude",
-      );
-    try {
-      await page.goto("/access?view=people");
-      const table = page.getByRole("table", { name: "People", exact: true });
-      await expect(table).toBeVisible();
-      const row = table.getByRole("row", {
-        name: new RegExp(actor.display_name!),
-      });
-      const headings = await table.getByRole("columnheader").allTextContents();
-      const countColumn = headings.findIndex(
-        (label) => label.trim() === "Active sessions",
-      );
-      expect(countColumn).toBeGreaterThanOrEqual(0);
-      const count = row.getByRole("cell").nth(countColumn);
-      await expect(count).toHaveText("2");
-      directoryReadsBefore = directoryReads().length;
-      primedAt = Date.now();
-      await page.getByRole("button", { name: "Account", exact: true }).click();
-      await page
-        .getByRole("menuitem", { name: "Your profile", exact: true })
-        .click();
-      await expect(page).toHaveURL(/\/profile$/);
-      const sessions = page.getByRole("list", {
-        name: "Active sessions",
-        exact: true,
-      });
-      await expect(sessions.getByRole("listitem")).toHaveCount(2);
-      await sessions
-        .getByRole("listitem")
-        .filter({ hasText: "Firefox on Android" })
-        .getByRole("button", { name: "End session", exact: true })
-        .click();
-      await page
-        .getByRole("alertdialog")
-        .getByRole("button", { name: "Confirm end session", exact: true })
-        .click();
-      await expect(sessions.getByRole("listitem")).toHaveCount(1);
-      expect(acceptedWrites).toEqual([otherSession.id]);
-      expect(api.monitoring.get(ids.rosa)?.active_session_count).toBe(1);
-      const navigation = page.getByRole("navigation", {
-        name: "Main navigation",
-        exact: true,
-      });
-      const people = navigation.getByRole("link", {
-        name: "People",
-        exact: true,
-      });
-      if (!(await people.isVisible()))
-        await navigation
-          .getByRole("button", { name: "Access", exact: true })
-          .click();
-      await people.click();
-      await expect(page).toHaveURL(/\/access\?view=people$/);
-      elapsedToReturnMs = Date.now() - primedAt;
-      expect(elapsedToReturnMs).toBeLessThan(30_000);
-      await expect(count).toHaveText("1");
-      await expect
-        .poll(() => directoryReads().length)
-        .toBeGreaterThan(directoryReadsBefore);
-    } finally {
-      testInfo.annotations.push({
-        type: "U4-probe-state",
-        description: JSON.stringify({
-          actorId: ids.rosa,
-          expectedActorThroughout: ids.rosa,
-          acceptedWrites,
-          authoritativeCount: api.monitoring.get(ids.rosa)
-            ?.active_session_count,
-          elapsedToReturnMs,
-          directoryReadsBefore,
-          directoryReadsAfter: directoryReads().length,
-          userReads: api.listReads.map((query) => Object.fromEntries(query)),
-        }),
-      });
-    }
-  });
+  await expect(sessions.getByRole("listitem")).toHaveCount(1);
+  expect(acceptedWrites).toEqual([otherSession.id]);
+  // The Access group is open at this width; the link keeps the cached client.
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "People", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/access\?view=people$/);
+  await expect(count).toHaveText("1");
+  await expect
+    .poll(() => directoryReads().length)
+    .toBeGreaterThan(directoryReadsBefore);
 });

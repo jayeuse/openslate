@@ -14,29 +14,14 @@ import {
   restoreBoard,
   updateBoard,
 } from "../../../src/components/systems/boards/adapters/board-management-api";
+import { wireBoard } from "../../helpers/wire";
+import { installNoArgumentFetch as installFetch } from "../helpers/fake-fetch";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const newBoardId = "00000000-0000-4000-8000-000000000002";
 const departmentId = "00000000-0000-4000-8000-000000000003";
 const groupId = "00000000-0000-4000-8000-000000000004";
 const timestamp = "2026-09-23T00:00:00Z";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(responder: () => Response) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder());
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status });
@@ -76,18 +61,14 @@ const bundle = {
 };
 
 function boardResponse(id = newBoardId) {
-  return {
+  return wireBoard({
     id,
-    scope: "project",
-    department_id: null,
     name: "Dispatch",
     description: "Daily handoffs",
-    status: "active",
-    revision: 1,
     level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
-  };
+  });
 }
 
 test("Board collection sends bounded filters and returns a validated page", async () => {
@@ -403,7 +384,7 @@ for (const [aggregation, metric] of [
   ["average", { name: "Amount", expected_type: "decimal" }],
   ["distinct", { name: "Label", expected_type: "text" }],
 ] as const) {
-  test(`S30 portable legacy ${aggregation} imports and downloads exact named bytes`, async () => {
+  test(`portable legacy ${aggregation} imports and downloads exact named bytes`, async () => {
     const explicit = structuredClone(bundle);
     const config = {
       ...explicit.configuration.widgets[0]!.config,

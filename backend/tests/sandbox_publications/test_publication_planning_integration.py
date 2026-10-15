@@ -13,11 +13,7 @@ from app.systems.sandbox.designs.schemas import DesignField
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.publications.executor import (
-    PublicationError,
-    apply_publication,
-    request_fingerprint,
-)
+from app.systems.sandbox.publications.executor import PublicationError
 from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.rules import _field_key
@@ -29,6 +25,7 @@ from tests.sandbox_publications.support import (
     bound_field,
     bound_module,
     publish_revision,
+    publish_saved,
     publish_structure,
     publishable_document,
 )
@@ -465,4 +462,4 @@ def _assert_update(plan, kind: str, sandbox_id: str) -> None:
 
 def _apply(db: Session, actor_id, saved, preview, suffix: str) -> None:
     token = sha256(suffix.encode()).hexdigest()
-    apply_publication(db, actor_id=actor_id, expected_revision=saved.revision, impact_digest=preview.impact_digest, expected_live_state_digest=preview.live_state_digest, preview_token_digest=token, idempotency_key=suffix, fingerprint=request_fingerprint(expected_revision=saved.revision, document_hash=saved.content_hash, impact_digest=preview.impact_digest, preview_token_digest=token, note=None), note=None)
+    publish_saved(db, actor_id, saved, preview, token_digest=token, idempotency_key=suffix)

@@ -218,6 +218,11 @@ class BackupWire:
         return httpx.Response(200, json=body, headers=headers)
 
 
+def _run_controls(actions, dataset, context):
+    for action in actions:
+        execute_control_action(action, dataset, context)
+
+
 def _backup_journey(tmp_path, fault=None, version_status="unknown", pack_key="harbor"):
     dataset = build_dataset("small", 83, date(2026, 10, 2), organization=get_pack(pack_key))
     wire = BackupWire(fault, version_status)
@@ -284,8 +289,7 @@ def test_backup_controls_refuse_wire_or_state_mismatch_without_repeated_writes(t
     dataset, wire, context, actions = _backup_journey(tmp_path, fault)
     try:
         with pytest.raises(SamplePhaseActionError):
-            for action in actions:
-                execute_control_action(action, dataset, context)
+            _run_controls(actions, dataset, context)
         assert sum(request.method == "POST" for request in wire.requests) <= 1
     finally:
         context.clients["admin"].close()
@@ -295,8 +299,7 @@ def test_backup_queue_unknown_outcome_stops_without_replay(tmp_path):
     dataset, wire, context, actions = _backup_journey(tmp_path, "lost_response")
     try:
         with pytest.raises(SampleWriteOutcomeUnknown):
-            for action in actions:
-                execute_control_action(action, dataset, context)
+            _run_controls(actions, dataset, context)
         assert sum(request.method == "POST" for request in wire.requests) == 1
     finally:
         context.clients["admin"].close()

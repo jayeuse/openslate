@@ -14,6 +14,7 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleActorBlocked,
+    LifecycleChallengeBindingMismatch,
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
     LifecyclePasswordServiceUnavailable,
@@ -116,6 +117,54 @@ def test_in_flight_verifications_reserve_the_actor_failure_budget() -> None:
     db.rollback.assert_called_once()
 
 
+def test_another_actor_cannot_reserve_a_challenge_for_the_same_operation() -> None:
+    now = datetime(2026, 8, 30, tzinfo=UTC)
+    target_id = UUID("00000000-0000-0000-0000-000000000456")
+    pending = LifecycleConfirmationChallenge(
+        actor_id=ACTOR_ID,
+        operation=LifecycleOperation.CLOSE,
+        target_type="department",
+        target_id=target_id,
+        impact_digest="impact",
+        token_hash="a" * 64,
+        status=LifecycleChallengeStatus.PENDING,
+        created_at=now,
+        updated_at=now,
+        expires_at=now + timedelta(minutes=5),
+    )
+    db = Mock()
+    db.scalars.return_value.all.return_value = []
+    db.scalar.return_value = pending
+    bucket = LifecycleRateLimitBucket(
+        actor_id=ACTOR_ID, attempt_count=0, window_started_at=now, window_expires_at=now
+    )
+
+    with (
+        patch(
+            "app.systems.sandbox.lifecycle.challenge_store._challenge_for_token",
+            return_value=pending,
+        ),
+        patch(
+            "app.systems.sandbox.lifecycle.challenge_store._refresh_failure_bucket",
+            return_value=bucket,
+        ),
+        pytest.raises(LifecycleChallengeBindingMismatch),
+    ):
+        begin_verification(
+            db,
+            CHALLENGE_TOKEN,
+            UUID("00000000-0000-0000-0000-000000000789"),
+            LifecycleOperation.CLOSE,
+            "department",
+            target_id,
+            "impact",
+            now=now,
+        )
+
+    db.commit.assert_not_called()
+    assert pending.status == LifecycleChallengeStatus.PENDING
+
+
 def test_provider_password_grant_returns_only_the_explicitly_bound_local_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -129,6 +178,7 @@ def test_provider_password_grant_returns_only_the_explicitly_bound_local_identit
         expires_at=None,
         status="active",
         invitation_sent_at=None,
+        invitation_accepted_at=None,
         role="admin",
     )
     db.scalar.return_value = local

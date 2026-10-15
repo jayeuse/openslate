@@ -13,6 +13,7 @@ import app.systems.access.users.account_operations as account_operations
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.schemas import UserUpdate
 from tests.conftest import guarded_create_engine
+from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = [
     pytest.mark.integration,
@@ -44,6 +45,7 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
     first_at_commit = Event()
     release_first = Event()
     second_projection_done = Event()
+    holder: list[int] = []
     original_projection = account_operations.ensure_projected_admin_remains
     original_disable = account_operations._disable_user
 
@@ -54,6 +56,7 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
 
     def pause_first_disable(db: Session, user: User, **kwargs: object) -> User:
         if user.id == first_id:
+            holder.append(backend_pid(db))
             first_at_commit.set()
             assert release_first.wait(timeout=5)
         return original_disable(db, user, **kwargs)
@@ -82,7 +85,8 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
             assert first_at_commit.wait(timeout=5)
             second = executor.submit(disable_self, second_id)
             try:
-                assert not second_projection_done.wait(timeout=0.5)
+                wait_until_blocked_by(engine, holder[0])
+                assert not second_projection_done.is_set()
             finally:
                 release_first.set()
             assert first.result(timeout=5) == 200

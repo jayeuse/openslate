@@ -13,6 +13,7 @@ from app.systems.sandbox.records.export import encode_csv, format_cell
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query import comparison_value
 from app.systems.sandbox.records.query_schemas import (
+    ExportRequest,
     FieldReference,
     QueryDefinition,
     QueryFilter,
@@ -175,6 +176,40 @@ def test_record_query_accepts_nonnegative_interactive_and_export_offset(offset: 
     else:
         with pytest.raises(ValidationError):
             RecordQuery(**payload)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"format": "pdf"},
+        {"title": "x" * 121},
+        {"include_record_id": "yes"},
+        {"accent": "red"},
+        {"totals": 1},
+        {"export_all": True},
+    ],
+)
+def test_export_request_rejects_invalid_options(options: dict[str, object]) -> None:
+    payload = {"module_id": uuid7(), "definition": {}, **options}
+
+    with pytest.raises(ValidationError):
+        ExportRequest.model_validate(payload)
+
+
+def test_export_request_accepts_its_declared_options() -> None:
+    accepted = ExportRequest.model_validate(
+        {
+            "module_id": uuid7(),
+            "definition": {},
+            "format": "xlsx",
+            "title": "x" * 120,
+            "include_record_id": True,
+            "accent": "gray",
+            "totals": True,
+        }
+    )
+
+    assert (accepted.format, accepted.accent, accepted.totals) == ("xlsx", "gray", True)
 
 
 def test_csv_escapes_formulas_quotes_and_preserves_decimal():

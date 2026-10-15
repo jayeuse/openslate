@@ -14,7 +14,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_signout_worker import ProviderSignoutWorker
 from app.systems.access.users.models import User
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
 
 

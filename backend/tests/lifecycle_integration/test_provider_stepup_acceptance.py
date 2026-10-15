@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -16,8 +16,9 @@ from app.systems.access.users.models import User, UserRole
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from tests.lifecycle_integration.lifecycle_integration_support import delete_committed_scope
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
 
 
@@ -63,18 +64,6 @@ def _cleanup_stepup_rows(
 
     with owner.begin() as connection:
         connection.execute(
-            text("DELETE FROM public.lifecycle_rate_limit_failures WHERE actor_id = :actor_id"),
-            {"actor_id": actor_id},
-        )
-        connection.execute(
-            text("DELETE FROM public.lifecycle_confirmation_challenges WHERE actor_id = :actor_id"),
-            {"actor_id": actor_id},
-        )
-        connection.execute(
-            text("DELETE FROM public.lifecycle_rate_limit_buckets WHERE actor_id = :actor_id"),
-            {"actor_id": actor_id},
-        )
-        connection.execute(
             text("DELETE FROM public.identity_rate_limit_buckets WHERE fingerprint = :fingerprint"),
             {"fingerprint": login_fingerprint(email, None)},
         )
@@ -85,41 +74,15 @@ def _cleanup_stepup_rows(
             ),
             {"actor_id": actor_id},
         )
-        entity_ids = department_ids | module_ids | field_ids
-        if entity_ids:
-            connection.execute(
-                text(
-                    "DELETE FROM public.audit_logs WHERE performed_by = :actor_id "
-                    "OR entity_id IN :entity_ids"
-                ).bindparams(bindparam("entity_ids", expanding=True)),
-                {"actor_id": actor_id, "entity_ids": list(entity_ids)},
-            )
-        else:
-            connection.execute(
-                text("DELETE FROM public.audit_logs WHERE performed_by = :actor_id"),
-                {"actor_id": actor_id},
-            )
-        if field_ids:
-            connection.execute(
-                text("DELETE FROM public.fields WHERE id IN :ids").bindparams(
-                    bindparam("ids", expanding=True)
-                ),
-                {"ids": list(field_ids)},
-            )
-        if module_ids:
-            connection.execute(
-                text("DELETE FROM public.modules WHERE id IN :ids").bindparams(
-                    bindparam("ids", expanding=True)
-                ),
-                {"ids": list(module_ids)},
-            )
-        if department_ids:
-            connection.execute(
-                text("DELETE FROM public.departments WHERE id IN :ids").bindparams(
-                    bindparam("ids", expanding=True)
-                ),
-                {"ids": list(department_ids)},
-            )
+        delete_committed_scope(
+            connection,
+            actor_id=actor_id,
+            audit_entity_ids=department_ids | module_ids | field_ids,
+            audit_by_actor=True,
+            field_ids=field_ids,
+            module_ids=module_ids,
+            department_ids=department_ids,
+        )
 
 
 def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_account) -> None:
@@ -194,9 +157,7 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
             "Provider password verification must not admit another application session"
         )
 
-        reopened = client.post(
-            f"/api/modules/{module_id_path}/reopen", json={"confirmed": True}
-        )
+        reopened = client.post(f"/api/modules/{module_id_path}/reopen", json={"confirmed": True})
         assert reopened.status_code == 200
         after_reopen = client.get(f"/api/modules/{module_id_path}")
         assert after_reopen.status_code == 200

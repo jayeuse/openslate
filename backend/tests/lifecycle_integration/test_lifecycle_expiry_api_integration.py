@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import text
 
 from app.systems.sandbox.lifecycle.service import hash_challenge_token
+from tests.lifecycle_integration.lifecycle_integration_support import password_boundary
 from tests.lifecycle_integration.test_lifecycle_api_integration import (  # noqa: F401
     LifecycleApiClient,
 )
@@ -45,19 +46,11 @@ def test_registered_close_rejects_expired_challenge_before_password_provider(
 
     calls: list[str] = []
 
-    class PasswordClient:
-        def __init__(self, _db) -> None:
-            pass
+    def verify() -> UUID:
+        calls.append("called")
+        return client.actor.id
 
-        def verify_password(self, _email: str, _password: str) -> UUID:
-            calls.append("called")
-            return client.actor.id
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(
-            "app.systems.sandbox.lifecycle.challenge_verification.ProviderPasswordGrantClient",
-            PasswordClient,
-        )
+    with password_boundary(verify):
         response = client.request(
             "POST",
             f"/api/modules/{module_id}/close",

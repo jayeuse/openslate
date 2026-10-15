@@ -1,1 +1,1 @@
-from record_queries.test_database import query_db  # noqa: F401
+from tests.record_queries.support import query_db as query_db

@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
-from fastapi import HTTPException, Request, Response
+from fastapi import HTTPException, Response
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -28,53 +28,7 @@ from app.systems.access.identity.schemas import (
     PasswordChangeRequest,
     RefreshTokenRequest,
 )
-from app.systems.access.users.models import User, UserRole, UserStatus
-
-
-def _request(
-    *,
-    method: str = "POST",
-    origin: str | None = "https://app.example.test",
-    cookies: str | None = None,
-    authorization: str | None = None,
-) -> Request:
-    headers: list[tuple[bytes, bytes]] = []
-    if origin is not None:
-        headers.append((b"origin", origin.encode()))
-    if cookies is not None:
-        headers.append((b"cookie", cookies.encode()))
-    if authorization is not None:
-        headers.append((b"authorization", authorization.encode()))
-    return Request(
-        {
-            "type": "http",
-            "method": method,
-            "path": "/api/auth/test",
-            "headers": headers,
-            "client": ("127.0.0.1", 50000),
-            "scheme": "https",
-            "server": ("app.example.test", 443),
-        }
-    )
-
-
-def _role(kind: UserRole = UserRole.MEMBER) -> str:
-    return kind.value
-
-
-def _user(*, status: UserStatus = UserStatus.ACTIVE, role: str | None = None) -> User:
-    selected_role = role or _role()
-    now = datetime.now(UTC)
-    return User(
-        id=uuid7(),
-        email="person@example.test",
-        username="person",
-        status=status.value,
-        role=selected_role,
-        created_at=now,
-        updated_at=now,
-        is_deleted=False,
-    )
+from tests.auth.local_identity_support import contract_request, contract_user
 
 
 def _issued(*, setup_only: bool = False) -> IssuedSession:
@@ -107,7 +61,7 @@ def test_login_sets_browser_cookies_and_maps_rate_and_credential_failures(
     payload = LoginRequest(email="person@example.test", password="correct password")
 
     response = Response()
-    result = auth_router.login(payload, _request(), response, db)
+    result = auth_router.login(payload, contract_request(), response, db)
 
     assert result == {"authenticated": True, "setup_required": False}
     assert db.commit.call_count == 1
@@ -118,7 +72,7 @@ def test_login_sets_browser_cookies_and_maps_rate_and_credential_failures(
         auth_router, "login_with_provider", Mock(side_effect=InvalidCredentials("bad"))
     )
     with pytest.raises(HTTPException) as invalid:
-        auth_router.login(payload, _request(), Response(), db)
+        auth_router.login(payload, contract_request(), Response(), db)
     assert invalid.value.status_code == 401
     assert db.commit.call_count == 2
 
@@ -126,7 +80,7 @@ def test_login_sets_browser_cookies_and_maps_rate_and_credential_failures(
         auth_router, "login_with_provider", Mock(side_effect=IdentityRateLimited("blocked"))
     )
     with pytest.raises(HTTPException) as rate_limited:
-        auth_router.login(payload, _request(), Response(), db)
+        auth_router.login(payload, contract_request(), Response(), db)
     assert rate_limited.value.status_code == 429
     assert rate_limited.value.headers == {"Retry-After": "900"}
     db.rollback.assert_called_once()
@@ -135,7 +89,7 @@ def test_login_sets_browser_cookies_and_maps_rate_and_credential_failures(
         auth_router, "login_with_provider", Mock(side_effect=SupabaseAuthUnavailable("offline"))
     )
     with pytest.raises(HTTPException) as unavailable:
-        auth_router.login(payload, _request(), Response(), db)
+        auth_router.login(payload, contract_request(), Response(), db)
     assert unavailable.value.status_code == 503
 
 
@@ -143,12 +97,12 @@ def test_refresh_browser_session_enforces_cookie_csrf_and_clears_invalid_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    no_cookie = _request()
+    no_cookie = contract_request()
     with pytest.raises(HTTPException) as missing:
         auth_router.refresh(no_cookie, Response(), db)
     assert missing.value.status_code == 401
 
-    request = _request(cookies="openslate_refresh=old-refresh")
+    request = contract_request(cookies="openslate_refresh=old-refresh")
     request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: Mock())
     monkeypatch.setattr(auth_router, "refresh_provider_session", Mock(return_value=_issued()))
@@ -186,7 +140,7 @@ def test_bearer_token_routes_reject_mixed_setup_replay_and_invalid_credentials(
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: client)
     monkeypatch.setattr(auth_router, "login_with_provider", Mock(return_value=_issued()))
 
-    issued = auth_router.issue_bearer_token(payload, _request(origin=None), db)
+    issued = auth_router.issue_bearer_token(payload, contract_request(origin=None), db)
     assert issued.access_token == "access-token" and issued.refresh_token == "refresh-token"
     db.commit.assert_called_once()
 
@@ -194,7 +148,7 @@ def test_bearer_token_routes_reject_mixed_setup_replay_and_invalid_credentials(
         auth_router, "login_with_provider", Mock(side_effect=IdentityRateLimited("blocked"))
     )
     with pytest.raises(HTTPException) as throttled:
-        auth_router.issue_bearer_token(payload, _request(origin=None), db)
+        auth_router.issue_bearer_token(payload, contract_request(origin=None), db)
     assert throttled.value.status_code == 429
     assert throttled.value.headers == {"Retry-After": "900"}
 
@@ -202,20 +156,20 @@ def test_bearer_token_routes_reject_mixed_setup_replay_and_invalid_credentials(
         auth_router, "login_with_provider", Mock(side_effect=InvalidCredentials("bad"))
     )
     with pytest.raises(HTTPException) as invalid_login:
-        auth_router.issue_bearer_token(payload, _request(origin=None), db)
+        auth_router.issue_bearer_token(payload, contract_request(origin=None), db)
     assert invalid_login.value.status_code == 401
 
     refresh = RefreshTokenRequest(refresh_token="x" * 32)
     monkeypatch.setattr(
         auth_router, "refresh_provider_session", Mock(return_value=_issued()), raising=False
     )
-    refreshed = auth_router.refresh_bearer_token(refresh, _request(origin=None), db)
+    refreshed = auth_router.refresh_bearer_token(refresh, contract_request(origin=None), db)
     assert refreshed.token_type == "bearer"
     monkeypatch.setattr(
         auth_router, "refresh_provider_session", Mock(side_effect=InvalidCredentials("revoked"))
     )
     with pytest.raises(HTTPException) as revoked:
-        auth_router.refresh_bearer_token(refresh, _request(origin=None), db)
+        auth_router.refresh_bearer_token(refresh, contract_request(origin=None), db)
     assert revoked.value.status_code == 401
     monkeypatch.setattr(
         auth_router,
@@ -223,7 +177,7 @@ def test_bearer_token_routes_reject_mixed_setup_replay_and_invalid_credentials(
         Mock(side_effect=SupabaseAuthUnavailable("offline")),
     )
     with pytest.raises(HTTPException) as unavailable_refresh:
-        auth_router.refresh_bearer_token(refresh, _request(origin=None), db)
+        auth_router.refresh_bearer_token(refresh, contract_request(origin=None), db)
     assert unavailable_refresh.value.status_code == 503
 
 
@@ -231,14 +185,14 @@ def test_password_change_requires_the_current_access_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    identity = CurrentIdentity(_user(), uuid7(), True, False)
+    identity = CurrentIdentity(contract_user(), uuid7(), True, False)
     change = Mock()
     monkeypatch.setattr(auth_router.provider_actions, "change_password", change)
     payload = PasswordChangeRequest(
         current_password="current password", password="new sufficiently long password"
     )
     with pytest.raises(HTTPException) as error:
-        auth_router.change_password(payload, identity, _request(), Response(), db)
+        auth_router.change_password(payload, identity, contract_request(), Response(), db)
     assert error.value.status_code == 401
     change.assert_not_called()
 
@@ -253,7 +207,7 @@ def test_invalid_bearer_refresh_does_not_roll_back_provider_owned_revocation(
     )
     with pytest.raises(HTTPException) as error:
         auth_router.refresh_bearer_token(
-            RefreshTokenRequest(refresh_token="x" * 32), _request(origin=None), db
+            RefreshTokenRequest(refresh_token="x" * 32), contract_request(origin=None), db
         )
     assert error.value.status_code == 401
     db.rollback.assert_not_called()
@@ -263,9 +217,9 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    user = _user()
+    user = contract_user()
     identity = CurrentIdentity(user, uuid7(), True, False)
-    request = _request(cookies="openslate_access=access; openslate_refresh=refresh")
+    request = contract_request(cookies="openslate_access=access; openslate_refresh=refresh")
     request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     lookup = Mock(return_value=identity)
     monkeypatch.setattr(auth_router, "get_current_identity", lookup)
@@ -289,7 +243,7 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
     monkeypatch.setattr(
         auth_router, "revoke_provider_refresh_session", Mock(return_value=None), raising=False
     )
-    refresh_only = _request(cookies="openslate_refresh=" + "r" * 48)
+    refresh_only = contract_request(cookies="openslate_refresh=" + "r" * 48)
     refresh_only.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     with pytest.raises(HTTPException) as invalid:
         auth_router.logout(refresh_only, db)
@@ -308,7 +262,7 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    user = _user()
+    user = contract_user()
     created_at = datetime.now(UTC)
     current = IdentitySession(
         id=uuid7(),
@@ -330,15 +284,18 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
     )
     identity = CurrentIdentity(user, current.id, True, False)
     monkeypatch.setattr(auth_router, "get_current_identity", Mock(side_effect=HTTPException(401)))
-    assert auth_router.session_status(_request(method="GET", origin=None), db) == {
+    assert auth_router.session_status(contract_request(method="GET", origin=None), db) == {
         "authenticated": False
     }
     monkeypatch.setattr(auth_router, "get_current_identity", Mock(side_effect=HTTPException(503)))
     with pytest.raises(HTTPException) as unavailable:
-        auth_router.session_status(_request(method="GET", origin=None), db)
+        auth_router.session_status(contract_request(method="GET", origin=None), db)
     assert unavailable.value.status_code == 503
     monkeypatch.setattr(auth_router, "get_current_identity", Mock(return_value=identity))
-    assert auth_router.session_status(_request(method="GET", origin=None), db)["user_id"] == user.id
+    assert (
+        auth_router.session_status(contract_request(method="GET", origin=None), db)["user_id"]
+        == user.id
+    )
     db.scalars.return_value.all.return_value = [current, other]
     sessions = sessions_router.list_sessions(identity, db)
     assert [item.current for item in sessions] == [True, False]
@@ -369,7 +326,7 @@ def test_self_session_end_records_one_redacted_event_only_when_state_changes(
     from app.systems.access.auth.aggregate_router import router
 
     db = Mock(spec=Session)
-    user = _user()
+    user = contract_user()
     timestamp = datetime.now(UTC)
     current = IdentitySession(id=uuid7(), user_id=user.id, revoked_at=None)
     other = IdentitySession(id=uuid7(), user_id=user.id, revoked_at=None)
@@ -402,7 +359,7 @@ def test_change_password_maps_safe_provider_errors_and_preserves_current_session
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    identity = CurrentIdentity(_user(), uuid7(), True, False)
+    identity = CurrentIdentity(contract_user(), uuid7(), True, False)
     payload = PasswordChangeRequest(
         current_password="old password", password="new sufficiently long password"
     )
@@ -410,7 +367,7 @@ def test_change_password_maps_safe_provider_errors_and_preserves_current_session
     change = Mock()
     monkeypatch.setattr(auth_router.provider_actions, "change_password", change)
     response = Response()
-    request = _request(cookies="openslate_access=current-access")
+    request = contract_request(cookies="openslate_access=current-access")
     assert auth_router.change_password(payload, identity, request, response, db) == {
         "authenticated": True,
         "setup_required": False,
@@ -429,3 +386,10 @@ def test_change_password_maps_safe_provider_errors_and_preserves_current_session
         assert rejected.value.status_code == expected
         assert "private" not in str(rejected.value.detail)
     assert db.rollback.call_count == 3
+
+    # A spent sign-in budget reports its remaining wait, as the sign-in routes do.
+    change.side_effect = IdentityRateLimited("private rate detail", retry_after=180)
+    with pytest.raises(HTTPException) as throttled:
+        auth_router.change_password(payload, identity, request, Response(), db)
+    assert throttled.value.status_code == 429
+    assert throttled.value.headers == {"Retry-After": "180"}

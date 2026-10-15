@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Route } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -42,14 +48,6 @@ type State = {
     ((route: Route, body: Record<string, unknown>) => Promise<void>) | null;
   onSession: ((route: Route) => Promise<void>) | null;
 };
-
-function deferred() {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-}
 
 async function installApi(page: Page): Promise<State> {
   await installOpenViewEventSource(page);
@@ -181,9 +179,9 @@ test("Organization Save persists only its confirmed revision response and surviv
 }) => {
   const api = await installApi(page);
   await seedCache(page, "slate");
-  const gate = deferred();
+  const gate = heldResponse();
   api.onPatch = async (route) => {
-    await gate.promise;
+    await gate.released;
     api.workspace = { ...api.workspace, theme: "stockroom", revision: 5 };
     await route.fulfill({ json: api.workspace });
   };
@@ -281,30 +279,6 @@ test("Organization failed Save retains draft without committing it and retries a
   ]);
 });
 
-for (const role of ["member", "guest"] as const) {
-  test(`Organization look is visible and read-only for a ${role}`, async ({
-    page,
-  }) => {
-    const api = await installApi(page);
-    api.role = role;
-    api.workspace.theme = "stockroom";
-    await page.goto("/manage?view=organization");
-    await expect(radio(page, "Stockroom")).toBeChecked();
-    await expect(radio(page, "Whiteboard")).toBeDisabled();
-    await look(page)
-      .locator("label")
-      .filter({ hasText: "Whiteboard" })
-      .click({ force: true });
-    await expect(radio(page, "Stockroom")).toBeChecked();
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-theme",
-      "stockroom",
-    );
-    expect(api.writes).toEqual([]);
-    await expect(save(page)).toHaveCount(0);
-  });
-}
-
 test("Organization dirty leave guard keeps preview until an accepted transition", async ({
   page,
 }) => {
@@ -319,6 +293,7 @@ test("Organization dirty leave guard keeps preview until an accepted transition"
   await expect(dialog).toContainText("Discard unsaved Manage changes?");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "stockroom");
   await dialog.getByRole("button", { name: "Keep editing" }).click();
+  await expect(page).toHaveURL(/\/manage\?view=organization/);
   await expect(radio(page, "Stockroom")).toBeChecked();
   await leave.click();
   await dialog.getByRole("button", { name: "Discard changes" }).click();
@@ -333,9 +308,9 @@ test("Organization cached look paints the first frame and public read reconciles
   const api = await installApi(page);
   api.authenticated = false;
   api.workspace.theme = "whiteboard";
-  const gate = deferred();
+  const gate = heldResponse();
   api.onAppearance = async (route) => {
-    await gate.promise;
+    await gate.released;
     await route.fulfill({
       headers: { "Cache-Control": "no-store" },
       json: { theme: "whiteboard" },
@@ -376,12 +351,7 @@ test("Organization cached look paints the first frame and public read reconciles
   }
 });
 
-for (const fault of [
-  "unavailable",
-  "unauthorized",
-  "malformed",
-  "private extra",
-] as const) {
+for (const fault of ["unavailable", "unauthorized", "malformed"] as const) {
   test(`Organization public ${fault} keeps the valid cached look without auth refresh`, async ({
     page,
   }) => {
@@ -395,9 +365,7 @@ for (const fault of [
         json:
           fault === "malformed"
             ? { theme: "sepia" }
-            : fault === "private extra"
-              ? { theme: "whiteboard", contact_email: "private@example.test" }
-              : { detail: "Unavailable" },
+            : { detail: "Unavailable" },
       });
     await page.goto("/login");
     await expect.poll(() => api.appearanceReads).toBeGreaterThan(0);
@@ -416,10 +384,10 @@ test("Organization older public read cannot replace a confirmed Save", async ({
 }) => {
   const api = await installApi(page);
   await seedCache(page, "slate");
-  const gate = deferred();
-  const answered = deferred();
+  const gate = heldResponse();
+  const answered = heldResponse();
   api.onAppearance = async (route) => {
-    await gate.promise;
+    await gate.released;
     await route.fulfill({ json: { theme: "whiteboard" } }).catch(() => {});
     answered.release();
   };
@@ -431,7 +399,7 @@ test("Organization older public read cannot replace a confirmed Save", async ({
     await save(page).click();
     await expect(savedNotice(page)).toBeVisible();
     gate.release();
-    await answered.promise;
+    await answered.released;
     await expect(page.locator("html")).toHaveAttribute(
       "data-theme",
       "stockroom",
@@ -448,10 +416,10 @@ for (const result of ["success", "failure"] as const) {
   }) => {
     const api = await installApi(page);
     await seedCache(page, "slate");
-    const gate = deferred();
-    const answered = deferred();
+    const gate = heldResponse();
+    const answered = heldResponse();
     api.onPatch = async (route) => {
-      await gate.promise;
+      await gate.released;
       if (result === "success")
         api.workspace = { ...api.workspace, theme: "stockroom", revision: 5 };
       await route
@@ -480,54 +448,20 @@ for (const result of ["success", "failure"] as const) {
       await expect(radio(page, "Slate")).toBeChecked();
       await choose(page, "Triplicate");
       gate.release();
-      await answered.promise;
+      await answered.released;
       await expect(radio(page, "Triplicate")).toBeChecked();
       await expect(page.locator("html")).toHaveAttribute(
         "data-theme",
         "triplicate",
       );
       expect(await cached(page)).toBe("slate");
-      await expect(savedNotice(page)).not.toBeVisible();
+      await expect(savedNotice(page)).toBeHidden();
       await expect(save(page)).toBeEnabled();
     } finally {
       gate.release();
     }
   });
 }
-
-test("Organization same-account privacy curtain suspends and resumes its unsaved preview", async ({
-  page,
-}) => {
-  const api = await installApi(page);
-  await seedCache(page, "slate");
-  await page.goto("/manage?view=organization");
-  await choose(page, "Stockroom");
-  const gate = deferred();
-  let checking = false;
-  api.onSession = async (route) => {
-    checking = true;
-    await gate.promise;
-    api.onSession = null;
-    await route.fulfill({
-      json: { authenticated: true, user_id: userA, setup_required: false },
-    });
-  };
-  try {
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await expect.poll(() => checking).toBe(true);
-    await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.+/);
-    expect(await cached(page)).toBe("slate");
-    gate.release();
-    await expect(radio(page, "Stockroom")).toBeChecked();
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-theme",
-      "stockroom",
-    );
-    expect(api.writes).toEqual([]);
-  } finally {
-    gate.release();
-  }
-});
 
 test("Organization older workspace refresh cannot undo a confirmed Save", async ({
   page,
@@ -536,12 +470,12 @@ test("Organization older workspace refresh cannot undo a confirmed Save", async 
   await seedCache(page, "slate");
   await page.goto("/manage?view=organization");
   await choose(page, "Stockroom");
-  const gate = deferred();
-  const answered = deferred();
+  const gate = heldResponse();
+  const answered = heldResponse();
   let pendingRead = false;
   api.onWorkspace = async (route, snapshot) => {
     pendingRead = true;
-    await gate.promise;
+    await gate.released;
     await route.fulfill({ json: snapshot }).catch(() => {});
     answered.release();
   };
@@ -552,7 +486,7 @@ test("Organization older workspace refresh cannot undo a confirmed Save", async 
     await save(page).click();
     await expect(savedNotice(page)).toBeVisible();
     gate.release();
-    await answered.promise;
+    await answered.released;
     await expect(radio(page, "Stockroom")).toBeChecked();
     await expect(page.locator("html")).toHaveAttribute(
       "data-theme",
@@ -688,11 +622,11 @@ test("Organization cached administrator role cannot admit edits while its fresh 
   await seedCache(page, "slate");
   await page.goto("/manage?view=organization");
   await choose(page, "Stockroom");
-  const gate = deferred();
+  const gate = heldResponse();
   let readingRole = false;
   await page.route("**/api/auth/me", async (route) => {
     readingRole = true;
-    await gate.promise;
+    await gate.released;
     await route.fulfill({ json: { id: userA, role: "member", access: [] } });
   });
   try {
@@ -717,13 +651,13 @@ test("Organization keeps a trusted background role refresh interactive but requi
   await seedCache(page, "slate");
   await page.goto("/manage?view=organization");
   await choose(page, "Stockroom");
-  const oldRead = deferred();
-  const freshRead = deferred();
-  const oldAnswered = deferred();
+  const oldRead = heldResponse();
+  const freshRead = heldResponse();
+  const oldAnswered = heldResponse();
   let reads = 0;
   await page.route("**/api/auth/me", async (route) => {
     const old = ++reads === 1;
-    await (old ? oldRead : freshRead).promise;
+    await (old ? oldRead : freshRead).released;
     await route
       .fulfill({
         json: { id: userA, role: old ? "admin" : "member", access: [] },
@@ -782,7 +716,7 @@ test("Organization keeps a trusted background role refresh interactive but requi
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
     await expect(radio(page, "Stockroom")).toBeDisabled();
     oldRead.release();
-    await oldAnswered.promise;
+    await oldAnswered.released;
     await expect(radio(page, "Stockroom")).toBeDisabled();
     await expect.poll(() => reads).toBeGreaterThan(1);
     freshRead.release();

@@ -34,7 +34,7 @@ class TestSelectionTests(unittest.TestCase):
     def test_full_frontend_preserves_configured_matrix(self):
         call = self.invoke("frontend", "full")
         self.assertFalse(any(arg.startswith("--project=") for arg in call.args[0]))
-        self.assertIn("tests/isolated/manage-state.spec.ts", call.args[0])
+        self.assertIn("tests/isolated/access/overview.spec.ts", call.args[0])
         self.assertIn("tests/isolated/security/auth-api.spec.ts", call.args[0])
         self.assertFalse(any("tests/browser/" in arg for arg in call.args[0]))
         root = Path(__file__).resolve().parents[2] / "frontend" / "tests"

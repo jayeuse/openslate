@@ -1,7 +1,6 @@
 """Concrete guarded Chart route fixtures; auth transport is unchanged and overridden."""
 
 from dataclasses import dataclass
-from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -10,9 +9,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import CurrentIdentity, get_current_identity
-from app.core.base_model import utc_now
-from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
@@ -20,7 +16,9 @@ from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from tests.live_session_support import with_live_session
 from tests.rbac.support import _client, add_department, add_module, add_user, make_group_access
+from tests.route_app_support import route_app
 
 
 @dataclass
@@ -35,29 +33,13 @@ class ChartWorld:
     users: dict[str, User]
 
     def client(self, key: str, *, session: IdentitySession | None = None) -> TestClient:
+        """The complete application, without its process lifespan, as *key*."""
+
         actor = self.users[key]
-        if session is None:
-            now = utc_now()
-            session = IdentitySession(
-                user_id=actor.id,
-                refresh_token_digest=uuid7().hex + uuid7().hex,
-                csrf_token_digest=uuid7().hex + uuid7().hex,
-                created_at=now,
-                refreshed_at=now,
-                expires_at=now + timedelta(hours=1),
-            )
-            self.db.add(session)
-        self.db.commit()
+        client = with_live_session(
+            _client(route_app(), actor, self.db), self.db, actor, session=session
+        )
         set_audit_actor(self.db, actor.id)
-        application = create_app()
-        client = _client(application, actor, self.db)
-        session_id = session.id
-
-        def identity() -> CurrentIdentity:
-            set_audit_actor(self.db, actor.id)
-            return CurrentIdentity(actor, session_id, False, False)
-
-        application.dependency_overrides[get_current_identity] = identity
         return client
 
     def body(self, name: str = "Reviewed Chart", *, kind: str = "bar", query=None):

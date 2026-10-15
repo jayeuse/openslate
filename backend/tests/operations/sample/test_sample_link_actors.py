@@ -12,13 +12,13 @@ import pytest
 from operations.sample.blueprint import edge_child_ids
 from operations.sample.client import SampleClient
 from operations.sample.episodes import plan_sessions
-from operations.sample.packs import get_pack
 from operations.sample.packs.types import RejectionCase
 from operations.sample.population.activity import run_activity
 from operations.sample.scenario import build_dataset
 from operations.sample.verification.core import verify_records_and_relationships
 from operations.seed_sample_data import build_plan_summary
 from tests.operations.sample.packs.test_school_access import _LEVEL_RANK, _module_level
+from tests.operations.sample.sample_datasets import sample_dataset
 from tests.operations.sample.test_sample_actor_access import _restricted_pack
 
 ANCHOR = date(2026, 9, 30)
@@ -73,7 +73,7 @@ def _dataset(**options):
 
 
 def test_school_relationship_creators_have_source_write_and_target_read():
-    dataset = build_dataset("small", seed=42, anchor_date=ANCHOR, organization=get_pack("school"))
+    dataset = sample_dataset("small", 42, ANCHOR, "school")
     records = {record.logical_id: record for record in dataset.records}
     failures = []
     cross_department = 0
@@ -97,7 +97,7 @@ def test_school_relationship_creators_have_source_write_and_target_read():
 
 
 def test_harbor_staff_write_the_cross_department_links_of_records_they_create():
-    dataset = build_dataset("small", seed=42, anchor_date=ANCHOR, organization=get_pack("harbor"))
+    dataset = sample_dataset("small", 42, ANCHOR, "harbor")
     records = {record.logical_id: record for record in dataset.records}
     leads = {team[0] for team in dataset.organization.actors.team_keys.values()}
     by_lead = not_by_child_creator = cross_department = 0

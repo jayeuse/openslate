@@ -104,8 +104,6 @@ def _lock_profile(db: Session, user_id: UUID) -> User | None:
         .execution_options(populate_existing=True)
         .with_for_update(of=User)
     )
-    if profile is not None and not isinstance(profile, User):
-        raise InvitationError("Unable to lock invitation profile")
     return profile
 
 
@@ -181,10 +179,11 @@ def invite_user(
                 "Administrators have access everywhere and are not group members"
             )
         group_ids = _lock_active_groups(db, payload.group_ids)
+        # No row lock: a match is always refused, and a lock on it could wait for a
+        # Sandbox publish that holds its administrator's row while waiting for a group
+        # locked above. The unique indexes still refuse a concurrent duplicate.
         existing = db.scalar(
-            select(User)
-            .where(or_(User.email == payload.email, User.username == payload.username))
-            .with_for_update(of=User)
+            select(User).where(or_(User.email == payload.email, User.username == payload.username))
         )
         if existing is not None:
             raise InvitationConflict("Email or username is already in use")
@@ -322,7 +321,7 @@ def resend_invitation(
             profile is None
             or profile.is_deleted
             or profile.status != UserStatus.PENDING.value
-            or getattr(profile, "invitation_accepted_at", None) is not None
+            or profile.invitation_accepted_at is not None
             or profile.supabase_user_id is None
             or profile.provider_invitation_operation_id is None
         ):
@@ -381,7 +380,7 @@ def reconcile_invitation(
             profile is None
             or profile.is_deleted
             or profile.status != UserStatus.PENDING.value
-            or getattr(profile, "invitation_accepted_at", None) is not None
+            or profile.invitation_accepted_at is not None
             or profile.provider_invitation_operation_id is None
         ):
             raise InvitationError("Invitation is not pending")

@@ -25,7 +25,7 @@ from tests.caddy_runtime import DisposableCaddy
 from tests.fullstack_environment import api_environment
 from tests.runner_console import stop_process_group
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
 _PROVIDER_KEYS = (
     "SUPABASE_URL",

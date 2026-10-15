@@ -325,7 +325,9 @@ def test_audit_options_are_empty_bounded_recent_and_registered_before_detail(
     api = create_app()
     token = uuid7().hex
     with _client(api, make_user(f"options-admin-{token}"), integration_db) as client:
-        empty = client.get("/api/audit-logs/options")
+        # Other tests leave committed audit rows behind, so the empty answer is checked
+        # in a department that no audit row names.
+        empty = client.get("/api/audit-logs/options", params={"department_id": str(uuid7())})
         assert empty.status_code == 200
         assert empty.json() == {"entity_types": [], "actors": []}
 

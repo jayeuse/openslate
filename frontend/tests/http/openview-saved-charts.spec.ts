@@ -1,9 +1,11 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInAs, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { pageOf } from "../helpers/pagination";
+import { gate } from "./helpers/gate";
+import { wireBucket } from "../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000210";
 const otherModule = "00000000-0000-4000-8000-000000000211";
@@ -47,48 +49,22 @@ function chart(id = chartId, name = "Intake by category") {
     updated_at: "2026-10-10T00:00:00Z",
   };
 }
-function listed(
-  items: unknown[],
-  offset = 0,
-  total = items.length,
-  limit = 25,
-) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
-}
 async function setup(
   page: Page,
   access: "department" | "module" | "read" = "department",
 ) {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    }),
-  );
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      json: {
-        id: userId,
-        role: "member",
-        access: [
-          {
-            department_id: departmentId,
-            module_id: access === "module" ? moduleId : null,
-            level: access === "read" ? "read" : "manage",
-          },
-        ],
+  await signedInAs(page, {
+    id: userId,
+    role: "member",
+    access: [
+      {
+        department_id: departmentId,
+        module_id: access === "module" ? moduleId : null,
+        level: access === "read" ? "read" : "manage",
       },
-    }),
-  );
+    ],
+  });
   const fields = [
     { id: categoryId, name: "Category", type: "text", config: {} },
     { id: amountId, name: "Amount", type: "decimal", config: {} },
@@ -101,7 +77,7 @@ async function setup(
   }));
   await page.route("**/api/views/data-sources**", (route) =>
     route.fulfill({
-      json: listed(
+      json: pageOf<unknown>(
         new URL(route.request().url()).pathname.endsWith("/fields")
           ? fields
           : [
@@ -118,9 +94,12 @@ async function setup(
                 title_field_id: null,
               },
             ],
-        0,
-        new URL(route.request().url()).pathname.endsWith("/fields") ? 3 : 2,
-        100,
+        {
+          limit: 100,
+          total: new URL(route.request().url()).pathname.endsWith("/fields")
+            ? 3
+            : 2,
+        },
       ),
     }),
   );
@@ -142,21 +121,29 @@ async function setup(
     return route.fulfill({ json: { ...field, is_deleted: false } });
   });
   await page.route("**/api/charts?*", (route) =>
-    route.fulfill({ json: listed([]) }),
+    route.fulfill({ json: pageOf([], { limit: 25 }) }),
   );
   await page.route(`**/api/charts/${chartId}`, (route) =>
     route.fulfill({ json: chart() }),
   );
   await page.route("**/api/records/aggregate-snapshot", (route) =>
     route.fulfill({
-      json: listed(
+      json: pageOf(
         [
-          { key: "support", label: "Support", value: 8, record_count: 8 },
-          { key: "delivery", label: "Delivery", value: 3, record_count: 3 },
+          wireBucket({
+            key: "support",
+            label: "Support",
+            value: 8,
+            record_count: 8,
+          }),
+          wireBucket({
+            key: "delivery",
+            label: "Delivery",
+            value: 3,
+            record_count: 3,
+          }),
         ],
-        0,
-        2,
-        2,
+        { limit: 2, total: 2 },
       ),
     }),
   );
@@ -173,7 +160,7 @@ async function saveName(
   await dialog.getByLabel("Chart name", { exact: true }).press("Enter");
 }
 
-test("S28 named Save, edited query, rename and Save as use revisioned literal definitions and URL reload", async ({
+test("named Save, edited query, rename and Save as use revisioned literal definitions and URL reload", async ({
   page,
 }) => {
   await setup(page);
@@ -251,7 +238,7 @@ test("S28 named Save, edited query, rename and Save as use revisioned literal de
   ]);
 });
 
-test("S28 saved URL opens off-page source and full grammar without substituting paged metadata", async ({
+test("saved URL opens off-page source and full grammar without substituting paged metadata", async ({
   page,
 }) => {
   await setup(page);
@@ -283,7 +270,7 @@ test("S28 saved URL opens off-page source and full grammar without substituting 
     route.fulfill({ json: saved }),
   );
   await page.route("**/api/views/data-sources**", (route) =>
-    route.fulfill({ json: listed([], 0, 0, 100) }),
+    route.fulfill({ json: pageOf([], { limit: 100, total: 0 }) }),
   );
   let posted: unknown;
   await page.route("**/api/charts", (route) => {
@@ -310,7 +297,7 @@ test("S28 saved URL opens off-page source and full grammar without substituting 
   });
 });
 
-test("S28 revision conflict preserves edited draft and refreshes current read only on intent", async ({
+test("revision conflict preserves edited draft and refreshes current read only on intent", async ({
   page,
 }) => {
   await setup(page);
@@ -399,12 +386,12 @@ test("S28 revision conflict preserves edited draft and refreshes current read on
 });
 
 for (const access of ["module", "read"] as const) {
-  test(`S28 ${access} permission may read but cannot save or archive Charts`, async ({
+  test(`${access} permission may read but cannot save or archive Charts`, async ({
     page,
   }) => {
     await setup(page, access);
     await page.route("**/api/charts?*", (route) =>
-      route.fulfill({ json: listed([chart()]) }),
+      route.fulfill({ json: pageOf([chart()], { limit: 25 }) }),
     );
     const writes: string[] = [];
     page.on("request", (request) => {
@@ -440,14 +427,14 @@ for (const access of ["module", "read"] as const) {
   });
 }
 
-test("S28 save denial and unknown receipt retain name and never automatically retry POST", async ({
+test("save denial and unknown receipt retain name and never automatically retry POST", async ({
   page,
 }) => {
   await setup(page);
   let listReads = 0;
   await page.route("**/api/charts?*", (route) => {
     listReads += 1;
-    return route.fulfill({ json: listed([]) });
+    return route.fulfill({ json: pageOf([], { limit: 25 }) });
   });
   const writes: unknown[] = [];
   await page.route("**/api/charts", (route) => {
@@ -486,7 +473,7 @@ test("S28 save denial and unknown receipt retain name and never automatically re
   );
 });
 
-test("S28 saved list search paging archive and restore use accepted revision and refresh authoritative rows", async ({
+test("saved list search paging archive and restore use accepted revision and refresh authoritative rows", async ({
   page,
 }) => {
   await setup(page);
@@ -503,7 +490,9 @@ test("S28 saved list search paging archive and restore use accepted revision and
         : offset
           ? [chart(copyId, "Later chart")]
           : [{ ...chart(), revision: archived ? 2 : 1, is_deleted: archived }];
-    return route.fulfill({ json: listed(items, offset, items.length ? 2 : 0) });
+    return route.fulfill({
+      json: pageOf(items, { limit: 25, offset, total: items.length ? 2 : 0 }),
+    });
   });
   await page.route(`**/api/charts/${chartId}*`, (route) => {
     if (route.request().method() === "DELETE") {
@@ -576,15 +565,17 @@ test("S28 saved list search paging archive and restore use accepted revision and
   ).toBe(true);
 });
 
-test("S28 usage 409 renders readable consumers and generic restricted flag, never hidden counts or identities", async ({
+test("usage 409 renders readable consumers and generic restricted flag, never hidden counts or identities", async ({
   page,
 }) => {
   await setup(page);
   await page.route("**/api/charts?*", (route) =>
-    route.fulfill({ json: listed([chart()]) }),
+    route.fulfill({ json: pageOf([chart()], { limit: 25 }) }),
   );
   const usage = {
-    ...listed([{ kind: "dashboard", id: consumerId, name: "Team overview" }]),
+    ...pageOf([{ kind: "dashboard", id: consumerId, name: "Team overview" }], {
+      limit: 25,
+    }),
     has_restricted_usage: true,
   };
   await page.route(`**/api/charts/${chartId}/usage?*`, (route) =>
@@ -638,7 +629,7 @@ test("S28 usage 409 renders readable consumers and generic restricted flag, neve
   expect(deletes).toBe(1);
 });
 
-test("S28 changing the editor module detaches saved identity and list refusal withdraws names", async ({
+test("changing the editor module detaches saved identity and list refusal withdraws names", async ({
   page,
 }) => {
   await setup(page);
@@ -646,7 +637,7 @@ test("S28 changing the editor module detaches saved identity and list refusal wi
   await page.route("**/api/charts?*", (route) =>
     denied
       ? route.fulfill({ status: 403, json: { detail: "Private list denial" } })
-      : route.fulfill({ json: listed([chart()]) }),
+      : route.fulfill({ json: pageOf([chart()], { limit: 25 }) }),
   );
   await page.goto(`/openview?section=charts&chart=${chartId}`);
   await expect(page.getByLabel("Group by", { exact: true })).toHaveValue(
@@ -667,9 +658,7 @@ test("S28 changing the editor module detaches saved identity and list refusal wi
   ).toHaveCount(0);
 });
 
-test("S28 archived URL cannot apply or save until restored", async ({
-  page,
-}) => {
+test("archived URL cannot apply or save until restored", async ({ page }) => {
   await setup(page);
   let archived = true;
   await page.route(`**/api/charts/${chartId}`, (route) =>
@@ -679,9 +668,10 @@ test("S28 archived URL cannot apply or save until restored", async ({
   );
   await page.route("**/api/charts?*", (route) =>
     route.fulfill({
-      json: listed([
-        { ...chart(), is_deleted: archived, revision: archived ? 2 : 3 },
-      ]),
+      json: pageOf(
+        [{ ...chart(), is_deleted: archived, revision: archived ? 2 : 3 }],
+        { limit: 25 },
+      ),
     }),
   );
   await page.route(`**/api/charts/${chartId}/restore`, (route) => {
@@ -707,7 +697,7 @@ test("S28 archived URL cannot apply or save until restored", async ({
   ).toBeEnabled();
 });
 
-test("S28 an opened chart resolves fresh bounded labels before Apply and withdraws on metadata refusal", async ({
+test("an opened chart resolves fresh bounded labels before Apply and withdraws on metadata refusal", async ({
   page,
 }) => {
   await setup(page);
@@ -732,24 +722,22 @@ test("S28 an opened chart resolves fresh bounded labels before Apply and withdra
         });
   });
   await page.route("**/api/views/data-sources**", (route) =>
-    route.fulfill({ json: listed([], 0, 0, 100) }),
+    route.fulfill({ json: pageOf([], { limit: 100, total: 0 }) }),
   );
   let aggregates = 0;
   await page.route("**/api/records/aggregate-snapshot", (route) => {
     aggregates += 1;
     return route.fulfill({
-      json: listed(
+      json: pageOf(
         [
-          {
+          wireBucket({
             key: "queue",
             label: "Authorised value",
             value: 9,
             record_count: 9,
-          },
+          }),
         ],
-        0,
-        1,
-        1,
+        { limit: 1, total: 1 },
       ),
     });
   });
@@ -776,7 +764,7 @@ test("S28 an opened chart resolves fresh bounded labels before Apply and withdra
   expect(metadata.length).toBeGreaterThanOrEqual(3);
 });
 
-test("S28 date-series Save persists bucket, window and measure without preview settings", async ({
+test("date-series Save persists bucket, window and measure without preview settings", async ({
   page,
 }) => {
   await setup(page);
@@ -819,7 +807,7 @@ test("S28 date-series Save persists bucket, window and measure without preview s
   ]);
 });
 
-test("S28 admin usage pages show every returned consumer without a restricted flag", async ({
+test("admin usage pages show every returned consumer without a restricted flag", async ({
   page,
 }) => {
   await setup(page);
@@ -827,7 +815,7 @@ test("S28 admin usage pages show every returned consumer without a restricted fl
     route.fulfill({ json: { id: userId, role: "admin", access: [] } }),
   );
   await page.route("**/api/charts?*", (route) =>
-    route.fulfill({ json: listed([chart()]) }),
+    route.fulfill({ json: pageOf([chart()], { limit: 25 }) }),
   );
   const offsets: string[] = [];
   await page.route(`**/api/charts/${chartId}/usage?*`, (route) => {
@@ -835,7 +823,7 @@ test("S28 admin usage pages show every returned consumer without a restricted fl
     offsets.push(offset);
     return route.fulfill({
       json: {
-        ...listed(
+        ...pageOf(
           offset === "0"
             ? [
                 {
@@ -845,8 +833,7 @@ test("S28 admin usage pages show every returned consumer without a restricted fl
                 },
               ]
             : [{ kind: "board", id: copyId, name: "Archived board" }],
-          Number(offset),
-          2,
+          { limit: 25, offset: Number(offset), total: 2 },
         ),
         has_restricted_usage: false,
       },
@@ -876,24 +863,19 @@ test("S28 admin usage pages show every returned consumer without a restricted fl
   expect(offsets).toEqual(["0", "1"]);
 });
 
-test("S28 navigating away from a held open fences the late definition", async ({
+test("navigating away from a held open fences the late definition", async ({
   page,
 }) => {
   await setup(page);
   await page.route("**/api/charts?*", (route) =>
-    route.fulfill({ json: listed([chart(copyId, "Other chart")]) }),
+    route.fulfill({
+      json: pageOf([chart(copyId, "Other chart")], { limit: 25 }),
+    }),
   );
-  let started!: () => void;
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const open = gate();
   await page.route(`**/api/charts/${copyId}`, async (route) => {
-    started();
-    await held;
+    open.signalStarted();
+    await open.wait;
     return route.fulfill({
       json: { ...chart(copyId, "Other chart"), chart_type: "pie" },
     });
@@ -907,14 +889,14 @@ test("S28 navigating away from a held open fences the late definition", async ({
     .getByRole("button", { name: "Open Other chart", exact: true })
     .click();
   try {
-    await pending;
+    await open.started;
     await page
       .getByRole("button", { name: "Saved charts", exact: true })
       .click();
     await page.getByRole("link", { name: "Charts", exact: true }).click();
     await expect(page).not.toHaveURL(/chart=/);
     const late = page.waitForResponse(`**/api/charts/${copyId}`);
-    release();
+    open.release();
     await (await late).finished();
     await expect(page.getByLabel("Chart type", { exact: true })).toHaveValue(
       "bar",
@@ -925,12 +907,12 @@ test("S28 navigating away from a held open fences the late definition", async ({
         .getByText("Other chart", { exact: true }),
     ).toHaveCount(0);
   } finally {
-    release();
+    open.release();
   }
 });
 
 for (const recover of [false, true]) {
-  test(`S28 held save receipt after read refusal ${recover ? "and later read recovery " : ""}cannot select the saved object or expose a server name`, async ({
+  test(`held save receipt after read refusal ${recover ? "and later read recovery " : ""}cannot select the saved object or expose a server name`, async ({
     page,
   }) => {
     await setup(page);
@@ -944,21 +926,14 @@ for (const recover of [false, true]) {
           json: { detail: "Private chart list" },
         });
       }
-      return route.fulfill({ json: listed([]) });
+      return route.fulfill({ json: pageOf([], { limit: 25 }) });
     });
-    let release!: () => void;
-    let started!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const pending = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const save = gate();
     let writes = 0;
     await page.route("**/api/charts", async (route) => {
       writes += 1;
-      started();
-      await held;
+      save.signalStarted();
+      await save.wait;
       return route.fulfill({
         status: 201,
         json: { ...chart(), name: "Private late chart" },
@@ -970,7 +945,7 @@ for (const recover of [false, true]) {
       .click();
     await saveName(page, "Save chart", "Private late chart");
     try {
-      await pending;
+      await save.started;
       denied = true;
       await sendOpenViewEvent(page, "invalidate", { entity: "charts" });
       await expect.poll(() => deniedReads).toBeGreaterThan(0);
@@ -998,7 +973,7 @@ for (const recover of [false, true]) {
           new URL(response.url()).pathname === "/api/charts" &&
           response.request().method() === "POST",
       );
-      release();
+      save.release();
       await (await receipt).finished();
       await expect(page).not.toHaveURL(/chart=/);
       await expect(
@@ -1009,12 +984,12 @@ for (const recover of [false, true]) {
       ).toHaveValue("Private late chart");
       expect(writes).toBe(1);
     } finally {
-      release();
+      save.release();
     }
   });
 }
 
-test("S28 mobile keyboard Save form rejects empty name and captures saved Charts in both themes", async ({
+test("mobile keyboard Save form rejects a blank name, then saves and applies the Chart", async ({
   page,
 }) => {
   await setup(page);
@@ -1023,7 +998,9 @@ test("S28 mobile keyboard Save form rejects empty name and captures saved Charts
     route.fulfill({ status: 201, json: { ...chart(), name: "Weekly intake" } }),
   );
   await page.route("**/api/charts?*", (route) =>
-    route.fulfill({ json: listed([{ ...chart(), name: "Weekly intake" }]) }),
+    route.fulfill({
+      json: pageOf([{ ...chart(), name: "Weekly intake" }], { limit: 25 }),
+    }),
   );
   await page.goto("/openview?section=charts");
   const save = page.getByRole("button", { name: "Save chart", exact: true });
@@ -1045,25 +1022,4 @@ test("S28 mobile keyboard Save form rejects empty name and captures saved Charts
     page.getByRole("table", { name: "Complete aggregate data", exact: true }),
   ).toContainText("Support");
   await page.getByRole("button", { name: "Saved charts", exact: true }).click();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-      },
-    };
-    await captureOpenViewReview(page, "s28-charts-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s28-charts-dark", options);
-  }
 });

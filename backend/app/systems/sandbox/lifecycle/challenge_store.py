@@ -317,10 +317,12 @@ def begin_verification(
     )
     for item in active:
         _expire(item, timestamp)
+    # The token read above took no lock; reload the row as the lock finds it.
     locked_challenge = db.scalar(
         select(LifecycleConfirmationChallenge)
         .where(LifecycleConfirmationChallenge.id == challenge.id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if locked_challenge is None:  # pragma: no cover - the row was just found
         raise LifecycleChallengeNotFound("Lifecycle confirmation challenge not found")

@@ -5,13 +5,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.main import create_app
 from app.systems.access.users.models import UserRole
 from tests.rbac.support import _client, add_user
+from tests.route_app_support import route_app
 
 
 def test_unauthenticated_backup_status_is_denied() -> None:
-    client = TestClient(create_app())
+    client = TestClient(route_app())
     response = client.get("/api/backups/status")
     assert response.status_code == 401
 
@@ -19,7 +19,7 @@ def test_unauthenticated_backup_status_is_denied() -> None:
 @pytest.mark.integration
 def test_admin_defaults_save_reload_and_durable_queue_replay(integration_db: Session) -> None:
     admin = add_user(integration_db, role=UserRole.ADMIN)
-    with _client(create_app(), admin, integration_db) as client:
+    with _client(route_app(), admin, integration_db) as client:
         before = client.get("/api/backups/status")
         assert before.status_code == 200
         assert before.headers["cache-control"] == "no-store"
@@ -71,7 +71,7 @@ def test_non_admin_cannot_read_or_write_backup_authority(
     integration_db: Session, role: str
 ) -> None:
     actor = add_user(integration_db, role=role)
-    with _client(create_app(), actor, integration_db) as client:
+    with _client(route_app(), actor, integration_db) as client:
         responses = [
             client.get("/api/backups/status"),
             client.get("/api/backups"),
@@ -104,7 +104,7 @@ def test_policy_invalid_inputs_make_no_partial_write(
     integration_db: Session, payload: dict
 ) -> None:
     admin = add_user(integration_db, role=UserRole.ADMIN)
-    with _client(create_app(), admin, integration_db) as client:
+    with _client(route_app(), admin, integration_db) as client:
         assert client.patch("/api/backups/status", json=payload).status_code == 422
     assert integration_db.connection().scalar(text("SELECT count(*) FROM backup_policies")) == 0
 
@@ -113,7 +113,7 @@ def test_policy_invalid_inputs_make_no_partial_write(
 def test_admin_can_turn_a_schedule_back_off(integration_db: Session) -> None:
     # Found by a live sample run: disabling a schedule failed with 503.
     admin = add_user(integration_db, role=UserRole.ADMIN)
-    with _client(create_app(), admin, integration_db) as client:
+    with _client(route_app(), admin, integration_db) as client:
         saved = client.patch(
             "/api/backups/status", json={"revision": 1, "schedule": "daily", "retention_days": 7}
         )
@@ -130,7 +130,7 @@ def test_admin_can_turn_a_schedule_back_off(integration_db: Session) -> None:
 @pytest.mark.integration
 def test_history_uses_literal_search_pagination_and_safe_filters(integration_db: Session) -> None:
     admin = add_user(integration_db, role=UserRole.ADMIN)
-    with _client(create_app(), admin, integration_db) as client:
+    with _client(route_app(), admin, integration_db) as client:
         for index, name in enumerate(("literal_% one", "literal_% two", "literalXX decoy")):
             assert (
                 client.post(

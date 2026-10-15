@@ -25,11 +25,11 @@ from app.systems.platform.scheduling.models import InAppNotification, ScheduledW
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
-from tests.platform_scheduling.test_notification_routes import (
-    _actor,
-    _client,
-    _notification,
-    _report,
+from tests.platform_scheduling.support import (
+    notification_actor,
+    notification_client,
+    notification_report,
+    report_notification,
 )
 
 pytestmark = pytest.mark.integration
@@ -74,12 +74,12 @@ def test_unread_list_count_and_read_all_agree_and_cover_more_than_one_page(
     integration_owner_db, monkeypatch
 ):
     db = integration_owner_db
-    owner, other = _actor(db), _actor(db)
-    report, _ = _report(db, owner)
-    notices = [_notification(db, report, owner, minute=i) for i in range(110)]
-    other_notice = _notification(db, report, other, minute=200)
-    hidden_report, hidden_module = _report(db, owner)
-    hidden = _notification(db, hidden_report, owner, minute=201)
+    owner, other = notification_actor(db), notification_actor(db)
+    report, _ = notification_report(db, owner)
+    notices = [report_notification(db, report, owner, minute=i) for i in range(110)]
+    other_notice = report_notification(db, report, other, minute=200)
+    hidden_report, hidden_module = notification_report(db, owner)
+    hidden = report_notification(db, hidden_report, owner, minute=201)
     notices[0].read_at = datetime(2026, 1, 2, tzinfo=UTC)
     notices[1].is_deleted = True
     notices[2].subject_id = UUID("00000000-0000-4000-8000-000000000999")
@@ -89,7 +89,7 @@ def test_unread_list_count_and_read_all_agree_and_cover_more_than_one_page(
     db.commit()
     before = len(_audit_updates(db, [n.id for n in notices]))
     monkeypatch.setattr(notification_router, "utc_now", lambda: READ_TIME)
-    client = _client(db, owner)
+    client = notification_client(db, owner)
 
     count = client.get("/api/notifications/unread-count")
     assert count.status_code == 200, count.text
@@ -108,8 +108,8 @@ def test_unread_list_count_and_read_all_agree_and_cover_more_than_one_page(
     assert client.get("/api/notifications").json()["pagination"]["total"] == 108
     for invalid in ("read", "unknown"):
         assert client.get(f"/api/notifications?status={invalid}").status_code == 422
-    assert _client(db, None).get("/api/notifications/unread-count").status_code == 401
-    assert _client(db, None).post("/api/notifications/read-all").status_code == 401
+    assert notification_client(db, None).get("/api/notifications/unread-count").status_code == 401
+    assert notification_client(db, None).post("/api/notifications/read-all").status_code == 401
 
     changed = client.post("/api/notifications/read-all")
     assert changed.status_code == 200, changed.text
@@ -140,9 +140,9 @@ def committed_subject():
     ids = {}
     try:
         with AuditSession(engine) as db:
-            owner = _actor(db)
-            report, module = _report(db, owner)
-            notice = _notification(db, report, owner, minute=1)
+            owner = notification_actor(db)
+            report, module = notification_report(db, owner)
+            notice = report_notification(db, report, owner, minute=1)
             ids = {
                 "owner": owner.id,
                 "report": report.id,
@@ -305,7 +305,7 @@ def test_notice_inserted_after_read_all_selection_remains_unread(committed_subje
         with AuditSession(engine) as writer:
             actor, source = writer.get(User, ids["owner"]), writer.get(Report, ids["report"])
             assert actor is not None and source is not None
-            arrived = _notification(writer, source, actor, minute=2)
+            arrived = report_notification(writer, source, actor, minute=2)
             writer.commit()
             return arrived.id
 

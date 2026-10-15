@@ -299,13 +299,17 @@ def test_retained_claim_recovers_stopped_db_or_preserves_topology(topology_runti
     from operations.sample.controls.host_environment import production_topology
 
     runtime, host, _ = topology_runtime
+
+    def stop_database_then_fail() -> None:
+        host.active_claim = {"claim_id": "owned-claim"}
+        host.fault = "unresolved_claim" if unresolved else None
+        for row in host.rows:
+            row["State"]["Status"] = "exited"
+        raise SamplePhaseActionError("Archive failed", step="host_runner")
+
     with pytest.raises(SamplePhaseActionError) as observed:
         with production_topology(runtime):
-            host.active_claim = {"claim_id": "owned-claim"}
-            host.fault = "unresolved_claim" if unresolved else None
-            for row in host.rows:
-                row["State"]["Status"] = "exited"
-            raise SamplePhaseActionError("Archive failed", step="host_runner")
+            stop_database_then_fail()
     assert observed.value.step == "host_runner"
     assert host.phase == ("production" if unresolved else "development")
     assert host.api_running is not unresolved
@@ -319,11 +323,15 @@ def test_external_failure_text_is_safe_and_cleanup_failure_does_not_replace_it(t
     from operations.sample.controls.host_environment import production_topology
 
     runtime, host, _ = topology_runtime
+
+    def claim_then_fail_privately() -> None:
+        host.active_claim = {"claim_id": "owned-claim"}
+        host.fault = "unresolved_claim"
+        raise RuntimeError("private-provider-payload-must-not-be-reported")
+
     with pytest.raises(SamplePhaseActionError) as observed:
         with production_topology(runtime):
-            host.active_claim = {"claim_id": "owned-claim"}
-            host.fault = "unresolved_claim"
-            raise RuntimeError("private-provider-payload-must-not-be-reported")
+            claim_then_fail_privately()
     assert observed.value.step == "host_topology"
     assert "private-provider" not in str(observed.value)
     assert runtime.reconciliation["development_restored"] is False

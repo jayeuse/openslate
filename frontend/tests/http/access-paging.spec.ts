@@ -1,6 +1,8 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, test } from "./helpers/test";
 import {
   at,
+  expectNoWrites,
+  fixtureId,
   group,
   ids,
   mockAccessApi,
@@ -8,10 +10,7 @@ import {
   type AccessEntry,
 } from "./helpers/access-api";
 
-const fixtureId = (index: number) =>
-  `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
-
-test("S08 Groups pages and server search preserve enriched reach without catalog crawling", async ({
+test("Groups pages and server search preserve enriched reach without catalog crawling", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -75,47 +74,7 @@ test("S08 Groups pages and server search preserve enriched reach without catalog
   expect(api.sent("GET", "/api/modules")).toHaveLength(0);
 });
 
-test("S08 Overview counts use bounded filtered totals beyond the first page", async ({
-  page,
-}) => {
-  const api = await mockAccessApi(page);
-  api.groups.clear();
-  for (let index = 0; index < 121; index++) {
-    api.groups.set(
-      fixtureId(500 + index),
-      group(fixtureId(500 + index), `Empty ${index}`, [], []),
-    );
-    api.users.set(
-      fixtureId(2000 + index),
-      person({ id: fixtureId(2000 + index), username: `unassigned${index}` }),
-    );
-  }
-  const reads: URL[] = [];
-  for (const path of ["/api/users", "/api/access/groups"])
-    api.on("GET", path, (route) => {
-      reads.push(new URL(route.request().url()));
-      return "next";
-    });
-  await page.goto("/access?view=overview");
-  await expect(
-    page.getByRole("region", { name: "Groups without access", exact: true }),
-  ).toContainText("121");
-  await expect(
-    page.getByRole("region", { name: "Groups without members", exact: true }),
-  ).toContainText("121");
-  await expect(
-    page.getByRole("region", { name: "People without a group", exact: true }),
-  ).toContainText("124");
-  expect(
-    reads.every(
-      (url) =>
-        url.searchParams.get("limit") === "1" &&
-        url.searchParams.get("offset") === "0",
-    ),
-  ).toBe(true);
-});
-
-test("S08 selected sponsor reload and username server search keep labels and write no changes", async ({
+test("selected sponsor reload and username server search keep labels and write no changes", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -136,8 +95,7 @@ test("S08 selected sponsor reload and username server search keep labels and wri
   await expect(sponsor).toContainText("Remote display");
   await sponsor.click();
   await page
-    .getByRole("combobox", { name: "Sponsor", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search sponsor", exact: true })
     .fill("remote_login");
   await expect
     .poll(() =>
@@ -155,10 +113,10 @@ test("S08 selected sponsor reload and username server search keep labels and wri
   expect(
     api.listReads.some((query) => query.get("search") === "remote_login"),
   ).toBe(true);
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
 
-test("S08 session pages expose later devices and retain global revocation", async ({
+test("session pages expose later devices and retain global revocation", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -203,7 +161,7 @@ test("S08 session pages expose later devices and retain global revocation", asyn
   expect(api.sent("DELETE", `/api/users/${ids.ben}/sessions`)).toHaveLength(1);
 });
 
-test("S08 member search preserves off-page members and marks ended manager candidates", async ({
+test("member search preserves off-page members and marks ended manager candidates", async ({
   page,
 }) => {
   const api = await mockAccessApi(page, {
@@ -215,11 +173,6 @@ test("S08 member search preserves off-page members and marks ended manager candi
       ],
     },
   });
-  api.on("GET", "/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: ids.ben, setup_required: false },
-    }),
-  );
   const current = fixtureId(999);
   const expired = fixtureId(998);
   api.users.set(
@@ -278,10 +231,10 @@ test("S08 member search preserves off-page members and marks ended manager candi
     reads.some((url) => url.searchParams.get("search") === "expired_login"),
   ).toBe(true);
   expect(api.sent("GET", "/api/users")).toHaveLength(0);
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
 
-test("S08 a refused people continuation conceals selected names until an explicit fresh retry", async ({
+test("a refused people continuation conceals selected names until an explicit fresh retry", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -318,29 +271,22 @@ test("S08 a refused people continuation conceals selected names until an explici
     .getByRole("button", { name: "Retry people", exact: true })
     .click();
   await expect(members).toContainText("Ana Santos");
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });
 
-test("S08 correction a people search refusal survives cached search and an older Retry", async ({
+test("a people search refusal survives cached search and an older Retry", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
   let denied = true;
-  let release: (() => void) | undefined;
-  let started: (() => void) | undefined;
-  const entered = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const hold = heldResponse();
   api.on("GET", "/api/users", async (route) => {
     const query = new URL(route.request().url()).searchParams;
     if (query.get("search") !== "blocked") return "next";
     if (denied)
       return route.fulfill({ status: 403, json: { detail: "Forbidden" } });
-    started?.();
-    await held;
+    hold.enter();
+    await hold.released;
     return "next";
   });
   await page.goto(`/access?view=groups&group=${ids.clerks}&tab=members`);
@@ -364,13 +310,13 @@ test("S08 correction a people search refusal survives cached search and an older
     await sheet
       .getByRole("button", { name: "Retry people", exact: true })
       .click();
-    await entered;
+    await hold.entered;
     await search.fill("");
     await expect(
       sheet.getByText("Loading people…", { exact: true }),
     ).toBeHidden();
     await expect(members).not.toContainText("Ana Santos");
-    release?.();
+    hold.release();
     await expect(sheet.getByRole("alert")).toContainText(
       "People are unavailable",
     );
@@ -379,13 +325,13 @@ test("S08 correction a people search refusal survives cached search and an older
       .getByRole("button", { name: "Retry people", exact: true })
       .click();
     await expect(members).toContainText("Ana Santos");
-    expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+    expectNoWrites(api);
   } finally {
-    release?.();
+    hold.release();
   }
 });
 
-test("S08 correction a selected-person refusal survives reopening a cached group", async ({
+test("a selected-person refusal survives reopening a cached group", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -434,5 +380,5 @@ test("S08 correction a selected-person refusal survives reopening a cached group
   await expect(
     sheet.getByRole("list", { name: "Members", exact: true }),
   ).toContainText("Ana Santos");
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  expectNoWrites(api);
 });

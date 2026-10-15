@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import replace
-from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -14,24 +12,23 @@ from operations import reset_application_data as reset
 from operations.reset import execution
 from operations.reset import planning as reset_planning
 from operations.reset.backups import read_backup_snapshot, validate_backup_preservation
-from tests.conftest import _guard_integration_database
+from tests.reset_application_data.execution_support import apply_confirmed
+from tests.reset_application_data.reset_integration_support import (
+    delete_sessions_and_rate_limits,
+    guarded_reset_database,
+    insert_department,
+    insert_logo_file,
+    insert_sessions_and_rate_limits,
+    provider_doubles,
+)
 
 
 @pytest.mark.integration
 def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator(
     request, monkeypatch
 ) -> None:
-    monkeypatch.setenv("OPENSLATE_ENV_SOURCE", "process")
-    runtime_url = os.environ.get("TEST_DATABASE_URL")
-    owner_url = os.environ.get("MIGRATION_DATABASE_URL")
-    if runtime_url is None or owner_url is None:
-        raise RuntimeError("Reset integration requires the disposable PostgreSQL runner")
-    _guard_integration_database(runtime_url)
-    _guard_integration_database(owner_url)
-    database_url = owner_url.replace("postgresql+psycopg://", "postgresql://", 1)
-    storage = Mock()
-    storage.list_object_keys.return_value = ()
-    auth = Mock()
+    reset_database = guarded_reset_database(monkeypatch)
+    storage, auth = provider_doubles()
     admin_id, member_id, guest_id, session_id = uuid4(), uuid4(), uuid4(), uuid4()
     admin_provider_id, member_provider_id, guest_provider_id = uuid4(), uuid4(), uuid4()
     provider_account_ids = tuple(sorted((member_provider_id, guest_provider_id), key=str))
@@ -40,51 +37,31 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
     backup_ids = tuple(uuid4() for _ in range(6))
     admin_email = f"reset-admin-{admin_id}@example.test"
 
-    def cleanup() -> None:
-        _guard_integration_database(runtime_url)
-        _guard_integration_database(owner_url)
-        with connect(database_url) as database:
-            with database.cursor() as cursor:
-                cursor.execute(
-                    "DELETE FROM public.backup_runs WHERE id = ANY(%s)", (list(backup_ids),)
-                )
-                cursor.execute("DELETE FROM public.backup_policies WHERE id = %s", (backup_ids[0],))
-                cursor.execute("DELETE FROM public.update_statuses WHERE id = %s", (backup_ids[1],))
-                cursor.execute(
-                    "UPDATE public.workspace_profiles SET logo_file_id = NULL "
-                    "WHERE logo_file_id = %s",
-                    (file_id,),
-                )
-                cursor.execute("DELETE FROM public.group_access WHERE id = %s", (access_id,))
-                cursor.execute("DELETE FROM public.group_members WHERE id = %s", (membership_id,))
-                cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
-                cursor.execute(
-                    "UPDATE public.workspace_profiles SET invitation_expiry_days = 7, "
-                    "guest_duration_days = 30"
-                )
-                cursor.execute(
-                    "DELETE FROM public.identity_sessions WHERE user_id IN (%s, %s, %s)",
-                    (admin_id, member_id, guest_id),
-                )
-                cursor.execute(
-                    "DELETE FROM public.lifecycle_rate_limit_buckets "
-                    "WHERE actor_id IN (%s, %s, %s)",
-                    (admin_id, member_id, guest_id),
-                )
-                cursor.execute(
-                    "DELETE FROM public.identity_rate_limit_buckets WHERE fingerprint IN (%s, %s)",
-                    ("1" * 64, "2" * 64),
-                )
-                cursor.execute("DELETE FROM public.files WHERE id = %s", (file_id,))
-                cursor.execute("DELETE FROM public.departments WHERE id = %s", (department_id,))
-                cursor.execute(
-                    "DELETE FROM public.users WHERE id IN (%s, %s, %s)",
-                    (admin_id, member_id, guest_id),
-                )
-            database.commit()
+    def cleanup(cursor) -> None:
+        cursor.execute("DELETE FROM public.backup_runs WHERE id = ANY(%s)", (list(backup_ids),))
+        cursor.execute("DELETE FROM public.backup_policies WHERE id = %s", (backup_ids[0],))
+        cursor.execute("DELETE FROM public.update_statuses WHERE id = %s", (backup_ids[1],))
+        cursor.execute(
+            "UPDATE public.workspace_profiles SET logo_file_id = NULL WHERE logo_file_id = %s",
+            (file_id,),
+        )
+        cursor.execute("DELETE FROM public.group_access WHERE id = %s", (access_id,))
+        cursor.execute("DELETE FROM public.group_members WHERE id = %s", (membership_id,))
+        cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
+        cursor.execute(
+            "UPDATE public.workspace_profiles SET invitation_expiry_days = 7, "
+            "guest_duration_days = 30"
+        )
+        delete_sessions_and_rate_limits(cursor, (admin_id, member_id, guest_id))
+        cursor.execute("DELETE FROM public.files WHERE id = %s", (file_id,))
+        cursor.execute("DELETE FROM public.departments WHERE id = %s", (department_id,))
+        cursor.execute(
+            "DELETE FROM public.users WHERE id IN (%s, %s, %s)",
+            (admin_id, member_id, guest_id),
+        )
 
-    request.addfinalizer(cleanup)
-    with connect(database_url) as database:
+    reset_database.clean_up_after(request, cleanup)
+    with connect(reset_database.url) as database:
         with database.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO public.users "
@@ -115,21 +92,8 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                     member_id,
                 ),
             )
-            cursor.execute(
-                "INSERT INTO public.identity_sessions "
-                "(id, user_id, refresh_token_digest, csrf_token_digest, created_at, refreshed_at, "
-                "expires_at) VALUES (%s, %s, %s, %s, now(), now(), now() + interval '1 day'), "
-                "(%s, %s, %s, %s, now(), now(), now() + interval '1 day')",
-                (
-                    session_id,
-                    admin_id,
-                    "a" * 64,
-                    "b" * 64,
-                    uuid4(),
-                    member_id,
-                    "c" * 64,
-                    "d" * 64,
-                ),
+            insert_sessions_and_rate_limits(
+                cursor, admin_id=admin_id, member_id=member_id, session_id=session_id
             )
             cursor.execute(
                 "INSERT INTO public.identity_mfa_observations "
@@ -137,29 +101,8 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 "VALUES (%s, %s, true, now()), (%s, %s, false, now())",
                 (admin_id, admin_provider_id, member_id, member_provider_id),
             )
-            cursor.execute(
-                "INSERT INTO public.identity_rate_limit_buckets "
-                "(fingerprint, attempt_count, window_started_at) "
-                "VALUES (%s, 1, now()), (%s, 1, now())",
-                ("1" * 64, "2" * 64),
-            )
-            cursor.execute(
-                "INSERT INTO public.lifecycle_rate_limit_buckets "
-                "(id, actor_id, attempt_count, window_started_at, window_expires_at) "
-                "VALUES (%s, %s, 1, now(), now() + interval '1 minute'), "
-                "(%s, %s, 1, now(), now() + interval '1 minute')",
-                (uuid4(), admin_id, uuid4(), member_id),
-            )
-            cursor.execute(
-                "INSERT INTO public.departments (id, department_name) VALUES (%s, %s)",
-                (department_id, f"reset-{admin_id}"),
-            )
-            cursor.execute(
-                "INSERT INTO public.files "
-                "(id, purpose, creator_id, filename, expected_size, object_key, state) "
-                "VALUES (%s, 'workspace_logo', %s, 'reset.png', 1, %s, 'awaiting_upload')",
-                (file_id, admin_id, uuid4().hex),
-            )
+            insert_department(cursor, department_id, admin_id)
+            insert_logo_file(cursor, file_id, admin_id)
             cursor.execute("UPDATE public.workspace_profiles SET logo_file_id = %s", (file_id,))
             cursor.execute(
                 "INSERT INTO public.groups (id, name, description, performed_by) "
@@ -271,12 +214,9 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 with pytest.raises(reset.ResetError, match="reconciliation"):
                     reset.build_reset_plan(database, admin_email)
                 with pytest.raises(reset.ResetError, match="reconciliation"):
-                    execution.apply_reset(
+                    apply_confirmed(
                         database,
                         plan,
-                        execute=True,
-                        stdin_is_tty=True,
-                        confirmation=plan.impact_digest,
                         storage=storage,
                         auth=auth,
                     )
@@ -308,12 +248,9 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             )
             auth.list_account_ids.side_effect = (provider_account_ids, ())
             with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
-                execution.apply_reset(
+                apply_confirmed(
                     database,
                     plan,
-                    execute=True,
-                    stdin_is_tty=True,
-                    confirmation=plan.impact_digest,
                     storage=storage,
                     auth=auth,
                 )
@@ -330,12 +267,9 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
         assert storage.list_object_keys() == plan.storage_object_keys
         # Restart the mocked provider fixture for the independent successful attempt.
         auth.list_account_ids.side_effect = (provider_account_ids, ())
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
         )

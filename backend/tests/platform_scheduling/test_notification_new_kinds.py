@@ -7,8 +7,11 @@ from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
-from tests.platform_scheduling.test_notification_routes import _client
-from tests.platform_scheduling.test_report_work import _subject
+from tests.platform_scheduling.support import (
+    assert_notice_hidden,
+    notification_client,
+    report_work_subject,
+)
 
 pytestmark = pytest.mark.integration
 WHEN = datetime(2026, 10, 6, 12, tzinfo=UTC)
@@ -18,7 +21,7 @@ def test_failed_report_reference_is_visible_without_a_run_and_lost_access_hides_
     integration_owner_db,
 ):
     db = integration_owner_db
-    owner, report, grant, _module, _department = _subject(db)
+    owner, report, grant, _module, _department = report_work_subject(db)
     work = ScheduledWork(
         report_id=report.id,
         scheduled_for=WHEN,
@@ -38,7 +41,7 @@ def test_failed_report_reference_is_visible_without_a_run_and_lost_access_hides_
     )
     db.add(notice)
     db.commit()
-    client = _client(db, owner)
+    client = notification_client(db, owner)
     count = client.get("/api/notifications/unread-count")
     assert count.status_code == 200, count.text
     assert count.json() == {"unread_count": 1}
@@ -55,11 +58,8 @@ def test_failed_report_reference_is_visible_without_a_run_and_lost_access_hides_
     assert marked.json()["status"] == "read"
     grant.is_deleted = True
     db.commit()
-    assert client.get("/api/notifications").json()["items"] == []
-    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
-    assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
-    assert client.post(f"/api/notifications/{notice.id}/read").status_code == 404
-    assert _client(db, None).get("/api/notifications/unread-count").status_code == 401
+    assert_notice_hidden(client, notice.id)
+    assert notification_client(db, None).get("/api/notifications/unread-count").status_code == 401
     assert (
         len(list(db.scalars(select(InAppNotification).where(InAppNotification.work_id == work.id))))
         == 1
@@ -81,7 +81,7 @@ def test_invalid_current_source_or_archived_notice_is_hidden_before_all_read_bou
     integration_owner_db, kind, subject_type
 ):
     db = integration_owner_db
-    owner, report, _grant, _module, _department = _subject(db)
+    owner, report, _grant, _module, _department = report_work_subject(db)
     owner.role = "admin"
     work = None
     subject_id = uuid7()
@@ -103,13 +103,11 @@ def test_invalid_current_source_or_archived_notice_is_hidden_before_all_read_bou
     )
     db.add(notice)
     db.commit()
-    client = _client(db, owner)
+    client = notification_client(db, owner)
     assert client.get("/api/notifications?limit=1&status=unread").json() == {
         "items": [],
         "pagination": {"limit": 1, "offset": 0, "count": 0, "total": 0, "has_more": False},
     }
-    assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
-    assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
-    assert client.post(f"/api/notifications/{notice.id}/read").status_code == 404
+    assert_notice_hidden(client, notice.id)
     db.refresh(notice)
     assert notice.read_at is None

@@ -14,6 +14,7 @@ import {
   unpublishBoardPost,
   updateBoardPost,
 } from "../../../src/components/systems/boards/adapters/board-posts-api";
+import { installNoArgumentFetch as installFetch } from "../helpers/fake-fetch";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const postId = "00000000-0000-4000-8000-000000000002";
@@ -21,23 +22,6 @@ const authorId = "00000000-0000-4000-8000-000000000003";
 const publicationKey = "00000000-0000-4000-8000-000000000005";
 const revisionId = "00000000-0000-4000-8000-000000000006";
 const timestamp = "2026-09-23T00:00:00Z";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(responder: () => Response) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder());
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 const jsonResponse = (body: unknown, status = 200) =>
   Response.json(body, { status });

@@ -1,19 +1,17 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInSession, test, type Page } from "./helpers/test";
+import { pageOf } from "../helpers/pagination";
+import { wireBoard } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000021";
 const userId = "00000000-0000-4000-8000-000000000022";
-const board = {
+const board = wireBoard({
   id: boardId,
-  scope: "project",
-  department_id: null,
   name: "Authorized operations",
   description: null,
-  status: "active",
-  revision: 1,
   level: "read",
   created_at: "2026-09-23T00:00:00Z",
   updated_at: "2026-09-23T00:00:00Z",
-};
+});
 
 async function installServerBoards(page: Page) {
   await page.route("**/api/workspace", (route) =>
@@ -31,16 +29,7 @@ async function installServerBoards(page: Page) {
       }),
     }),
   );
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
+  await signedInSession(page, userId);
   await page.route("**/api/boards**", (route) => {
     const path = new URL(route.request().url()).pathname;
     const reply = (status: number, body: unknown) =>
@@ -50,16 +39,7 @@ async function installServerBoards(page: Page) {
         body: JSON.stringify(body),
       });
     if (path === "/api/boards")
-      return reply(200, {
-        items: [board],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
-      });
+      return reply(200, pageOf([board], { limit: 25 }));
     if (path === `/api/boards/${boardId}`) return reply(200, board);
     if (path === `/api/boards/${boardId}/my-access`)
       return reply(200, {
@@ -69,16 +49,7 @@ async function installServerBoards(page: Page) {
         manage: false,
       });
     if (path === `/api/boards/${boardId}/post-authors`)
-      return reply(200, {
-        items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
-      });
+      return reply(200, pageOf([], { limit: 25 }));
     return reply(404, { detail: "Content route unavailable" });
   });
 }

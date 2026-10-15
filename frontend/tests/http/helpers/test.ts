@@ -1,9 +1,17 @@
-import { test as base } from "@playwright/test";
+import {
+  expect as baseExpect,
+  test as base,
+  type BrowserContext,
+  type Page,
+  type Route,
+} from "@playwright/test";
+import { wireWorkspace } from "../../helpers/wire";
 
-// The shared `test` for HTTP specs. The app navigation reads `/api/auth/me`
-// on every signed-in page, and the synthetic dev server has no backend, so
-// each browser context answers it with a signed-in administrator by default.
-// A spec overrides it with its own `page.route("**/api/auth/me", ...)` or
+// The shared `test` for HTTP specs. The auth gate reads `/api/auth/session`
+// and the app navigation reads `/api/auth/me` on every signed-in page, and the
+// synthetic dev server has no backend, so each browser context answers both
+// with a signed-in administrator by default. A spec overrides them with
+// `signedInAs(...)`, `signedInSession(...)`, or its own `page.route(...)` /
 // `context.route(...)`: page routes win over context routes, and a later
 // context route wins over this one. Contexts a spec opens itself with
 // `browser.newContext()` get no default.
@@ -14,8 +22,141 @@ export const defaultSignedInIdentity = {
   access: [],
 } as const;
 
+type AccessLevel = "read" | "write" | "manage";
+
+/** The `/api/auth/me` body: one account and its group access rows. */
+export type SignedInIdentity = {
+  id: string;
+  role: "admin" | "member" | "guest";
+  access?: readonly {
+    department_id: string;
+    module_id: string | null;
+    level: AccessLevel;
+  }[];
+};
+
+/**
+ * Answers the session read as signed out, for pages a signed-out person uses
+ * (sign in, invitation setup, recovery). The base fixture's default is signed
+ * in. A browser without session cookies has its refresh rejected, so the
+ * refresh answers 401 as well.
+ */
+export async function signedOut(target: Page | BrowserContext): Promise<void> {
+  await target.route("**/api/auth/session", (route) =>
+    route.fulfill({ json: { authenticated: false } }),
+  );
+  await target.route("**/api/auth/refresh", (route) =>
+    route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
+  );
+}
+
+/**
+ * Answers `/api/auth/session` with a signed-in session for `userId`. Use it
+ * alone when the spec owns `/api/auth/me` separately or keeps the default
+ * identity; otherwise use `signedInAs`. Stateful, held, counted, or failing
+ * session reads stay inline in the spec.
+ */
+export async function signedInSession(
+  target: Page | BrowserContext,
+  userId: string,
+  options: { setupRequired?: boolean } = {},
+): Promise<void> {
+  await target.route("**/api/auth/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user_id: userId,
+        setup_required: options.setupRequired ?? false,
+      },
+    }),
+  );
+}
+
+/** Signs `identity` in: its session and its `/api/auth/me` identity. */
+export async function signedInAs(
+  target: Page | BrowserContext,
+  identity: SignedInIdentity,
+  options: { setupRequired?: boolean } = {},
+): Promise<void> {
+  await signedInSession(target, identity.id, options);
+  await target.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        id: identity.id,
+        role: identity.role,
+        access: identity.access ?? [],
+      },
+    }),
+  );
+}
+
+/**
+ * A session that a journey changes while it runs: switch the signed-in
+ * account, sign it out, fail its identity read, or hold its session reads.
+ * Fixed sessions use `signedInAs`, `signedInSession` or `signedOut` instead.
+ * Pass `identityRead: false` when the spec answers `/api/auth/me` itself.
+ */
+export async function controlledSession(
+  target: Page | BrowserContext,
+  identity: SignedInIdentity,
+  options: { identityRead?: boolean } = {},
+) {
+  const session = {
+    identity,
+    signedIn: true,
+    /** Any other status answers `/api/auth/me` with a private detail. */
+    identityStatus: 200,
+    /** While set, each session read waits for its release. */
+    hold: null as ReturnType<typeof heldResponse> | null,
+    /** Session reads that arrived while signed out. */
+    signedOutReads: 0,
+  };
+  await target.route("**/api/auth/session", async (route) => {
+    if (!session.signedIn) session.signedOutReads += 1;
+    const hold = session.hold;
+    if (hold) {
+      hold.enter();
+      await hold.released;
+    }
+    await route.fulfill({
+      json: session.signedIn
+        ? {
+            authenticated: true,
+            user_id: session.identity.id,
+            setup_required: false,
+          }
+        : { authenticated: false },
+    });
+  });
+  if (options.identityRead !== false)
+    await target.route("**/api/auth/me", (route) =>
+      session.identityStatus === 200
+        ? route.fulfill({
+            json: {
+              id: session.identity.id,
+              role: session.identity.role,
+              access: session.identity.access ?? [],
+            },
+          })
+        : route.fulfill({
+            status: session.identityStatus,
+            json: { detail: "Private database detail must never be displayed" },
+          }),
+    );
+  return session;
+}
+
 export const test = base.extend({
   context: async ({ context }, provide) => {
+    await context.route("**/api/auth/session", (route) =>
+      route.fulfill({
+        json: {
+          authenticated: true,
+          user_id: defaultSignedInIdentity.id,
+          setup_required: false,
+        },
+      }),
+    );
     await context.route("**/api/auth/me", (route) =>
       route.fulfill({ json: defaultSignedInIdentity }),
     );
@@ -30,26 +171,14 @@ export const test = base.extend({
     await context.route("**/api/workspace", (route) =>
       route.request().method() === "GET"
         ? route.fulfill({
-            json: {
+            json: wireWorkspace({
               id: "00000000-0000-4000-8000-000000000102",
-              display_name: "OpenSlate",
-              legal_name: null,
-              description: null,
-              contact_email: null,
-              contact_phone: null,
-              postal_address: null,
-              logo_file_id: null,
               locale: "en-PH",
               timezone: "Asia/Manila",
-              mark: "OS",
               currency: "PHP",
-              week_start: "monday",
-              business_hours: "09:00–18:00",
-              theme: "slate",
-              revision: 1,
               today: "2026-10-06",
               purge_enabled: false,
-            },
+            }),
           })
         : route.fallback(),
     );
@@ -62,7 +191,7 @@ export const test = base.extend({
     await context.route("**/api/events", () => undefined);
     // Preferences are read under the verified session ID, which individual
     // journeys may override independently of this default navigation identity.
-    // Full preferences mirror the separate strict9a DTO; each context owns its state.
+    // Full preferences mirror the strict preferences DTO; each context owns its state.
     type Preference = {
       theme: "light" | "dark" | "system";
       appearance: { motion: "system" | "reduce"; keyboard_shortcuts: boolean };
@@ -138,3 +267,96 @@ export const test = base.extend({
 
 export { expect } from "@playwright/test";
 export type { BrowserContext, Locator, Page, Route } from "@playwright/test";
+
+/**
+ * The event stream stays held by the context route above. A spec's catch-all
+ * `/api/**` page route takes precedence over it, so it hands the stream back
+ * with `route.fallback()`; answering it instead makes the stream fail at a
+ * random moment, and its resync reloads whatever the journey is doing.
+ */
+export function isEventStream(route: Route): boolean {
+  return new URL(route.request().url()).pathname === "/api/events";
+}
+
+/**
+ * Whether the page blocks a browser exit now: dispatches a cancelable
+ * `beforeunload` and reports whether a listener prevented it.
+ */
+export function exitGuarded(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+}
+
+/**
+ * Waits `frames` animation frames, so React commits the updates and effect
+ * cleanups that already-settled promise handlers scheduled. Use it before a
+ * check that must not run ahead of those commits; it waits for no event.
+ */
+export async function settleReact(page: Page, frames = 2): Promise<void> {
+  await page.evaluate(
+    (count) =>
+      new Promise<void>((resolve) => {
+        const step = (left: number): void => {
+          if (left === 0) resolve();
+          else requestAnimationFrame(() => step(left - 1));
+        };
+        step(count);
+      }),
+    frames,
+  );
+}
+
+/**
+ * A held mock response. The route handler calls `enter()` and awaits
+ * `released`; the test awaits `entered`, acts, then calls `release()`.
+ */
+export function heldResponse() {
+  let enter = () => {};
+  let release = () => {};
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    entered,
+    released,
+    enter: () => enter(),
+    release: () => release(),
+  };
+}
+
+/** The page does not scroll sideways at the current viewport. */
+export async function expectNoHorizontalScroll(page: Page): Promise<void> {
+  baseExpect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth <=
+        document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+}
+
+/**
+ * Replaces the browser `EventSource` with one that never connects or emits,
+ * for journeys that drive the session gate and must not see a stream resync.
+ */
+export async function quietEventSource(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    class QuietEventSource extends EventTarget {
+      close() {}
+    }
+    Object.defineProperty(window, "EventSource", { value: QuietEventSource });
+  });
+}
+
+/** Asks the auth gate to verify the current session again, as a focus or retry does. */
+export async function recheckSession(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("openslate:session-recheck")),
+  );
+}

@@ -26,7 +26,7 @@ from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
-from tests.auth.test_supabase_auth_core import _signed_access
+from tests.auth.provider_jwt_support import signed_access
 from tests.conftest import guarded_create_engine
 
 POLICY_FIELDS = (
@@ -86,7 +86,7 @@ class PolicyWorld:
     bucket_ids: list[str] = field(default_factory=list, repr=False)
 
     def access(self, aal="aal1", slot=0, **extra):
-        return _signed_access(
+        return signed_access(
             self.key,
             user_id=str(self.provider_id),
             session_id=str(self.provider_sessions[slot]),

@@ -1,0 +1,261 @@
+name: Mutation (optional)
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: openslate-mutation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  mutation:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      OUTPUT: backend/test-results/mutation-scheduled
+    steps:
+      - name: Start the bounded lane
+        run: |
+          echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          printf 'COMPARED=0\nDISCOVERED=0\n' >> "$GITHUB_ENV"
+          mkdir -p "$OUTPUT"
+          printf 'run=%s attempt=%s trigger=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" > "$OUTPUT/run.txt"
+      - uses: actions/checkout@v7
+        timeout-minutes: 2
+        with:
+          fetch-depth: 0
+          clean: false # Keep the pre-checkout failure/report record, not any cached source.
+      - id: restore
+        name: Restore the latest checkpoint, including failed cycles
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          runs=$(gh api --method GET "repos/$GH_REPO/actions/workflows/mutation.yml/runs" \
+            -f branch="$DEFAULT_BRANCH" -f per_page=100 \
+            --jq ".workflow_runs[] | select(.id == $GITHUB_RUN_ID or .status == \"completed\") | .id")
+          for prior in $runs; do
+            names=$(gh api "repos/$GH_REPO/actions/runs/$prior/artifacts" --paginate \
+              --jq '.artifacts | map(select(.name | startswith("mutation-checkpoint-"))) | sort_by(.created_at) | reverse | .[].name')
+            for name in $names; do
+              rm -rf "$RUNNER_TEMP/mutation-restore"
+              gh run download "$prior" --name "$name" --dir "$RUNNER_TEMP/mutation-restore" || continue
+              candidate="$RUNNER_TEMP/mutation-restore/state.json"
+              jq -e 'type == "object" and (.cycle|type) == "string" and (.pending|type) == "array" and (.modes|type) == "object" and (.results|type) == "object" and (.failures|type) == "object" and (.last_success == null or (.last_success|type) == "string")' "$candidate" >/dev/null 2>&1 || continue
+              mkdir -p "$OUTPUT" backend/test-results/mutation
+              cp -a "$RUNNER_TEMP/mutation-restore/." "$OUTPUT/"
+              if [ -f "$OUTPUT/native.tgz" ]; then
+                tar -xzf "$OUTPUT/native.tgz" -C backend/test-results/mutation || {
+                  rm -rf backend/test-results/mutation/scheduled
+                  rm -f "$OUTPUT/native.tgz"
+                  echo "Invalid native cache; pending work will be regenerated at its pinned revision."
+                }
+              fi
+              exit 0
+            done
+          done
+          echo "No valid checkpoint found; selection will use the recorded anchor."
+      - id: plan
+        name: Select from last success or the recorded anchor; pin unfinished cycles
+        run: |
+          cp scripts/mutation.py "$RUNNER_TEMP/mutation-controller.py"
+          python3 "$RUNNER_TEMP/mutation-controller.py" plan
+          cycle=$(jq -r .cycle "$OUTPUT/state.json")
+          git checkout --detach "$cycle"
+          printf 'run=%s attempt=%s trigger=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" > "$OUTPUT/run.txt"
+          printf 'tested-cycle=%s tree=%s\n' "$cycle" "$(git rev-parse HEAD^{tree})" >> "$OUTPUT/run.txt"
+      - id: python
+        uses: actions/setup-python@v7
+        timeout-minutes: 2
+        with:
+          python-version: "3.14"
+      - id: uv
+        uses: astral-sh/setup-uv@v10.1.0
+        timeout-minutes: 2
+        with:
+          version: "0.12.x"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - id: sync
+        timeout-minutes: 5
+        run: |
+          uv sync --locked || {
+            rc=$?
+            python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure sync "$rc"
+            exit "$rc"
+          }
+        working-directory: backend
+      - name: Checkpoint terminal dependency setup failure
+        if: always() && steps.plan.outcome == 'success'
+        env:
+          PYTHON_SETUP: ${{ steps.python.outcome }}
+          UV_SETUP: ${{ steps.uv.outcome }}
+          SYNC: ${{ steps.sync.outcome }}
+        run: |
+          if [ "$PYTHON_SETUP" = failure ]; then
+            python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure python 1
+          elif [ "$UV_SETUP" = failure ]; then
+            python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure uv 1
+          elif [ "$SYNC" = failure ]; then
+            python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure sync 1
+          fi
+      - id: native
+        name: Native mutations only; reserve fifteen minutes for reporting and upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$GITHUB_WORKSPACE/$OUTPUT/state.json"
+          baseline="$GITHUB_WORKSPACE/docs/plans/mutation-baseline.json"
+          deadline=$((STARTED + 45 * 60))
+          native="$GITHUB_WORKSPACE/backend/.venv/bin/mutmut"
+          run_native() {
+            local remaining=$((deadline - $(date +%s)))
+            [ "$remaining" -gt 15 ] || return 124
+            (cd "$root" && no_proxy='*' timeout --signal=TERM --kill-after=10 "$remaining" "$native" "$@") >> "$log" 2>&1
+          }
+          while module=$(jq -r '.pending[0] // empty' "$state"); [ -n "$module" ]; do
+            [ "$(date +%s)" -lt "$deadline" ] || break
+            root=$(python3 "$RUNNER_TEMP/mutation-controller.py" prepare "$module") || {
+              rc=$?
+              python3 "$RUNNER_TEMP/mutation-controller.py" pre-failure prepare "$rc" "$module"
+              exit "$rc"
+            }
+            meta="$root/mutants/$module.meta"
+            log="$root/run.log"
+            mode=$(jq -r --arg m "$module" '.modes[$m]' "$state")
+            rc=0
+            if [ "$mode" = rescan ]; then
+              while IFS= read -r id; do
+                # Resume only successful exact-ID commands with completed native verdicts.
+                if [ -f "$root/completed.txt" ] && grep -Fxq "$id" "$root/completed.txt" && [ -f "$meta" ] && jq -e --arg id "$id" '.exit_code_by_key[$id] as $c | [0,1,3] | index($c) != null' "$meta" >/dev/null; then continue; fi
+                if [ -f "$root/retried.txt" ] && grep -Fxq "$id" "$root/retried.txt"; then rc=1; continue; fi
+                run_native run "$id" --max-children 6 || { rc=$?; break; }
+                if jq -e --arg id "$id" '.exit_code_by_key[$id] as $c | [0,1,3] | index($c) != null' "$meta" >/dev/null; then printf '%s\n' "$id" >> "$root/completed.txt"; fi
+              done < <(jq -r --arg m "$module" '.modules[$m].baseline.survivors[]' "$baseline")
+            else
+              # Native no-name run resumes this revision's prepared root without deleting it.
+              run_native run --max-children 6 || rc=$?
+            fi
+            if [ -f "$meta" ]; then
+              while IFS= read -r id; do
+                touch "$root/retried.txt"
+                grep -Fxq "$id" "$root/retried.txt" && continue
+                [ "$((deadline - $(date +%s)))" -gt 15 ] || { rc=124; break; }
+                printf '%s\n' "$id" >> "$root/retried.txt"
+                # Never use wrappers' run here: they delete the generated root.
+                if run_native run "$id" --max-children 1; then
+                  if jq -e --arg id "$id" '.exit_code_by_key[$id] as $c | [0,1,3] | index($c) != null' "$meta" >/dev/null; then printf '%s\n' "$id" >> "$root/completed.txt"; fi
+                else
+                  rc=$?
+                fi
+              done < <(jq -r '.exit_code_by_key | to_entries[] | select(.value == 36 or .value == -24 or .value == 24 or .value == 152 or .value == 255) | .key' "$meta")
+            fi
+            known=$(jq -c --arg m "$module" '[.results[$m].survivors[]?, .failures[$m].survivors[]?] | unique' "$state")
+            python3 "$RUNNER_TEMP/mutation-controller.py" compare "$module" "$rc"
+            COMPARED=$((COMPARED + 1))
+            DISCOVERED=$((DISCOVERED + $(jq --arg m "$module" --argjson known "$known" '(.results[$m].new_survivors - $known) | length' "$state")))
+            printf 'COMPARED=%s\nDISCOVERED=%s\n' "$COMPARED" "$DISCOVERED" >> "$GITHUB_ENV"
+            cycle=$(jq -r .cycle "$state")
+            diffs="$GITHUB_WORKSPACE/$OUTPUT/diffs/$cycle/${module//\//__}"
+            mkdir -p "$diffs"
+            while IFS= read -r id; do
+              # Unknowns propose full survivor sets; known regressions attach native diffs.
+              remaining=$((deadline - $(date +%s)))
+              [ "$remaining" -gt 15 ] || { echo "Native diff budget exhausted for $id" >&2; exit 1; }
+              (cd "$root" && timeout --kill-after=10 "$remaining" "$native" show "$id") > "$diffs/$id.diff" 2>&1
+            done < <(jq -r --arg m "$module" '.results[$m] | select(.proposal == null) | .new_survivors[]' "$state")
+            if jq -e --arg m "$module" '.results[$m].settled' "$state" >/dev/null; then
+              receipts="$GITHUB_WORKSPACE/$OUTPUT/native-meta/$cycle/${module//\//__}"
+              mkdir -p "$receipts"
+              if [ -f "$meta" ]; then cp "$meta" "$receipts/verdicts.meta"; fi
+              cp "$log" "$receipts/run.log"
+              rm -rf "$root" # Only this workflow's completed prepared copy, never app/provider data.
+            else
+              break
+            fi
+          done
+      - name: Always retain the report and native checkpoint
+        if: always()
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT"
+          {
+            printf '# Optional mutation report\n\n'
+            printf 'Attempt %s/%s: modules checked (compared): %s; newly discovered survivors: %s\n\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${COMPARED:-0}" "${DISCOVERED:-0}"
+            if [ -s "$OUTPUT/state.json" ]; then
+              jq -r '"Tested cycle: `\(.cycle)`\nLast successful complete cycle: `\(.last_success // "none")`\nCumulative cycle: selected \(.modes|length); completed \(.results|to_entries|map(select(.value.complete))|length); pending \(.pending|length); retained failures \(.failures|length)\nRetained new-survivor names (cumulative): \([.failures[].new_survivors|length]|add // 0)\nNotes: \((.notes // [])|join("; "))\n\nFull proposed baselines and retained failures (each carries its tested revision):\n"' "$OUTPUT/state.json"
+              printf '\n```json\n'
+              jq '.failures' "$OUTPUT/state.json"
+              jq '{precomparison_failure, precomparison_receipts}' "$OUTPUT/state.json"
+              printf '```\n\nAdopt unknown baselines only in a reviewed commit after matching item 24 classes in docs/plans/mutation-survivors.md. Never automatically accept these proposals.\n'
+            else
+              printf 'No usable checkpoint; setup/restore/selection failed. No last-success advancement.\n'
+            fi
+          } > "$OUTPUT/report.md"
+          minutes=$(awk -v start="$STARTED" -v end="$(date +%s)" 'BEGIN {printf "%.2f", (end-start)/60}')
+          printf '\nWall minutes (first lane step through report generation; excludes upload/issue/finalization; not billing or job-total): %s\n' "$minutes" >> "$OUTPUT/report.md"
+          cat "$OUTPUT/report.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -d backend/test-results/mutation/scheduled ]; then
+            # Do not upload the source/test symlinks or any installation environment.
+            (cd backend/test-results/mutation && find scheduled -type f -o -type d > "$RUNNER_TEMP/native-files")
+            tar --no-recursion -czf "$OUTPUT/native.tgz" -C backend/test-results/mutation -T "$RUNNER_TEMP/native-files"
+          fi
+      - id: upload
+        name: Save checkpoint even on failure or budget rollover
+        if: always()
+        timeout-minutes: 4
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
+          path: backend/test-results/mutation-scheduled/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Open or update one mutation issue thread
+        if: always()
+        timeout-minutes: 3
+        shell: bash
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          test -s "$OUTPUT/state.json" || exit 0
+          jq -e '.failures | length > 0' "$OUTPUT/state.json" >/dev/null || exit 0
+          title='Optional mutation baseline regressions'
+          issue=$(gh issue list --state all --search "$title in:title" --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)
+          printf '\nNative mutant diffs and full proposed baselines: %s\nRun: https://github.com/%s/actions/runs/%s\n' "$ARTIFACT_URL" "$GH_REPO" "$GITHUB_RUN_ID" >> "$OUTPUT/report.md"
+          # Keep unabridged proposals in the artifact when GitHub's issue size is exceeded.
+          body="$OUTPUT/report.md"
+          if [ "$(wc -c < "$body")" -gt 60000 ]; then
+            body="$OUTPUT/issue.md"
+            printf 'Full proposed baselines (killed counts and every named survivor), retained failures and native new-mutant diffs: %s\nRun: https://github.com/%s/actions/runs/%s\nHuman review and item 24 classification are required; nothing was accepted.\n' "$ARTIFACT_URL" "$GH_REPO" "$GITHUB_RUN_ID" > "$body"
+          fi
+          if [ -z "$issue" ]; then
+            gh issue create --title "$title" --body-file "$body"
+          else
+            if [ "$(gh issue view "$issue" --json state --jq .state)" = CLOSED ]; then gh issue reopen "$issue"; fi
+            gh issue comment "$issue" --body-file "$body"
+          fi
+      - name: Require a complete passing cycle; pending/failures never advance last success
+        if: always()
+        env:
+          RESTORE: ${{ steps.restore.outcome }}
+          PLAN: ${{ steps.plan.outcome }}
+          SYNC: ${{ steps.sync.outcome }}
+          NATIVE: ${{ steps.native.outcome }}
+          UPLOAD: ${{ steps.upload.outcome }}
+        run: |
+          test "$RESTORE" = success && test "$PLAN" = success && test "$SYNC" = success && test "$NATIVE" = success && test "$UPLOAD" = success
+          jq -e '(.pending | length) == 0 and (.failures | length) == 0 and ((.notes // []) | length) == 0 and .last_success == .cycle' "$OUTPUT/state.json"

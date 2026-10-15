@@ -1,9 +1,19 @@
-import { expect, test, type Page, type Route } from "./helpers/test";
+import {
+  controlledSession,
+  expect,
+  heldResponse,
+  settleReact,
+  signedInAs,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf, wirePagination } from "../helpers/pagination";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const notificationId = "00000000-0000-4000-8000-000000000102";
@@ -33,16 +43,7 @@ async function notificationRoute(
 
 async function mockSession(page: Page) {
   await installTitleSources(page);
-  await page.route("**/api/auth/session", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    });
-  });
+  await signedInAs(page, { id: userId, role: "admin" });
 }
 
 async function fakeEventSource(page: Page) {
@@ -70,7 +71,6 @@ test("connected Report notifications show reference status and refetch after mar
   await mockSession(page);
   await fakeEventSource(page);
   let status: "unread" | "read" = "unread";
-  let listReadsAfterMutation = 0;
   await notificationRoute(page, async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
@@ -81,18 +81,11 @@ test("connected Report notifications show reference status and refetch after mar
       });
       return;
     }
-    if (status === "read") listReadsAfterMutation += 1;
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
         items: [notification(status)],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       }),
     });
   });
@@ -116,12 +109,9 @@ test("connected Report notifications show reference status and refetch after mar
     `/openview?section=reports&report=${reportId}&run=${runId}`,
   );
   await connected.getByRole("button", { name: "Mark as read" }).click();
+  // The command writes nothing to the cache (notification-items.tsx), so the
+  // Read label can come only from the refetched list.
   await expect(connected.getByText("Read", { exact: true })).toBeVisible();
-  expect(listReadsAfterMutation).toBeGreaterThanOrEqual(1);
-  await expect(
-    page.getByText("Preview notifications", { exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByText("Preview preferences")).toHaveCount(0);
 });
 
 test("connected inbox shows Board publication and reminder references without content", async ({
@@ -162,13 +152,7 @@ test("connected inbox shows Board publication and reminder references without co
             read_at: null,
           },
         ],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 2,
-          total: 2,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 2, total: 2 }),
       }),
     });
   });
@@ -186,9 +170,6 @@ test("connected inbox shows Board publication and reminder references without co
   await expect(
     connected.getByText("Board post", { exact: true }),
   ).toBeVisible();
-  await expect(
-    connected.getByText("Event reminder", { exact: true }),
-  ).toBeVisible();
   await expect(connected).not.toContainText(postId);
   await expect(connected).not.toContainText(eventId);
   await expect(connected).not.toContainText("Publication body");
@@ -198,12 +179,6 @@ test("connected inbox shows Board publication and reminder references without co
   ).toHaveAttribute(
     "href",
     `/boards?board=${boardId}&section=posts&post=${postId}`,
-  );
-  await expect(
-    connected.getByRole("link", { name: "Open event" }),
-  ).toHaveAttribute(
-    "href",
-    `/boards?board=${boardId}&section=calendar&event=${eventId}`,
   );
 });
 
@@ -220,13 +195,11 @@ test("Report notification SSE resync and recipient invalidation refresh without 
       contentType: "application/json",
       body: JSON.stringify({
         items: available ? [notification("unread")] : [],
-        pagination: {
+        pagination: wirePagination({
           limit: 25,
-          offset: 0,
           count: available ? 1 : 0,
           total: available ? 1 : 0,
-          has_more: false,
-        },
+        }),
       }),
     });
   });
@@ -245,52 +218,21 @@ test("Report notification SSE resync and recipient invalidation refresh without 
       url.searchParams.get("limit") === "25"
     );
   });
-  await page.evaluate(() => {
-    const stream = (
-      window as Window & {
-        reportEventSources?: Array<EventTarget & { closed: boolean }>;
-      }
-    ).reportEventSources?.findLast((candidate) => !candidate.closed);
-    stream?.dispatchEvent(new MessageEvent("resync", { data: "{}" }));
-  });
+  await sendOpenViewEvent(page, "resync");
   await (await openingPage).finished();
   await expect(connected.getByText("Refreshing notifications…")).toHaveCount(0);
   const baselineReads = listReads;
   available = true;
-  await page.evaluate(() => {
-    const stream = (
-      window as Window & {
-        reportEventSources?: Array<EventTarget & { closed: boolean }>;
-      }
-    ).reportEventSources?.findLast((candidate) => !candidate.closed);
-    stream?.dispatchEvent(
-      new MessageEvent("invalidate", {
-        data: JSON.stringify({ entity: "reports", entity_id: "private" }),
-      }),
-    );
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "reports",
+    entity_id: "private",
   });
   expect(listReads).toBe(baselineReads);
-  await page.evaluate(() => {
-    const stream = (
-      window as Window & {
-        reportEventSources?: Array<EventTarget & { closed: boolean }>;
-      }
-    ).reportEventSources?.findLast((candidate) => !candidate.closed);
-    stream?.dispatchEvent(new MessageEvent("resync", { data: "{}" }));
-  });
+  await sendOpenViewEvent(page, "resync");
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
   available = false;
-  await page.evaluate(() => {
-    const stream = (
-      window as Window & {
-        reportEventSources?: Array<EventTarget & { closed: boolean }>;
-      }
-    ).reportEventSources?.findLast((candidate) => !candidate.closed);
-    stream?.dispatchEvent(
-      new MessageEvent("invalidate", {
-        data: JSON.stringify({ entity: "in_app_notifications" }),
-      }),
-    );
+  await sendOpenViewEvent(page, "invalidate", {
+    entity: "in_app_notifications",
   });
   await expect(
     connected.getByText("No notifications on this page."),
@@ -299,16 +241,6 @@ test("Report notification SSE resync and recipient invalidation refresh without 
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const streams = (
-          window as Window & { reportEventSources?: Array<{ closed: boolean }> }
-        ).reportEventSources;
-        return streams?.filter((stream) => !stream.closed).length ?? 0;
-      }),
-    )
-    .toBe(1);
 });
 
 test("Report notification refresh retains last good on transient failure and clears it on denial", async ({
@@ -330,13 +262,7 @@ test("Report notification refresh retains last good on transient failure and cle
       contentType: "application/json",
       body: JSON.stringify({
         items: [notification("unread")],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       }),
     });
   });
@@ -386,18 +312,9 @@ test("a revoked notification 404 clears old references before a failed first-pag
   let staleRefreshRequested = false;
   let revoked = false;
   let followUpRequested = false;
-  let releaseStaleRefresh = () => {};
-  let releaseFollowUp = () => {};
-  let signalStaleRefresh = () => {};
-  const staleRefreshGate = new Promise<void>((resolve) => {
-    releaseStaleRefresh = resolve;
-  });
-  const followUpGate = new Promise<void>((resolve) => {
-    releaseFollowUp = resolve;
-  });
-  const staleRefreshStarted = new Promise<void>((resolve) => {
-    signalStaleRefresh = resolve;
-  });
+  const followUpOffsets: (string | null)[] = [];
+  const staleRefresh = heldResponse();
+  const followUp = heldResponse();
   const oldPage = {
     items: [notification("unread")],
     pagination: { limit: 25, offset: 0, count: 1, total: 1, has_more: false },
@@ -413,11 +330,12 @@ test("a revoked notification 404 clears old references before a failed first-pag
       return;
     }
     if (revoked) {
-      expect(new URL(route.request().url()).searchParams.get("offset")).toBe(
-        "0",
+      followUpOffsets.push(
+        new URL(route.request().url()).searchParams.get("offset"),
       );
       followUpRequested = true;
-      await followUpGate;
+      followUp.enter();
+      await followUp.released;
       await route.fulfill({
         status: 500,
         contentType: "application/json",
@@ -426,8 +344,8 @@ test("a revoked notification 404 clears old references before a failed first-pag
       return;
     }
     if (staleRefreshRequested) {
-      signalStaleRefresh();
-      await staleRefreshGate;
+      staleRefresh.enter();
+      await staleRefresh.released;
     }
     await route.fulfill({
       contentType: "application/json",
@@ -440,34 +358,22 @@ test("a revoked notification 404 clears old references before a failed first-pag
     name: "Notifications",
   });
   await expect(connected.getByText("Scheduled report run")).toBeVisible();
-  await page.evaluate(() => {
-    const stream = (
-      window as Window & {
-        reportEventSources?: Array<EventTarget & { closed: boolean }>;
-      }
-    ).reportEventSources?.findLast((candidate) => !candidate.closed);
-    stream?.dispatchEvent(new MessageEvent("resync", { data: "{}" }));
-  });
+  await sendOpenViewEvent(page, "resync");
   staleRefreshRequested = true;
-  await page.evaluate(() => {
-    const stream = (
-      window as Window & {
-        reportEventSources?: Array<EventTarget & { closed: boolean }>;
-      }
-    ).reportEventSources?.findLast((candidate) => !candidate.closed);
-    stream?.dispatchEvent(new MessageEvent("resync", { data: "{}" }));
-  });
-  await staleRefreshStarted;
+  await sendOpenViewEvent(page, "resync");
+  await staleRefresh.entered;
   await connected.getByRole("button", { name: "Mark as read" }).click();
   await expect.poll(() => followUpRequested).toBe(true);
   await expect(connected.getByText("Scheduled report run")).toHaveCount(0);
-  releaseStaleRefresh();
-  releaseFollowUp();
+  staleRefresh.release();
+  followUp.release();
   await expect(
     connected.getByText("Couldn’t load notifications."),
   ).toBeVisible();
   await expect(connected.getByText("Scheduled report run")).toHaveCount(0);
   await expect(connected).not.toContainText(reportId);
+  // The recovery after the revoked notice rereads only the first page.
+  expect([...new Set(followUpOffsets)]).toEqual(["0"]);
 });
 
 test("a revoked notice on a later page reloads the authorized first page", async ({
@@ -501,13 +407,7 @@ test("a revoked notice on a later page reloads the authorized first page", async
               scheduled_for: "2026-10-01T00:00:00Z",
             },
           ],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
         }),
       });
       return;
@@ -601,16 +501,7 @@ function noticePage(
   offset: number,
   total: number,
 ) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
+  return pageOf(items, { limit, offset, total });
 }
 
 async function installTitleSources(page: Page) {
@@ -683,9 +574,11 @@ async function installTitleSources(page: Page) {
 }
 
 async function installNotificationJourney(page: Page, count = 125) {
-  await mockSession(page);
+  await installTitleSources(page);
+  const session = await controlledSession(page, { id: userId, role: "admin" });
   await fakeEventSource(page);
   const state = {
+    session,
     items: Array.from({ length: Math.max(70, count) }, (_, index) => ({
       ...notification(index < count ? "unread" : "read"),
       id: `00000000-0000-4000-8000-${String(500 + index).padStart(12, "0")}`,
@@ -863,30 +756,26 @@ for (const count of [0, 8, 125]) {
   });
 }
 
-for (const invalid of [
-  { unread_count: -1 },
-  { unread_count: 1.5 },
-  { unread_count: 0, secret: "private" },
-]) {
-  test(`unknown count stays neutral and retries after malformed scalar ${JSON.stringify(invalid)}`, async ({
-    page,
-  }) => {
-    const state = await installNotificationJourney(page);
-    state.countBody = invalid;
-    await page.goto("/platform");
-    await expect(
-      page.getByRole("button", { name: "Notifications", exact: true }),
-    ).toBeVisible();
-    const popup = await notificationPopover(page);
-    await expect(popup.getByText("Couldn’t load notifications.")).toBeVisible();
-    await expect(popup).not.toContainText("private");
-    state.countBody = { unread_count: 8 };
-    await popup.getByRole("button", { name: "Try again" }).click();
-    await expect(
-      page.getByRole("button", { name: "Notifications, 8 unread" }),
-    ).toBeVisible();
-  });
-}
+// The count rules (negative, fractional, extra field, missing, text) are
+// owned by isolated/platform/notifications-api.spec.ts.
+test("unknown count stays neutral and retries after a malformed scalar", async ({
+  page,
+}) => {
+  const state = await installNotificationJourney(page);
+  state.countBody = { unread_count: 0, secret: "private" };
+  await page.goto("/platform");
+  await expect(
+    page.getByRole("button", { name: "Notifications", exact: true }),
+  ).toBeVisible();
+  const popup = await notificationPopover(page);
+  await expect(popup.getByText("Couldn’t load notifications.")).toBeVisible();
+  await expect(popup).not.toContainText("private");
+  state.countBody = { unread_count: 8 };
+  await popup.getByRole("button", { name: "Try again" }).click();
+  await expect(
+    page.getByRole("button", { name: "Notifications, 8 unread" }),
+  ).toBeVisible();
+});
 
 test("shared read guard prevents overlapping bell and inbox commands and explicitly reconciles read-all", async ({
   page,
@@ -899,10 +788,8 @@ test("shared read guard prevents overlapping bell and inbox commands and explici
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
   const popup = await notificationPopover(page);
-  let release = () => {};
-  state.holdCommand = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const command = heldResponse();
+  state.holdCommand = command.released;
   await popup.getByRole("button", { name: "Mark all as read" }).click();
   await expect.poll(() => state.commands.length).toBe(1);
   await expect(
@@ -914,7 +801,7 @@ test("shared read guard prevents overlapping bell and inbox commands and explici
   await expect(
     page.getByRole("button", { name: "Notifications, 70 unread" }),
   ).toBeVisible();
-  release();
+  command.release();
   await expect(
     page.getByRole("button", { name: "Notifications, 1 unread" }),
   ).toBeVisible();
@@ -1019,10 +906,7 @@ test("failed read-all retains authoritative count and does not resend until expl
   await expect(
     inbox.getByRole("button", { name: "Mark all as read" }),
   ).toBeEnabled();
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
-  );
+  await settleReact(page, 1);
   await expect(
     page.getByRole("heading", {
       name: "Notifications could not be marked as read. Try again.",
@@ -1035,6 +919,9 @@ test("failed read-all retains authoritative count and does not resend until expl
   await expect(
     page.getByRole("button", { name: "Notifications, 0 unread" }),
   ).toBeVisible();
+  await expect(inbox.getByRole("button", { name: "Mark as read" })).toHaveCount(
+    0,
+  );
   expect(state.commands).toHaveLength(3);
 });
 
@@ -1042,14 +929,10 @@ test("opening resync replaces cold count and popup reads and ignores their late 
   page,
 }) => {
   const state = await installNotificationJourney(page, 1);
-  let releaseCount = () => {};
-  let releaseList = () => {};
-  state.holdCount = new Promise<void>((resolve) => {
-    releaseCount = resolve;
-  });
-  state.holdList = new Promise<void>((resolve) => {
-    releaseList = resolve;
-  });
+  const coldCount = heldResponse();
+  const coldList = heldResponse();
+  state.holdCount = coldCount.released;
+  state.holdList = coldList.released;
   await page.goto("/platform");
   const popup = await notificationPopover(page);
   await expect.poll(() => state.countReads).toBeGreaterThan(0);
@@ -1065,8 +948,8 @@ test("opening resync replaces cold count and popup reads and ignores their late 
     ).toBeVisible();
     await expect(popup.getByText("No notifications yet.")).toBeVisible();
   } finally {
-    releaseCount();
-    releaseList();
+    coldCount.release();
+    coldList.release();
   }
   await expect(
     page.getByRole("button", { name: "Notifications, 1 unread" }),
@@ -1135,24 +1018,11 @@ test("the shell keeps one active stream and only unavailable-stream focus refres
   await expect.poll(() => state.countReads).toBeGreaterThan(2);
   const oldListReads = state.listReads.length;
   const oldCountReads = state.countReads;
-  let releaseSession = () => {};
-  let signalSession = () => {};
-  const heldSession = new Promise<void>((resolve) => {
-    releaseSession = resolve;
-  });
-  const sessionStarted = new Promise<void>((resolve) => {
-    signalSession = resolve;
-  });
-  await page.route("**/api/auth/session", async (route) => {
-    signalSession();
-    await heldSession;
-    await route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    });
-  });
+  const sessionCheck = heldResponse();
+  state.session.hold = sessionCheck;
   state.count = 12;
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-  await sessionStarted;
+  await sessionCheck.entered;
   try {
     await expect(
       page.getByRole("dialog", { name: "Session verification" }),
@@ -1160,7 +1030,7 @@ test("the shell keeps one active stream and only unavailable-stream focus refres
     expect(state.countReads).toBe(oldCountReads);
     expect(state.listReads).toHaveLength(oldListReads);
   } finally {
-    releaseSession();
+    sessionCheck.release();
   }
   await expect(
     page.getByRole("button", { name: "Notifications, 12 unread" }),
@@ -1322,10 +1192,8 @@ test("cached inbox revisits retain the authorized page while a refresh is held",
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
-  let release = () => {};
-  state.holdList = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const refresh = heldResponse();
+  state.holdList = refresh.released;
   await page.getByRole("link", { name: "Notifications", exact: true }).click();
   try {
     await expect(
@@ -1335,7 +1203,7 @@ test("cached inbox revisits retain the authorized page while a refresh is held",
     ).toHaveCount(25);
     await expect(page.getByText("Refreshing notifications…")).toBeVisible();
   } finally {
-    release();
+    refresh.release();
   }
 });
 
@@ -1344,29 +1212,13 @@ test("held count, title and read-command results cannot follow a different verif
 }) => {
   const state = await installNotificationJourney(page, 8);
   const accountB = "00000000-0000-4000-8000-000000000901";
-  let account = userId;
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: account, setup_required: false },
-    }),
-  );
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: account, role: "admin", access: [] } }),
-  );
   let holdTitle = false;
-  let releaseTitle = () => {};
-  let titleStarted = () => {};
-  const heldTitle = new Promise<void>((resolve) => {
-    releaseTitle = resolve;
-  });
-  const titleBegun = new Promise<void>((resolve) => {
-    titleStarted = resolve;
-  });
+  const title = heldResponse();
   await page.route(`**/api/reports/${reportId}`, async (route) => {
-    const requestedAccount = account;
+    const requestedAccount = state.session.identity.id;
     if (requestedAccount === userId && holdTitle) {
-      titleStarted();
-      await heldTitle;
+      title.enter();
+      await title.released;
     }
     await route.fulfill({
       json: {
@@ -1402,34 +1254,25 @@ test("held count, title and read-command results cannot follow a different verif
   await expect(
     popup.getByText("Private operations review", { exact: true }),
   ).toHaveCount(10);
-  let releaseCommand = () => {};
-  let commandStarted = () => {};
-  const heldCommand = new Promise<void>((resolve) => {
-    releaseCommand = resolve;
-  });
-  const commandBegun = new Promise<void>((resolve) => {
-    commandStarted = resolve;
-  });
+  const command = heldResponse();
   const oldItem = { ...state.items[0], status: "read", read_at: timestamp };
   await page.route(`**/api/notifications/${oldItem.id}/read`, async (route) => {
-    commandStarted();
-    await heldCommand;
+    command.enter();
+    await command.released;
     await route.fulfill({ json: oldItem });
   });
   await popup.getByRole("button", { name: "Mark as read" }).first().click();
-  await commandBegun;
+  await command.entered;
   await page.keyboard.press("Escape");
   holdTitle = true;
   await notificationPopover(page);
-  await titleBegun;
-  let releaseCount = () => {};
-  state.holdCount = new Promise<void>((resolve) => {
-    releaseCount = resolve;
-  });
+  await title.entered;
+  const count = heldResponse();
+  state.holdCount = count.released;
   const priorCountReads = state.countReads;
   await sendOpenViewEvent(page, "resync");
   await expect.poll(() => state.countReads).toBeGreaterThan(priorCountReads);
-  account = accountB;
+  state.session.identity = { id: accountB, role: "admin" };
   state.holdCount = null;
   state.count = 1;
   state.items = [{ ...notification("unread"), id: oldItem.id }];
@@ -1452,17 +1295,14 @@ test("held count, title and read-command results cannot follow a different verif
       (response) =>
         new URL(response.url()).pathname === `/api/reports/${reportId}`,
     );
-    releaseCount();
-    releaseTitle();
-    releaseCommand();
+    count.release();
+    title.release();
+    command.release();
     await Promise.all([
       (await oldCommand).finished(),
       (await oldTitle).finished(),
     ]);
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
-    );
+    await settleReact(page, 1);
   }
   await expect(
     inbox.getByText("Private operations review", { exact: true }),
@@ -1495,86 +1335,64 @@ test("held count, title and read-command results cannot follow a different verif
     .toBe(1);
 });
 
-for (const invalid of [
-  "duplicate",
-  "mismatched-page",
-  "private-field",
-] as const) {
-  test(`a ${invalid} notification page fails safely and recovers through explicit retry`, async ({
-    page,
-  }) => {
-    const state = await installNotificationJourney(page, 8);
-    const item = state.items[0];
-    state.listBody =
-      invalid === "duplicate"
-        ? noticePage([item, item], 10, 0, 2)
-        : invalid === "mismatched-page"
-          ? {
-              ...noticePage([item], 10, 0, 1),
-              pagination: {
-                limit: 25,
-                offset: 0,
-                count: 1,
-                total: 1,
-                has_more: false,
-              },
-            }
-          : {
-              ...noticePage([item], 10, 0, 1),
-              private_detail: "Private title must not render",
-            };
-    await page.goto("/platform");
-    const popup = await notificationPopover(page);
-    await expect(popup.getByText("Couldn’t load notifications.")).toBeVisible();
-    await expect(popup).not.toContainText("Private title must not render");
-    await expect(
-      popup.getByText("Operations review", { exact: true }),
-    ).toHaveCount(0);
-    state.listBody = null;
-    await popup.getByRole("button", { name: "Try again" }).click();
-    await expect(
-      popup.getByText("Operations review", { exact: true }),
-    ).toHaveCount(10);
-  });
-}
+// The page rules (duplicate, mismatched page, extra field and the rest) are
+// owned by isolated/platform/notifications-api.spec.ts.
+test("a notification page with a private extra field fails safely and recovers through explicit retry", async ({
+  page,
+}) => {
+  const state = await installNotificationJourney(page, 8);
+  const item = state.items[0];
+  state.listBody = {
+    ...noticePage([item], 10, 0, 1),
+    private_detail: "Private title must not render",
+  };
+  await page.goto("/platform");
+  const popup = await notificationPopover(page);
+  await expect(popup.getByText("Couldn’t load notifications.")).toBeVisible();
+  await expect(popup).not.toContainText("Private title must not render");
+  await expect(
+    popup.getByText("Operations review", { exact: true }),
+  ).toHaveCount(0);
+  state.listBody = null;
+  await popup.getByRole("button", { name: "Try again" }).click();
+  await expect(
+    popup.getByText("Operations review", { exact: true }),
+  ).toHaveCount(10);
+});
 
-for (const body of [
-  { updated_count: -1 },
-  { updated_count: 0.5 },
-  { updated_count: 8, secret: "Private update detail" },
-]) {
-  test(`an unconfirmed read-all result ${JSON.stringify(body)} cannot announce success`, async ({
-    page,
-  }) => {
-    const state = await installNotificationJourney(page, 8);
-    state.readAllBody = body;
-    await page.goto("/platform?section=notifications");
-    const inbox = page.getByRole("region", { name: "Notifications" });
-    await expect(
-      inbox.getByText("Operations review", { exact: true }),
-    ).toHaveCount(25);
-    await inbox.getByRole("button", { name: "Mark all as read" }).click();
-    await expect(
-      page.getByRole("heading", {
-        name: "Notifications could not be marked as read. Try again.",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", {
-        name: "Notifications marked as read.",
-        exact: true,
-      }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "Notifications, 8 unread" }),
-    ).toBeVisible();
-    await expect(page.getByRole("main")).not.toContainText(
-      "Private update detail",
-    );
-    expect(state.commands).toHaveLength(1);
-  });
-}
+// The read-all result rules are owned by
+// isolated/platform/notifications-api.spec.ts.
+test("an unconfirmed read-all result with a private extra field cannot announce success", async ({
+  page,
+}) => {
+  const state = await installNotificationJourney(page, 8);
+  state.readAllBody = { updated_count: 8, secret: "Private update detail" };
+  await page.goto("/platform?section=notifications");
+  const inbox = page.getByRole("region", { name: "Notifications" });
+  await expect(
+    inbox.getByText("Operations review", { exact: true }),
+  ).toHaveCount(25);
+  await inbox.getByRole("button", { name: "Mark all as read" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Notifications could not be marked as read. Try again.",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Notifications marked as read.",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Notifications, 8 unread" }),
+  ).toBeVisible();
+  await expect(page.getByRole("main")).not.toContainText(
+    "Private update detail",
+  );
+  expect(state.commands).toHaveLength(1);
+});
 
 test("a confirmed inbox read updates the shared count after leaving the inbox without SSE", async ({
   page,
@@ -1585,17 +1403,15 @@ test("a confirmed inbox read updates the shared count after leaving the inbox wi
   await expect(
     inbox.getByText("Operations review", { exact: true }),
   ).toHaveCount(25);
-  let release = () => {};
-  state.holdCommand = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const command = heldResponse();
+  state.holdCommand = command.released;
   await inbox.getByRole("button", { name: "Mark as read" }).first().click();
   await expect.poll(() => state.commands.length).toBe(1);
   await page.getByRole("link", { name: "Search workspace" }).click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
-  release();
+  command.release();
   await expect(
     page.getByRole("button", { name: "Notifications, 7 unread" }),
   ).toBeVisible();

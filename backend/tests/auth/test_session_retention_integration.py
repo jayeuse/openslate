@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Event
 from time import monotonic
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -21,89 +20,10 @@ from app.systems.access.identity.provider_signout_worker import ProviderSignoutW
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
+from tests.auth.session_retention_support import world as world
 
+pytest_plugins = ("tests.auth.session_policy_support",)
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def world(integration_owner_db, request):
-    owner = integration_owner_db.get_bind().engine
-    runtime = get_engine()
-    users = []
-    events = []
-    with Session(owner) as db:
-        before = set(db.scalars(select(SecurityEvent.id)))
-
-    def add_users(count=1):
-        rows = [
-            User(
-                id=uuid4(),
-                username=str(uuid4()),
-                email=f"{uuid4()}@example.test",
-                status="active",
-                role="member",
-            )
-            for _ in range(count)
-        ]
-        users.extend(row.id for row in rows)
-        with Session(owner) as db:
-            db.add_all(rows)
-            db.commit()
-        return users[-count:]
-
-    def add_sessions(fields):
-        rows = [
-            IdentitySession(
-                id=uuid4(),
-                user_id=item.pop("user_id", users[0]),
-                refresh_token_digest=str(uuid4()),
-                csrf_token_digest="owned",
-                **item,
-            )
-            for item in fields
-        ]
-        ids = [row.id for row in rows]
-        with Session(owner) as db:
-            db.add_all(rows)
-            db.commit()
-        return ids
-
-    def proofs():
-        with Session(owner) as db:
-            return list(
-                db.scalars(
-                    select(SecurityEvent).where(
-                        SecurityEvent.source == "identity.session_retention",
-                        SecurityEvent.id.not_in(before),
-                    )
-                )
-            )
-
-    def cleanup():
-        with Session(owner) as db:
-            for row in db.scalars(
-                select(SecurityEvent).where(
-                    (SecurityEvent.source == "identity.session_retention")
-                    & SecurityEvent.id.not_in(before)
-                    | SecurityEvent.id.in_(events)
-                )
-            ):
-                db.delete(row)
-            for row in db.scalars(select(User).where(User.id.in_(users))):
-                db.delete(row)
-            db.commit()
-
-    request.addfinalizer(cleanup)
-    add_users()
-    return SimpleNamespace(
-        owner=owner,
-        runtime=runtime,
-        users=users,
-        events=events,
-        add_users=add_users,
-        add_sessions=add_sessions,
-        proofs=proofs,
-    )
 
 
 def _remaining(world, ids):
@@ -381,9 +301,6 @@ def test_global_10k_plan_real_cap_backlog_empty_and_held_rows(world, request):
             ),
         )
     )
-
-
-pytest_plugins = ("tests.auth.session_policy_support",)
 
 
 def test_mfa_and_bulk_revocation_complete_without_deadlock(policy_world, request):

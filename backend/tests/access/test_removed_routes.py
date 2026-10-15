@@ -1,14 +1,18 @@
-"""Routes retired with roles, rules and service identities stay unmounted (S3-9)."""
+"""Routes retired with roles, rules and service identities stay unmounted (S3-9).
+
+Their absence from the OpenAPI document is owned by the committed ``contracts/openapi.json``
+(``tests/contracts/test_openapi_snapshot.py``); these tests prove that nothing serves them.
+"""
 
 import pytest
 from fastapi.testclient import TestClient
-from uuid6 import uuid7
 
 from app.main import app, create_app
 from app.systems.access.users.models import UserRole
 from tests.rbac.support import _client, make_user
 
-_ID = str(uuid7())
+# Fixed, so parametrized test IDs are the same in every process.
+_ID = "0190a000-0000-7000-8000-000000000001"
 
 REMOVED_ROUTES: tuple[tuple[str, str], ...] = (
     ("/api/roles", "GET"),
@@ -36,28 +40,6 @@ REMOVED_ROUTES: tuple[tuple[str, str], ...] = (
 # The retired chooser path now falls into the report detail route, whose UUID
 # parameter rejects it; it can never reach a dedicated handler again.
 SHADOWED_ROUTES: tuple[tuple[str, str], ...] = (("/api/reports/audience-roles", "GET"),)
-
-_REMOVED_PREFIXES = (
-    "/api/roles",
-    "/api/access/service-identities",
-    "/api/access/rules",
-    "/api/access/checks",
-    "/api/access/capabilities",
-    "/api/access/defaults",
-    "/api/reports/audience-roles",
-)
-
-
-def test_removed_routes_are_absent_from_openapi() -> None:
-    paths = app.openapi()["paths"]
-
-    leftovers = sorted(
-        path
-        for path in paths
-        if path.startswith(_REMOVED_PREFIXES) or path.endswith("/grant-roles")
-    )
-
-    assert leftovers == []
 
 
 @pytest.mark.parametrize(("url", "method"), REMOVED_ROUTES)

@@ -18,6 +18,7 @@ from operations import reset_application_data as reset
 from operations.reset import execution
 from operations.reset.backups import read_backup_snapshot, validate_backup_preservation
 from tests.conftest import _guard_integration_database
+from tests.reset_application_data.execution_support import apply_confirmed
 
 pytestmark = pytest.mark.integration
 
@@ -179,12 +180,9 @@ def test_reset_retains_export_history_and_artifact_but_clears_admission_and_curr
     assert plan.counts["backup_export_operations"] >= 5
     before = read_backup_snapshot(world.database)
     world.auth.list_account_ids.side_effect = (plan.provider_account_ids, ())
-    execution.apply_reset(
+    apply_confirmed(
         world.database,
         plan,
-        execute=True,
-        stdin_is_tty=True,
-        confirmation=plan.impact_digest,
         storage=world.storage,
         auth=world.auth,
     )
@@ -226,12 +224,9 @@ def test_preparing_export_after_preview_blocks_before_any_provider_effect(export
         )
         db.commit()
     with pytest.raises(reset.ResetError, match="export"):
-        execution.apply_reset(
+        apply_confirmed(
             world.database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=world.storage,
             auth=world.auth,
         )
@@ -281,12 +276,9 @@ def test_reset_failure_retains_export_state_and_refuses_restricted_source_before
 
         monkeypatch.setattr(execution, "_reset_sandbox_workspace", fail)
     with pytest.raises(reset.ResetError):
-        execution.apply_reset(
+        apply_confirmed(
             world.database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=world.storage,
             auth=world.auth,
         )

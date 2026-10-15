@@ -1,9 +1,15 @@
-import { expect, test, type Locator, type Page } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  recheckSession,
+  test,
+  type Locator,
+  type Page,
+} from "./helpers/test";
 import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   created,
-  DAY,
+  fixtureId,
   group,
   ids,
   listPage,
@@ -11,18 +17,17 @@ import {
   person,
 } from "./helpers/access-api";
 
-const fixtureId = (index: number) =>
-  `00000000-0000-4000-8000-${String(80_000 + index).padStart(12, "0")}`;
+const membershipId = (index: number) => fixtureId(80_000 + index);
 
 async function membershipsFixture(page: Page, count: number) {
   const api = await mockAccessApi(page);
   api.groups.clear();
   for (let index = 0; index < 110; index += 1) {
-    const id = fixtureId(index);
+    const id = membershipId(index);
     api.groups.set(id, group(id, `A unrelated ${index}`, [ids.cy], []));
   }
   for (let index = 0; index < count; index += 1) {
-    const id = fixtureId(200 + index);
+    const id = membershipId(200 + index);
     api.groups.set(
       id,
       group(
@@ -52,52 +57,13 @@ function peopleRow(page: Page, name = "Ben Cruz") {
     .filter({ hasText: name });
 }
 
+/** A held response that also reports when the held route has finished. */
 function readGate() {
-  let enter!: () => void;
-  let release!: () => void;
   let complete!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
   const completed = new Promise<void>((resolve) => {
     complete = resolve;
   });
-  return {
-    entered,
-    released,
-    completed,
-    enter: () => enter(),
-    release: () => release(),
-    complete: () => complete(),
-  };
-}
-
-async function captureMembershipReview(
-  page: Page,
-  name: string,
-  options: Parameters<typeof captureOpenViewReview>[2] = {},
-) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  const previous = await page.evaluate(() => ({
-    mode: document.documentElement.classList.contains("dark")
-      ? ("dark" as const)
-      : ("light" as const),
-    reduceMotion: document.documentElement.dataset.motion === "reduced",
-  }));
-  try {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate(applyAppearancePreferences, {
-        mode,
-        reduceMotion: true,
-      });
-      await captureOpenViewReview(page, `${name}-${mode}`, options);
-    }
-  } finally {
-    await page.evaluate(applyAppearancePreferences, previous);
-  }
+  return { ...heldResponse(), completed, complete: () => complete() };
 }
 
 async function disableBen(page: Page) {
@@ -125,7 +91,7 @@ async function column(row: Locator, name: string) {
   return row.getByRole("cell").nth(index);
 }
 
-test("S08 People memberships include no-access groups beyond the global first hundred without crawling", async ({
+test("People memberships include no-access groups beyond the global first hundred without crawling", async ({
   page,
 }) => {
   const { reads } = await membershipsFixture(page, 2);
@@ -145,7 +111,7 @@ test("S08 People memberships include no-access groups beyond the global first hu
   ).toBe(true);
 });
 
-test("S08 People memberships disclose a partial page and continue only after the person requests more", async ({
+test("People memberships disclose a partial page and continue only after the person requests more", async ({
   page,
 }) => {
   const { reads } = await membershipsFixture(page, 27);
@@ -175,7 +141,7 @@ test("S08 People memberships disclose a partial page and continue only after the
   ).toEqual(["0", "25"]);
 });
 
-test("S08 People membership continuation failure retains the partial disclosure and retries the requested page", async ({
+test("People membership continuation failure retains the partial disclosure and retries the requested page", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
@@ -207,7 +173,7 @@ test("S08 People membership continuation failure retains the partial disclosure 
   await expect(groups.getByRole("alert")).toHaveCount(0);
 });
 
-test("S08 People membership refusal survives a cached directory remount until a fresh Retry", async ({
+test("People membership refusal survives a cached directory remount until a fresh Retry", async ({
   page,
 }) => {
   const { api, reads } = await membershipsFixture(page, 27);
@@ -247,7 +213,7 @@ test("S08 People membership refusal survives a cached directory remount until a 
   await expect(groups).toContainText("25 of 27 groups");
 });
 
-test("S08 People membership cache is replaced when the verified account changes", async ({
+test("People membership cache is replaced when the verified account changes", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 2);
@@ -270,18 +236,16 @@ test("S08 People membership cache is replaced when the verified account changes"
         name: item.name.replace("Z membership", "New account group"),
       });
   signedInId = ids.dee;
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  await recheckSession(page);
   await expect(groups).toContainText("New account group 00");
   await expect(groups).not.toContainText("Z membership");
 });
 
-test("S08 People department reach is explicitly partial until the shared membership continuation completes", async ({
+test("People department reach is explicitly partial until the shared membership continuation completes", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
-  const lastGroup = fixtureId(226);
+  const lastGroup = membershipId(226);
   api.groups.set(
     lastGroup,
     group(
@@ -290,7 +254,7 @@ test("S08 People department reach is explicitly partial until the shared members
       [ids.ben],
       [
         {
-          department_id: fixtureId(400),
+          department_id: membershipId(400),
           department_name: "Beyond-catalog department",
           module_id: null,
           level: "read",
@@ -304,53 +268,33 @@ test("S08 People department reach is explicitly partial until the shared members
   await expect(groups).toContainText("25 of 27 groups");
   await expect(departments).toContainText("Departments not fully loaded");
   await expect(departments).not.toContainText("None");
-  await captureMembershipReview(page, "s08-memberships-partial", {
-    beforeScreenshot: async (_, viewport) => {
-      const people = page.getByRole(viewport.width === 390 ? "list" : "table", {
-        name: "People",
-        exact: true,
-      });
-      const row = people
-        .getByRole(viewport.width === 390 ? "listitem" : "row")
-        .filter({ hasText: "Ben Cruz" });
-      const more = row.getByRole("button", {
-        name: "Load more groups",
-        exact: true,
-      });
-      await more.scrollIntoViewIfNeeded();
-      await expect(more).toBeVisible();
-      await expect(row).toContainText("25 of 27 groups");
-      await expect(row).toContainText("Departments not fully loaded");
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-    },
-  });
   await groups
     .getByRole("button", { name: "Load more groups", exact: true })
     .click();
   await expect(departments).toHaveText("Beyond-catalog department");
   await expect(groups).toContainText("Z membership 26");
-  expect(api.sent("GET", `/api/departments/${fixtureId(400)}`)).toHaveLength(0);
+  expect(api.sent("GET", `/api/departments/${membershipId(400)}`)).toHaveLength(
+    0,
+  );
 });
 
-for (const state of ["pending", "disabled", "expired", "deleted"] as const)
-  test(`S08 People preserve assigned department reach for ${state} people`, async ({
+// Membership reads skip only administrators (use-people-memberships.ts), so
+// pending, disabled and expired people take the same branch; disabled stands
+// for them. A deleted person changes the directory query (status=deleted).
+for (const state of ["disabled", "deleted"] as const)
+  test(`People preserve assigned department reach for ${state} people`, async ({
     page,
   }) => {
     const { api } = await membershipsFixture(page, 1);
     const ben = api.users.get(ids.ben)!;
     api.users.set(ids.ben, {
       ...ben,
-      status: state === "pending" || state === "disabled" ? state : "active",
-      expires_at:
-        state === "expired" ? new Date(Date.now() - DAY).toISOString() : null,
+      status: state === "disabled" ? state : "active",
+      expires_at: null,
       is_deleted: state === "deleted",
       deleted_at: state === "deleted" ? created : null,
     });
-    const assigned = fixtureId(200);
+    const assigned = membershipId(200);
     api.groups.set(
       assigned,
       group(
@@ -359,7 +303,7 @@ for (const state of ["pending", "disabled", "expired", "deleted"] as const)
         [ids.ben],
         [
           {
-            department_id: fixtureId(401),
+            department_id: membershipId(401),
             department_name: "Assigned department",
             module_id: null,
             level: "read",
@@ -375,12 +319,12 @@ for (const state of ["pending", "disabled", "expired", "deleted"] as const)
     expect(api.sent("GET", `/api/users/${ids.ben}/access`)).toHaveLength(0);
   });
 
-test("S08 the offpage selected person shares membership continuation with their directory row", async ({
+test("the offpage selected person shares membership continuation with their directory row", async ({
   page,
 }) => {
   const { api, reads } = await membershipsFixture(page, 27);
   for (let index = 0; index < 30; index += 1) {
-    const id = fixtureId(500 + index);
+    const id = membershipId(500 + index);
     api.users.set(
       id,
       person({
@@ -401,29 +345,6 @@ test("S08 the offpage selected person shares membership continuation with their 
   await expect(
     sheet.getByRole("link", { name: "Z membership 26", exact: true }),
   ).toBeVisible();
-  await captureMembershipReview(page, "s08-memberships-offpage-full", {
-    beforeScreenshot: async () => {
-      const lastGroup = sheet.getByRole("link", {
-        name: "Z membership 26",
-        exact: true,
-      });
-      await lastGroup.scrollIntoViewIfNeeded();
-      await expect(lastGroup).toBeInViewport();
-      await expect(
-        sheet.getByRole("button", { name: "Load more groups", exact: true }),
-      ).toHaveCount(0);
-      expect(
-        await sheet.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
-        ),
-      ).toBe(true);
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-    },
-  });
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await page
     .getByRole("searchbox", { name: "Search people", exact: true })
@@ -438,7 +359,7 @@ test("S08 the offpage selected person shares membership continuation with their 
 });
 
 for (const target of ["complete panel", "partial directory"] as const)
-  test(`S08 membership correction retained ${target} memberships recover a failed first-page refresh`, async ({
+  test(`retained ${target} memberships recover a failed first-page refresh`, async ({
     page,
   }) => {
     const count = target === "complete panel" ? 2 : 27;
@@ -506,7 +427,7 @@ for (const target of ["complete panel", "partial directory"] as const)
     else await expect(region).toContainText("25 of 27 groups");
   });
 
-test("S08 membership correction cancels a held continuation when its person leaves the directory", async ({
+test("membership loading cancels a held continuation when its person leaves the directory", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
@@ -571,7 +492,7 @@ test("S08 membership correction cancels a held continuation when its person leav
   ).toBeEnabled();
 });
 
-test("S08 membership correction discards a held extension after an accepted action replaces the first read", async ({
+test("membership loading discards a held extension after an accepted action replaces the first read", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
@@ -611,7 +532,7 @@ test("S08 membership correction discards a held extension after an accepted acti
     for (const [id, item] of api.groups)
       if (item.member_ids.includes(ids.ben)) api.groups.delete(id);
     for (let index = 0; index < 27; index += 1) {
-      const id = fixtureId(700 + index);
+      const id = membershipId(700 + index);
       api.groups.set(
         id,
         group(
@@ -645,7 +566,7 @@ test("S08 membership correction discards a held extension after an accepted acti
   ).toBeVisible();
 });
 
-test("S08 membership correction older Retry cannot clear a newer continuation refusal", async ({
+test("an older membership Retry cannot clear a newer continuation refusal", async ({
   page,
 }) => {
   const { api } = await membershipsFixture(page, 27);
@@ -734,3 +655,118 @@ test("S08 membership correction older Retry cannot clear a newer continuation re
   await expect(benGroups).toContainText("Z membership 00");
   await expect(cyGroups).toContainText("A unrelated 0");
 });
+
+for (const mode of ["light", "dark"] as const) {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`membership matrix: partial row at ${viewport.width} px in ${mode}`, async ({
+      page,
+    }) => {
+      const { api } = await membershipsFixture(page, 27);
+      const lastGroup = membershipId(226);
+      api.groups.set(
+        lastGroup,
+        group(
+          lastGroup,
+          "Z membership 26",
+          [ids.ben],
+          [
+            {
+              department_id: membershipId(400),
+              department_name: "Beyond-catalog department",
+              module_id: null,
+              level: "read",
+            },
+          ],
+        ),
+      );
+      await page.goto("/access?view=people");
+      const groups = await column(peopleRow(page), "Groups");
+      const departments = await column(peopleRow(page), "Departments");
+      await expect(groups).toContainText("25 of 27 groups");
+      await expect(departments).toContainText("Departments not fully loaded");
+      await expect(departments).not.toContainText("None");
+      await page.evaluate(applyAppearancePreferences, {
+        mode,
+        reduceMotion: true,
+      });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.setViewportSize(viewport);
+      const people = page.getByRole(viewport.width === 390 ? "list" : "table", {
+        name: "People",
+        exact: true,
+      });
+      const row = people
+        .getByRole(viewport.width === 390 ? "listitem" : "row")
+        .filter({ hasText: "Ben Cruz" });
+      const more = row.getByRole("button", {
+        name: "Load more groups",
+        exact: true,
+      });
+      await more.scrollIntoViewIfNeeded();
+      await expect(more).toBeVisible();
+      await expect(row).toContainText("25 of 27 groups");
+      await expect(row).toContainText("Departments not fully loaded");
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+    });
+
+    test(`membership matrix: completed offpage sheet at ${viewport.width} px in ${mode}`, async ({
+      page,
+    }) => {
+      const { api } = await membershipsFixture(page, 27);
+      for (let index = 0; index < 30; index += 1) {
+        const id = membershipId(500 + index);
+        api.users.set(
+          id,
+          person({
+            id,
+            username: `a-first-${index}`,
+            display_name: `A first ${index}`,
+          }),
+        );
+      }
+      await page.goto(`/access?view=people&user=${ids.ben}`);
+      const sheet = page.getByRole("dialog", { name: "Ben Cruz", exact: true });
+      await expect(sheet).toBeVisible();
+      await expect(sheet).toContainText("25 of 27 groups");
+      await expect(sheet).not.toContainText("Not in any group yet");
+      await sheet
+        .getByRole("button", { name: "Load more groups", exact: true })
+        .click();
+      await expect(
+        sheet.getByRole("link", { name: "Z membership 26", exact: true }),
+      ).toBeVisible();
+      await page.evaluate(applyAppearancePreferences, {
+        mode,
+        reduceMotion: true,
+      });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.setViewportSize(viewport);
+      const lastGroup = sheet.getByRole("link", {
+        name: "Z membership 26",
+        exact: true,
+      });
+      await lastGroup.scrollIntoViewIfNeeded();
+      await expect(lastGroup).toBeInViewport();
+      await expect(
+        sheet.getByRole("button", { name: "Load more groups", exact: true }),
+      ).toHaveCount(0);
+      expect(
+        await sheet.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth,
+        ),
+      ).toBe(true);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+    });
+  }
+}

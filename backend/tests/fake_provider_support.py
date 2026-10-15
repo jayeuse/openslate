@@ -37,7 +37,7 @@ from app.core.integrations.supabase_auth import SupabaseAuthClient, get_supabase
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User, UserStatus
 from app.systems.platform.scheduling.models import InAppNotification
-from tests.auth.test_supabase_auth_core import _signed_access
+from tests.auth.provider_jwt_support import signed_access
 from tests.conftest import guarded_create_engine
 
 # Long enough that a browser refresh keeps the current access token (its fast path).
@@ -166,7 +166,7 @@ class FakeProvider:
 
     def access(self, user_id: UUID, session_id: UUID, aal: str = "aal1") -> str:
         settings = get_settings()
-        return _signed_access(
+        return signed_access(
             self.key,
             user_id=str(user_id),
             session_id=str(session_id),

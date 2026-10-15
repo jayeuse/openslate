@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
 import httpx
@@ -8,10 +7,8 @@ import pytest
 
 from operations.sample.blueprint import SampleDataset
 from operations.sample.packs.phase_types import PhaseAction
-from operations.sample.packs.registry import get_pack
 from operations.sample.phases.plan import phase_action_to_manifest
 from operations.sample.phases.verification import verify_phases
-from operations.sample.scenario import build_dataset
 from tests.operations.sample.phases.sample_phase_verification_helpers import (
     ADMIN_ID,
     MEMBER_ID,
@@ -20,6 +17,7 @@ from tests.operations.sample.phases.sample_phase_verification_helpers import (
     _request_spec,
     _server_revocation_event,
 )
+from tests.operations.sample.sample_datasets import sample_dataset
 
 TARGET_ID = "e40862a7-fbb7-4e71-a590-90e11f4e893d"
 ORIGINAL_BOARD_ID = "aa29e25d-37b3-497c-9dc8-f6faf03f70ca"
@@ -34,7 +32,7 @@ VERSION_ID = "ee2c6f72-4c67-4dbe-8d71-7e2aa15e89e8"
 
 @pytest.fixture
 def dataset() -> SampleDataset:
-    return build_dataset("small", 42, date(2026, 9, 30), organization=get_pack("harbor"))
+    return sample_dataset()
 
 
 def _action(

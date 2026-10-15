@@ -1,6 +1,7 @@
 import type {
   Design,
   Field,
+  SelectOption,
 } from "../../src/components/systems/sandbox/domain/model";
 import {
   mergeProjectedDesign,
@@ -8,8 +9,51 @@ import {
 } from "../../src/components/systems/sandbox/domain/document-bridge";
 import {
   SANDBOX_DOCUMENT_SCHEMA_VERSION,
+  type SandboxDocumentField,
   type SandboxDocumentV4,
 } from "../../src/components/systems/sandbox/domain/document";
+
+/** An open Text field of a current-format document, with an empty default. */
+export function documentTextField({
+  id,
+  name,
+  required = false,
+}: {
+  id: string;
+  name: string;
+  required?: boolean;
+}): SandboxDocumentField {
+  return {
+    id,
+    name,
+    type: "Text",
+    required,
+    closed: false,
+    config: { kind: "text", defaultValue: "" },
+  };
+}
+
+/** An open, optional Select field of a current-format document. */
+export function documentSelectField({
+  id,
+  name,
+  defaultValue,
+  options,
+}: {
+  id: string;
+  name: string;
+  defaultValue: string | null;
+  options: SelectOption[];
+}): SandboxDocumentField {
+  return {
+    id,
+    name,
+    type: "Select",
+    required: false,
+    closed: false,
+    config: { kind: "select", defaultValue, options },
+  };
+}
 
 /** Builds a current-format Sandbox document from a Designer fixture. */
 export function sandboxDocumentFromDesign(design: Design): SandboxDocumentV4 {

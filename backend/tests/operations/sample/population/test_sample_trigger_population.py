@@ -10,7 +10,7 @@ import pytest
 
 from operations.sample.client import SampleClient
 from operations.sample.history import plan_history
-from operations.sample.packs.registry import get_pack, pack_keys
+from operations.sample.packs.registry import pack_keys
 from operations.sample.population.activity import rule_candidates
 from operations.sample.population.run import SamplePopulationError
 from operations.sample.population.triggers import (
@@ -19,7 +19,7 @@ from operations.sample.population.triggers import (
     _wait_trigger,
     validate_record_trigger_candidates,
 )
-from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
 def test_trigger_record_edit_uses_the_read_revision_like_the_frontend(
@@ -27,7 +27,7 @@ def test_trigger_record_edit_uses_the_read_revision_like_the_frontend(
 ) -> None:
     from operations.sample.population import triggers as workflow
 
-    dataset = build_dataset("small", 42, date(2026, 9, 30))
+    dataset = sample_dataset()
     blueprint = dataset.organization.blueprint
     key = blueprint.patch_trigger_keys[0]
     dataset = replace(
@@ -93,14 +93,14 @@ def test_trigger_record_edit_uses_the_read_revision_like_the_frontend(
 
 @pytest.mark.parametrize("organization", pack_keys())
 def test_generated_small_dataset_has_real_records_for_created_triggers(organization: str) -> None:
-    dataset = build_dataset("small", 42, date(2026, 9, 29), organization=get_pack(organization))
+    dataset = sample_dataset("small", 42, date(2026, 9, 29), organization)
 
     validate_record_trigger_candidates(dataset)
 
 
 @pytest.mark.parametrize("operator", ("all", "any"))
 def test_unconditional_school_rule_candidates_match_engine_group_semantics(operator: str) -> None:
-    dataset = build_dataset("small", 42, date(2026, 9, 30), organization=get_pack("school"))
+    dataset = sample_dataset(pack="school")
     trigger = _trigger_by_key(dataset, "academic-alert-parent-contact")
     trigger["conditionGroup"]["operator"] = operator
     academic_ids = {

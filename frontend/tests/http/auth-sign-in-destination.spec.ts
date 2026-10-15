@@ -1,7 +1,8 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, heldResponse, test, type Page } from "./helpers/test";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { regionalDefaults } from "./helpers/profile-api";
+import { pageOf } from "../helpers/pagination";
 
 const userId = "00000000-0000-4000-8000-000000000301";
 const moduleId = "00000000-0000-4000-8000-000000000302";
@@ -31,8 +32,10 @@ async function installDestination(
   );
   const dataSourceRequests: string[] = [];
   const sandboxProbes: string[] = [];
+  const loginRequests: unknown[] = [];
   await page.route("**/api/auth/login", (route) => {
     signedIn = true;
+    loginRequests.push(route.request().postDataJSON());
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -72,16 +75,7 @@ async function installDestination(
         : [];
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        items,
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: items.length,
-          total: items.length,
-          has_more: false,
-        },
-      }),
+      body: JSON.stringify(pageOf(items, { limit: 1 })),
     });
   });
 
@@ -127,7 +121,7 @@ async function installDestination(
           },
     ),
   );
-  return { dataSourceRequests, sandboxProbes, identity };
+  return { dataSourceRequests, sandboxProbes, loginRequests, identity };
 }
 
 async function signInWith(
@@ -152,10 +146,17 @@ async function signInWith(
 test("a first sign-in with nothing published opens the Sandbox", async ({
   page,
 }) => {
-  const { dataSourceRequests, sandboxProbes } = await signInWith(page, "none");
+  const { dataSourceRequests, sandboxProbes, loginRequests } = await signInWith(
+    page,
+    "none",
+  );
   await expect(page).toHaveURL(/\/sandbox$/);
   expect(dataSourceRequests[0]).toContain("limit=1");
   expect(sandboxProbes[0]).toContain("limit=1");
+  // The form posts the Email and Password fields and nothing else.
+  expect(loginRequests).toEqual([
+    { email: "owner@example.test", password: "correct horse battery" },
+  ]);
 });
 
 test("a first sign-in without Sandbox access opens OpenView", async ({
@@ -188,79 +189,40 @@ test("a sign-in that needs account setup explains it and skips the catalog check
   expect(dataSourceRequests).toEqual([]);
 });
 
-for (const [preferred, expected] of [
-  ["boards", "/boards"],
-  ["comms", "/comms"],
-  ["openview", "/openview"],
-  ["manage", "/manage"],
-  ["platform", "/platform"],
-  ["sandbox", "/sandbox"],
-  ["access", "/access"],
-] as const) {
-  test(`preferred landing ${preferred} opens an admitted route without rewriting preferences`, async ({
-    page,
-  }) => {
-    const fixture = await installDestination(page, "some", false, true, true);
-    if (["manage", "platform", "boards", "comms"].includes(preferred))
-      fixture.identity.role = "guest";
-    let writes = 0;
-    await page.route("**/api/users/*/preferences", (route) => {
-      if (route.request().method() !== "GET") writes += 1;
-      return route.fulfill({
-        json: {
-          user_id: fixture.identity.id,
-          theme: "light",
-          appearance: {
-            motion: "system",
-            keyboard_shortcuts: true,
-            ...regionalDefaults,
-            start_page: preferred,
-          },
-        },
-      });
-    });
-    await page.goto("/login");
-    await expect(page).toHaveURL(new RegExp(`${expected}$`));
-    expect(writes).toBe(0);
-    // The start check reads one Test run; the Sandbox page then loads its own list.
-    if (preferred === "sandbox")
-      expect(
-        fixture.sandboxProbes.filter((query) => query.startsWith("?limit=1&")),
-      ).toHaveLength(1);
-  });
-}
-
-test("preferred Access sends a member manager to Groups rather than administrator controls", async ({
+// The other preferred landings, the member manager's Groups landing and the
+// hidden and off-site fallbacks are rows of tests/isolated/auth/workspace-start.spec.ts.
+test("preferred landing sandbox opens an admitted route without rewriting preferences", async ({
   page,
 }) => {
-  const fixture = await installDestination(page, "some", false, false, true);
-  fixture.identity.role = "member";
-  fixture.identity.access = [
-    { department_id: departmentId, module_id: null, level: "manage" },
-  ];
-  await page.route("**/api/users/*/preferences", (route) =>
-    route.fulfill({
+  const fixture = await installDestination(page, "some", false, true, true);
+  let writes = 0;
+  await page.route("**/api/users/*/preferences", (route) => {
+    if (route.request().method() !== "GET") writes += 1;
+    return route.fulfill({
       json: {
-        user_id: userId,
+        user_id: fixture.identity.id,
         theme: "light",
         appearance: {
           motion: "system",
           keyboard_shortcuts: true,
           ...regionalDefaults,
-          start_page: "access",
+          start_page: "sandbox",
         },
       },
-    }),
-  );
+    });
+  });
   await page.goto("/login");
-  await expect(page).toHaveURL(/\/access\?view=groups$/);
+  await expect(page).toHaveURL(/\/sandbox$/);
+  expect(writes).toBe(0);
+  // The start check reads one Test run; the Sandbox page then loads its own list.
+  expect(
+    fixture.sandboxProbes.filter((query) => query.startsWith("?limit=1&")),
+  ).toHaveLength(1);
 });
 
 for (const failure of [
   "sandbox-denied",
-  "access-hidden",
   "preference-unavailable",
-  "unknown-route",
   "wrong-owner",
 ] as const) {
   test(`preferred landing ${failure} falls back without deleting the stored choice`, async ({
@@ -268,12 +230,7 @@ for (const failure of [
   }) => {
     const fixture = await installDestination(page, "some", false, false, true);
     fixture.identity.role = "member";
-    const preference =
-      failure === "sandbox-denied"
-        ? "sandbox"
-        : failure === "unknown-route"
-          ? "https://untrusted.example"
-          : "access";
+    const preference = failure === "sandbox-denied" ? "sandbox" : "access";
     let writes = 0;
     await page.route("**/api/users/*/preferences", (route) => {
       if (route.request().method() !== "GET") writes += 1;
@@ -301,13 +258,12 @@ test("preferred landing refuses a held prior-account response against a fresh id
   page,
 }) => {
   const fixture = await installDestination(page, "some", false, false, true);
-  const gate = deferred();
-  const begun = deferred();
+  const preference = heldResponse();
   await page.route("**/api/users/*/preferences", async (route) => {
     const owner = new URL(route.request().url()).pathname.split("/")[3];
     if (owner === userId) {
-      begun.release();
-      await gate.promise;
+      preference.enter();
+      await preference.released;
     }
     await route
       .fulfill({
@@ -326,12 +282,12 @@ test("preferred landing refuses a held prior-account response against a fresh id
   });
   try {
     await page.goto("/login");
-    await begun.promise;
+    await preference.entered;
     fixture.identity.id = departmentId;
-    gate.release();
+    preference.release();
     await expect(page).toHaveURL(/\/openview$/);
   } finally {
-    gate.release();
+    preference.release();
   }
 });
 
@@ -425,33 +381,23 @@ for (const failure of loginFailures) {
   });
 }
 
-function deferred() {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-}
-
 for (const entry of ["/", "/login"] as const) {
   test(`an authenticated visitor to ${entry} waits for the session and destination with no sign-in flash`, async ({
     page,
   }) => {
     await installDestination(page, "none", false, true, true);
-    const session = deferred();
-    const destination = deferred();
-    const sessionStarted = deferred();
-    const destinationStarted = deferred();
+    const session = heldResponse();
+    const destination = heldResponse();
     await page.route("**/api/auth/session", async (route) => {
-      sessionStarted.release();
-      await session.promise;
+      session.enter();
+      await session.released;
       await route.fulfill({
         json: { authenticated: true, user_id: userId, setup_required: false },
       });
     });
     await page.route("**/api/sandbox/tests?**", async (route) => {
-      destinationStarted.release();
-      await destination.promise;
+      destination.enter();
+      await destination.released;
       await route.fulfill({ json: { items: [] } });
     });
     try {
@@ -468,9 +414,9 @@ for (const entry of ["/", "/login"] as const) {
         page.getByRole("button", { name: "Sign in", exact: true }),
       ).toBeHidden();
       await expect(page.getByLabel("Email", { exact: true })).toBeHidden();
-      await sessionStarted.promise;
+      await session.entered;
       session.release();
-      await destinationStarted.promise;
+      await destination.entered;
       await expect(page).toHaveURL(entry === "/" ? /\/$/ : /\/login$/);
       await expect(
         page.getByRole("link", { name: "Sign in", exact: true }),

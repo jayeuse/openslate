@@ -1,4 +1,5 @@
-FROM node:24-alpine AS frontend-builder
+# Keep the Node major equal to the root .node-version pin.
+FROM node:26-alpine AS frontend-builder
 
 WORKDIR /workspace/frontend
 

@@ -8,8 +8,6 @@ from threading import Barrier
 
 import psycopg
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
@@ -23,7 +21,7 @@ from app.systems.access.identity.rate_limits import login_fingerprint
 from app.systems.access.users.models import User, UserStatus
 from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
-from tests.conftest import guarded_create_engine
+from tests.conftest import alembic_heads, guarded_create_engine
 from tests.operations import migration_support
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
@@ -34,13 +32,13 @@ def _catalog(db, statement: str):
 
 @pytest.mark.integration
 def test_baseline_has_one_head_and_provider_identity_file_catalog(integration_owner_db) -> None:
-    config = Config("alembic.ini")
-    heads = ScriptDirectory.from_config(config).get_heads()
+    heads = alembic_heads()
     assert len(heads) == 1
     current_revision = _catalog(
         integration_owner_db, "SELECT version_num FROM alembic_version"
     ).scalar()
-    assert current_revision == heads[0]
+    [head] = heads
+    assert current_revision == head
     tables = set(
         _catalog(
             integration_owner_db,

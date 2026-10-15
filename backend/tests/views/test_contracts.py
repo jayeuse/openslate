@@ -1,5 +1,5 @@
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from pydantic import ValidationError
 from uuid6 import uuid7
 
@@ -8,11 +8,8 @@ from app.systems.access.policy.scope import EffectiveAccess
 from app.systems.access.users.models import User
 from app.systems.manage.audit.snapshots import REDACTED, build_update_snapshot
 from app.systems.openview.views.models import SavedView
-from app.systems.openview.views.router import router as views_router
-from app.systems.openview.views.schemas import ViewPresentation
+from app.systems.openview.views.schemas import ViewCreate, ViewPresentation, ViewUpdate
 from app.systems.platform.events.models import event_for_entity
-from app.systems.sandbox.fields.models import Field, FieldType
-from app.systems.sandbox.records.query_schemas import FieldReference, QueryDefinition
 
 
 def test_presentation_uses_bounded_field_id_wire_projection() -> None:
@@ -59,89 +56,6 @@ def test_presentation_uses_bounded_field_id_wire_projection() -> None:
 def test_presentation_rejects_more_than_one_pinned_field() -> None:
     with pytest.raises(ValidationError):
         ViewPresentation(pinned_field_ids=[uuid7(), uuid7()])
-
-
-def test_presentation_dependencies_must_be_query_columns_and_active_fields() -> None:
-    from fastapi import HTTPException
-
-    from app.systems.openview.views.router import _validate_presentation
-
-    module_id, field_id = uuid7(), uuid7()
-    presentation = ViewPresentation(column_field_ids=[field_id], primary_field_id=field_id)
-    with pytest.raises(HTTPException) as missing_column:
-        _validate_presentation(
-            object(),  # type: ignore[arg-type]
-            module_id,
-            presentation,
-            QueryDefinition(),
-        )
-    assert missing_column.value.status_code == 409
-
-    class FieldRows:
-        def all(self) -> list[Field]:
-            return [
-                Field(
-                    id=field_id,
-                    module_id=module_id,
-                    name="Primary",
-                    type=FieldType.TEXT,
-                    required=False,
-                    position=0,
-                    config={},
-                    is_deleted=True,
-                )
-            ]
-
-    class FieldSession:
-        def scalars(self, _statement: object) -> FieldRows:
-            return FieldRows()
-
-    with pytest.raises(HTTPException) as stale_field:
-        _validate_presentation(
-            FieldSession(),  # type: ignore[arg-type]
-            module_id,
-            presentation,
-            QueryDefinition(columns=[FieldReference(field_id=field_id, expected_type="text")]),
-        )
-    assert stale_field.value.status_code == 409
-
-
-def test_calendar_presentation_requires_a_live_date_or_datetime_query_column() -> None:
-    from fastapi import HTTPException
-
-    from app.systems.openview.views.router import _validate_presentation
-
-    module_id, field_id = uuid7(), uuid7()
-    date_field = Field(
-        id=field_id,
-        module_id=module_id,
-        name="Start date",
-        type=FieldType.TEXT,
-        required=False,
-        position=0,
-        config={},
-        is_deleted=False,
-    )
-
-    class FieldRows:
-        def all(self) -> list[Field]:
-            return [date_field]
-
-    class FieldSession:
-        def scalars(self, _statement: object) -> FieldRows:
-            return FieldRows()
-
-    definition = QueryDefinition(
-        columns=[FieldReference(field_id=field_id, expected_type=FieldType.TEXT)]
-    )
-    with pytest.raises(HTTPException) as error:
-        _validate_presentation(
-            FieldSession(),  # type: ignore[arg-type]
-            module_id,
-            ViewPresentation(column_field_ids=[field_id], date_field_id=field_id),
-            definition,
-        )
-    assert error.value.status_code == 409
 
 
 @pytest.mark.parametrize(
@@ -212,21 +126,6 @@ def test_saved_view_invalidation_omits_row_ids_and_carries_its_module() -> None:
     }
 
 
-def test_saved_view_routes_require_revision_for_archive_and_restore() -> None:
-    app = FastAPI()
-    app.include_router(views_router, prefix="/api")
-    paths = app.openapi()["paths"]
-
-    delete_parameters = paths["/api/views/{view_id}"]["delete"]["parameters"]
-    revision_parameter = next(
-        parameter for parameter in delete_parameters if parameter["name"] == "revision"
-    )
-
-    assert revision_parameter["in"] == "query"
-    assert revision_parameter["required"] is True
-    assert paths["/api/views/{view_id}/restore"]["post"]["requestBody"]["required"] is True
-
-
 def test_stale_saved_view_conflict_includes_current_revision() -> None:
     from types import SimpleNamespace
 
@@ -265,4 +164,112 @@ def test_stale_saved_view_conflict_includes_current_revision() -> None:
         "code": "stale_revision",
         "message": "View changed; reload before saving",
         "current_revision": 9,
+    }
+
+
+def test_view_mutation_rejects_owner_audience_and_empty_patch():
+    for extra in ({"owner_id": uuid7()}, {"visibility": "workspace"}, {"audience": {}}):
+        with pytest.raises(ValidationError):
+            ViewCreate.model_validate(
+                {"module_id": uuid7(), "name": "Shared", "definition": {}, **extra}
+            )
+    assert ViewUpdate(revision=1, is_default=True).is_default is True
+    with pytest.raises(ValidationError):
+        ViewUpdate(revision=1)
+    with pytest.raises(ValidationError):
+        ViewUpdate.model_validate({"revision": 1, "visibility": "workspace"})
+
+
+def _admin() -> User:
+    # An administrator needs no database lookup for the module level.
+    return User(id=uuid7(), status="active", role="admin", is_deleted=False)
+
+
+class _NoRowSession:
+    def scalar(self, _statement: object) -> None:
+        return None
+
+
+def test_missing_or_hidden_view_reads_as_not_found() -> None:
+    from app.systems.openview.views.router import read_view
+
+    with pytest.raises(HTTPException) as error:
+        read_view(uuid7(), _admin(), _NoRowSession())
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "View not found"
+
+
+def test_view_change_on_an_unavailable_module_is_refused() -> None:
+    from app.systems.openview.views.router import _active_module
+
+    with pytest.raises(HTTPException) as error:
+        _active_module(_NoRowSession(), uuid7())
+
+    assert error.value.status_code == 409
+    assert error.value.detail == {"code": "view_invalid", "message": "The module is unavailable"}
+
+
+def test_constraint_failure_on_save_rolls_back_and_reports_view_invalid() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from app.systems.openview.views.router import commit
+
+    class RefusingSession:
+        rolled_back = False
+
+        def commit(self) -> None:
+            raise IntegrityError("INSERT", {}, Exception("uq_saved_views_module_default"))
+
+        def rollback(self) -> None:
+            self.rolled_back = True
+
+    session = RefusingSession()
+    with pytest.raises(HTTPException) as error:
+        commit(session)
+
+    assert session.rolled_back is True
+    assert error.value.status_code == 409
+    assert error.value.detail == {"code": "view_invalid", "message": "Unable to save view"}
+
+
+@pytest.mark.parametrize(
+    ("column_deleted", "refused"),
+    [
+        pytest.param(False, False, id="every referenced field is active"),
+        pytest.param(True, True, id="a query column names a deleted field"),
+    ],
+)
+def test_saved_view_definition_refuses_a_deleted_field(column_deleted: bool, refused: bool) -> None:
+    from app.systems.openview.views.router import _validate_definition
+    from app.systems.sandbox.fields.models import Field, FieldType
+    from app.systems.sandbox.modules.models import Module
+    from app.systems.sandbox.records.query_schemas import FieldReference, QueryDefinition
+
+    module = Module(id=uuid7())
+    active = Field(id=uuid7(), module_id=module.id, type=FieldType.TEXT, is_deleted=False)
+    column = Field(id=uuid7(), module_id=module.id, type=FieldType.TEXT, is_deleted=column_deleted)
+
+    class ModuleFieldSession:
+        def get(self, model: type, ident: object) -> object:
+            return module if model is Module and ident == module.id else None
+
+        def scalars(self, _statement: object) -> list[Field]:
+            return [active, column]
+
+    definition = QueryDefinition(
+        columns=[FieldReference(field_id=column.id, expected_type="text")],
+        sort=[{"field_id": active.id, "expected_type": "text", "direction": "asc"}],
+    )
+
+    session = ModuleFieldSession()
+    if not refused:
+        _validate_definition(session, _admin(), module.id, definition)
+        return
+    with pytest.raises(HTTPException) as error:
+        _validate_definition(session, _admin(), module.id, definition)
+    assert error.value.status_code == 409
+    assert error.value.detail == {
+        "code": "view_invalid",
+        "message": "A referenced field is no longer active",
     }

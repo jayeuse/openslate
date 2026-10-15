@@ -1,4 +1,10 @@
-"""The access function: who reads, writes or manages each department and module."""
+"""The access function on PostgreSQL: its reads, the account check (rule 2) and denials.
+
+The stack-free table in ``test_access_fold.py`` owns the fold (rules 1 and 3 to 6). These
+cases keep what needs the database: the live rows of live groups and memberships, the
+modules each row reaches (including modules created after the row), the administrator
+and inactive-account checks before any read, and the authorization denials.
+"""
 
 from datetime import UTC, datetime, timedelta
 
@@ -68,30 +74,6 @@ def test_most_specific_row_of_one_group_wins_even_when_lower(integration_db: Ses
     assert level_for(integration_db, member, inventory.id, prices.id) is READ
     assert level_for(integration_db, member, inventory.id, products.id) is WRITE
     assert allowed_module_ids(integration_db, member, WRITE) == frozenset({products.id})
-
-
-def test_module_row_raises_one_module_above_the_department_level(integration_db: Session) -> None:
-    member = add_user(integration_db)
-    inventory = add_department(integration_db)
-    products = add_module(integration_db, inventory)
-    prices = add_module(integration_db, inventory)
-    make_group_access(integration_db, [member], inventory, level=READ)
-    make_group_access(integration_db, [member], inventory, prices, level=WRITE)
-
-    assert level_for(integration_db, member, inventory.id, prices.id) is WRITE
-    assert level_for(integration_db, member, inventory.id, products.id) is READ
-
-
-def test_highest_level_across_groups_wins(integration_db: Session) -> None:
-    member = add_user(integration_db)
-    inventory = add_department(integration_db)
-    products = add_module(integration_db, inventory)
-    make_group_access(integration_db, [member], inventory, level=READ)
-    make_group_access(integration_db, [member], inventory, level=MANAGE)
-    make_group_access(integration_db, [member], inventory, products, level=WRITE)
-
-    assert level_for(integration_db, member, inventory.id, products.id) is MANAGE
-    assert level_for(integration_db, member, inventory.id) is MANAGE
 
 
 def test_module_only_access_does_not_open_the_department(integration_db: Session) -> None:

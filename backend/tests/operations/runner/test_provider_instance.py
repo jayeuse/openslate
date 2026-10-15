@@ -10,6 +10,7 @@ import pytest
 from app.core.config import provider_instance as guard
 from app.core.config.disposable_instance import PROVIDER_IMAGES
 from app.core.config.instance import InstanceTarget, InstanceTargetError
+from tests.repository import REPOSITORY_ROOT
 
 
 def _installation(tmp_path: Path) -> tuple[dict[str, str], InstanceTarget, list[dict]]:
@@ -23,7 +24,7 @@ def _installation(tmp_path: Path) -> tuple[dict[str, str], InstanceTarget, list[
     }
     target = InstanceTarget(project, "127.0.0.1", 55432, "postgres", path, project)
     containers = []
-    root = Path(__file__).resolve().parents[4] / "infra/supabase"
+    root = REPOSITORY_ROOT / "infra/supabase"
     for service in ("api-gw", "auth", "storage"):
         containers.append({
             "Config": {"Image": PROVIDER_IMAGES[service], "Labels": {

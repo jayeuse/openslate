@@ -2,6 +2,8 @@ import json
 import logging
 from secrets import token_urlsafe
 
+import pytest
+
 from app.core import observability
 
 LOG_CANARY = token_urlsafe(32)
@@ -167,7 +169,7 @@ def test_sink_closed_terminal_and_short_write_do_not_escape(tmp_path, monkeypatc
         "route": "/api/records",
         "method": "POST",
         "reason_code": "transport_failure",
-            "upstream": "identity",
+        "upstream": "identity",
         "request_id": "request",
         "operation_id": "operation",
     }
@@ -202,6 +204,7 @@ def test_independent_writers_preserve_complete_records(tmp_path) -> None:
     assert (tmp_path / "2026-09-09.log").stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.integration
 def test_api_responses_survive_log_sink_failure_and_recover(tmp_path, monkeypatch, capsys) -> None:
     from fastapi.testclient import TestClient
 
@@ -249,6 +252,7 @@ def test_api_responses_survive_log_sink_failure_and_recover(tmp_path, monkeypatc
         get_settings.cache_clear()
 
 
+@pytest.mark.integration
 def test_request_logs_use_complete_registered_route_templates() -> None:
     from fastapi.testclient import TestClient
 
@@ -264,12 +268,7 @@ def test_request_logs_use_complete_registered_route_templates() -> None:
                 client.get("/api/records/00000000-0000-0000-0000-000000000001").status_code == 401
             )
             assert client.get("/api/health").status_code == 200
-            assert (
-                client.get(
-                    f"/api/unknown-{LOG_CANARY}?secret={LOG_CANARY}"
-                ).status_code
-                == 404
-            )
+            assert client.get(f"/api/unknown-{LOG_CANARY}?secret={LOG_CANARY}").status_code == 404
         records = [json.loads(record.getMessage()) for record in handler.records]
         routes = [record["route"] for record in records if record["event"] == "http_request"]
         assert routes == ["/api/records", "/api/records/{record_id}", "/api/health", "unknown"]

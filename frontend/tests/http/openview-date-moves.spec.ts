@@ -1,10 +1,10 @@
 import { expect, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
-import { test } from "./helpers/test";
+import { test, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf } from "../helpers/pagination";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -43,24 +43,6 @@ type WindowRequest = {
   to_date?: string;
   definition: { search: string | null };
 };
-function pageOf<T>(
-  items: T[],
-  limit: number,
-  offset = 0,
-  total = items.length,
-) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
-}
-
 async function installDates(
   page: Page,
   options: {
@@ -72,7 +54,6 @@ async function installDates(
     timezone?: string;
     undated?: number;
     level?: "read" | "write";
-    theme?: "light" | "dark";
   } = {},
 ) {
   await page.clock.setFixedTime(new Date(revision));
@@ -204,6 +185,7 @@ async function installDates(
     return `${parts.find((p) => p.type === "year")!.value}-${parts.find((p) => p.type === "month")!.value}-${parts.find((p) => p.type === "day")!.value}`;
   };
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const target = new URL(request.url());
     const path = target.pathname;
@@ -253,12 +235,6 @@ async function installDates(
         timezone: zone,
         week_start: "monday",
       });
-    if (options.theme && path.endsWith("/preferences"))
-      return json({
-        user_id: id(1),
-        theme: options.theme,
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
-      });
     if (path === "/api/views/data-sources")
       return json(
         pageOf(
@@ -270,11 +246,11 @@ async function installDates(
               title_field_id: titleId,
             },
           ],
-          limit,
+          { limit },
         ),
       );
     if (path === `/api/views/data-sources/${moduleId}/fields`)
-      return json(pageOf(fields, limit));
+      return json(pageOf(fields, { limit }));
     if (
       path === `/api/departments/${departmentId}` ||
       path === "/api/departments"
@@ -289,10 +265,12 @@ async function installDates(
         performed_by: null,
       };
       return json(
-        path === "/api/departments" ? pageOf([department], limit) : department,
+        path === "/api/departments"
+          ? pageOf([department], { limit })
+          : department,
       );
     }
-    if (path === "/api/views") return json(pageOf([saved], limit));
+    if (path === "/api/views") return json(pageOf([saved], { limit }));
     if (path === `/api/views/${viewId}`) return json(saved);
     if (path === "/api/records/window-query") {
       const body = request.postDataJSON() as WindowRequest;
@@ -309,12 +287,11 @@ async function installDates(
           : !!end && start <= body.to_date! && end >= body.from_date!;
       });
       return json({
-        ...pageOf(
-          selected.slice(body.offset, body.offset + body.limit),
-          body.limit,
-          body.offset,
-          selected.length,
-        ),
+        ...pageOf(selected.slice(body.offset, body.offset + body.limit), {
+          limit: body.limit,
+          offset: body.offset,
+          total: selected.length,
+        }),
         timezone:
           startType === "datetime" || endType === "datetime" ? zone : null,
       });
@@ -377,15 +354,6 @@ async function installDates(
       if (failure === "503")
         return json({ detail: "Private batch canary" }, 503);
       if (failure === "missing") return json({ results: [] });
-      if (failure === "duplicate")
-        return json({ results: [results[0], results[0]] });
-      const first = results[0];
-      if (first && "record" in first && first.record) {
-        if (failure === "half") first.record.data[endId] = "2026-03-10";
-        if (failure === "foreign") first.record_id = id(1999);
-        if (failure === "module") first.record.module_id = id(1998);
-        if (failure === "deleted") first.record.is_deleted = true;
-      }
       return json({ results });
     }
     const record = path.match(/^\/api\/records\/([^/]+)$/)?.[1];
@@ -396,12 +364,11 @@ async function installDates(
     if (path === "/api/records/query") {
       recordReads++;
       return json(
-        pageOf(
-          [...rows.values()].slice(offset, offset + limit),
+        pageOf([...rows.values()].slice(offset, offset + limit), {
           limit,
           offset,
-          rows.size,
-        ),
+          total: rows.size,
+        }),
       );
     }
     return route.fallback();
@@ -492,7 +459,7 @@ async function drag(page: Page, from: Locator, to: { x: number; y: number }) {
   await page.clock.runFor(60);
 }
 
-test("S19 Timeline stages one atomic interval through repeated moves, end resize, and a layout remount", async ({
+test("Timeline stages one atomic interval through repeated moves, end resize, and a layout remount", async ({
   page,
 }) => {
   const api = await installDates(page);
@@ -536,7 +503,7 @@ test("S19 Timeline stages one atomic interval through repeated moves, end resize
   });
 });
 
-test("S19 Calendar preserves workspace wall time and fractional seconds across DST and reads undated pages only on intent", async ({
+test("Calendar preserves workspace wall time and fractional seconds across DST and reads undated pages only on intent", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -608,7 +575,7 @@ test("S19 Calendar preserves workspace wall time and fractional seconds across D
   });
 });
 
-test("S19 nonexistent workspace times refuse staging and overlaps require an explicit offset", async ({
+test("nonexistent workspace times refuse staging and overlaps require an explicit offset", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -652,7 +619,7 @@ test("S19 nonexistent workspace times refuse staging and overlaps require an exp
   });
 });
 
-test("S19 Timeline pointer shift uses unclipped dates and its end handle changes only end", async ({
+test("Timeline pointer shift uses unclipped dates and its end handle changes only end", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1600 });
@@ -713,7 +680,7 @@ test("S19 Timeline pointer shift uses unclipped dates and its end handle changes
   });
 });
 
-test("S19 Calendar drops an undated card on a visible day without an eager read or write", async ({
+test("Calendar drops an undated card on a visible day without an eager read or write", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1600 });
@@ -756,7 +723,7 @@ test("S19 Calendar drops an undated card on a visible day without an eager read 
   });
 });
 
-test("S19 phone keyboard Move to can cancel, reject a reversed end, compose, and return to the original interval", async ({
+test("phone keyboard Move to can cancel, reject a reversed end, compose, and return to the original interval", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -784,7 +751,7 @@ test("S19 phone keyboard Move to can cancel, reject a reversed end, compose, and
 });
 
 for (const outcome of ["stale", "invalid", "forbidden"] as const) {
-  test(`S19 partial ${outcome} keeps the failed card and announces the successful move once`, async ({
+  test(`partial ${outcome} keeps the failed card and announces the successful move once`, async ({
     page,
   }) => {
     const api = await installDates(page);
@@ -833,16 +800,10 @@ for (const outcome of ["stale", "invalid", "forbidden"] as const) {
   });
 }
 
-for (const fault of [
-  "half",
-  "missing",
-  "duplicate",
-  "foreign",
-  "module",
-  "deleted",
-  "503",
-]) {
-  test(`S19 ${fault} compound receipt refreshes reads but retains the original pending revision without retry`, async ({
+// The other receipt faults (half, duplicate, foreign, module, deleted) are
+// owned by isolated/openview/record-move-receipts.spec.ts.
+for (const fault of ["missing", "503"]) {
+  test(`${fault} compound receipt refreshes reads but retains the original pending revision without retry`, async ({
     page,
   }) => {
     const api = await installDates(page);
@@ -868,7 +829,7 @@ for (const fault of [
   });
 }
 
-test("S19 held Save blocks duplicate staging and read refusal withdraws date controls and pending metadata", async ({
+test("held Save blocks duplicate staging and read refusal withdraws date controls and pending metadata", async ({
   page,
 }) => {
   const api = await installDates(page);
@@ -906,7 +867,7 @@ test("S19 held Save blocks duplicate staging and read refusal withdraws date con
   expect(api.batches).toHaveLength(1);
 });
 
-test("S19 incomplete intervals and read-only access never expose functioning move controls", async ({
+test("incomplete intervals and read-only access never expose functioning move controls", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -931,7 +892,7 @@ test("S19 incomplete intervals and read-only access never expose functioning mov
   expect(api.writes()).toBe(0);
 });
 
-test("S19 a late held receipt cannot republish results after records-read refusal", async ({
+test("a late held receipt cannot republish results after records-read refusal", async ({
   page,
 }) => {
   const api = await installDates(page);
@@ -958,7 +919,7 @@ test("S19 a late held receipt cannot republish results after records-read refusa
   await expect(page.getByRole("main")).not.toContainText("Task 1");
 });
 
-test("S19 Timeline shifts mixed date and datetime fields together across DST without losing wall precision", async ({
+test("Timeline shifts mixed date and datetime fields together across DST without losing wall precision", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -982,29 +943,7 @@ test("S19 Timeline shifts mixed date and datetime fields together across DST wit
   });
 });
 
-test("S19 Calendar interprets timezone-free datetime as UTC and shifts its cross-midnight workspace day", async ({
-  page,
-}) => {
-  const api = await installDates(page, {
-    layout: "calendar",
-    startType: "datetime",
-    start: "2026-03-07T01:15:30.123456",
-  });
-  await page.goto(url);
-  await stage(page, "2026-03-08", "Task 1", "Move date…");
-  await page.getByRole("button", { name: "Save changes (1)" }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Saved 1 move." }),
-  ).toBeVisible();
-  expect(api.batches[0].items[0]).toEqual({
-    record_id: recordId,
-    revision,
-    field_id: startId,
-    value: "2026-03-09T00:15:30.123456Z",
-  });
-});
-
-test("S19 returning a legacy timezone-free datetime to its original workspace day clears the move without a write", async ({
+test("returning a legacy timezone-free datetime to its original workspace day clears the move without a write", async ({
   page,
 }) => {
   const api = await installDates(page, {
@@ -1027,13 +966,13 @@ test("S19 returning a legacy timezone-free datetime to its original workspace da
   );
 });
 
-test.describe("S19 touch", () => {
+test.describe("touch", () => {
   test.use({
     viewport: { width: 390, height: 844 },
     hasTouch: true,
     isMobile: true,
   });
-  test("S19 Timeline phone handles are distinct 44px targets and touch shift stages both dates", async ({
+  test("Timeline phone handles are distinct 44px targets and touch shift stages both dates", async ({
     page,
   }) => {
     const api = await installDates(page);
@@ -1089,63 +1028,3 @@ test.describe("S19 touch", () => {
     expect(api.batches).toEqual([]);
   });
 });
-
-if (process.env.S19_CAPTURE_DIR) {
-  for (const layout of ["calendar", "timeline"] as const) {
-    test(`S19 capture ${layout} moves`, async ({ page }) => {
-      const directory = process.env.S19_CAPTURE_DIR!;
-      await mkdir(directory, { recursive: true });
-      for (const theme of ["light", "dark"] as const) {
-        for (const size of ["desktop", "mobile"] as const) {
-          await page.setViewportSize(
-            size === "desktop"
-              ? { width: 1440, height: 900 }
-              : { width: 390, height: 844 },
-          );
-          await page.emulateMedia({
-            reducedMotion: "reduce",
-            colorScheme: theme,
-          });
-          const api = await installDates(page, { layout, undated: 1, theme });
-          await page.goto(url);
-          await stage(
-            page,
-            "2026-03-07",
-            "Task 1",
-            layout === "calendar" ? "Move date…" : "Move start date…",
-          );
-          if (layout === "calendar") {
-            await page
-              .getByRole("button", {
-                name: "Show undated move list",
-                exact: true,
-              })
-              .click();
-            await stage(page, "2026-03-09", "Task 3", "Move date…");
-          } else {
-            await stage(page, "2026-03-15", "Task 1", "Resize end date…");
-            await stage(page, "2026-03-13", "Task 2");
-            api.outcome("stale");
-            await page
-              .getByRole("button", { name: "Save changes (2)" })
-              .click();
-            await expect(card(page, "Task 2")).toContainText(
-              "Changed by someone else — review",
-            );
-          }
-          await page.addStyleTag({
-            content: "nextjs-portal { display: none !important; }",
-          });
-          await page.evaluate(async () => {
-            await document.fonts.ready;
-          });
-          await page.screenshot({
-            path: `${directory}/${layout}-${theme}-${size}.png`,
-            fullPage: true,
-            animations: "disabled",
-          });
-        }
-      }
-    });
-  }
-}

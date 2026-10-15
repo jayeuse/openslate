@@ -233,7 +233,13 @@ export default function ServerBackedCharts() {
   // A denied read withdraws the applied chart, as every read did before.
   const readDenied = sourcesDenied || fieldsDenied;
   useEffect(() => {
-    if (!readDenied) return;
+    if (!readDenied) {
+      // Access came back: the refusal message no longer applies.
+      setQueryError((current) =>
+        current === AUTHORIZATION_ERROR ? "" : current,
+      );
+      return;
+    }
     openSequence.current += 1;
     setOpening(false);
     setOpenedChart(null);

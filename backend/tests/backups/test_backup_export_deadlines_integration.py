@@ -5,28 +5,16 @@ from threading import Event
 
 import anyio
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
 from app.systems.manage.audit.context import get_audit_context
-from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.backups import downloads
 from app.systems.manage.backups.models import BackupExportOperation
-from tests.backups.test_backup_export_downloads_integration import _scope
+from tests.backups.export_support import content_scope, request_then_wait, stored_export
 
-pytest_plugins = ("tests.backups.test_backup_export_downloads_integration",)
 pytestmark = pytest.mark.integration
-
-
-def _stored(world):
-    with Session(world.auth.owner) as db:
-        row = db.get(BackupExportOperation, world.export_id)
-        events = list(
-            db.scalars(select(SecurityEvent).where(SecurityEvent.subject_id == world.export_id))
-        )
-        return row, events
 
 
 @pytest.mark.parametrize("stage", ["preflight", "commit"])
@@ -78,14 +66,7 @@ def test_preparation_deadline_includes_sql_and_retains_worker_owned_session(
 
     async def execute():
         stopped = anyio.Event()
-        received = False
-
-        async def receive():
-            nonlocal received
-            if not received:
-                received = True
-                return {"type": "http.request", "body": b"", "more_body": False}
-            await anyio.Event().wait()
+        receive = request_then_wait()
 
         async def send(message):
             if message["type"] == "http.response.start":
@@ -94,7 +75,7 @@ def test_preparation_deadline_includes_sql_and_retains_worker_owned_session(
 
         async def request():
             try:
-                await world.auth.client.app(_scope(world), receive, send)
+                await world.auth.client.app(content_scope(world), receive, send)
             finally:
                 stopped.set()
 
@@ -125,7 +106,7 @@ def test_preparation_deadline_includes_sql_and_retains_worker_owned_session(
         if stage == "commit":
             event.remove(AuditSession, "before_commit", commit)
             event.remove(AuditSession, "before_flush", observe)
-    row, events = _stored(world)
+    row, events = stored_export(world)
     if stage == "preflight":
         assert row.admission_digest is not None and not events
     else:
@@ -163,15 +144,8 @@ def test_stream_wall_deadline_interrupts_blocked_read_but_retains_open_descripto
 
     async def execute():
         stopped = anyio.Event()
-        received = False
         digest = hashlib.sha256()
-
-        async def receive():
-            nonlocal received
-            if not received:
-                received = True
-                return {"type": "http.request", "body": b"", "more_body": False}
-            await anyio.Event().wait()
+        receive = request_then_wait()
 
         async def send(message):
             if message["type"] == "http.response.start":
@@ -181,7 +155,7 @@ def test_stream_wall_deadline_interrupts_blocked_read_but_retains_open_descripto
 
         async def request():
             try:
-                await world.auth.client.app(_scope(world), receive, send)
+                await world.auth.client.app(content_scope(world), receive, send)
             finally:
                 stopped.set()
 
@@ -208,7 +182,7 @@ def test_stream_wall_deadline_interrupts_blocked_read_but_retains_open_descripto
     finally:
         release.set()
         assert read_exited.wait(10)
-    row, events = _stored(world)
+    row, events = stored_export(world)
     assert row.admission_digest is None and len(events) == 1
 
 
@@ -232,12 +206,12 @@ def test_request_rollback_failure_releases_export_slot_without_consumption(
     assert not remaining[0] and failed.status_code == 503
     assert failed.json()["detail"]["code"] == "export_unavailable"
     assert "content-disposition" not in failed.headers and failed.content != world.content
-    row, events = _stored(world)
+    row, events = stored_export(world)
     assert row.admission_digest is not None and not events
     monkeypatch.setattr(AuditSession, "rollback", original)
     retried = world.auth.client.get(world.path + "/content", headers=world.native_headers)
     assert retried.status_code == 200 and retried.content == world.content
-    row, events = _stored(world)
+    row, events = stored_export(world)
     assert row.admission_digest is None and len(events) == 1
 
 
@@ -288,7 +262,7 @@ def test_named_fifo_refuses_promptly_and_releases_physical_download_slot(ready_e
     assert timely, "Nonregular export blocked before fstat instead of promptly refusing"
     assert response.status_code == 503 and "content-disposition" not in response.headers
     assert exited.is_set()
-    row, events = _stored(world)
+    row, events = stored_export(world)
     assert row.admission_digest is not None and not events
     world.artifact.unlink()
     world.artifact.write_bytes(world.content)

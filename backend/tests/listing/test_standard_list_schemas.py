@@ -36,15 +36,23 @@ def test_standard_list_request_defaults() -> None:
     assert request.deleted is DeletedFilter.EXCLUDE
 
 
-@pytest.mark.parametrize("limit", [0, 101])
-def test_standard_list_request_rejects_invalid_limits(limit: int) -> None:
+@pytest.mark.parametrize(
+    "page",
+    [{"limit": 0}, {"limit": 101}, {"offset": -1}],
+    ids=["limit below 1", "limit above 100", "negative offset"],
+)
+def test_standard_list_request_rejects_out_of_range_paging(page: dict[str, int]) -> None:
+    """Every endpoint request inherits these bounds; endpoint tests keep one row each."""
+
     with pytest.raises(ValidationError):
-        ExampleListRequest(limit=limit)
+        ExampleListRequest(**page)
 
 
-def test_standard_list_request_rejects_negative_offset() -> None:
-    with pytest.raises(ValidationError):
-        ExampleListRequest(offset=-1)
+@pytest.mark.parametrize(("limit", "offset"), [(1, 0), (100, 10_000)])
+def test_standard_list_request_accepts_the_paging_bounds(limit: int, offset: int) -> None:
+    request = ExampleListRequest(limit=limit, offset=offset)
+
+    assert (request.limit, request.offset) == (limit, offset)
 
 
 def test_standard_list_request_normalizes_search() -> None:

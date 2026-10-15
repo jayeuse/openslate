@@ -10,12 +10,12 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 from tests.config_support import settings_environment
+from tests.repository import REPOSITORY_ROOT
 
-SNAPSHOT_PATH = Path(__file__).resolve().parents[3] / "contracts" / "openapi.json"
+SNAPSHOT_PATH = REPOSITORY_ROOT / "contracts" / "openapi.json"
 REFRESH_COMMAND = "cd backend && uv run python -m tests.contracts.export_openapi"
 
 

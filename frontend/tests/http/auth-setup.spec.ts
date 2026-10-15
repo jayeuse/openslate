@@ -1,36 +1,40 @@
-import { expect, test } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  settleReact,
+  signedOut,
+  test,
+} from "./helpers/test";
 
-test("setup without an invitation link explains how to recover", async ({
-  page,
-}) => {
-  await page.goto("/auth/setup");
+test.use({ trace: "off", screenshot: "off", video: "off" });
 
-  await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: "This invitation link is invalid or incomplete." }),
-  ).toHaveText(
-    "This invitation link is invalid or incomplete. Request a new invitation.",
-  );
-  await expect(
-    page.getByRole("link", { name: "Return to sign in" }),
-  ).toHaveAttribute("href", "/login");
-  await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
+// Account setup and recovery are for signed-out people.
+test.beforeEach(async ({ page }) => {
+  await signedOut(page);
 });
 
-test("an old temporary-password URL cannot start account setup", async ({
-  page,
-}) => {
-  await page.goto("/auth/setup?temporary=1");
-  await expect(page).toHaveURL(/\/auth\/setup$/);
-  await expect(page.getByLabel("Temporary password")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
-  await expect(
-    page
+// A setup page without a usable invitation fragment, including an old
+// temporary-password URL, cannot start account setup.
+for (const entry of ["/auth/setup", "/auth/setup?temporary=1"] as const) {
+  test(`setup at ${entry} without an invitation link explains how to recover`, async ({
+    page,
+  }) => {
+    await page.goto(entry);
+    await expect(page).toHaveURL(/\/auth\/setup$/);
+    const alert = page
       .getByRole("alert")
-      .filter({ hasText: "This invitation link is invalid or incomplete." }),
-  ).toBeVisible();
-});
+      .filter({ hasText: "This invitation link is invalid or incomplete." });
+    await expect(alert).toBeVisible();
+    await expect(alert).toHaveText(
+      "This invitation link is invalid or incomplete. Request a new invitation.",
+    );
+    await expect(
+      page.getByRole("link", { name: "Return to sign in" }),
+    ).toHaveAttribute("href", "/login");
+    await expect(page.getByLabel("Temporary password")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+}
 
 test("invitation setup clears the fragment and waits for explicit submission", async ({
   page,
@@ -98,21 +102,14 @@ test("a new invitation link clears an expired-link failure before retry", async 
 test("an old invitation response cannot replace a newer link", async ({
   page,
 }) => {
-  let releaseOldResponse = () => {};
-  let signalOldRequest = () => {};
-  const oldResponseReleased = new Promise<void>((resolve) => {
-    releaseOldResponse = resolve;
-  });
-  const oldRequestStarted = new Promise<void>((resolve) => {
-    signalOldRequest = resolve;
-  });
+  const oldResponse = heldResponse();
   const submittedTokens: string[] = [];
   await page.route("**/api/auth/invitations/complete", async (route) => {
     const body = route.request().postDataJSON() as { token_hash: string };
     submittedTokens.push(body.token_hash);
     if (body.token_hash === "old") {
-      signalOldRequest();
-      await oldResponseReleased;
+      oldResponse.enter();
+      await oldResponse.released;
     }
     await route.fulfill({ status: 204 });
   });
@@ -123,12 +120,24 @@ test("an old invitation response cannot replace a newer link", async ({
       .fill("first password choice");
     await page.getByLabel("Confirm password").fill("first password choice");
     await page.getByRole("button", { name: "Continue" }).click();
-    await oldRequestStarted;
+    await oldResponse.entered;
     await page.goto("/auth/setup#token_hash=new&type=invite");
     await expect(page).toHaveURL(/\/auth\/setup$/);
     await expect(page.getByLabel("Password", { exact: true })).toHaveValue("");
     await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
-    releaseOldResponse();
+    // Deliver the old response and let React commit whatever it schedules
+    // before checking that the newer link still owns the page.
+    const oldDelivered = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/auth/invitations/complete") &&
+        (response.request().postDataJSON() as { token_hash: string })
+          .token_hash === "old",
+    );
+    oldResponse.release();
+    await oldDelivered;
+    await settleReact(page, 3);
+    await expect(page).toHaveURL(/\/auth\/setup$/);
+    await expect(page.getByLabel("Password", { exact: true })).toHaveValue("");
     await page
       .getByLabel("Password", { exact: true })
       .fill("second password choice");
@@ -137,7 +146,7 @@ test("an old invitation response cannot replace a newer link", async ({
     await expect(page).toHaveURL(/\/login\?completed=password$/);
     expect(submittedTokens).toEqual(["old", "new"]);
   } finally {
-    releaseOldResponse();
+    oldResponse.release();
   }
 });
 
@@ -180,6 +189,7 @@ test("recovery requests email and confirms a fragment only on submission", async
   ]);
 });
 
+// Keep the original member/no-access tuple separate from administrator landings.
 test("login accepts email and does not send a username field", async ({
   page,
 }) => {

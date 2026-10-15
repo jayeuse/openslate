@@ -7,7 +7,6 @@ from uuid6 import uuid7
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.main import create_app
 from app.systems.access.policy.schemas import (
     GroupAccessReplace,
     GroupCreate,
@@ -22,6 +21,10 @@ from app.systems.access.users.schemas import (
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from tests.catalog.auth_support import override_catalog_authorization
 from tests.rbac.support import make_user
+from tests.route_app_support import route_app
+
+# Fixed, so parametrized test IDs are the same in every process.
+_PATH_ID = "0190a000-0000-7000-8000-000000000001"
 
 
 def _actor() -> object:
@@ -30,7 +33,7 @@ def _actor() -> object:
 
 @pytest.fixture
 def client() -> TestClient:
-    application = create_app()
+    application = route_app()
     application.dependency_overrides[get_current_user] = _actor
     override_catalog_authorization(application)
     application.dependency_overrides[get_db] = lambda: object()
@@ -66,13 +69,13 @@ def test_write_schemas_accept_declared_inputs_and_reject_unknown_top_level_field
     ("method", "path", "payload"),
     [
         ("post", "/api/auth/invitations", {"email": "admin@example.com", "username": "admin"}),
-        ("post", "/api/records", {"module_id": str(uuid7()), "data": {"dynamic": "value"}}),
-        ("patch", f"/api/records/{uuid7()}", {"data": {"dynamic": "value"}}),
+        ("post", "/api/records", {"module_id": _PATH_ID, "data": {"dynamic": "value"}}),
+        ("patch", f"/api/records/{_PATH_ID}", {"data": {"dynamic": "value"}}),
         ("post", "/api/access/groups", {"name": "Inventory"}),
-        ("put", f"/api/access/groups/{uuid7()}/access", {"access": []}),
-        ("put", f"/api/access/groups/{uuid7()}/members", {"member_ids": []}),
+        ("put", f"/api/access/groups/{_PATH_ID}/access", {"access": []}),
+        ("put", f"/api/access/groups/{_PATH_ID}/members", {"member_ids": []}),
         ("post", "/api/users", {"email": "member@example.com", "username": "member"}),
-        ("patch", f"/api/users/{uuid7()}", {"username": "member"}),
+        ("patch", f"/api/users/{_PATH_ID}", {"username": "member"}),
     ],
 )
 def test_unknown_write_fields_return_fastapi_422(

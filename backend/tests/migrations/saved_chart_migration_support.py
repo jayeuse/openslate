@@ -3,19 +3,16 @@
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from functools import cache
 from pathlib import Path
 from uuid import UUID
 
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
-from tests.conftest import guarded_create_engine
+from tests.conftest import alembic_heads, guarded_create_engine
 from tests.database_pool import dispose_process_engines
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
@@ -25,12 +22,9 @@ PREDECESSOR = "5d4e4a094aa7"
 STAMP = datetime(2025, 2, 3, 4, 5, 6, tzinfo=UTC)
 
 
-@cache
 def database_head() -> str:
     """The single Alembic head the shared test database starts and ends at."""
-    config = Config()
-    config.set_main_option("script_location", str(Path(__file__).parents[2] / "migrations"))
-    [head] = ScriptDirectory.from_config(config).get_heads()
+    [head] = alembic_heads()
     return head
 
 

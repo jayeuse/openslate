@@ -16,6 +16,10 @@ import type {
 } from "../../../src/components/systems/sandbox/domain/document";
 import type { SandboxDocumentDesign } from "../../../src/components/systems/sandbox/domain/document";
 import { publicationIdempotencyKey } from "../../../src/components/systems/sandbox/components/review-publish-dialog";
+import {
+  documentSelectField,
+  documentTextField,
+} from "../../helpers/sandbox-fixtures";
 
 const design: SandboxDocumentDesign = {
   departments: [{ id: "operations", name: "Operations", closed: false }],
@@ -27,29 +31,16 @@ const design: SandboxDocumentDesign = {
       closed: false,
       titleFieldId: null,
       fields: [
-        {
-          id: "title",
-          name: "Title",
-          type: "Text",
-          required: true,
-          closed: false,
-          config: { kind: "text", defaultValue: "" },
-        },
-        {
+        documentTextField({ id: "title", name: "Title", required: true }),
+        documentSelectField({
           id: "status",
           name: "Status",
-          type: "Select",
-          required: false,
-          closed: false,
-          config: {
-            kind: "select",
-            defaultValue: null,
-            options: [
-              { id: "open", label: "Open" },
-              { id: "on-hold", label: "On hold" },
-            ],
-          },
-        },
+          defaultValue: null,
+          options: [
+            { id: "open", label: "Open" },
+            { id: "on-hold", label: "On hold" },
+          ],
+        }),
       ],
     },
   ],

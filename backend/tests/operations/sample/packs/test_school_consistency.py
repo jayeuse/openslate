@@ -15,12 +15,12 @@ from app.systems.sandbox.fields.validation import validate_field_value
 from app.systems.sandbox.publications.rules import _field_type, operational_config
 from operations.sample.packs import get_pack
 from operations.sample.population.board_entries import validate_board_scenarios
-from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
 def test_school_named_fee_records_pass_real_board_amount_validation() -> None:
     pack = get_pack("school")
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30), organization=pack)
+    dataset = sample_dataset(pack="school")
     document = SandboxDocument.model_validate(dataset.document)
     module_keys = {value: key for key, value in dataset.module_ids.items()}
     fields: dict[str, list[dict[str, Any]]] = {
@@ -48,9 +48,7 @@ def test_school_named_fee_records_pass_real_board_amount_validation() -> None:
 
 @pytest.mark.parametrize("profile", ("small", "standard", "large"))
 def test_school_class_headcounts_and_capacity_match_actual_admitted_rosters(profile) -> None:
-    dataset = build_dataset(
-        profile, seed=42, anchor_date=date(2026, 9, 30), organization=get_pack("school")
-    )
+    dataset = sample_dataset(profile, pack="school")
     roster_id = dataset.relationship_ids["student_roster"]
     headcounts = Counter(
         edge.target_record_id for edge in dataset.edges if edge.relationship_id == roster_id
@@ -123,9 +121,7 @@ def pupil_codes(dataset: Any) -> dict[str, str]:
 
 
 def test_school_pupil_titles_agree_with_their_student_number_or_student_link() -> None:
-    dataset = build_dataset(
-        "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack("school")
-    )
+    dataset = sample_dataset(pack="school")
     records = {record.logical_id: record for record in dataset.records}
     codes = pupil_codes(dataset)
     mismatches = []
@@ -153,7 +149,7 @@ def test_school_pupil_titles_agree_with_their_student_number_or_student_link() -
 
 @pytest.mark.parametrize("anchor", (date(2026, 9, 30), date(2026, 4, 15)))
 def test_school_attendance_titles_only_state_their_actual_activity_date(anchor) -> None:
-    dataset = build_dataset("small", seed=42, anchor_date=anchor, organization=get_pack("school"))
+    dataset = sample_dataset("small", 42, anchor, "school")
     fields = dataset.field_ids["attendance_exceptions"]
     wrong_dates = []
     for record in dataset.records:
@@ -172,9 +168,7 @@ def test_school_attendance_titles_only_state_their_actual_activity_date(anchor) 
 
 @pytest.mark.parametrize("seed", (17, 42))
 def test_school_enrolment_chain_keeps_the_same_child_name_and_year_group(seed) -> None:
-    dataset = build_dataset(
-        "small", seed=seed, anchor_date=date(2026, 9, 30), organization=get_pack("school")
-    )
+    dataset = sample_dataset("small", seed, pack="school")
     records = {record.logical_id: record for record in dataset.records}
     document = SandboxDocument.model_validate(dataset.document)
     fields = {field.id: field for module in document.design.modules for field in module.fields}

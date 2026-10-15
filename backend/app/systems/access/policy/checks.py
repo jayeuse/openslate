@@ -120,7 +120,8 @@ def _lock_authority(db: Session, actor_id: UUID) -> User | None:
        waits too.
 
     A group joined after step 1 can only add access, so it cannot make the
-    decision wrong.
+    decision wrong. The Sandbox publish locks the live groups FOR SHARE, then the
+    module access rows FOR UPDATE, before any structure row.
     """
 
     group_ids = db.scalars(

@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+from operations.sample.packs import get_pack
+
 if __package__:
     from .caddy_runtime import GATEWAY_PORT, DisposableCaddy
     from .fullstack_environment import RUNNER_API_PORT, RUNNER_CONCURRENCY_LIMIT, api_environment
@@ -158,7 +160,18 @@ def main() -> int:
         stage, started = name, now
 
     try:
-        timed("PostgreSQL startup")
+        timed("PostgreSQL startup (overlaps frontend build)")
+        build_command = ["npm", "run", "build", "--", "--webpack"]
+        build = subprocess.Popen(
+            build_command,
+            cwd=FRONTEND,
+            env=base_env,
+            stdout=log,
+            stderr=log,
+            text=True,
+            start_new_session=True,
+        )
+        processes.append(build)
         postgres = DisposablePostgres(private, run_id, base_env, log, template_port=8008)
         postgres.start()
         database_env = postgres.urls()
@@ -174,7 +187,7 @@ def main() -> int:
             "OPENSLATE_FULLSTACK_RUN_ID": run_id,
             "OPENSLATE_TEST_DATABASE_MANIFEST": str(manifest),
         }
-        timed("schema and Storage")
+        timed("schema and Storage (overlaps frontend build)")
         provision = [sys.executable, "operations/provision_database_role.py", "--confirm"]
         run(provision, BACKEND, migration_env)
         run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, migration_env)
@@ -194,8 +207,10 @@ def main() -> int:
         api_env["E2E_BACKGROUND_WORKERS"] = "true"
         run([sys.executable, "operations/provision_storage.py", "--confirm"], BACKEND, api_env)
         admin = seed(owner_url, run_id, migration_env, roles=("admin",))["admin"]
-        timed("static frontend build")
-        run(["npm", "run", "build", "--", "--webpack"], FRONTEND, base_env)
+        timed("remaining static frontend build wait")
+        build_returncode = build.wait()
+        if build_returncode:
+            raise subprocess.CalledProcessError(build_returncode, build_command)
         api_env["WEB_ASSETS_ROOT"] = str(FRONTEND / "out")
         timed("FastAPI and gateway startup")
 
@@ -243,7 +258,12 @@ def main() -> int:
         credentials = json.loads((sample_run / "credentials.json").read_text(encoding="utf-8"))
         fixture = _write_private(
             private / "smoke-fixture.json",
-            {"runId": run_id, "baseURL": WEB, "roles": smoke_identities(credentials, admin)},
+            {
+                "runId": run_id,
+                "baseURL": WEB,
+                "workspaceName": get_pack(ORGANIZATION).identity.workspace_name,
+                "roles": smoke_identities(credentials, admin),
+            },
         )
         stop_process_group(processes.pop())
         start_api(api_env)
@@ -273,9 +293,11 @@ def main() -> int:
         result = 0
     except Exception as error:
         failure_type = type(error).__name__
-        timed(stage)
         print(f"Smoke FAIL at {stage} ({failure_type}).")
     finally:
+        if stage != "complete":
+            # Include an interrupted stage, but never charge teardown to its duration.
+            timed(stage)
         for process in reversed(processes):
             try:
                 stop_process_group(process)

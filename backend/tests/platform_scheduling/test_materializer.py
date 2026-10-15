@@ -7,7 +7,7 @@ from datetime import UTC, datetime, time
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
@@ -22,6 +22,8 @@ from app.systems.platform.scheduling.models import ScheduledWork
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
+from tests.grant_support import assert_runtime_only_grants
+from tests.platform_scheduling.support import report_scope
 
 
 def test_daily_spring_gap_shifts_forward_then_resumes_local_time():
@@ -70,7 +72,7 @@ def test_weekly_anchor_and_monthly_absent_dates_skip():
 
 
 def test_unknown_timezone_and_non_utc_instant_fail_closed():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Schedule requires an IANA timezone"):
         next_due_after(
             cadence="daily",
             timezone_name="No/Such_Zone",
@@ -79,7 +81,7 @@ def test_unknown_timezone_and_non_utc_instant_fail_closed():
             month_day=None,
             after=datetime(2026, 1, 1, tzinfo=UTC),
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Schedule cursor requires a UTC instant"):
         next_due_after(
             cadence="daily",
             timezone_name="UTC",
@@ -95,24 +97,9 @@ def _subject(
 ) -> tuple[User, Report, ReportSchedule, str, Module, Department]:
     # The materializer concerns scheduling; an administrator can always run the report.
     role = "admin"
-    owner = User(
-        email=f"materializer-{uuid7().hex}@example.test",
-        username=f"materializer_{uuid7().hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=role,
+    owner, report, _access, module, department = report_scope(
+        db, label="Materializer", role=role, grant_read=False
     )
-    department = Department(department_name=f"Materializer {uuid7().hex}")
-    db.add_all((owner, department))
-    db.flush()
-    module = Module(
-        department_id=department.id,
-        module_name=f"Materializer {uuid7().hex}",
-    )
-    db.add(module)
-    db.flush()
-    report = Report(module_id=module.id, name="Scheduled", recipe={})
-    db.add(report)
-    db.flush()
     schedule = ReportSchedule(
         report_id=report.id,
         enabled=True,
@@ -244,18 +231,20 @@ def test_schedule_edits_replace_due_cursor_and_one_policy_is_enforced(integratio
     db = integration_owner_db
     old_due = datetime(2026, 1, 1, 9, tzinfo=UTC)
     _owner, report, schedule, _role, _module, _department = _subject(db, old_due)
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(
-            ReportSchedule(
-                report_id=report.id,
-                enabled=False,
-                cadence="daily",
-                timezone_name="UTC",
-                local_time=time(9),
-                next_due_at=old_due,
-            )
+    savepoint = db.begin_nested()
+    db.add(
+        ReportSchedule(
+            report_id=report.id,
+            enabled=False,
+            cadence="daily",
+            timezone_name="UTC",
+            local_time=time(9),
+            next_due_at=old_due,
         )
+    )
+    with pytest.raises(IntegrityError):
         db.flush()
+    savepoint.rollback()
     schedule.cadence = "weekly"
     schedule.weekday = 0
     schedule.next_due_at = next_due_after(
@@ -298,21 +287,7 @@ def test_unavailable_report_or_source_disables_policy_without_enqueuing(
 def test_report_schedule_table_grants_runtime_access_and_blocks_provider_roles(
     integration_owner_db,
 ):
-    connection = integration_owner_db.connection()
-    statement = text("SELECT has_table_privilege(:role, 'public.report_schedules', :privilege)")
-    for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-        assert connection.scalar(
-            statement,
-            {"role": "openslate_runtime", "privilege": privilege},
-        ) is True
-        for role in ("anon", "authenticated", "service_role"):
-            assert (
-                connection.scalar(
-                    statement,
-                    {"role": role, "privilege": privilege},
-                )
-                is False
-            )
+    assert_runtime_only_grants(integration_owner_db.connection(), "public.report_schedules")
 
 
 @pytest.mark.integration

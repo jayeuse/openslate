@@ -7,118 +7,34 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import httpx
-import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from jwt.algorithms import ECAlgorithm
 from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
-from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
+from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User, UserRole, UserStatus
-
-
-def _settings() -> SimpleNamespace:
-    return SimpleNamespace(
-        supabase_url="https://supabase.example.test",
-        supabase_auth_issuer="https://supabase.example.test/auth/v1",
-        supabase_auth_audience="authenticated",
-        supabase_publishable_key=SecretStr("sb_publishable_test"),
-        supabase_secret_key=SecretStr("sb_secret_test"),
-        supabase_timeout_seconds=2,
-    )
-
-
-def _signed_access(
-    private_key: ec.EllipticCurvePrivateKey,
-    *,
-    user_id: str,
-    session_id: str,
-    issuer: str = "https://supabase.example.test/auth/v1",
-    audience: str = "authenticated",
-    expires_at: datetime | None = None,
-    include_nbf: bool = True,
-    kid: str = "test-key",
-    extra: dict[str, object] | None = None,
-) -> str:
-    now = datetime.now(UTC)
-    claims: dict[str, object] = {
-        "sub": user_id,
-        "session_id": session_id,
-        "iss": issuer,
-        "aud": audience,
-        "iat": now,
-        "exp": expires_at or now + timedelta(minutes=10),
-        "role": "admin",
-        "aal": "aal1",
-        "user_metadata": {"role": "admin"},
-        **(extra or {}),
-    }
-    if include_nbf and "nbf" not in claims:
-        claims["nbf"] = now
-    return jwt.encode(claims, private_key, algorithm="ES256", headers={"kid": kid})
-
-
-def _client_for_key(private_key: ec.EllipticCurvePrivateKey, *, user_id=None, factors=None):
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
-
-    jwk = ECAlgorithm.to_jwk(private_key.public_key(), as_dict=True)
-    jwk.update({"kid": "test-key", "alg": "ES256", "use": "sig"})
-
-    def respond(request: httpx.Request) -> httpx.Response:
-        if request.url.path.startswith("/auth/v1/admin/users/"):
-            assert request.headers["apikey"] == "sb_secret_test"
-            assert "authorization" not in request.headers
-            return httpx.Response(
-                200,
-                json={"id": str(user_id), **({"factors": factors} if factors is not None else {})},
-            )
-        assert request.headers["apikey"] == "sb_publishable_test"
-        if request.url.path.endswith("/.well-known/jwks.json"):
-            return httpx.Response(200, json={"keys": [jwk]})
-        return httpx.Response(404)
-
-    return SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
-
-
-def _session_database(user: User, session: IdentitySession) -> Mock:
-    observation = IdentityMfaObservation(
-        user_id=user.id,
-        observed_provider_user_id=user.supabase_user_id,
-        verified_totp=False,
-        observed_at=session.created_at - timedelta(seconds=1),
-    )
-    rows = {
-        User: user,
-        User.supabase_user_id: user.supabase_user_id,
-        IdentitySession: session,
-        IdentityMfaObservation: observation,
-    }
-    db = Mock(spec=Session)
-    db.scalar.side_effect = lambda query: rows[query.column_descriptions[0]["expr"]]
-
-    def get(model, identifier, **_kwargs):
-        row = rows[model]
-        key = "user_id" if model is IdentityMfaObservation else "id"
-        return row if getattr(row, key) == identifier else None
-
-    db.get.side_effect = get
-    db.execute.return_value.scalar_one.return_value = True
-    return db
+from tests.auth.provider_jwt_support import (
+    client_for_key,
+    provider_settings,
+    session_database,
+    signed_access,
+)
 
 
 def test_provider_access_accepts_missing_nbf_but_enforces_nbf_when_present() -> None:
     from app.core.integrations.supabase_auth import InvalidProviderToken
 
     key = ec.generate_private_key(ec.SECP256R1())
-    client = _client_for_key(key)
+    client = client_for_key(key)
     user_id, session_id = uuid4(), uuid4()
-    real_shape = _signed_access(
+    real_shape = signed_access(
         key, user_id=str(user_id), session_id=str(session_id), include_nbf=False
     )
     assert client.verify_access_token(real_shape).session_id == session_id
 
-    premature = _signed_access(
+    premature = signed_access(
         key,
         user_id=str(user_id),
         session_id=str(session_id),
@@ -148,10 +64,10 @@ def test_unknown_signing_kids_have_one_bounded_refresh_budget(
         state["fetches"] += 1
         return httpx.Response(200, json={"keys": state["keys"]})
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     user_id, session_id = uuid4(), uuid4()
-    first = _signed_access(first_key, user_id=str(user_id), session_id=str(session_id), kid="first")
-    rotated = _signed_access(
+    first = signed_access(first_key, user_id=str(user_id), session_id=str(session_id), kid="first")
+    rotated = signed_access(
         rotated_key, user_id=str(user_id), session_id=str(session_id), kid="rotated"
     )
     assert client.verify_access_token(first).session_id == session_id
@@ -182,14 +98,14 @@ def test_provider_password_and_refresh_failures_keep_denial_distinct_from_outage
         assert "sb_secret_test" not in str(request.headers)
         return httpx.Response(400, json={"error_code": "invalid_credentials"})
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(invalid))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(invalid))
     with pytest.raises(InvalidProviderCredentials):
         client.password_grant("person@example.test", "wrong")
 
     def outage(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("provider unavailable")
 
-    unavailable = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(outage))
+    unavailable = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(outage))
     with pytest.raises(SupabaseAuthUnavailable):
         unavailable.refresh("opaque-provider-refresh")
 
@@ -288,7 +204,7 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
         status=UserStatus.ACTIVE.value,
         role=UserRole.MEMBER,
     )
-    db = _session_database(user, local_session)
+    db = session_database(user, local_session)
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(provider_user_id, None)
     identity = ProviderAccessIdentity(
@@ -353,7 +269,7 @@ def test_concurrent_refresh_reuses_current_provider_token_and_stable_handle(
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    db = _session_database(user, session)
+    db = session_database(user, session)
     client = Mock()
     client.verify_access_token.return_value = ProviderAccessIdentity(
         provider_user_id,
@@ -385,8 +301,8 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
     monkeypatch.setattr("app.systems.access.identity.provider_sessions.utc_now", lambda: now)
     key = ec.generate_private_key(ec.SECP256R1())
     user_id, provider_id, provider_session_id = uuid4(), uuid4(), uuid4()
-    access = _signed_access(key, user_id=str(provider_id), session_id=str(provider_session_id))
-    client = _client_for_key(key, user_id=provider_id)
+    access = signed_access(key, user_id=str(provider_id), session_id=str(provider_session_id))
+    client = client_for_key(key, user_id=provider_id)
     monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: client)
     user = User(
         id=user_id,
@@ -407,7 +323,7 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    db = _session_database(user, session)
+    db = session_database(user, session)
     app = FastAPI()
     app.dependency_overrides[get_db] = lambda: db
 
@@ -472,7 +388,7 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    db = _session_database(user, session)
+    db = session_database(user, session)
     db.commit.side_effect = [SQLAlchemyError("transient write failure"), None]
     client = Mock()
     client.verify_access_token.side_effect = [

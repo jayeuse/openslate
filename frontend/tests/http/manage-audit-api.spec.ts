@@ -1,8 +1,17 @@
 import { readFile } from "node:fs/promises";
 
-import { expect, test, type Route, type Page } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  signedInSession,
+  test,
+  type Route,
+  type Page,
+} from "./helpers/test";
+import { fixtureId } from "./helpers/access-api";
 import { mockMfa } from "./helpers/mfa";
 import { profilePreferences, profileSelf } from "./helpers/profile-api";
+import { pageOf } from "../helpers/pagination";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000201";
 const NULL_LABEL_ACTOR_ID = "00000000-0000-4000-8000-000000000202";
@@ -87,10 +96,6 @@ function fixtureCsv(logs: AuditLogFixture[]): string {
       .join(","),
   );
   return [CSV_HEADER.slice(0, -2), ...rows].join("\r\n");
-}
-
-function fixtureId(value: number): string {
-  return `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 }
 
 function makeAuditLogs(count = 12): AuditLogFixture[] {
@@ -318,16 +323,11 @@ function createAuditRoute(logs: AuditLogFixture[]) {
       const offset = Number(params.get("offset") ?? 0);
       const items = filtered.slice(offset, offset + limit);
       await route.fulfill({
-        json: {
-          items: items.map(wireAuditLog),
-          pagination: {
-            limit,
-            offset,
-            count: items.length,
-            total: filtered.length,
-            has_more: offset + items.length < filtered.length,
-          },
-        },
+        json: pageOf(items.map(wireAuditLog), {
+          limit,
+          offset,
+          total: filtered.length,
+        }),
       });
     },
   };
@@ -353,15 +353,6 @@ test.beforeEach(async ({ page }) => {
         business_hours: "09:00–18:00",
         theme: "slate",
         revision: 4,
-      },
-    }),
-  );
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000101",
-        setup_required: false,
       },
     }),
   );
@@ -621,7 +612,7 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
   expect(exported.has("limit")).toBe(false);
   expect(exported.has("offset")).toBe(false);
 
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
   api.failList();
   // Reopening the same export after its cache goes stale refetches while
   // retaining the successful preparation; no query internals are injected.
@@ -640,10 +631,8 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
 
   api.allowList();
   logs[0]!.after = { status: "retry succeeded" };
-  let releaseRetry: (() => void) | undefined;
-  retryResponseGate = new Promise<void>((resolve) => {
-    releaseRetry = resolve;
-  });
+  const retryHold = heldResponse();
+  retryResponseGate = retryHold.released;
   try {
     const retryStarted = page.waitForRequest((request) => {
       const url = new URL(request.url());
@@ -657,8 +646,8 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
     await retryStarted;
     await expect(downloadCsv).toBeDisabled();
     expect(downloads).toBe(1);
-    releaseRetry?.();
-    await expect(preparationError).not.toBeVisible();
+    retryHold.release();
+    await expect(preparationError).toBeHidden();
     await expect(preview.getByLabel("CSV preview")).toContainText(
       "retry succeeded",
     );
@@ -675,7 +664,7 @@ test("Audit export downloads server CSV beyond one page and blocks a failed stal
     expect(recoveredCsv).toBe(api.exportBodies[1]);
     expect(downloads).toBe(2);
   } finally {
-    releaseRetry?.();
+    retryHold.release();
   }
 });
 
@@ -707,10 +696,10 @@ test("Audit unscoped reads and export hide cached data on refusal until explicit
     })
     .click();
   await expect(listDenied).toBeVisible();
-  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.getByRole("dialog")).toBeHidden();
   await expect(
     page.getByRole("table", { name: "Activity history table" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   api.allowDetails();
   await listDenied.getByRole("button", { name: "Retry" }).click();
   await expect(
@@ -734,17 +723,17 @@ test("Audit unscoped reads and export hide cached data on refusal until explicit
     .getByRole("button", { name: "Download CSV", exact: true })
     .click();
   await expect(listDenied).toBeVisible();
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
   await expect(
     page.getByRole("table", { name: "Activity history table" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   await page
     .getByRole("combobox", { name: "Sort activity" })
     .selectOption("oldest");
   await expect(listDenied).toBeVisible();
   await expect(
     page.getByRole("table", { name: "Activity history table" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   expect(downloads).toBe(0);
   api.allowList();
   await page.getByRole("link", { name: "Organization", exact: true }).click();
@@ -757,7 +746,7 @@ test("Audit unscoped reads and export hide cached data on refusal until explicit
   await expect(listDenied).toBeVisible();
   await expect(
     page.getByRole("table", { name: "Activity history table" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   await page
     .getByRole("combobox", { name: "Sort activity" })
     .selectOption("oldest");
@@ -775,11 +764,6 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
     const state = await mockMfa(page, { verified: true, aal2: true });
     const api = createAuditRoute(makeAuditLogs());
     let blocked = true;
-    let sessionChecks = 0;
-    page.on("request", (request) => {
-      if (new URL(request.url()).pathname === "/api/auth/session")
-        sessionChecks += 1;
-    });
     await page.route("**/api/audit-logs**", async (route) => {
       if (
         new URL(route.request().url()).pathname === "/api/audit-logs/export" &&
@@ -812,10 +796,12 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
     await expect(
       preview.getByRole("button", { name: "Download CSV", exact: true }),
     ).toBeEnabled();
-    const before = sessionChecks;
     if (code === "mfa_required")
       state.actors.get(state.userId)!.assurance = "aal1";
     else state.networkDenied = true;
+    const sessionCheck = page.waitForRequest(
+      (request) => new URL(request.url()).pathname === "/api/auth/session",
+    );
     await preview
       .getByRole("button", { name: "Download CSV", exact: true })
       .click();
@@ -837,9 +823,9 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
           .getByRole("alert")
           .filter({ hasText: "address is not allowed" }),
       ).toBeVisible();
-    await expect(table).not.toBeVisible();
-    await expect(preview).not.toBeVisible();
-    expect(sessionChecks).toBeGreaterThan(before);
+    await expect(table).toBeHidden();
+    await expect(preview).toBeHidden();
+    await sessionCheck;
     blocked = false;
     state.actors.get(state.userId)!.assurance = "aal2";
     state.networkDenied = false;
@@ -849,13 +835,13 @@ for (const code of ["mfa_required", "ip_not_allowed"] as const) {
         exact: true,
       })
       .click();
-    await expect(curtain).not.toBeVisible();
+    await expect(curtain).toBeHidden();
     await expect(table).toBeVisible();
     await expect(
       page.getByText("Only administrators can view audit history.", {
         exact: true,
       }),
-    ).not.toBeVisible();
+    ).toBeHidden();
     expect(state.calls.filter((call) => call.method === "POST")).toHaveLength(
       0,
     );
@@ -876,7 +862,7 @@ test("Audit CSV failure retains its pinned preview and Retry refuses malformed o
 }, testInfo) => {
   await page.clock.install({ time: new Date("2026-10-01T09:00:00Z") });
   const api = createAuditRoute(makeAuditLogs(12));
-  let failure: "unavailable" | "media" | "count" | "cap" | null = "unavailable";
+  let failure: "unavailable" | "media" | "cap" | null = "unavailable";
   const downloads: string[] = [];
   const requests: URL[] = [];
   page.on("download", (download) =>
@@ -939,7 +925,7 @@ test("Audit CSV failure retains its pinned preview and Retry refuses malformed o
   await expect(preview).not.toContainText("Private upstream diagnostic");
   const cutoff = requests[0]!.searchParams.get("created_before");
   await page.clock.setSystemTime(new Date("2026-10-01T09:05:00Z"));
-  for (const next of ["media", "count", "cap"] as const) {
+  for (const next of ["media", "cap"] as const) {
     failure = next;
     await alert.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(alert).toContainText(
@@ -957,22 +943,21 @@ test("Audit CSV failure retains its pinned preview and Retry refuses malformed o
   await download.saveAs(path);
   expect(await readFile(path, "utf8")).toBe(api.exportBodies[0]);
   expect(downloads).toEqual(["openslate-audit.csv"]);
-  expect(requests).toHaveLength(5);
+  expect(requests).toHaveLength(4);
   expect(
     requests.every((url) => url.searchParams.get("created_before") === cutoff),
   ).toBe(true);
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
 });
 
 test("Audit Close, Escape, route leave and session concealment suppress pending CSV downloads", async ({
   page,
 }) => {
   const api = createAuditRoute(makeAuditLogs());
+  // `response` holds the export answer; `handled` is entered once it is sent.
   let hold: {
-    response: Promise<void>;
-    release: () => void;
-    handled: Promise<void>;
-    finish: () => void;
+    response: ReturnType<typeof heldResponse>;
+    handled: ReturnType<typeof heldResponse>;
   } | null = null;
   let started = 0;
   let downloads = 0;
@@ -986,11 +971,12 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
     ) {
       const captured = hold;
       started += 1;
-      await captured.response;
+      captured.response.enter();
+      await captured.response.released;
       try {
         await api.handle(route);
       } finally {
-        captured.finish();
+        captured.handled.enter();
       }
       return;
     }
@@ -1014,25 +1000,15 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
     await expect(
       preview.getByRole("button", { name: "Download CSV", exact: true }),
     ).toBeEnabled();
-    let release!: () => void;
-    let finish!: () => void;
-    hold = {
-      response: new Promise<void>((resolve) => {
-        release = resolve;
-      }),
-      release: () => release(),
-      handled: new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-      finish: () => finish(),
-    };
+    hold = { response: heldResponse(), handled: heldResponse() };
     const barrier = hold;
     const before = started;
     try {
       await preview
         .getByRole("button", { name: "Download CSV", exact: true })
         .click();
-      await expect.poll(() => started).toBe(before + 1);
+      await barrier.response.entered;
+      expect(started).toBe(before + 1);
       await expect(
         preview.getByRole("button", { name: "Download CSV", exact: true }),
       ).toBeDisabled();
@@ -1057,9 +1033,9 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
           page.getByRole("heading", { name: "Organization", exact: true }),
         ).toBeVisible();
       }
-      await expect(preview).not.toBeVisible();
-      barrier.release();
-      await barrier.handled;
+      await expect(preview).toBeHidden();
+      barrier.response.release();
+      await barrier.handled.entered;
       if (method === "blur") {
         await page.evaluate(() => window.dispatchEvent(new Event("focus")));
         await expect(
@@ -1067,7 +1043,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
             name: "Session verification",
             exact: true,
           }),
-        ).not.toBeVisible();
+        ).toBeHidden();
         await expect(preview).toBeVisible();
         await expect(
           preview.getByRole("button", { name: "Download CSV", exact: true }),
@@ -1079,9 +1055,9 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
       expect(downloads).toBe(0);
       await expect(
         page.getByText(/Downloaded \d+ filtered audit/),
-      ).not.toBeVisible();
+      ).toBeHidden();
     } finally {
-      barrier.release();
+      barrier.response.release();
       hold = null;
     }
   }
@@ -1100,7 +1076,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
     .getByRole("button", { name: "Download CSV", exact: true })
     .click();
   await downloaded;
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
   expect(downloads).toBe(1);
 });
 
@@ -1264,123 +1240,128 @@ test("Audit search waits for typing to settle before sending its server query", 
   ).toEqual(["delete"]);
 });
 
-for (const personal of [false, true]) {
-  test(
-    personal
-      ? "S21 Audit personal display preserves workspace DST day bounds and server CSV"
-      : "Audit date filters use workspace-local day bounds across a daylight-saving change",
-    async ({ page }, testInfo) => {
-      await page.clock.setFixedTime(new Date("2026-03-10T12:00:00Z"));
-      if (personal) {
-        const userId = "00000000-0000-4000-8000-000000000101";
-        await page.route("**/api/auth/me", (route) =>
-          route.fulfill({ json: profileSelf(userId, "admin") }),
-        );
-        await page.route(`**/api/users/${userId}/preferences`, (route) =>
-          route.fulfill({
-            json: profilePreferences(userId, {
-              timezone: "America/Los_Angeles",
-              date_format: "ymd",
-              time_format: "24h",
-            }),
-          }),
-        );
-      }
-      await page.route("**/api/workspace", (route) =>
+for (const [personal, title] of [
+  [
+    false,
+    "Audit date filters use workspace-local day bounds across a daylight-saving change",
+  ],
+  [
+    true,
+    "Audit personal display preserves workspace DST day bounds and server CSV",
+  ],
+] as const) {
+  test(title, async ({ page }, testInfo) => {
+    await page.clock.setFixedTime(new Date("2026-03-10T12:00:00Z"));
+    if (personal) {
+      const userId = "00000000-0000-4000-8000-000000000101";
+      await signedInSession(page, userId);
+      await page.route("**/api/auth/me", (route) =>
+        route.fulfill({ json: profileSelf(userId, "admin") }),
+      );
+      await page.route(`**/api/users/${userId}/preferences`, (route) =>
         route.fulfill({
-          json: {
-            id: fixtureId(77),
-            display_name: "Harbor workspace",
-            legal_name: null,
-            description: null,
-            contact_email: null,
-            contact_phone: null,
-            postal_address: null,
-            locale: "en-US",
-            timezone: "America/New_York",
-            logo_file_id: null,
-            mark: "RS",
-            currency: "PHP",
-            week_start: "monday",
-            business_hours: "09:00–18:00",
-            theme: "slate",
-            revision: 4,
-          },
+          json: profilePreferences(userId, {
+            timezone: "America/Los_Angeles",
+            date_format: "ymd",
+            time_format: "24h",
+          }),
         }),
       );
-      const logs = makeAuditLogs(5);
-      const localDayRows = [
-        ["2026-03-08T04:59:59.999Z", "Before local day"],
-        ["2026-03-08T05:00:00.000Z", "At local day start"],
-        ["2026-03-08T07:00:00.000Z", "After clock change"],
-        ["2026-03-09T03:59:59.999Z", "At local day end"],
-        ["2026-03-09T04:00:00.000Z", "After local day"],
-      ] as const;
-      logs.forEach((log, index) => {
-        log.created_at = localDayRows[index]![0];
-        log.after = { name: localDayRows[index]![1] };
-      });
-      const api = createAuditRoute(logs);
-      await page.route("**/api/audit-logs**", (route) => api.handle(route));
-      await page.goto("/manage?view=audit");
-      const table = page.getByRole("table", {
-        name: "Activity history table",
+    }
+    await page.route("**/api/workspace", (route) =>
+      route.fulfill({
+        json: {
+          id: fixtureId(77),
+          display_name: "Harbor workspace",
+          legal_name: null,
+          description: null,
+          contact_email: null,
+          contact_phone: null,
+          postal_address: null,
+          locale: "en-US",
+          timezone: "America/New_York",
+          logo_file_id: null,
+          mark: "RS",
+          currency: "PHP",
+          week_start: "monday",
+          business_hours: "09:00–18:00",
+          theme: "slate",
+          revision: 4,
+        },
+      }),
+    );
+    const logs = makeAuditLogs(5);
+    const localDayRows = [
+      ["2026-03-08T04:59:59.999Z", "Before local day"],
+      ["2026-03-08T05:00:00.000Z", "At local day start"],
+      ["2026-03-08T07:00:00.000Z", "After clock change"],
+      ["2026-03-09T03:59:59.999Z", "At local day end"],
+      ["2026-03-09T04:00:00.000Z", "After local day"],
+    ] as const;
+    logs.forEach((log, index) => {
+      log.created_at = localDayRows[index]![0];
+      log.after = { name: localDayRows[index]![1] };
+    });
+    const api = createAuditRoute(logs);
+    await page.route("**/api/audit-logs**", (route) => api.handle(route));
+    await page.goto("/manage?view=audit");
+    const table = page.getByRole("table", {
+      name: "Activity history table",
+      exact: true,
+    });
+    await expect(table).toBeVisible();
+    await page.getByRole("button", { name: "More filters" }).click();
+    await page.getByLabel("From", { exact: true }).fill("2026-03-08");
+    await page.getByLabel("To", { exact: true }).fill("2026-03-08");
+
+    await expect
+      .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
+      .toBe("2026-03-08T05:00:00.000Z");
+    await expect
+      .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
+      .toBe("2026-03-09T03:59:59.999Z");
+    await expect(
+      page.getByText("Showing 1–3 of 3", { exact: true }),
+    ).toBeVisible();
+    await expect(table).toContainText("At local day start");
+    await expect(table).toContainText("After clock change");
+    await expect(table).toContainText("At local day end");
+    await expect(table).not.toContainText("Before local day");
+    await expect(table).not.toContainText("After local day");
+    if (personal) {
+      const row = table
+        .getByRole("row")
+        .filter({ hasText: "At local day start" });
+      await expect(row).toContainText("2026-03-07");
+      await expect(row).toContainText("21:00");
+      await page
+        .getByRole("button", { name: "Export audit preview", exact: true })
+        .click();
+      const preview = page.getByRole("dialog", {
+        name: "Audit export preview",
         exact: true,
       });
-      await expect(table).toBeVisible();
-      await page.getByRole("button", { name: "More filters" }).click();
-      await page.getByLabel("From", { exact: true }).fill("2026-03-08");
-      await page.getByLabel("To", { exact: true }).fill("2026-03-08");
-
-      await expect
-        .poll(() => api.requests.at(-1)?.searchParams.get("created_after"))
-        .toBe("2026-03-08T05:00:00.000Z");
-      await expect
-        .poll(() => api.requests.at(-1)?.searchParams.get("created_before"))
-        .toBe("2026-03-09T03:59:59.999Z");
-      await expect(
-        page.getByText("Showing 1–3 of 3", { exact: true }),
-      ).toBeVisible();
-      await expect(table).toContainText("At local day start");
-      await expect(table).toContainText("After clock change");
-      await expect(table).toContainText("At local day end");
-      await expect(table).not.toContainText("Before local day");
-      await expect(table).not.toContainText("After local day");
-      if (personal) {
-        const row = table
-          .getByRole("row")
-          .filter({ hasText: "At local day start" });
-        await expect(row).toContainText("2026-03-07");
-        await expect(row).toContainText("21:00");
-        await page
-          .getByRole("button", { name: "Export audit preview", exact: true })
-          .click();
-        const preview = page.getByRole("dialog", {
-          name: "Audit export preview",
-          exact: true,
-        });
-        await expect(preview).toContainText("3 filtered entries");
-        const downloaded = page.waitForEvent("download");
-        await preview
-          .getByRole("button", { name: "Download CSV", exact: true })
-          .click();
-        const download = await downloaded;
-        const path = testInfo.outputPath("s21-audit-workspace-day.csv");
-        await download.saveAs(path);
-        const csv = await readFile(path, "utf8");
-        expect(csv).toContain('"2026-03-08T05:00:00.000Z"');
-        expect(csv).toContain('"2026-03-09T03:59:59.999Z"');
-        expect(csv).not.toContain("2026-03-07");
-        expect(api.exports).toHaveLength(1);
-        expect(api.exports[0]?.searchParams.get("created_after")).toBe(
-          "2026-03-08T05:00:00.000Z",
-        );
-        expect(api.exports[0]?.searchParams.get("created_before")).toBe(
-          "2026-03-09T03:59:59.999Z",
-        );
-      }
-    },
-  );
+      await expect(preview).toContainText("3 filtered entries");
+      const downloaded = page.waitForEvent("download");
+      await preview
+        .getByRole("button", { name: "Download CSV", exact: true })
+        .click();
+      const download = await downloaded;
+      const path = testInfo.outputPath("audit-workspace-day.csv");
+      await download.saveAs(path);
+      const csv = await readFile(path, "utf8");
+      expect(csv).toContain('"2026-03-08T05:00:00.000Z"');
+      expect(csv).toContain('"2026-03-09T03:59:59.999Z"');
+      expect(csv).toBe(api.exportBodies[0]);
+      expect(api.exports).toHaveLength(1);
+      expect(api.exports[0]?.searchParams.get("created_after")).toBe(
+        "2026-03-08T05:00:00.000Z",
+      );
+      expect(api.exports[0]?.searchParams.get("created_before")).toBe(
+        "2026-03-09T03:59:59.999Z",
+      );
+    }
+  });
 }
 
 test("Audit export uses the last settled search while a newer search is debouncing", async ({
@@ -1404,6 +1385,9 @@ test("Audit export uses the last settled search while a newer search is debounci
   await expect
     .poll(() => api.requests.at(-1)?.searchParams.get("search"))
     .toBe("delete");
+  // Hold time still: the newer search must stay inside its 300 ms debounce
+  // until the export opens, however slowly the browser runs.
+  await page.clock.pauseAt(new Date("2026-10-01T09:01:00Z"));
   await search.fill("assigned");
   await page.getByRole("button", { name: "Export audit preview" }).click();
   const preview = page.getByRole("dialog", {
@@ -1488,7 +1472,7 @@ test("Audit export pins the opening horizon through preview retry and server CSV
   const csv = await readFile(csvPath, "utf8");
   expect(csv.trimEnd().split(/\r?\n/)).toHaveLength(103);
   expect(csv).toContain("Export person");
-  expect(csv).not.toContain("Concurrent future entry");
+  expect(csv).toBe(api.exportBodies[0]);
   expect(
     exportRequests.filter((url) => url.pathname === "/api/audit-logs/export"),
   ).toHaveLength(1);
@@ -1555,13 +1539,13 @@ test("Audit export refuses more than 10000 rows and exports the header after fil
   expect(api.exports[0]!.searchParams.get("search")).toBe(
     "no matching activity",
   );
-  await expect(preview).not.toBeVisible();
+  await expect(preview).toBeHidden();
   await expect(
     page.getByText("Downloaded 0 filtered audit entries.", { exact: true }),
   ).toBeVisible();
 });
 
-test("S08 Audit option search finds actors outside the capped first result and preserves selection", async ({
+test("Audit option search finds actors outside the capped first result and preserves selection", async ({
   page,
 }) => {
   const api = createAuditRoute(makeAuditLogs());
@@ -1604,7 +1588,7 @@ test("S08 Audit option search finds actors outside the capped first result and p
   await person.click();
   await page
     .getByRole("dialog")
-    .getByRole("combobox", { name: "Person", exact: true })
+    .getByRole("combobox", { name: "Search person", exact: true })
     .fill("Remote actor");
   await page.getByRole("option", { name: "Remote actor", exact: true }).click();
   await expect(
@@ -1613,7 +1597,7 @@ test("S08 Audit option search finds actors outside the capped first result and p
   await person.click();
   await page
     .getByRole("dialog")
-    .getByRole("combobox", { name: "Person", exact: true })
+    .getByRole("combobox", { name: "Search person", exact: true })
     .fill("Tara");
   await expect(
     page.getByRole("option", { name: "Tara Reyes", exact: true }),

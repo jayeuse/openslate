@@ -1,11 +1,42 @@
+import { expect, test } from "@playwright/test";
+
+import {
+  departmentSchema,
+  groupAccessEntrySchema,
+  groupSchema,
+  invitationCreateSchema,
+  invitationSettingsSchema,
+  memberCandidateSchema,
+  moduleSchema,
+  pageSchema,
+  sessionSchema,
+  userAccessSchema,
+  userPatchSchema,
+  userSchema,
+} from "../../../src/components/systems/access/state/api-contracts";
 import {
   endAllAccessRemoteSessions,
   endAccessSession,
   getAccessCallerIp,
   getAccessSecurityPolicy,
+  getPersonSecurity,
   listAccessSessions,
+  recoverPerson,
+  resetPersonMfa,
   updateAccessSecurityPolicy,
 } from "../../../src/components/systems/access/adapters/security-api";
+import {
+  defaultSecurityEventsRequest,
+  getAccessSecurityEvent,
+  listAccessSecurityEvents,
+} from "../../../src/components/systems/access/adapters/security-events-api";
+import {
+  cancelMfaEnrollment,
+  enrollMfa,
+  getMfaStatus,
+  removeMfa,
+  verifyMfa,
+} from "../../../src/lib/mfa-api";
 import {
   createAccessGroup,
   deleteAccessGroup,
@@ -33,6 +64,17 @@ import {
   updateAccessInvitationSettings,
   updateAccessUser,
 } from "../../../src/components/systems/access/state/api";
+import {
+  department,
+  group,
+  ids,
+  memberCandidate,
+  accessModule,
+  pageOf,
+  session,
+  user,
+  workspace,
+} from "../access/fixtures";
 import { describeContracts } from "./openapi-contract";
 
 const userId = "00000000-0000-4000-8000-000000000001";
@@ -41,6 +83,8 @@ const sessionId = "00000000-0000-4000-8000-000000000003";
 const departmentId = "00000000-0000-4000-8000-000000000004";
 const moduleId = "00000000-0000-4000-8000-000000000005";
 const etag = '"group-1"';
+const eventId = "00000000-0000-4000-8000-000000000006";
+const factorId = "00000000-0000-4000-8000-000000000007";
 const list = {
   limit: 25,
   offset: 0,
@@ -124,6 +168,80 @@ describeContracts("Access", [
     name: "endAllAccessRemoteSessions",
     run: () => endAllAccessRemoteSessions(),
   },
+  {
+    name: "listAccessSecurityEvents",
+    run: () =>
+      listAccessSecurityEvents({
+        ...defaultSecurityEventsRequest,
+        search: "sign",
+        event_type: "identity.sign_in",
+        outcome: "failure",
+        person_id: userId,
+        occurred_after: "2026-10-01T00:00:00Z",
+        occurred_before: "2026-10-02T00:00:00Z",
+        operation_id: sessionId,
+      }),
+  },
+  {
+    name: "getAccessSecurityEvent",
+    run: () => getAccessSecurityEvent(eventId),
+    // The adapter refuses a detail for another event on purpose.
+    responses: {
+      "GET /api/security-events/{security_event_id}": { id: eventId },
+    },
+  },
+  {
+    name: "getPersonSecurity",
+    run: () => getPersonSecurity(userId),
+    // The adapter refuses a status for another person on purpose.
+    responses: { "GET /api/users/{user_id}/security": { user_id: userId } },
+  },
+  // UserRecoveryResponse declares local_revocation and revoked_sessions
+  // independently; the route sends a count only with "committed", and the
+  // adapter refuses any other pairing (finding in the F4 report).
+  {
+    name: "recoverPerson",
+    run: () => recoverPerson(userId, true),
+    responses: {
+      "POST /api/users/{user_id}/recovery": {
+        user_id: userId,
+        local_revocation: "committed",
+        revoked_sessions: 2,
+      },
+    },
+  },
+  {
+    name: "recoverPerson without signing out",
+    run: () => recoverPerson(userId, false),
+    responses: {
+      "POST /api/users/{user_id}/recovery": {
+        user_id: userId,
+        local_revocation: "not_requested",
+        revoked_sessions: null,
+      },
+    },
+  },
+  {
+    name: "resetPersonMfa",
+    run: () => resetPersonMfa(userId),
+    responses: { "POST /api/users/{user_id}/mfa/reset": { user_id: userId } },
+  },
+  { name: "getMfaStatus", run: () => getMfaStatus() },
+  { name: "enrollMfa", run: () => enrollMfa() },
+  {
+    name: "verifyMfa",
+    run: () => verifyMfa(factorId, "123456"),
+    // The route returns the access token only to bearer clients
+    // (mfa_router.py); a cookie-authenticated browser gets null, the only
+    // value the adapter accepts (finding in the F4 report).
+    responses: {
+      "POST /api/auth/mfa/factors/{factor_id}/verification": {
+        access_token: null,
+      },
+    },
+  },
+  { name: "removeMfa", run: () => removeMfa(factorId) },
+  { name: "cancelMfaEnrollment", run: () => cancelMfaEnrollment(factorId) },
 
   {
     name: "listAccessUsers",
@@ -261,3 +379,206 @@ describeContracts("Access", [
       }),
   },
 ]);
+
+test("responses shaped like the current backend models parse", () => {
+  expect(sessionSchema.parse(session)).toEqual(session);
+  expect(departmentSchema.parse(department)).toEqual(department);
+  expect(moduleSchema.parse(accessModule)).toEqual(accessModule);
+  expect(pageSchema(groupSchema).parse(pageOf([group])).items).toHaveLength(1);
+});
+
+// The generated cases above only prove that the adapters accept what the
+// backend declares. These schema checks own the refusals that generation
+// cannot produce: extra keys, unknown enum values, malformed dates, and
+// missing required ids.
+test("group responses carry server-resolved reach names while requests remain IDs and levels", () => {
+  const named = {
+    ...group,
+    access: group.access.map((entry) => ({
+      ...entry,
+      department_name: "Inventory",
+      module_name: entry.module_id === null ? null : "Prices",
+    })),
+  };
+  expect(groupSchema.safeParse(named).success).toBe(true);
+  expect(groupAccessEntrySchema.safeParse(named.access[0]).success).toBe(false);
+});
+
+test("member candidates carry nullable access expiry so expired access cannot be added", () => {
+  expect(
+    memberCandidateSchema.safeParse({
+      ...memberCandidate,
+      access_ends_at: null,
+    }).success,
+  ).toBe(true);
+  expect(
+    memberCandidateSchema.safeParse({
+      ...memberCandidate,
+      access_ends_at: "2026-01-01T00:00:00Z",
+    }).success,
+  ).toBe(true);
+  expect(
+    memberCandidateSchema.safeParse({
+      ...memberCandidate,
+      access_ends_at: "yesterday",
+    }).success,
+  ).toBe(false);
+});
+
+test("users carry a role and no longer carry role ids, kinds, or departments", () => {
+  for (const role of ["admin", "member", "guest"])
+    expect(userSchema.safeParse({ ...user, role }).success, role).toBe(true);
+  expect(userSchema.safeParse({ ...user, role: "owner" }).success).toBe(false);
+  for (const removed of [
+    { role_id: ids.admin },
+    { identity_kind: "guest" },
+    { department_ids: [ids.department] },
+    { primary_department_id: ids.department },
+  ])
+    expect(
+      userSchema.safeParse({ ...user, ...removed }).success,
+      Object.keys(removed)[0],
+    ).toBe(false);
+});
+
+test("group access entries allow a whole department or one module at three levels", () => {
+  for (const level of ["read", "write", "manage"])
+    expect(
+      groupSchema.safeParse({
+        ...group,
+        access: [
+          {
+            department_id: ids.department,
+            department_name: "Inventory",
+            module_id: null,
+            module_name: null,
+            level,
+          },
+        ],
+      }).success,
+      level,
+    ).toBe(true);
+  expect(
+    groupSchema.safeParse({
+      ...group,
+      access: [
+        {
+          department_id: ids.department,
+          department_name: "Inventory",
+          module_id: null,
+          module_name: null,
+          level: "admin",
+        },
+      ],
+    }).success,
+  ).toBe(false);
+  // The backend always sends module_id; a missing one is a contract change.
+  expect(
+    groupSchema.safeParse({
+      ...group,
+      access: [
+        {
+          department_id: ids.department,
+          department_name: "Inventory",
+          module_name: null,
+          level: "read",
+        },
+      ],
+    }).success,
+  ).toBe(false);
+  expect(groupSchema.safeParse({ ...group, extra: true }).success).toBe(false);
+});
+
+test("member candidates never include administrators", () => {
+  expect(
+    memberCandidateSchema.safeParse({ ...memberCandidate, role: "admin" })
+      .success,
+  ).toBe(false);
+  expect(
+    memberCandidateSchema.safeParse({ ...memberCandidate, job_title: "QA" })
+      .success,
+  ).toBe(false);
+});
+
+test("invitation settings read only their fields from the workspace resource", () => {
+  expect(invitationSettingsSchema.parse(workspace)).toEqual({
+    invitation_expiry_days: 7,
+    guest_duration_days: 30,
+    revision: 4,
+  });
+  expect(
+    invitationSettingsSchema.safeParse({ ...workspace, guest_duration_days: 0 })
+      .success,
+  ).toBe(false);
+});
+
+test("commands accept only the fields the backend accepts", () => {
+  expect(
+    invitationCreateSchema.safeParse({
+      email: "ana@example.com",
+      username: "ana",
+      role: "guest",
+      group_ids: [ids.group],
+      sponsor_user_id: ids.admin,
+      expires_at: "2026-10-28T00:00:00Z",
+    }).success,
+  ).toBe(true);
+  expect(
+    invitationCreateSchema.safeParse({
+      email: "ana@example.com",
+      username: "ana smith",
+    }).success,
+  ).toBe(false);
+  expect(
+    invitationCreateSchema.safeParse({
+      email: "ana@example.com",
+      username: "ana",
+      department_ids: [ids.department],
+    }).success,
+  ).toBe(false);
+  expect(userPatchSchema.safeParse({ status: "pending" }).success).toBe(false);
+  expect(userPatchSchema.safeParse({ role: "member" }).success).toBe(true);
+});
+
+test("a person's effective access names the level and the groups that give it", () => {
+  const response = {
+    user_id: ids.guest,
+    role: "guest",
+    unrestricted: false,
+    entries: [
+      {
+        department_id: ids.department,
+        module_id: null,
+        level: "read",
+        groups: [
+          { group_id: ids.group, name: "Inventory clerks", level: "write" },
+        ],
+      },
+    ],
+  };
+  expect(userAccessSchema.parse(response)).toEqual(response);
+  expect(
+    userAccessSchema.parse({
+      ...response,
+      role: "admin",
+      unrestricted: true,
+      entries: [],
+    }).unrestricted,
+  ).toBe(true);
+  expect(userAccessSchema.safeParse({ ...response, extra: 1 }).success).toBe(
+    false,
+  );
+  expect(
+    userAccessSchema.safeParse({
+      ...response,
+      entries: [{ ...response.entries[0], level: "admin" }],
+    }).success,
+  ).toBe(false);
+  // A missing module id or source list is a contract change.
+  expect(
+    userAccessSchema.safeParse({
+      ...response,
+      entries: [{ department_id: ids.department, level: "read", groups: [] }],
+    }).success,
+  ).toBe(false);
+});

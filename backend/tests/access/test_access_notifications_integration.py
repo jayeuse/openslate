@@ -7,7 +7,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.platform.scheduling.notification_router import router as notification_router
-from tests.access.test_user_admin_http_integration import world as world
+from tests.access.user_admin_support import world as world
 from tests.rbac.support import add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration

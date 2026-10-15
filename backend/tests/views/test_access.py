@@ -2,8 +2,6 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException, Request, Response
-from pydantic import ValidationError
-from record_queries.test_database import setup_rows
 from sqlalchemy import func, select
 from uuid6 import uuid7
 
@@ -23,6 +21,7 @@ from app.systems.openview.views.schemas import ViewCreate, ViewUpdate
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.records.query_schemas import QueryDefinition
 from tests.rbac.support import add_user, make_group_access
+from tests.record_queries.support import setup_rows
 
 pytestmark = pytest.mark.integration
 
@@ -177,16 +176,3 @@ def test_same_normalized_view_patch_does_not_commit_or_bump_revision(query_db):
         select(func.count()).select_from(AuditLog).where(AuditLog.entity_id == view.id)
     )
     assert after_events == before_events
-
-
-def test_view_mutation_rejects_owner_audience_and_empty_patch():
-    for extra in ({"owner_id": uuid7()}, {"visibility": "workspace"}, {"audience": {}}):
-        with pytest.raises(ValidationError):
-            ViewCreate.model_validate(
-                {"module_id": uuid7(), "name": "Shared", "definition": {}, **extra}
-            )
-    assert ViewUpdate(revision=1, is_default=True).is_default is True
-    with pytest.raises(ValidationError):
-        ViewUpdate(revision=1)
-    with pytest.raises(ValidationError):
-        ViewUpdate.model_validate({"revision": 1, "visibility": "workspace"})

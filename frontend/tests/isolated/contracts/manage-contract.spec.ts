@@ -18,13 +18,24 @@ import {
 import {
   getManageWorkspace,
   getWorkspaceAppearance,
+  getWorkspaceBrand,
+  getWorkspaceCalendarSettings,
+  getWorkspaceLifecycleSettings,
   updateManageWorkspace,
 } from "../../../src/components/systems/manage/adapters/workspace-api";
+import {
+  getWorkspaceLogo,
+  getWorkspaceLogoFile,
+  reconcileWorkspaceLogo,
+  reserveWorkspaceLogo,
+  uploadWorkspaceLogo,
+} from "../../../src/components/systems/manage/adapters/workspace-logo-api";
 import {
   listManageJobs,
   retryManageJob,
 } from "../../../src/components/systems/manage/adapters/jobs-api";
 import { describeContracts } from "./openapi-contract";
+import { wirePagination } from "../../helpers/pagination";
 
 const auditId = "00000000-0000-4000-8000-000000000001";
 const userId = "00000000-0000-4000-8000-000000000002";
@@ -54,6 +65,24 @@ const version = {
 };
 // Currency is an ISO 4217 code.
 const workspace = { currency: "PHP" };
+// The calendar read needs a calendar date.
+const calendarWorkspace = { ...workspace, today: "2026-10-06" };
+
+// A workspace logo is an image File the adapter asked for by id, with no
+// record, board or department owner, at most 2 MiB.
+const logoFile = {
+  id: auditId,
+  purpose: "workspace_logo",
+  record_id: null,
+  board_id: null,
+  department_id: null,
+  media_type: "image/png",
+  expected_size: 1024,
+  actual_size: 1024,
+  state: "ready",
+};
+const logoBytes = () =>
+  new File([new Uint8Array(1024)], "logo.png", { type: "image/png" });
 
 // Jobs link values are application-relative; scheduled receipts retain kind/id.
 const contractJob = {
@@ -85,13 +114,7 @@ describeContracts("Manage", [
     responses: {
       "GET /api/jobs": {
         items: [contractJob],
-        pagination: {
-          limit: 10,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 10, count: 1, total: 1 }),
       },
     },
   },
@@ -191,6 +214,45 @@ describeContracts("Manage", [
     name: "getManageWorkspace",
     run: () => getManageWorkspace(),
     responses: { "GET /api/workspace": workspace },
+  },
+  {
+    name: "getWorkspaceBrand",
+    run: () => getWorkspaceBrand(),
+    responses: { "GET /api/workspace": workspace },
+  },
+  {
+    name: "getWorkspaceCalendarSettings",
+    run: () => getWorkspaceCalendarSettings(),
+    responses: { "GET /api/workspace": calendarWorkspace },
+  },
+  {
+    name: "getWorkspaceLifecycleSettings",
+    run: () => getWorkspaceLifecycleSettings(),
+  },
+  {
+    name: "reserveWorkspaceLogo",
+    run: () => reserveWorkspaceLogo(logoBytes()),
+    responses: { "POST /api/files": logoFile },
+  },
+  {
+    name: "uploadWorkspaceLogo",
+    run: () => uploadWorkspaceLogo(auditId, logoBytes()),
+    requestOnly: "The request body is the image bytes, not JSON",
+  },
+  {
+    name: "getWorkspaceLogoFile",
+    run: () => getWorkspaceLogoFile(auditId),
+    responses: { "GET /api/files/{file_id}": logoFile },
+  },
+  {
+    name: "reconcileWorkspaceLogo",
+    run: () => reconcileWorkspaceLogo(auditId),
+    responses: { "POST /api/files/{file_id}/reconcile": logoFile },
+  },
+  {
+    name: "getWorkspaceLogo",
+    run: () => getWorkspaceLogo(auditId),
+    requestOnly: "The response is the image bytes, not JSON",
   },
   {
     name: "updateManageWorkspace",

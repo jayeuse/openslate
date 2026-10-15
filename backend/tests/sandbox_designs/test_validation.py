@@ -1,4 +1,8 @@
+from collections.abc import Callable
 from copy import deepcopy
+from typing import Any
+
+import pytest
 
 from app.systems.sandbox.designs.validation import validate_document
 from tests.sandbox_designs.fixtures import sample_document
@@ -172,6 +176,169 @@ def test_validation_reports_structural_duplicates_missing_layout_and_self_links(
         "field.id_duplicate",
         "relationship.self_link",
     } <= codes
+
+
+def _duplicate_department(design: dict[str, Any], _payload: dict[str, Any]) -> None:
+    design["departments"].append(deepcopy(design["departments"][0]))
+
+
+def _duplicate_module(design: dict[str, Any], _payload: dict[str, Any]) -> None:
+    design["modules"].append(deepcopy(design["modules"][0]))
+
+
+def _duplicate_field(design: dict[str, Any], _payload: dict[str, Any]) -> None:
+    fields = design["modules"][0]["fields"]
+    fields.append(deepcopy(fields[0]))
+
+
+def _missing_department(design: dict[str, Any], _payload: dict[str, Any]) -> None:
+    design["modules"][2]["departmentId"] = "missing-department"
+
+
+def _missing_mapping_fields(design: dict[str, Any], _payload: dict[str, Any]) -> None:
+    design["relationships"][0]["fieldMappings"] = [
+        {"sourceFieldId": "missing-source", "targetFieldId": "missing-target"}
+    ]
+
+
+def _self_links(count: int) -> Callable[[dict[str, Any], dict[str, Any]], None]:
+    def add(design: dict[str, Any], _payload: dict[str, Any]) -> None:
+        self_link = deepcopy(design["relationships"][0])
+        self_link.update(
+            {
+                "id": "self-link",
+                "sourceModuleId": "sample-requests",
+                "targetModuleId": "sample-requests",
+                "fieldMappings": [],
+            }
+        )
+        design["relationships"].extend(deepcopy(self_link) for _ in range(count))
+
+    return add
+
+
+def _missing_layout(design: dict[str, Any], _payload: dict[str, Any]) -> None:
+    del design["layout"]["sample-customers"]
+
+
+def _unknown_layout(design: dict[str, Any], _payload: dict[str, Any]) -> None:
+    design["layout"]["unknown-layout"] = {"x": 0, "y": 0, "width": 100, "height": 100}
+
+
+def _duplicate_trigger(_design: dict[str, Any], payload: dict[str, Any]) -> None:
+    payload["triggers"].append(deepcopy(payload["triggers"][0]))
+
+
+def _duplicate_scenario(_design: dict[str, Any], payload: dict[str, Any]) -> None:
+    scenario = {
+        "id": "duplicate-scenario",
+        "name": "Duplicate scenario",
+        "records": [],
+        "links": [],
+    }
+    payload["scenarios"] = [scenario, deepcopy(scenario)]
+
+
+@pytest.mark.parametrize(
+    ("defect", "expected"),
+    (
+        pytest.param(
+            _duplicate_department,
+            [("department.id_duplicate", "Duplicate department ID", "sample-operations")],
+            id="duplicate-department",
+        ),
+        pytest.param(
+            _duplicate_module,
+            [("module.id_duplicate", "Duplicate module ID", "sample-requests")],
+            id="duplicate-module",
+        ),
+        pytest.param(
+            _duplicate_field,
+            [("field.id_duplicate", "Duplicate field ID", "sample-requests")],
+            id="duplicate-field",
+        ),
+        pytest.param(
+            _missing_department,
+            [("module.department_missing", "Module department does not exist", "sample-customers")],
+            id="missing-department",
+        ),
+        pytest.param(
+            _missing_mapping_fields,
+            [
+                (
+                    "relationship.source_field_missing",
+                    "Relationship mapping source field does not exist on its source module",
+                    "sample-uses",
+                ),
+                (
+                    "relationship.target_field_missing",
+                    "Relationship mapping target field does not exist on its target module",
+                    "sample-uses",
+                ),
+            ],
+            id="missing-mapping-fields",
+        ),
+        pytest.param(
+            _self_links(1),
+            [
+                (
+                    "relationship.self_link",
+                    "A relationship cannot link a module to itself",
+                    "self-link",
+                )
+            ],
+            id="self-link",
+        ),
+        pytest.param(
+            _self_links(2),
+            [("relationship.id_duplicate", "Duplicate relationship ID", "self-link")],
+            id="duplicate-relationship",
+        ),
+        pytest.param(
+            _missing_layout,
+            [
+                (
+                    "layout.entity_missing",
+                    "Layout is required for every department and module",
+                    "sample-customers",
+                )
+            ],
+            id="missing-layout",
+        ),
+        pytest.param(
+            _unknown_layout,
+            [
+                (
+                    "layout.entity_missing",
+                    "Layout references an unknown department or module",
+                    "unknown-layout",
+                )
+            ],
+            id="unknown-layout",
+        ),
+        pytest.param(
+            _duplicate_trigger,
+            [("trigger.id_duplicate", "Duplicate trigger ID", "sample-urgent")],
+            id="duplicate-trigger",
+        ),
+        pytest.param(
+            _duplicate_scenario,
+            [("scenario.id_duplicate", "Duplicate scenario ID", "duplicate-scenario")],
+            id="duplicate-scenario",
+        ),
+    ),
+)
+def test_validation_reports_each_structural_defect_with_its_target(
+    defect: Callable[[dict[str, Any], dict[str, Any]], None],
+    expected: list[tuple[str, str, str]],
+) -> None:
+    payload = sample_document().model_dump(by_alias=True, mode="json")
+    defect(payload["design"], payload)
+    codes = {code for code, _message, _target in expected}
+
+    issues = [issue for issue in validate_document(payload) if issue.code in codes]
+
+    assert [(issue.code, issue.message, issue.target_id) for issue in issues] == expected
 
 
 def test_validation_preserves_duplicate_lookup_precedence_and_issue_order() -> None:

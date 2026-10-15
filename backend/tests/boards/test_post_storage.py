@@ -163,10 +163,11 @@ def test_published_snapshot_remains_private_and_immutable_during_scheduled_repla
     post.status = "archived"
     db.flush()
     assert db.get(BoardPostRevision, published.id) is published
+    savepoint = db.begin_nested()
+    db.delete(post)
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.delete(post)
-            db.flush()
+        db.flush()
+    savepoint.rollback()
     db.delete(published)
     db.flush()
     db.delete(post)
@@ -211,10 +212,11 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
         {"revision": 0},
         {"displayed_publication_number": 0},
     ):
+        savepoint = db.begin_nested()
+        db.add(BoardPost(**(base | override)))
         with pytest.raises(IntegrityError):
-            with db.begin_nested():
-                db.add(BoardPost(**(base | override)))
-                db.flush()
+            db.flush()
+        savepoint.rollback()
 
     post = BoardPost(**base)
     db.add(post)
@@ -257,10 +259,11 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
         {"expires_at": now},
         {"body": "x" * 2001},
     ):
+        savepoint = db.begin_nested()
+        db.add(BoardPostRevision(**(revision_base | override)))
         with pytest.raises(IntegrityError):
-            with db.begin_nested():
-                db.add(BoardPostRevision(**(revision_base | override)))
-                db.flush()
+            db.flush()
+        savepoint.rollback()
 
 
 @pytest.mark.integration

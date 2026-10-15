@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Page, isEventStream } from "./helpers/test";
 
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
 
@@ -12,6 +12,7 @@ async function mockSession(page: Page, verifiedUser: () => string) {
   // sending a still-authenticated session back to its start page.
   let signedOut = false;
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const { pathname } = new URL(route.request().url());
     if (pathname === "/api/auth/session") {
       await route.fulfill({
@@ -253,6 +254,7 @@ test("an invalid session after reload clears Access drafts before sign-in", asyn
   page,
 }) => {
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const { pathname } = new URL(route.request().url());
     if (pathname === "/api/auth/session") {
       await route.fulfill({

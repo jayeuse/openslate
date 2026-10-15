@@ -13,6 +13,7 @@ from operations import reset_application_data as reset
 from operations.reset import execution
 from operations.reset import planning as reset_planning
 from operations.reset.models import BackupSnapshot
+from tests.reset_application_data.execution_support import apply_confirmed
 
 
 @pytest.fixture(autouse=True)
@@ -139,12 +140,9 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
     monkeypatch.setattr(execution, "_validate_postconditions", lambda *_args, **_kwargs: None)
     with pytest.raises(execution.ResetError, match="reset committed but private storage"):
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=_auth(plan),
             build_plan_fn=lambda *_, **__: plan,
@@ -197,12 +195,9 @@ def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) 
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
     monkeypatch.setattr(execution, "_validate_postconditions", lambda *_args, **_kwargs: None)
 
-    execution.apply_reset(
+    apply_confirmed(
         database,
         plan,
-        execute=True,
-        stdin_is_tty=True,
-        confirmation=plan.impact_digest,
         storage=storage,
         auth=auth,
         build_plan_fn=lambda *_, **__: plan,
@@ -232,12 +227,9 @@ def test_changed_auth_inventory_refuses_reset_before_any_provider_deletion(monke
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
 
     with pytest.raises(reset.ResetError, match="reset plan changed"):
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
             build_plan_fn=lambda *_, **kwargs: (
@@ -263,12 +255,9 @@ def test_provider_failure_keeps_application_profiles_for_safe_retry(monkeypatch)
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
 
     with pytest.raises(reset.ResetError, match="Provider account cleanup is incomplete"):
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
             build_plan_fn=lambda *_, **__: plan,
@@ -293,12 +282,9 @@ def test_database_failure_after_provider_cleanup_reports_partial_reset(monkeypat
     monkeypatch.setattr(execution, "_single_value", lambda *_: True)
 
     with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
             build_plan_fn=lambda *_, **__: plan,
@@ -325,12 +311,9 @@ def test_plan_drift_after_auth_cleanup_keeps_profiles_and_reports_partial(monkey
     plans = iter((plan, changed))
 
     with pytest.raises(reset.ResetError, match="Provider accounts.*profiles were retained"):
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
             build_plan_fn=lambda *_, **__: next(plans),
@@ -352,12 +335,9 @@ def test_ambiguous_database_commit_does_not_claim_profiles_were_retained(monkeyp
     monkeypatch.setattr(execution, "_validate_postconditions", lambda *_args, **_kwargs: None)
 
     with pytest.raises(reset.ResetError, match="database commit outcome is uncertain"):
-        execution.apply_reset(
+        apply_confirmed(
             database,
             plan,
-            execute=True,
-            stdin_is_tty=True,
-            confirmation=plan.impact_digest,
             storage=storage,
             auth=auth,
             build_plan_fn=lambda *_, **__: plan,

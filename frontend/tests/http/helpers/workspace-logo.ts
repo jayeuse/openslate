@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { pageOf } from "../../helpers/pagination";
 
 export const logoActor = "11111111-1111-4111-8111-111111111111";
 export const oldLogoId = "22222222-2222-4222-8222-222222222222";
@@ -51,14 +52,6 @@ export function logoFile(
   };
 }
 type LogoFile = ReturnType<typeof logoFile>;
-
-export function deferred() {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-}
 
 /** Owned public-API fixtures; lifecycle origin never crosses the wire. */
 export async function installLogoApi(page: Page) {
@@ -235,16 +228,7 @@ export async function installLogoApi(page: Page) {
       const offset = Number(url.searchParams.get("offset") ?? "0");
       const items = all.slice(offset, offset + limit);
       return route.fulfill({
-        json: {
-          items,
-          pagination: {
-            limit,
-            offset,
-            count: items.length,
-            total: all.length,
-            has_more: offset + items.length < all.length,
-          },
-        },
+        json: pageOf(items, { limit, offset, total: all.length }),
       });
     }
     const [, id, action] = match;

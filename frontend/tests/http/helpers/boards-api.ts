@@ -1,4 +1,7 @@
 import type { Page } from "./test";
+import { isEventStream, signedInAs } from "./test";
+import { wirePagination } from "../../helpers/pagination";
+import { wireBoard } from "../../helpers/wire";
 
 // The Board shell's API, mocked for HTTP specs: an authorized administrator,
 // two Boards, and empty posts, events and widgets. A spec registers its own
@@ -6,18 +9,14 @@ import type { Page } from "./test";
 
 export const boardId = "00000000-0000-4000-8000-000000000011";
 export const userId = "00000000-0000-4000-8000-000000000012";
-export const board = {
+export const board = wireBoard({
   id: boardId,
-  scope: "project",
-  department_id: null,
   name: "Live operations board",
   description: "Current authorized workspace content",
-  status: "active",
-  revision: 1,
   level: "manage",
   created_at: "2026-09-23T00:00:00Z",
   updated_at: "2026-09-23T00:00:00Z",
-};
+});
 export const otherBoard = {
   ...board,
   id: "00000000-0000-4000-8000-000000000013",
@@ -51,25 +50,15 @@ export async function installBoardApi(
 ) {
   const visibleBoard = { ...board, level: access.level };
   await page.route("**/api/**", (route) =>
-    route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ detail: "Not available in this route test" }),
-    }),
+    isEventStream(route)
+      ? route.fallback()
+      : route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Not available in this route test" }),
+        }),
   );
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: userId, role: "admin", access: [] } }),
-  );
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
+  await signedInAs(page, { id: userId, role: "admin" });
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -91,13 +80,7 @@ export async function installBoardApi(
       contentType: "application/json",
       body: JSON.stringify({
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
       }),
     }),
   );
@@ -113,25 +96,13 @@ export async function installBoardApi(
     if (path === "/api/boards")
       return reply(200, {
         items: [visibleBoard, otherBoard],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 2,
-          total: 2,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 2, total: 2 }),
       });
     if (path === `/api/boards/${boardId}/my-access`) return reply(200, access);
     if (path === `/api/boards/${boardId}/events/occurrences`)
       return reply(200, {
         items: [],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 0, total: 0 }),
         board_revision: 1,
       });
     if (path === `/api/boards/${boardId}/post-authors`) {
@@ -142,48 +113,29 @@ export async function installBoardApi(
           : [];
       return reply(200, {
         items,
-        pagination: {
+        pagination: wirePagination({
           limit: Number(url.searchParams.get("limit") ?? 25),
           offset: Number(url.searchParams.get("offset") ?? 0),
           count: items.length,
           total: items.length,
-          has_more: false,
-        },
+        }),
       });
     }
     if (path === `/api/boards/${boardId}/posts`)
       return reply(200, {
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
         board_revision: 1,
       });
     if (path === `/api/boards/${boardId}/files`)
       return reply(200, {
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
       });
     if (path === `/api/boards/${boardId}/widgets`)
       return reply(200, {
         items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
         board_revision: 1,
       });
     if (path === `/api/boards/${boardId}`)

@@ -216,9 +216,12 @@ def main(arguments=()):
     private = Path(tempfile.mkdtemp(prefix="openslate-p5-"))
     processes = []
     stage = "prepare"
+    stage_seconds: dict[str, float] = {}
+    started = time.monotonic()
     result = 1
     admission, checker_exit, postgres, caddy = {}, None, None, None
     browser_completed = False
+    browser_lines: list[str] = []
     failure_type = failure_message = None
     result_path = summary_path(BACKEND, FRONTEND, batch=batch, backend_only=backend_only)
     base_env = {"PATH": os.environ["PATH"], "OPENSLATE_ENV_SOURCE": "process"}
@@ -237,12 +240,18 @@ def main(arguments=()):
     base_env["TMPDIR"] = str(private / "tmp")
     log = (private / "process.log").open("w")
 
-    def run(command, cwd, env=base_env, capture=False):
+    def run(command, cwd, env=base_env, capture=False, shown=None):
         print(f"Full-stack: {stage}", flush=True)
-        return run_streamed(command, cwd, env, log, capture=capture)
+        return run_streamed(command, cwd, env, log, capture=capture, shown=shown)
+
+    def timed(name: str) -> None:
+        nonlocal stage, started
+        now = time.monotonic()
+        stage_seconds[stage] = round(now - started, 3)
+        stage, started = name, now
 
     try:
-        stage = "PostgreSQL startup"
+        timed("PostgreSQL startup")
         postgres = DisposablePostgres(
             private, run_id, base_env, log, template_port=None if backend_only else 8008
         )
@@ -262,13 +271,13 @@ def main(arguments=()):
         }
         if instance_target_for_process(owner_url, "openslate_owner", migration_env) is None:
             raise RuntimeError("Disposable PostgreSQL target identity is unavailable")
-        stage = "database role bootstrap"
+        timed("database role bootstrap")
         run(
             [sys.executable, "operations/provision_database_role.py", "--confirm"],
             BACKEND,
             migration_env,
         )
-        stage = "migrations"
+        timed("migrations")
         run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, migration_env)
         run([sys.executable, "-m", "alembic", "check"], BACKEND, migration_env)
         api_env = api_environment(
@@ -280,14 +289,14 @@ def main(arguments=()):
             private=private,
             public_origin=WEB,
         )
-        stage = "private Storage initialization"
+        timed("private Storage initialization")
         run(
             [sys.executable, "operations/provision_storage.py", "--confirm"],
             BACKEND,
             api_env,
         )
         if not acceptance_only and not browser_only:
-            stage = "backend batch" if batch else "backend regression and coverage gate"
+            timed("backend batch" if batch else "backend regression and coverage gate")
             execute = run_backend_batches if batch else run_backend_coverage
             result = execute(
                 run,
@@ -304,7 +313,7 @@ def main(arguments=()):
         if backend_only:
             result = result if batch else 0
         else:
-            stage = "dedicated identities"
+            timed("dedicated identities")
             identities = seed(owner_url, run_id, migration_env)
             fixture = private / "fixture.json"
             fixture.write_text(
@@ -318,10 +327,10 @@ def main(arguments=()):
                 )
             )
             fixture.chmod(0o600)
-            stage = "static frontend build"
+            timed("static frontend build")
             run(["npm", "run", "build", "--", "--webpack"], FRONTEND)
             api_env["WEB_ASSETS_ROOT"] = str(FRONTEND / "out")
-            stage = "FastAPI startup"
+            timed("FastAPI startup")
             processes.append(
                 subprocess.Popen(
                     [
@@ -345,13 +354,13 @@ def main(arguments=()):
                 )
             )
             wait_for(API + "/api/ready", processes[-1])
-            stage = "bounded admission and recovery"
+            timed("bounded admission and recovery")
             admission = measure_admission()
-            stage = "Caddy gateway startup"
+            timed("Caddy gateway startup")
             caddy = DisposableCaddy(private, run_id, base_env, log)
             caddy.start()
             wait_for(WEB + "/login", caddy, verify=False)
-            stage = "browser acceptance"
+            timed("browser acceptance")
             test_env = {
                 **base_env,
                 "BASE_URL": WEB,
@@ -360,10 +369,15 @@ def main(arguments=()):
                 "E2E_ALLOW_MUTATIONS": "true",
                 "PLAYWRIGHT_NO_COPY_PROMPT": "1",
             }
-            run(browser_acceptance_command(browser_only=browser_only), FRONTEND, test_env)
+            run(
+                browser_acceptance_command(browser_only=browser_only),
+                FRONTEND,
+                test_env,
+                shown=browser_lines,
+            )
             browser_completed = True
             if not browser_only:
-                stage = "read-only operational checker"
+                timed("read-only operational checker")
                 try:
                     run(
                         [sys.executable, "operations/check_operational_health.py"], BACKEND, api_env
@@ -380,6 +394,7 @@ def main(arguments=()):
         print(f"Full-stack FAIL at {stage} ({failure_type}). See {result_path}.")
         result = 1
     finally:
+        stage_seconds[stage] = round(time.monotonic() - started, 3)
         try:
             for process in reversed(processes):
                 if process.poll() is not None:
@@ -417,6 +432,8 @@ def main(arguments=()):
                 backend_only=backend_only,
                 acceptance_only=acceptance_only,
                 stage=stage,
+                stage_seconds=stage_seconds,
+                browser_lines=browser_lines,
                 browser_completed=browser_completed,
                 browser_only=browser_only,
                 admission=admission,

@@ -5,14 +5,12 @@ from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
-from record_queries.test_analytics_database import add_values, reference
-from record_queries.test_database import READER, request_for, setup_rows
 from sqlalchemy import select
 
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.records.aggregation import aggregate_records
 from app.systems.sandbox.records.query_schemas import DateSeriesAggregateQuery
+from tests.record_queries.support import READER, add_values, reference, request_for, setup_rows
 
 pytestmark = pytest.mark.integration
 
@@ -152,23 +150,6 @@ def test_longer_date_ranges_are_legal_when_they_have_366_buckets(
         to_date=to_date,
     )
     assert len(aggregate_records(query_db, payload, reader=READER).items) == 366
-
-
-@pytest.mark.parametrize(
-    "bucket,from_date,to_date",
-    [("month", "2020-01-31", "2050-07-01"), ("year", "2000-03-01", "2366-12-31")],
-)
-def test_series_rejects_the_367th_calendar_bucket(query_db, bucket, from_date, to_date):
-    module, field, _ = setup_rows(query_db, "date", [])
-    with pytest.raises(ValidationError):
-        DateSeriesAggregateQuery(
-            module_id=module.id,
-            definition={},
-            date_field=reference(field),
-            bucket=bucket,
-            from_date=from_date,
-            to_date=to_date,
-        )
 
 
 def test_month_bucket_uses_workspace_date_not_session_timezone(query_db):

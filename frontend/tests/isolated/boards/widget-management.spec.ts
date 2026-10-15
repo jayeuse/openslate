@@ -21,6 +21,8 @@ import {
   notifyIfBoardViewLost,
 } from "../../../src/components/systems/boards/hooks/use-board-widget-management";
 import { blankWidgetCreation } from "../../../src/components/systems/boards/domain/widget-editor";
+import { wirePagination } from "../../helpers/pagination";
+import { wireBoard } from "../../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const moduleId = "00000000-0000-4000-8000-000000000002";
@@ -82,7 +84,7 @@ test("settings edits keep unrelated config exactly", () => {
   expect(input.widgetType).toBe("records");
 });
 
-test("S26 reference settings preserve the Chart identity with null config and current size pin version", () => {
+test("reference settings preserve the Chart identity with null config and current size pin version", () => {
   const source: BoardWidget = {
     ...widget(),
     chartId: otherId,
@@ -177,18 +179,17 @@ test("widget denial revokes parent Board only after independent VIEW loss confir
     globalThis.fetch = ((input: RequestInfo | URL) => {
       paths.push(String(input));
       return Promise.resolve(
-        Response.json({
-          id: boardId,
-          scope: "project",
-          department_id: null,
-          name: "Still visible",
-          description: null,
-          status: "active",
-          revision: 4,
-          level: "read",
-          created_at: timestamp,
-          updated_at: timestamp,
-        }),
+        Response.json(
+          wireBoard({
+            id: boardId,
+            name: "Still visible",
+            description: null,
+            revision: 4,
+            level: "read",
+            created_at: timestamp,
+            updated_at: timestamp,
+          }),
+        ),
       );
     }) as typeof fetch;
     await notifyIfBoardViewLost(
@@ -388,13 +389,7 @@ test("management metadata uses Board access and a complete widget page", async (
             updated_at: timestamp,
           },
         ],
-        pagination: {
-          limit: 12,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 12, count: 1, total: 1 }),
         board_revision: 7,
       }),
     );
@@ -517,13 +512,7 @@ test("source chooser reads active OpenView catalog page rather than accepting a 
             title_field_id: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       }),
     );
   }) as typeof fetch;

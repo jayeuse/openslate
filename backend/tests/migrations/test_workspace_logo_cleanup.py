@@ -4,12 +4,10 @@ import subprocess
 from uuid import uuid4
 
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from tests.conftest import guarded_create_engine
+from tests.conftest import alembic_heads, guarded_create_engine
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
 pytestmark = pytest.mark.integration
@@ -64,12 +62,8 @@ def test_file_cleanup_origin_is_nullable_internal_column_with_named_fail_closed_
                 )
             ).one()
             assert tuple(column) == ("YES", None, 30)
-            config = Config()
-            config.set_main_option("script_location", "migrations")
-            assert (
-                connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == ScriptDirectory.from_config(config).get_current_head()
-            )
+            [head] = alembic_heads()
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == head
         run_alembic(environment, "check")
     finally:
         engine.dispose()

@@ -50,3 +50,22 @@ test("URL state only serializes allowlisted identifiers and record links resolve
   expect(parseOpenViewUrl("?view=" + "x".repeat(129)).invalid).toBe(true);
   expect(serializeOpenViewUrl({ record: "../secrets" })).toBe("/openview");
 });
+
+for (const target of [
+  { name: "a malformed Report id", query: "report=invalid" },
+  {
+    name: "a run without its Report",
+    query: "run=00000000-0000-4000-8000-000000000900",
+  },
+]) {
+  test(`${target.name} is an invalid Report link that selects no Report or output`, () => {
+    expect(
+      parseOpenViewUrl(`/openview?section=reports&${target.query}`),
+    ).toEqual({
+      section: "reports",
+      module: "service-requests",
+      invalid: true,
+      invalidReportSelection: true,
+    });
+  });
+}

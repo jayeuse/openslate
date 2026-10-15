@@ -7,14 +7,13 @@ from collections import Counter
 from collections.abc import Iterator
 from dataclasses import asdict
 from datetime import date
-from functools import cache
 
 import pytest
 
-from operations.sample.packs.registry import get_pack
 from operations.sample.packs.types import SampleProfile
-from operations.sample.scenario import SampleDataset, build_dataset
+from operations.sample.scenario import SampleDataset
 from operations.sample.vocabulary import TRADE_PHRASES
+from tests.operations.sample.sample_datasets import sample_dataset
 
 ANCHOR = date(2026, 9, 30)
 MARKERS = re.compile(
@@ -59,9 +58,8 @@ REAL_BRANDS = (
 NAMED_MODULES = ("customers", "contacts", "equipment", "products", "suppliers", "warehouses")
 
 
-@cache
 def _dataset(profile: str) -> SampleDataset:
-    return build_dataset(profile, seed=42, anchor_date=ANCHOR)  # type: ignore[arg-type]
+    return sample_dataset(profile, 42, ANCHOR)
 
 
 def _field_ids(dataset: SampleDataset, module_key: str) -> dict[str, str]:
@@ -125,7 +123,7 @@ def test_every_control_plan_string_uses_natural_organization_content(
 ) -> None:
     from operations.sample.controls.actions import plan_controls
 
-    dataset = build_dataset(profile, seed=42, anchor_date=ANCHOR, organization=get_pack(pack_key))
+    dataset = sample_dataset(profile, 42, ANCHOR, pack_key)
     texts = list(_strings([asdict(action) for action in plan_controls(dataset)]))
     assert texts
     offenders = sorted(

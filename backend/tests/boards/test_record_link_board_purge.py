@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.boards import lifecycle_router
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
@@ -16,7 +17,8 @@ from app.systems.boards.record_link_models import (
     BoardRecordLink,
 )
 from app.systems.sandbox.records.models import Record
-from tests.boards.test_permanent_delete import _actor, _client, _enabled
+from tests.boards.support import client as board_client
+from tests.boards.test_permanent_delete import _actor, _enabled
 from tests.boards.test_record_links import _source
 
 pytestmark = pytest.mark.integration
@@ -90,7 +92,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
     db.commit()
     _enabled(monkeypatch, True)
     path = f"/api/boards/{board.id}/purge"
-    with _client(db, admin) as client:
+    with board_client(db, admin, lifecycle_router.router) as client:
         preview = client.post(f"{path}/preview")
         assert preview.status_code == 200, preview.text
         types = {row["entity_type"] for row in preview.json()["impact"]["rows"]}
@@ -106,12 +108,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
         assert executed.status_code == 200, executed.text
     assert db.get(Board, board.id) is None
     assert db.get(Record, record.id) is not None
-    assert (
-        db.scalar(
-            select(BoardRecordLink.id).where(BoardRecordLink.board_id == board.id)
-        )
-        is None
-    )
+    assert db.scalar(select(BoardRecordLink.id).where(BoardRecordLink.board_id == board.id)) is None
     assert (
         db.scalar(
             select(BoardPostRevisionRecordLink.id).where(

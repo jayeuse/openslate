@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from record_queries.test_database import setup_rows
+import pytest
 from uuid6 import uuid7
 from views.test_access import actor
 
@@ -11,6 +11,7 @@ from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope
 from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
 from app.systems.sandbox.modules.models import Module
+from tests.record_queries.support import setup_rows
 
 
 def test_purge_dependency_inventory_tracks_saved_view_default_changes():
@@ -71,6 +72,7 @@ def test_purge_dependency_inventory_tracks_saved_view_default_changes():
     assert changed_state.state_fingerprint != first.state_fingerprint
 
 
+@pytest.mark.integration
 def test_purge_lists_and_blocks_unpurged_attachments_and_lists_saved_views(query_db):
     owner = actor(query_db)
     module, _, records = setup_rows(query_db, "text", ["value"])
@@ -109,6 +111,7 @@ def test_purge_lists_and_blocks_unpurged_attachments_and_lists_saved_views(query
     assert not current.blockers
 
 
+@pytest.mark.integration
 def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(query_db):
     from sqlalchemy import select
 
@@ -158,6 +161,7 @@ def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(q
     assert {event.entity_type for event in events} == {"files", "saved_views"}
 
 
+@pytest.mark.integration
 def test_close_does_not_archive_file_or_view(query_db):
     from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 
@@ -186,6 +190,7 @@ def test_close_does_not_archive_file_or_view(query_db):
     assert not view.is_deleted
 
 
+@pytest.mark.integration
 def test_department_library_blocks_purge_tracks_drift_then_deletes_confirmed_inventory(query_db):
     import pytest
     from sqlalchemy import select

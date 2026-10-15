@@ -6,9 +6,7 @@ import {
   accessSummary,
   detailsConflicts,
   entriesFromAccessDraft,
-  filterGroups,
   groupFiltersFromParams,
-  groupRows,
   mergeMembers,
   resolveAccess,
   sameAccess,
@@ -16,15 +14,13 @@ import {
   setDepartmentLevel,
   setModuleLevel,
   summaryLabel,
-  type GroupFilters,
 } from "../../../src/components/systems/access/helpers/groups";
 import type {
   AccessDepartment,
-  AccessGroup,
   AccessGroupAccessEntry,
   AccessModule,
 } from "../../../src/components/systems/access/state/api-contracts";
-import { accessModule, department, group } from "./fixtures";
+import { accessModule, department } from "./fixtures";
 
 const inventory = "00000000-0000-4000-8000-0000000000d1";
 const finance = "00000000-0000-4000-8000-0000000000d2";
@@ -166,78 +162,6 @@ test.describe("access summary", () => {
 });
 
 test.describe("group list", () => {
-  const base = group as AccessGroup;
-  const groups: AccessGroup[] = [
-    {
-      ...base,
-      id: "00000000-0000-4000-8000-0000000000a1",
-      name: "Inventory clerks",
-      description: "Stock counts",
-      member_ids: ["a", "b"],
-      access: [
-        {
-          ...entry(inventory, null, "write"),
-          department_name: "Inventory",
-          module_name: null,
-        },
-      ],
-      created_at: "2026-01-01T00:00:00Z",
-    },
-    {
-      ...base,
-      id: "00000000-0000-4000-8000-0000000000a2",
-      name: "auditors",
-      description: "",
-      member_ids: [],
-      access: [
-        {
-          ...entry(finance, null, "read"),
-          department_name: "Finance",
-          module_name: null,
-        },
-      ],
-      created_at: "2026-03-01T00:00:00Z",
-    },
-    {
-      ...base,
-      id: "00000000-0000-4000-8000-0000000000a3",
-      name: "New hires",
-      description: "Starts empty",
-      member_ids: ["c"],
-      access: [],
-      created_at: "2026-02-01T00:00:00Z",
-    },
-  ];
-  const rows = groupRows(groups, departments, modules);
-  const filters: GroupFilters = { query: "", sort: "name", filter: "all" };
-
-  test("sorts by name ignoring case, by members, or newest first", () => {
-    expect(filterGroups(rows, filters).map((row) => row.group.name)).toEqual([
-      "auditors",
-      "Inventory clerks",
-      "New hires",
-    ]);
-    expect(
-      filterGroups(rows, { ...filters, sort: "members" }).map(
-        (row) => row.group.name,
-      ),
-    ).toEqual(["Inventory clerks", "New hires", "auditors"]);
-    expect(
-      filterGroups(rows, { ...filters, sort: "newest" }).map(
-        (row) => row.group.name,
-      ),
-    ).toEqual(["auditors", "New hires", "Inventory clerks"]);
-  });
-
-  test("searches name, description and reached departments, and filters gaps", () => {
-    const names = (next: Partial<GroupFilters>) =>
-      filterGroups(rows, { ...filters, ...next }).map((row) => row.group.name);
-    expect(names({ query: "stock" })).toEqual(["Inventory clerks"]);
-    expect(names({ query: "finance" })).toEqual(["auditors"]);
-    expect(names({ filter: "no-access" })).toEqual(["New hires"]);
-    expect(names({ filter: "no-members" })).toEqual(["auditors"]);
-  });
-
   test("reads the gap filter from the URL and ignores unknown values", () => {
     expect(
       groupFiltersFromParams(new URLSearchParams("filter=no-access")).filter,

@@ -1,9 +1,10 @@
 import { expect, type Page } from "@playwright/test";
-import { test } from "./helpers/test";
+import { test, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf } from "../helpers/pagination";
 
 const id = (value: number) =>
   `00000000-0000-4000-8000-${value.toString().padStart(12, "0")}`;
@@ -39,19 +40,6 @@ type WireRecord = {
   is_deleted: false;
   performed_by: string;
 };
-
-function paged<T>(items: T[], limit: number, offset = 0, total = items.length) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
-}
 
 async function installKanbanApi(
   page: Page,
@@ -164,10 +152,11 @@ async function installKanbanApi(
   let authReads = 0;
   let groupedReads = 0;
   let nextBatchStatus = 200;
-  let committedFailure: "unknown" | "malformed" | null = null;
+  let committedFailure: "malformed" | null = null;
   let holdBatch: Promise<void> | null = null;
   let revision = 0;
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const target = new URL(request.url());
     const path = target.pathname;
@@ -195,7 +184,7 @@ async function installKanbanApi(
     }
     if (path === "/api/views/data-sources")
       return json(
-        paged(
+        pageOf(
           [
             {
               id: moduleId,
@@ -204,11 +193,11 @@ async function installKanbanApi(
               title_field_id: nameFieldId,
             },
           ],
-          limit,
+          { limit },
         ),
       );
     if (path === `/api/views/data-sources/${moduleId}/fields`)
-      return json(paged(fields, limit));
+      return json(pageOf(fields, { limit }));
     if (path === `/api/departments/${departmentId}`)
       return json({
         id: departmentId,
@@ -221,7 +210,7 @@ async function installKanbanApi(
       });
     if (path === "/api/departments")
       return json(
-        paged(
+        pageOf(
           [
             {
               id: departmentId,
@@ -233,11 +222,11 @@ async function installKanbanApi(
               performed_by: null,
             },
           ],
-          limit,
+          { limit },
         ),
       );
     if (path === "/api/views" && request.method() === "GET")
-      return json(paged([saved], limit));
+      return json(pageOf([saved], { limit }));
     if (path === `/api/views/${viewId}`) return json(saved);
     if (path === "/api/records/grouped-query") {
       groupedReads += 1;
@@ -276,22 +265,23 @@ async function installKanbanApi(
       return json({
         items: selectedRows.slice(body.offset, body.offset + body.limit),
         pagination: selected
-          ? paged(
-              selectedRows.slice(body.offset, body.offset + body.limit),
-              body.limit,
-              body.offset,
-              selectedRows.length,
-            ).pagination
+          ? pageOf(selectedRows.slice(body.offset, body.offset + body.limit), {
+              limit: body.limit,
+              offset: body.offset,
+              total: selectedRows.length,
+            }).pagination
           : null,
         groups: groups.slice(
           body.group_offset,
           body.group_offset + body.group_limit,
         ),
-        group_pagination: paged(
+        group_pagination: pageOf(
           groups.slice(body.group_offset, body.group_offset + body.group_limit),
-          body.group_limit,
-          body.group_offset,
-          groups.length,
+          {
+            limit: body.group_limit,
+            offset: body.group_offset,
+            total: groups.length,
+          },
         ).pagination,
         selected_group: selected,
       });
@@ -346,8 +336,6 @@ async function installKanbanApi(
       });
       const failure = committedFailure;
       committedFailure = null;
-      if (failure === "unknown")
-        return json({ detail: "Private failure canary" }, 503);
       if (failure === "malformed") return json({ results: [] });
       return json({ results });
     }
@@ -356,12 +344,11 @@ async function installKanbanApi(
       return json(rows.get(recordId), rows.has(recordId) ? 200 : 404);
     if (path === "/api/records/query")
       return json(
-        paged(
-          [...rows.values()].slice(offset, offset + limit),
+        pageOf([...rows.values()].slice(offset, offset + limit), {
           limit,
           offset,
-          rows.size,
-        ),
+          total: rows.size,
+        }),
       );
     return route.fallback();
   });
@@ -376,7 +363,7 @@ async function installKanbanApi(
     failBatch: (status: number) => {
       nextBatchStatus = status;
     },
-    commitThenFail: (failure: "unknown" | "malformed") => {
+    commitThenFail: (failure: "malformed") => {
       committedFailure = failure;
     },
     holdBatch: () => {
@@ -614,7 +601,11 @@ for (const options of [
     expect(api.batches).toEqual([]);
   });
 
-for (const failure of ["unknown", "malformed", "denied"] as const)
+// The receipt fault matrix is owned by
+// isolated/openview/record-move-receipts.spec.ts. One committed-but-malformed
+// receipt stays here for the Kanban recovery: the grouped-read poll, the lane
+// count, and the record hidden until its lane opens.
+for (const failure of ["malformed", "denied"] as const)
   test(`Kanban retains unsaved moves after a ${failure} batch result`, async ({
     page,
   }) => {
@@ -806,7 +797,9 @@ test("Kanban keyboard drag cancels with Escape and saves the chosen lane", async
 test("Kanban retains 100 pending records across pages and refuses a 101st before saving", async ({
   page,
 }) => {
-  test.setTimeout(120_000);
+  // 100 staged moves is the product limit, so no smaller input proves it; each
+  // menu move is two clicks (~58 ms each, flat across all 100 moves).
+  test.setTimeout(120_000); // measured: 12.3-12.5 s at 1 worker (5 runs, load 4-5); 19-49 s at 3 workers (6 runs, load 16); default 30 s fails
   const api = await installKanbanApi(page, { rowCount: 101 });
   await page.goto(url);
   await page

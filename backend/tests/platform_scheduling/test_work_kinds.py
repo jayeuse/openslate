@@ -27,6 +27,7 @@ from app.systems.platform.scheduling.service import (
 )
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.grant_support import assert_runtime_only_grants
 from tests.rbac.support import make_group_access
 
 pytestmark = pytest.mark.integration
@@ -112,43 +113,49 @@ def test_post_work_enforces_disjoint_sources_and_unique_occurrence(integration_o
     db.add(publication)
     db.flush()
 
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(
-            ScheduledWork(
-                kind="post-publish",
-                post_id=post.id,
-                source_revision=post.revision,
-                scheduling_actor_id=actor.id,
-                scheduled_for=NOW + timedelta(hours=1),
-                next_attempt_at=NOW + timedelta(hours=1),
-            )
+    savepoint = db.begin_nested()
+    db.add(
+        ScheduledWork(
+            kind="post-publish",
+            post_id=post.id,
+            source_revision=post.revision,
+            scheduling_actor_id=actor.id,
+            scheduled_for=NOW + timedelta(hours=1),
+            next_attempt_at=NOW + timedelta(hours=1),
         )
+    )
+    with pytest.raises(IntegrityError):
         db.flush()
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(
-            ScheduledWork(
-                kind="post-publish",
-                report_id=report.id,
-                post_id=post.id,
-                source_revision=post.revision + 1,
-                scheduling_actor_id=actor.id,
-                scheduled_for=NOW + timedelta(hours=2),
-                next_attempt_at=NOW + timedelta(hours=2),
-            )
+    savepoint.rollback()
+    savepoint = db.begin_nested()
+    db.add(
+        ScheduledWork(
+            kind="post-publish",
+            report_id=report.id,
+            post_id=post.id,
+            source_revision=post.revision + 1,
+            scheduling_actor_id=actor.id,
+            scheduled_for=NOW + timedelta(hours=2),
+            next_attempt_at=NOW + timedelta(hours=2),
         )
+    )
+    with pytest.raises(IntegrityError):
         db.flush()
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(
-            ScheduledWork(
-                kind="post-publish",
-                post_id=post.id,
-                source_revision=0,
-                scheduling_actor_id=actor.id,
-                scheduled_for=NOW + timedelta(hours=3),
-                next_attempt_at=NOW + timedelta(hours=3),
-            )
+    savepoint.rollback()
+    savepoint = db.begin_nested()
+    db.add(
+        ScheduledWork(
+            kind="post-publish",
+            post_id=post.id,
+            source_revision=0,
+            scheduling_actor_id=actor.id,
+            scheduled_for=NOW + timedelta(hours=3),
+            next_attempt_at=NOW + timedelta(hours=3),
         )
+    )
+    with pytest.raises(IntegrityError):
         db.flush()
+    savepoint.rollback()
     assert db.scalar(select(ScheduledWork).where(ScheduledWork.id == publication.id)) is publication
 
 
@@ -165,9 +172,11 @@ def test_post_success_requires_its_publication_result(integration_owner_db):
     )
     db.add(work)
     db.flush()
-    with pytest.raises(IntegrityError), db.begin_nested():
-        work.state = WorkState.SUCCEEDED
+    savepoint = db.begin_nested()
+    work.state = WorkState.SUCCEEDED
+    with pytest.raises(IntegrityError):
         db.flush()
+    savepoint.rollback()
     db.refresh(work)
     revision = BoardPostRevision(
         post_id=post.id,
@@ -227,30 +236,38 @@ def test_reminder_work_needs_one_occurrence_and_is_unique_per_occurrence(integra
         reminder_work(occurrence_start_at=None),
         reminder_work(occurrence_start_at=NOW + timedelta(days=1), post_id=post.id),
     ):
-        with pytest.raises(IntegrityError), db.begin_nested():
-            db.add(invalid)
+        savepoint = db.begin_nested()
+        db.add(invalid)
+        with pytest.raises(IntegrityError):
             db.flush()
+        savepoint.rollback()
     db.add(reminder_work(occurrence_start_at=NOW + timedelta(weeks=1)))
     db.flush()
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(
-            ScheduledWork(
-                kind="post-publish",
-                post_id=post.id,
-                source_revision=post.revision,
-                scheduling_actor_id=actor.id,
-                occurrence_start_at=NOW,
-                scheduled_for=NOW,
-                next_attempt_at=NOW,
-            )
+    savepoint = db.begin_nested()
+    db.add(
+        ScheduledWork(
+            kind="post-publish",
+            post_id=post.id,
+            source_revision=post.revision,
+            scheduling_actor_id=actor.id,
+            occurrence_start_at=NOW,
+            scheduled_for=NOW,
+            next_attempt_at=NOW,
         )
+    )
+    with pytest.raises(IntegrityError):
         db.flush()
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(BoardEventReminder(board_id=post.board_id, event_id=event.id, timing="start"))
+    savepoint.rollback()
+    savepoint = db.begin_nested()
+    db.add(BoardEventReminder(board_id=post.board_id, event_id=event.id, timing="start"))
+    with pytest.raises(IntegrityError):
         db.flush()
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(BoardEventReminder(board_id=post.board_id, event_id=event.id, timing="now"))
+    savepoint.rollback()
+    savepoint = db.begin_nested()
+    db.add(BoardEventReminder(board_id=post.board_id, event_id=event.id, timing="now"))
+    with pytest.raises(IntegrityError):
         db.flush()
+    savepoint.rollback()
 
 
 def test_typed_work_constraints_fks_and_runtime_privileges_are_installed(integration_owner_db):
@@ -284,16 +301,4 @@ def test_typed_work_constraints_fks_and_runtime_privileges_are_installed(integra
         )
     )
     assert default == "'report-run'::character varying"
-    for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-        assert connection.scalar(
-            text("SELECT has_table_privilege('openslate_runtime', 'scheduled_work', :privilege)"),
-            {"privilege": privilege},
-        ) is True
-        for role in ("anon", "authenticated", "service_role"):
-            assert (
-                connection.scalar(
-                    text("SELECT has_table_privilege(:role, 'scheduled_work', :privilege)"),
-                    {"role": role, "privilege": privilege},
-                )
-                is False
-            )
+    assert_runtime_only_grants(connection, "scheduled_work")

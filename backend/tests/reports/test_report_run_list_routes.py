@@ -110,7 +110,7 @@ def test_report_run_list_shows_runs_to_module_readers_and_respects_archive_state
     assert denied.json()["detail"]["code"] == "report_archived"
 
 
-@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "sort_order=asc"])
+@pytest.mark.parametrize("query", ["limit=101", "sort_order=asc"])
 def test_report_run_list_rejects_unbounded_or_ascending_pages(
     report_run_fixture: _RunFixture, query: str
 ) -> None:

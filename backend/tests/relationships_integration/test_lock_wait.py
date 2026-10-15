@@ -2,7 +2,6 @@
 
 import os
 import threading
-import time
 from uuid import UUID
 
 import pytest
@@ -11,6 +10,7 @@ from uuid6 import uuid7
 from app.core.database.session import AuditSession
 from app.systems.sandbox.relationships.service import create_relationship
 from tests.conftest import guarded_create_engine as create_engine
+from tests.race_support import wait_until_waiting
 from tests.relationships_integration.relationships_integration_support import (
     _seed_committed_graph,
     _set_request,
@@ -35,6 +35,8 @@ def test_two_concurrent_link_writes_in_the_same_modules_both_succeed(
     assert TEST_DATABASE_URL is not None
     engine = create_engine(TEST_DATABASE_URL)
     first_holds_locks = threading.Event()
+    second_waits = threading.Event()
+    second_pids: list[int] = []
     outcomes: dict[str, object] = {}
 
     def write(name: str, source: UUID, target: UUID, *, hold: bool) -> None:
@@ -43,28 +45,41 @@ def test_two_concurrent_link_writes_in_the_same_modules_both_succeed(
             if hold:
                 commit = session.commit
 
-                def slow_commit() -> None:
+                def held_commit() -> None:
                     first_holds_locks.set()
-                    time.sleep(0.5)
+                    # Hang guard only: the test releases this as soon as it sees the wait.
+                    second_waits.wait(5)
                     commit()
 
-                session.commit = slow_commit  # type: ignore[method-assign]
+                session.commit = held_commit  # type: ignore[method-assign]  # test seam
+            else:
+                pid = session.connection().exec_driver_sql("SELECT pg_backend_pid()").scalar_one()
+                second_pids.append(pid)
             try:
                 outcomes[name] = create_relationship(session, field.id, source, target)
             except Exception as error:  # noqa: BLE001 - recorded for the assertion
                 outcomes[name] = error
 
+    first = threading.Thread(
+        target=write, args=("first", sources[0].id, targets[0].id), kwargs={"hold": True}
+    )
+    second = threading.Thread(
+        target=write, args=("second", sources[1].id, targets[1].id), kwargs={"hold": False}
+    )
+    observed_wait = False
     try:
-        first = threading.Thread(
-            target=write, args=("first", sources[0].id, targets[0].id), kwargs={"hold": True}
-        )
         first.start()
         assert first_holds_locks.wait(5)
-        write("second", sources[1].id, targets[1].id, hold=False)
-        first.join(5)
+        second.start()
+        # Watch for the second write's lock wait, well inside its 2 s lock_timeout.
+        observed_wait = wait_until_waiting(engine, second_pids, wait=1.5, while_running=second)
     finally:
+        second_waits.set()
+        first.join(5)
+        second.join(5)
         engine.dispose()
 
+    assert observed_wait, "the second write never waited for the first write's locks"
     for name in ("first", "second"):
         outcome = outcomes[name]
         assert not isinstance(outcome, Exception), f"{name} write failed: {outcome!r}"

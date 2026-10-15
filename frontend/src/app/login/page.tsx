@@ -13,8 +13,8 @@ import {
   FieldControl,
   FieldLabel,
 } from "@/components/ui/field";
-import { ApiError } from "@/lib/api";
 import { getSessionStatus, signIn } from "@/lib/auth-api";
+import { loginFailureMessage } from "@/lib/login-failure";
 
 function PasswordSetNotice() {
   const search = useSearchParams();
@@ -62,27 +62,7 @@ export default function LoginPage() {
       }
       router.push(await workspaceStartRoute());
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        setError("That email or password is not right.");
-      } else if (error instanceof ApiError && error.status === 429) {
-        setError(
-          error.retryAfter !== undefined
-            ? `Too many attempts. Try again in ${Math.max(1, Math.ceil(error.retryAfter / 60))} minutes.`
-            : "Too many attempts. Try again later.",
-        );
-      } else if (error instanceof ApiError && error.status === 503) {
-        setError("Sign-in is not available now. Try again later.");
-      } else if (
-        error instanceof ApiError &&
-        error.status === 403 &&
-        error.code === "ip_not_allowed"
-      ) {
-        setError(
-          "Sign-in from this network is not allowed. Contact your administrator.",
-        );
-      } else {
-        setError("Unable to sign in. Check your connection and try again.");
-      }
+      setError(loginFailureMessage(error));
     } finally {
       setPending(false);
     }

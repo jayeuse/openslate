@@ -172,6 +172,15 @@ def _pending_users(db: Session, user_ids: set[UUID]) -> set[UUID]:
     return {row.id for row in rows}
 
 
+def _refuse_administrators(db: Session, user_ids: set[UUID]) -> None:
+    if user_ids and db.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.id.in_(user_ids), User.role == UserRole.ADMIN.value)
+    ):
+        raise conflict("Administrators have access everywhere and are not group members")
+
+
 def replace_group_members(
     db: Session,
     row: Group,
@@ -189,17 +198,16 @@ def replace_group_members(
     desired = _unique_ids(member_ids)
     existing_ids = {item.user_id for item in existing}
     added_ids = set(desired) - existing_ids
+    # Refuse an administrator before locking any user row: a Sandbox publish holds
+    # its administrator's row while it waits for this group. The check repeats after
+    # the locks, because a promotion can commit in between.
+    _refuse_administrators(db, added_ids)
     # Lock every desired user as before; only new members must be usable. A member
     # who became disabled or expired may stay so the rest of the list can be saved.
     inactive_ids = set(desired) - _active_users(db, desired)
     if (inactive_ids - _pending_users(db, inactive_ids)) & added_ids:
         raise conflict("New members must be active or pending, unexpired users")
-    if added_ids and db.scalar(
-        select(func.count())
-        .select_from(User)
-        .where(User.id.in_(added_ids), User.role == UserRole.ADMIN.value)
-    ):
-        raise conflict("Administrators have access everywhere and are not group members")
+    _refuse_administrators(db, added_ids)
     if existing_ids == set(desired):
         return False
     before = lock_access_recipients(db, existing_ids ^ set(desired))

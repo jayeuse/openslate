@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Route } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
@@ -39,14 +45,6 @@ type Api = {
   onPatch: ((route: Route) => Promise<void>) | null;
   onSession: ((route: Route) => Promise<void>) | null;
 };
-
-function gate() {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-}
 
 function guestBody(workspace: Workspace): Record<string, unknown> {
   const body: Record<string, unknown> = { ...workspace };
@@ -179,8 +177,14 @@ test("Organization profile fields load, save and clear without changing omitted 
   await save(page).click();
   await expect(field(page, "Contact phone")).toHaveValue("");
   expect(api.writes[1]).toEqual({ revision: 5, contact_phone: null });
-  expect(api.workspace.description).toBe("Updated description\nSecond line");
-  expect(api.workspace.theme).toBe("slate");
+  await expect(field(page, "Description")).toHaveValue(
+    "Updated description\nSecond line",
+  );
+  await expect(
+    page
+      .getByRole("radiogroup", { name: "Organization look" })
+      .getByRole("radio", { name: /^Slate/ }),
+  ).toBeChecked();
   await field(page, "Contact phone").fill("  ");
   await expect(save(page)).toBeDisabled();
 });
@@ -244,30 +248,6 @@ test("Organization invalid email keeps the draft with a safe linked field error"
   await expect(email).toHaveAttribute("aria-invalid", "false");
 });
 
-for (const role of ["member", "guest"] as const) {
-  test(`Organization ${role} profile is read only with the permitted fields`, async ({
-    page,
-  }) => {
-    const api = await installProfile(page);
-    api.role = role;
-    await page.goto("/manage?view=organization");
-    await expect(field(page, "Legal name")).toHaveValue("Harbor Services Ltd");
-    await expect(field(page, "Legal name")).toBeDisabled();
-    await expect(field(page, "Description")).toBeDisabled();
-    if (role === "guest") {
-      await expect(field(page, "Contact email")).toHaveCount(0);
-      await expect(field(page, "Contact phone")).toHaveCount(0);
-      await expect(field(page, "Postal address")).toHaveCount(0);
-    } else {
-      await expect(field(page, "Contact email")).toHaveValue(
-        "contact@example.com",
-      );
-      await expect(field(page, "Contact email")).toBeDisabled();
-    }
-    expect(api.writes).toEqual([]);
-  });
-}
-
 test("Organization full null profile remains an editable full response", async ({
   page,
 }) => {
@@ -290,49 +270,31 @@ test("Organization full null profile remains an editable full response", async (
   ]);
 });
 
-for (const fault of [
-  "partial",
-  "wrong type",
-  "guest shape for admin",
-] as const) {
-  test(`Organization malformed contact ${fault} is unavailable rather than a writable guest`, async ({
-    page,
-  }) => {
-    const api = await installProfile(page);
-    api.onGet = (route) => {
-      const body = guestBody(api.workspace);
-      if (fault === "partial") body.contact_email = "partial@example.com";
-      if (fault === "wrong type")
-        Object.assign(body, {
-          contact_email: "valid@example.com",
-          contact_phone: 42,
-          postal_address: null,
-        });
-      return route.fulfill({ json: body });
-    };
-    await page.goto("/manage?view=organization");
-    await expect(
-      page.getByText("The organization settings could not be loaded.", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(field(page, "Contact email")).toHaveCount(0);
-    // A guest-shaped body makes the form read-only, which hides Save.
-    if (fault === "guest shape for admin")
-      await expect(save(page)).toHaveCount(0);
-    else await expect(save(page)).toBeDisabled();
-    api.onGet = (route) =>
-      route.fulfill({
-        json: { ...api.workspace, unrelated_metadata: { accepted: true } },
-      });
-    await page
-      .getByRole("button", { name: "Retry organization settings", exact: true })
-      .click();
-    await expect(field(page, "Contact email")).toHaveValue(
-      "contact@example.com",
-    );
-  });
-}
+// The partial and wrong-typed contact replies are rows of
+// isolated/shell/organization-api.spec.ts.
+test("Organization malformed contact guest shape for admin is unavailable rather than a writable guest", async ({
+  page,
+}) => {
+  const api = await installProfile(page);
+  api.onGet = (route) => route.fulfill({ json: guestBody(api.workspace) });
+  await page.goto("/manage?view=organization");
+  await expect(
+    page.getByText("The organization settings could not be loaded.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(field(page, "Contact email")).toHaveCount(0);
+  // A guest-shaped body makes the form read-only, which hides Save.
+  await expect(save(page)).toHaveCount(0);
+  api.onGet = (route) =>
+    route.fulfill({
+      json: { ...api.workspace, unrelated_metadata: { accepted: true } },
+    });
+  await page
+    .getByRole("button", { name: "Retry organization settings", exact: true })
+    .click();
+  await expect(field(page, "Contact email")).toHaveValue("contact@example.com");
+});
 
 test("Organization malformed full PATCH keeps its draft until explicit readback", async ({
   page,
@@ -354,7 +316,8 @@ test("Organization malformed full PATCH keeps its draft until explicit readback"
   await save(page).click();
   await expect(saved(page)).toBeVisible();
   expect(api.writes).toHaveLength(2);
-  expect(api.workspace.description).toBe("Uncertain description");
+  await page.reload();
+  await expect(field(page, "Description")).toHaveValue("Uncertain description");
 });
 
 test("Organization stale and failed profile saves preserve the draft and current revision", async ({
@@ -387,9 +350,9 @@ test("Organization pending profile save blocks duplicate commands and navigation
   page,
 }) => {
   const api = await installProfile(page);
-  const pending = gate();
+  const pending = heldResponse();
   api.onPatch = async (route) => {
-    await pending.promise;
+    await pending.released;
     api.workspace = {
       ...api.workspace,
       legal_name: "Pending legal name",
@@ -413,42 +376,13 @@ test("Organization pending profile save blocks duplicate commands and navigation
   }
 });
 
-test("Organization same-account privacy curtain removes contacts and restores its draft", async ({
-  page,
-}) => {
-  const api = await installProfile(page);
-  const session = gate();
-  try {
-    await page.goto("/manage?view=organization");
-    await field(page, "Contact email").fill("retained@example.com");
-    api.onSession = async (route) => {
-      await session.promise;
-      await route.fulfill({
-        json: { authenticated: true, user_id: userA, setup_required: false },
-      });
-    };
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await expect(
-      page.getByText("Checking your session…", { exact: true }),
-    ).toBeVisible();
-    await expect(field(page, "Contact email")).toHaveCount(0);
-    session.release();
-    await expect(field(page, "Contact email")).toHaveValue(
-      "retained@example.com",
-    );
-    expect(api.writes).toEqual([]);
-  } finally {
-    session.release();
-  }
-});
-
 for (const delayed of ["GET", "PATCH"] as const) {
   test(`Organization late ${delayed} cannot expose the previous account's contacts to a guest`, async ({
     page,
   }) => {
     const api = await installProfile(page);
-    const pending = gate();
-    const started = gate();
+    const pending = heldResponse();
+    const started = heldResponse();
     const old = { ...api.workspace };
     if (delayed === "GET") {
       let first = true;
@@ -456,14 +390,14 @@ for (const delayed of ["GET", "PATCH"] as const) {
         if (first) {
           first = false;
           started.release();
-          await pending.promise;
+          await pending.released;
           await route.fulfill({ json: old }).catch(() => {});
         } else await route.fulfill({ json: guestBody(api.workspace) });
       };
     } else
       api.onPatch = async (route) => {
         started.release();
-        await pending.promise;
+        await pending.released;
         await route
           .fulfill({
             json: { ...old, description: "Late accepted change", revision: 5 },
@@ -476,7 +410,7 @@ for (const delayed of ["GET", "PATCH"] as const) {
         await field(page, "Description").fill("Late accepted change");
         await save(page).click();
       }
-      await started.promise;
+      await started.released;
       api.userId = userB;
       api.role = "guest";
       api.workspace = { ...api.workspace, legal_name: "Guest legal name" };

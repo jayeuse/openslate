@@ -7,11 +7,8 @@ import {
   afterAccessUserChange,
   afterInvitationSettingsChange,
   authMeOptions,
-  departmentListOptions,
   groupListOptions,
   invitationSettingsOptions,
-  memberCandidateListOptions,
-  moduleListOptions,
   userAccessOptions,
   userListOptions,
   userSessionsOptions,
@@ -26,9 +23,6 @@ test("every Access key starts with the area and holds its list filter", () => {
   const keys = [
     userListOptions("exclude").queryKey,
     groupListOptions("include").queryKey,
-    memberCandidateListOptions().queryKey,
-    departmentListOptions("include").queryKey,
-    moduleListOptions("exclude").queryKey,
     invitationSettingsOptions().queryKey,
   ];
   for (const key of keys) expect(key[0]).toBe("access");

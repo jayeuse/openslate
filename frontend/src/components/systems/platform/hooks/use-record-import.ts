@@ -1,6 +1,5 @@
 "use client";
 
-import Papa from "papaparse";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
@@ -12,6 +11,12 @@ import {
   type ImportEnvelope,
   type ImportResultRow,
 } from "../adapters/record-import-api";
+import {
+  checkCsvFile,
+  importMappingError,
+  parseCsvText,
+} from "../helpers/csv-import-rules";
+import { importFailure } from "../helpers/record-import-failure";
 import type { WorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 
 type CsvDraft = { name: string; headers: string[]; rows: CsvRow[] };
@@ -19,24 +24,9 @@ type Preview = { digest: string; rows: ImportResultRow[] };
 type Configuration = Omit<ImportEnvelope, "mode" | "schema_digest" | "headers">;
 
 function failureMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) {
-    if (error.code === "mfa_required" || error.code === "ip_not_allowed") {
-      queueMicrotask(requestSessionRecheck);
-      return "Session access needs to be checked before continuing.";
-    }
-    if (error.status === 401) {
-      queueMicrotask(requestSessionRecheck);
-      return "Your session needs to be checked before continuing.";
-    }
-    if (error.status === 403)
-      return "Administrator permission is required to import records.";
-    if (error.code === "schema_changed")
-      return "Module schema changed; preview again.";
-    if (error.status === 404)
-      return "This module is no longer available. Choose another module.";
-    return error.message;
-  }
-  return error instanceof Error ? error.message : fallback;
+  const failure = importFailure(error, fallback);
+  if (failure.recheckSession) queueMicrotask(requestSessionRecheck);
+  return failure.message;
 }
 
 export function useRecordImport() {
@@ -101,10 +91,7 @@ export function useRecordImport() {
     current.current = "file";
     setOperation("file");
     try {
-      if (!/\.csv$/i.test(file.name))
-        throw new Error("Choose a UTF-8 CSV file.");
-      if (file.size > 8 * 1024 * 1024)
-        throw new Error("CSV files support up to 8 MB.");
+      checkCsvFile(file);
       let text: string;
       try {
         text = new TextDecoder("utf-8", { fatal: true }).decode(
@@ -114,38 +101,8 @@ export function useRecordImport() {
         throw new Error("The CSV must use valid UTF-8 encoding.");
       }
       if (generation.current !== started || !mounted.current) return;
-      const parsed = Papa.parse<string[]>(text, {
-        dynamicTyping: false,
-        skipEmptyLines: false,
-      });
-      if (parsed.errors.some((error) => error.code !== "UndetectableDelimiter"))
-        throw new Error(
-          "The CSV could not be read. Check quotes and delimiters.",
-        );
-      const cells = parsed.data;
-      if (
-        /\r?\n$/.test(text) &&
-        cells.at(-1)?.length === 1 &&
-        cells.at(-1)?.[0] === ""
-      )
-        cells.pop();
-      const headers = cells.shift();
-      if (!headers?.length || headers.every((header) => !header.trim()))
-        throw new Error("The CSV needs a header row.");
-      if (!cells.length)
-        throw new Error("The CSV needs at least one data row.");
-      if (cells.length > 10000)
-        throw new Error("CSV imports support up to 10,000 data rows.");
-      const mismatch = cells.findIndex((row) => row.length !== headers.length);
-      if (mismatch !== -1)
-        throw new Error(
-          `Row ${mismatch + 2} must have ${headers.length} cells, matching the headers.`,
-        );
-      setCsv({
-        name: file.name,
-        headers,
-        rows: cells.map((cells, index) => ({ row_number: index + 2, cells })),
-      });
+      const { headers, rows } = parseCsvText(text);
+      setCsv({ name: file.name, headers, rows });
     } catch (error) {
       if (generation.current === started && mounted.current)
         setError(failureMessage(error, "The CSV could not be read."));
@@ -158,13 +115,9 @@ export function useRecordImport() {
   }
   async function previewImport(configuration: Configuration) {
     if (!csv || current.current || uncertain) return;
-    if (!configuration.mapping.length) {
-      setError("Map at least one CSV column to a field.");
-      return;
-    }
-    const fields = configuration.mapping.map((item) => item.field_id);
-    if (new Set(fields).size !== fields.length) {
-      setError("Each field can be mapped only once.");
+    const mappingError = importMappingError(configuration.mapping);
+    if (mappingError) {
+      setError(mappingError);
       return;
     }
     const started = generation.current;

@@ -1,11 +1,5 @@
 import { readFile } from "node:fs/promises";
-import {
-  expect,
-  test,
-  type Locator,
-  type Page,
-  type Route,
-} from "./helpers/test";
+import { expect, test, type Page, type Route } from "./helpers/test";
 import {
   authorAccess,
   boardId,
@@ -13,6 +7,7 @@ import {
   userId,
 } from "./helpers/boards-api";
 import { dummyFile, type DummyFile } from "../helpers/dummy-files";
+import { pageOf } from "../helpers/pagination";
 
 const UNCLEAR_UPLOAD =
   "The upload result is unclear. Use Attach file to finish, or choose the file again.";
@@ -70,17 +65,7 @@ function postWire(
 }
 
 function listPage(items: unknown[], extra: Record<string, unknown> = {}) {
-  return {
-    items,
-    pagination: {
-      limit: 25,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-    ...extra,
-  };
+  return { ...pageOf(items, { limit: 25 }), ...extra };
 }
 
 type Options = {
@@ -236,22 +221,6 @@ async function openDraftAttachments(page: Page) {
   return panel;
 }
 
-// Optional review evidence: set BOARD_ATTACHMENT_CAPTURE_DIR to keep
-// desktop and mobile screenshots of the attachment panel.
-async function capture(page: Page, panel: Locator, name: string) {
-  const directory = process.env.BOARD_ATTACHMENT_CAPTURE_DIR;
-  if (!directory) return;
-  for (const [width, height] of [
-    [1440, 900],
-    [390, 844],
-  ] as const) {
-    await page.setViewportSize({ width, height });
-    await panel.getByLabel("Add an attachment").scrollIntoViewIfNeeded();
-    await page.screenshot({ path: `${directory}/${name}-${width}.png` });
-  }
-  await page.setViewportSize({ width: 1280, height: 720 });
-}
-
 test("an author uploads, downloads and removes post attachments in one step each", async ({
   page,
 }) => {
@@ -295,7 +264,6 @@ test("an author uploads, downloads and removes post attachments in one step each
       panel.getByRole("button", { name: `Download ${name}` }),
     ).toBeVisible();
   }
-  await capture(page, panel, "board-attachments-editor");
 
   const pdf = dummyFile(names[0]!);
   const [download] = await Promise.all([

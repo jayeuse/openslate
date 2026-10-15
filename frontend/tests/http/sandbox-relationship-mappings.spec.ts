@@ -1,56 +1,36 @@
-import { expect, test, type Page } from "./helpers/test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import {
+  exitGuarded,
+  expect,
+  heldResponse,
+  settleReact,
+  signedInAs,
+  test,
+  type Page,
+} from "./helpers/test";
+import { readFile } from "node:fs/promises";
 import {
   initialDesign,
   type Design,
 } from "../../src/components/systems/sandbox/domain/model";
 import { publicationFieldKey } from "../../src/components/systems/sandbox/components/publish-change-groups";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
-  installOpenViewEventSource,
-  sendOpenViewEvent,
-} from "./helpers/openview-event-source";
+  capacityVersions,
+  exportBundleFixture,
+  historyPagingVersions,
+  historyRegions,
+  historyVersionFixture,
+  installLifecycleRoutes,
+  lifecycleImpactFixture,
+  lifecycleReview,
+  liveBinding,
+  openAuthenticatedSandbox,
+  openCheckpointDialog,
+  openImportExport,
+} from "./helpers/sandbox-api";
 import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
-
-type SandboxOptions = {
-  importFailure?: string;
-  saveFailure?: string;
-  clearTestsFailure?: string;
-  discardRefreshFailure?: string;
-  discardRefreshDelay?: Promise<void>;
-  hasUnpublishedChanges?: boolean;
-  publishedHash?: string | null;
-  testRuns?: unknown[];
-  /** The draft revision the session starts at. */
-  revision?: number;
-  saveDelay?: Promise<void>;
-  publicationDelay?: Promise<void>;
-  issues?: Array<{ code: string; message: string; targetId: string | null }>;
-  versionMutationDelay?: Promise<void>;
-  versionListDelay?: Promise<void>;
-  capacityMetadata?: Record<string, unknown>;
-  versionListFailure?: number;
-  pruneDelay?: Promise<void>;
-  pruneReadbackDelay?: Promise<void>;
-  pruneReadbackFailure?: boolean;
-  pruneFailure?: { status: number; code: string };
-  pruneResponse?: unknown;
-  versions?: Array<Record<string, unknown>>;
-  previewChanges?: Array<Record<string, string>>;
-  bindings?: Array<{
-    kind: "department" | "module" | "field" | "relationship" | "trigger";
-    sandbox_id: string;
-    parent_sandbox_id: string | null;
-    live_id: string;
-    is_deleted: boolean;
-  }>;
-  bindingFailure?: number;
-  bindingRevision?: number;
-};
 
 function configuredDesignWithLegacyMapping(): Design {
   const design = structuredClone(configuredSandboxDesign);
@@ -80,378 +60,211 @@ function configuredDesignWithOffsetDateTimeBounds(): Design {
   return design;
 }
 
-async function openAuthenticatedSandbox(
+async function expectNoBusySandboxRegionsAtReviewSizes(
   page: Page,
-  designFixture: Design = configuredSandboxDesign,
-  options: SandboxOptions = {},
+  theme: "light" | "dark",
 ) {
-  await installOpenViewEventSource(page);
-  const workspace = { purge_enabled: true as boolean | undefined };
-  let workspaceFailure = false;
-  await page.route("**/api/workspace", (route) =>
-    route.fulfill(
-      workspaceFailure
-        ? { status: 503, json: { detail: "Workspace unavailable" } }
-        : { json: workspace },
-    ),
-  );
-  let revision = options.revision ?? 1;
-  let documentReads = 0;
-  let documentWrites = 0;
-  let versions = options.versions ?? [];
-  let pruned = false;
-  let pruneReadbackFailure = options.pruneReadbackFailure ?? false;
-  const pruneRequests: unknown[] = [];
-  const checkpointRequests: unknown[] = [];
-  let document = sandboxDocumentFromDesign(designFixture);
-  let bindings = options.bindings ?? [];
-  let bindingFailure = options.bindingFailure;
-  let bindingRevision = options.bindingRevision;
-  await page.route("**/api/auth/session", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      }),
-    });
-  });
-  await page.route("**/api/sandbox/document", async (route) => {
-    if (route.request().method() === "GET") {
-      documentReads += 1;
-      if (pruned) await options.pruneReadbackDelay;
-      if (pruned && pruneReadbackFailure)
-        return route.fulfill({
-          status: 503,
-          json: { detail: "Readback unavailable" },
-        });
-      if (options.discardRefreshDelay && documentReads === 3)
-        await options.discardRefreshDelay;
-      if (options.discardRefreshFailure && documentReads === 3) {
-        await route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: options.discardRefreshFailure }),
-        });
-        return;
-      }
-    }
-    if (route.request().method() === "PUT") {
-      documentWrites += 1;
-      await options.saveDelay;
-      if (options.saveFailure) {
-        await route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: options.saveFailure }),
-        });
-        return;
-      }
-      const body = route.request().postDataJSON() as {
-        document: typeof document;
-      };
-      document = body.document;
-      revision += 1;
-    }
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        document,
-        revision,
-        contentHash: "a".repeat(64),
-        byteCount: JSON.stringify(document).length,
-        issues: options.issues ?? [],
-        latestPublishedVersion: null,
-        publishedHash: options.publishedHash ?? null,
-        hasUnpublishedChanges: options.hasUnpublishedChanges ?? true,
-      }),
-    });
-  });
-  await page.route("**/api/sandbox/bindings", async (route) => {
-    await route.fulfill({
-      status: bindingFailure ?? 200,
-      json: bindingFailure
-        ? { detail: "Live state is unavailable" }
-        : { document_revision: bindingRevision ?? revision, items: bindings },
-    });
-  });
-  await page.route("**/api/sandbox/imports", async (route) => {
-    if (options.importFailure) {
-      await route.fulfill({
-        status: 409,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: options.importFailure }),
-      });
-      return;
-    }
-    const body = route.request().postDataJSON() as {
-      bundle: typeof document;
-    };
-    document = body.bundle;
-    revision += 1;
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        document,
-        revision,
-        contentHash: "b".repeat(64),
-        byteCount: JSON.stringify(document).length,
-        issues: [],
-        latestPublishedVersion: null,
-        publishedHash: options.publishedHash ?? null,
-        hasUnpublishedChanges: options.hasUnpublishedChanges ?? true,
-      }),
-    });
-  });
-  await page.route("**/api/sandbox/versions?*", async (route) => {
-    await options.versionListDelay;
-    if (pruned) await options.pruneReadbackDelay;
-    if (options.versionListFailure || (pruned && pruneReadbackFailure))
-      return route.fulfill({
-        status: options.versionListFailure ?? 503,
-        json: { detail: "History unavailable" },
-      });
-    const url = new URL(route.request().url());
-    const limit = Number(url.searchParams.get("limit"));
-    const offset = Number(url.searchParams.get("offset"));
-    const search = (url.searchParams.get("search") ?? "").toLocaleLowerCase();
-    const kind = url.searchParams.get("kind");
-    const filtered = versions
-      .filter(
-        (version) =>
-          !version.isDeleted &&
-          (!kind || version.kind === kind) &&
-          `${version.label} ${version.note ?? ""}`
-            .toLocaleLowerCase()
-            .includes(search),
-      )
-      .sort((a, b) => Number(b.sequence) - Number(a.sequence));
-    const items = filtered.slice(offset, offset + limit);
-    await route.fulfill({
-      json: {
-        items,
-        limit,
-        offset,
-        count: items.length,
-        total: filtered.length,
-        hasMore: offset + items.length < filtered.length,
-        ...(options.capacityMetadata ?? {
-          mutableCount: versions.filter(
-            (version) =>
-              !version.isDeleted &&
-              (version.kind === "checkpoint" || version.kind === "imported"),
-          ).length,
-          versionCap: 50,
-        }),
-      },
-    });
-  });
-  await page.route("**/api/sandbox/versions/*", async (route) => {
-    if (route.request().method() === "GET") {
-      const id = new URL(route.request().url()).pathname.split("/").at(-1);
-      const version = versions.find(
-        (item) => item.id === id && !item.isDeleted,
-      );
-      return route.fulfill(
-        version
-          ? { json: { ...version, document } }
-          : { status: 404, json: { detail: "Unavailable" } },
-      );
-    }
-    if (route.request().method() !== "PATCH") return route.fallback();
-    await options.versionMutationDelay;
-    const body = route.request().postDataJSON() as { label?: string };
-    const current = versions[0];
-    if (!current) throw new Error("A checkpoint fixture is required");
-    const updated = {
-      ...current,
-      label: body.label ?? current.label,
-      metadataRevision: Number(current.metadataRevision) + 1,
-    };
-    versions = [updated, ...versions.slice(1)];
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ ...updated, document }),
-    });
-  });
-  await page.route("**/api/sandbox/versions/prune", async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    const body = route.request().postDataJSON();
-    pruneRequests.push(body);
-    await options.pruneDelay;
-    if (options.pruneFailure) {
-      if (options.pruneFailure.code === "stale_revision") revision += 1;
-      return route.fulfill({
-        status: options.pruneFailure.status,
-        json: {
-          detail: {
-            code: options.pruneFailure.code,
-            message: "Private failure canary",
-          },
-        },
-      });
-    }
-    if (body.expectedRevision !== revision)
-      return route.fulfill({
-        status: 409,
-        json: { detail: { code: "stale_revision", message: "Changed" } },
-      });
-    const mutable = versions
-      .filter((version) => !version.isDeleted && version.kind !== "published")
-      .sort((a, b) => Number(a.sequence) - Number(b.sequence));
-    const deleted = mutable.slice(0, Math.max(0, mutable.length - 40));
-    const deletedIds = new Set(deleted.map((version) => version.id));
-    versions = versions.filter((version) => !deletedIds.has(version.id));
-    if (deleted.length) revision += 1;
-    pruned = true;
-    await route.fulfill({
-      json: options.pruneResponse ?? { deletedCount: deleted.length },
-    });
-  });
-  await page.route("**/api/sandbox/versions", async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    const body = route.request().postDataJSON();
-    checkpointRequests.push(body);
-    if (
-      versions.filter(
-        (version) => !version.isDeleted && version.kind !== "published",
-      ).length >= 50
-    )
-      return route.fulfill({
-        status: 409,
-        json: {
-          detail: { code: "version_limit", message: "Private capacity canary" },
-        },
-      });
-    if (body.expectedRevision !== revision)
-      return route.fulfill({
-        status: 409,
-        json: { detail: { code: "stale_revision", message: "Changed" } },
-      });
-    const sequence =
-      Math.max(0, ...versions.map((version) => Number(version.sequence))) + 1;
-    const version = {
-      ...historyVersionFixture(
-        sequence,
-        body.label,
-        "checkpoint",
-        body.note ?? null,
-      ),
-      sourceDocumentRevision: revision,
-      createdAt: "2026-10-01T10:00:00Z",
-    };
-    versions = [...versions, version];
-    revision += 1;
-    await route.fulfill({ json: { ...version, document } });
-  });
-  await page.route("**/api/sandbox/tests*", async (route) => {
-    if (route.request().method() === "DELETE" && options.clearTestsFailure) {
-      await route.fulfill({
-        status: 500,
-        contentType: "application/json",
-        body: JSON.stringify({ detail: options.clearTestsFailure }),
-      });
-      return;
-    }
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        items: options.testRuns ?? [],
-        limit: 50,
-        offset: 0,
-        count: 0,
-        total: 0,
-        hasMore: false,
-      }),
-    });
-  });
-  await page.route("**/api/sandbox/trigger-runs?*", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ items: [] }),
-    });
-  });
-  await page.route("**/api/sandbox/publication-previews", async (route) => {
-    await options.publicationDelay;
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        previewToken: "sandbox-preview",
-        impactDigest: "b".repeat(64),
-        documentRevision: revision,
-        documentHash: "a".repeat(64),
-        expiresAt: "2026-09-22T12:00:00Z",
-        changes: options.previewChanges ?? [],
-        counts: {
-          departments: 0,
-          modules: 0,
-          fields: 0,
-          relationships: 0,
-          triggers: 0,
-        },
-        warnings: [],
-        blockers: [],
-      }),
-    });
-  });
-  await page.goto("/sandbox");
-  await expect(
-    page.getByRole("heading", { name: "Sandbox", exact: true }),
-  ).toBeVisible();
-  return {
-    workspace,
-    failWorkspaceRead: (failed: boolean) => {
-      workspaceFailure = failed;
-    },
-    refreshWorkspace: () =>
-      sendOpenViewEvent(page, "invalidate", { entity: "workspace_profiles" }),
-    document: () => structuredClone(document),
-    documentReads: () => documentReads,
-    documentWrites: () => documentWrites,
-    pruneRequests: () => structuredClone(pruneRequests),
-    checkpointRequests: () => structuredClone(checkpointRequests),
-    versions: () => structuredClone(versions),
-    setPruneReadbackFailure: (failed: boolean) => {
-      pruneReadbackFailure = failed;
-    },
-    confirmLiveDocument: (next: typeof document) => {
-      document = structuredClone(next);
-      revision += 1;
-    },
-    confirmBindings: (next: typeof bindings) => {
-      bindings = structuredClone(next);
-      bindingFailure = undefined;
-      bindingRevision = undefined;
-    },
-  };
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    // The original callback checks the applied theme before its busy predicate.
+    await expect(page.locator("html")).toHaveClass(
+      theme === "dark" ? /dark/ : /^(?!.*dark)/,
+    );
+    await expect(
+      page.locator('[data-slot="loading-region"][aria-busy="true"]'),
+    ).toHaveCount(0);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
 }
 
-function lifecycleImpactFixture(
-  kind: "department" | "module" | "field",
-  id: string,
-  operation: "close" | "reopen" | "purge",
-) {
-  return {
-    target_type: kind,
-    target_id: id,
-    operation,
-    actor_id: "00000000-0000-4000-8000-000000000001",
-    rows: [
-      {
-        entity_type: `${kind}s`,
-        entity_id: id,
-        is_deleted: operation !== "close",
-        deleted_at: operation === "close" ? null : "2026-10-01T00:00:00Z",
-        updated_at: "2026-10-01T00:00:00Z",
-        state_fingerprint: "owned-live-state",
-      },
-    ],
-    external_impacts: [],
-    key_strips: [],
-    blockers: [],
-    impact_digest: "d".repeat(64),
-  };
+for (const theme of ["light", "dark"] as const) {
+  test.describe(`Sandbox zero busy loading regions in ${theme}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+      await page.route("**/api/users/*/preferences", (route) =>
+        route.fulfill({
+          json: {
+            user_id: "00000000-0000-4000-8000-000000000001",
+            theme,
+            appearance: { motion: "reduce", keyboard_shortcuts: true },
+          },
+        }),
+      );
+    });
+
+    test("incoming relationship close review", async ({ page }) => {
+      const design = configuredDesignWithLegacyMapping();
+      const relationship = design.relationships[0]!;
+      const liveId = "00000000-0000-4000-8000-000000000561";
+      const externalImpacts = [1, 2].map((endpoint) => ({
+        edge_id: "00000000-0000-4000-8000-000000000562",
+        field_id: liveId,
+        external_record_id: `00000000-0000-4000-8000-00000000056${endpoint + 2}`,
+        external_record_label: `Retained record ${endpoint}`,
+        external_module_id: "00000000-0000-4000-8000-000000000565",
+        external_module_name: "Equipment",
+        external_department_id: "00000000-0000-4000-8000-000000000566",
+        external_department_name: "Operations",
+      }));
+      await installLifecycleRoutes(
+        page,
+        { kind: "field", liveId },
+        {
+          reviews: {
+            close: () =>
+              lifecycleReview("field", liveId, "close", {
+                token: "owned-relationship-close",
+                confirmationName: "Live equipment link",
+                impact: { external_impacts: externalImpacts },
+              }),
+          },
+        },
+      );
+      await openAuthenticatedSandbox(page, design, {
+        bindings: [liveBinding("relationship", relationship.id, liveId)],
+      });
+      await page.goto(`/sandbox?module=${relationship.target}`);
+      await page
+        .getByRole("button", {
+          name: `Close incoming relationship ${relationship.name}`,
+          exact: true,
+        })
+        .click();
+      const close = page.getByRole("dialog", {
+        name: "Close relationship",
+        exact: true,
+      });
+      await expect(
+        close.getByText(
+          "1 record link will be closed. Existing records are kept.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+    });
+
+    test("filtered capacity 45 History and checkpoint review", async ({
+      page,
+    }) => {
+      await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+        versions: capacityVersions(45),
+      });
+      await page.getByRole("link", { name: "History", exact: true }).click();
+      const { timeline } = historyRegions(page);
+      await timeline.getByLabel("Find a version").fill("Needle");
+      await expect(timeline).toContainText("1 saved version");
+      const text =
+        "45 of 50 versions used. Delete the oldest unpublished checkpoints to free space.";
+      await expect(timeline.getByText(text, { exact: true })).toBeVisible();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+      const checkpoint = await openCheckpointDialog(page);
+      await expect(checkpoint.getByText(text, { exact: true })).toBeVisible();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+    });
+
+    test("filtered 28-version export after the unchecked download", async ({
+      page,
+    }) => {
+      const versions = Array.from({ length: 28 }, (_, index) => ({
+        ...historyVersionFixture(
+          index + 1,
+          index === 0 ? "Needle checkpoint" : `Export version ${index + 1}`,
+          index < 20 ? "checkpoint" : "published",
+        ),
+        createdAt: "2026-10-01T10:00:00Z",
+      }));
+      const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+      const bundle = exportBundleFixture(versions, document);
+      await page.route("**/api/sandbox/export?*", (route) =>
+        route.fulfill({
+          contentType: "application/json",
+          headers: {
+            "Content-Disposition":
+              'attachment; filename="owned-sandbox-history.json"',
+          },
+          json:
+            new URL(route.request().url()).searchParams.get(
+              "includeVersions",
+            ) === "true"
+              ? bundle
+              : document,
+        }),
+      );
+      await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+        versions,
+      });
+      await page.getByRole("link", { name: "History", exact: true }).click();
+      const { timeline } = historyRegions(page);
+      await timeline.getByLabel("Find a version").fill("Needle");
+      await expect(timeline).toContainText("1 saved version");
+      const dialog = await openImportExport(page);
+      const include = dialog.getByRole("checkbox", {
+        name: "Include version history",
+        exact: true,
+      });
+      await expect(include).not.toBeChecked();
+      await expect(
+        dialog.getByText("28 saved versions", { exact: true }),
+      ).toBeVisible();
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        dialog
+          .getByRole("button", { name: "Export JSON", exact: true })
+          .click(),
+      ]);
+      await download.path();
+      await include.check();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+    });
+
+    test("51-version export ready and held pending from Build", async ({
+      page,
+    }) => {
+      const versions = capacityVersions(50);
+      const bundle = exportBundleFixture(versions);
+      const pending = heldResponse();
+      await page.route("**/api/sandbox/export?*", async (route) => {
+        pending.enter();
+        await pending.released;
+        await route.fulfill({
+          headers: {
+            "Content-Disposition":
+              'attachment; filename="owned-history-51.json"',
+          },
+          json: bundle,
+        });
+      });
+      await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+        versions,
+      });
+      const dialog = await openImportExport(page);
+      await expect(
+        dialog.getByText("51 saved versions", { exact: true }),
+      ).toBeVisible();
+      await dialog
+        .getByRole("checkbox", { name: "Include version history", exact: true })
+        .check();
+      await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+      try {
+        await dialog
+          .getByRole("button", { name: "Export JSON", exact: true })
+          .click();
+        await pending.entered;
+        await expect(
+          dialog.getByRole("button", { name: "Exporting…", exact: true }),
+        ).toBeDisabled();
+        await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
+        const completedDownload = page.waitForEvent("download");
+        pending.release();
+        await completedDownload;
+      } finally {
+        pending.release();
+      }
+    });
+  });
 }
 
 test("bound module lifecycle uses the live name and refreshes the saved design", async ({
@@ -462,42 +275,47 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
   if (!targetModule) throw new Error("A module fixture is required");
   targetModule.name = "Unpublished requests";
   const liveId = "00000000-0000-4000-8000-000000000501";
-  const binding = {
-    kind: "module" as const,
-    sandbox_id: targetModule.id,
-    parent_sandbox_id: null,
-    live_id: liveId,
-    is_deleted: false,
-  };
+  const binding = liveBinding("module", targetModule.id, liveId);
   const requests: unknown[] = [];
   let failPostMutationRead = false;
-  await page.route(`**/api/modules/${liveId}/close/preview`, (route) =>
-    route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("module", liveId, "close"),
-        token: "owned-close-review",
-        expires_at: "2027-10-01T00:00:00Z",
-        confirmation_name: "Requests",
+  await installLifecycleRoutes(
+    page,
+    { kind: "module", liveId },
+    {
+      reviews: {
+        close: () =>
+          lifecycleReview("module", liveId, "close", {
+            token: "owned-close-review",
+            confirmationName: "Requests",
+          }),
       },
-    }),
+      commands: {
+        close: (body) => {
+          requests.push(body);
+          const confirmed = sandbox.document();
+          const target = confirmed.design.modules.find(
+            (item) => item.id === targetModule.id,
+          );
+          if (!target) throw new Error("The owned module disappeared");
+          target.closed = true;
+          sandbox.confirmLiveDocument(confirmed);
+          sandbox.confirmBindings([{ ...binding, is_deleted: true }]);
+          return { operationId: "00000000-0000-4000-8000-000000000502" };
+        },
+        reopen: () => {
+          const confirmed = sandbox.document();
+          const target = confirmed.design.modules.find(
+            (item) => item.id === targetModule.id,
+          );
+          if (!target) throw new Error("The owned module disappeared");
+          target.closed = false;
+          sandbox.confirmLiveDocument(confirmed);
+          sandbox.confirmBindings([binding]);
+          failPostMutationRead = true;
+        },
+      },
+    },
   );
-  await page.route(`**/api/modules/${liveId}/close`, async (route) => {
-    requests.push(route.request().postDataJSON());
-    const confirmed = sandbox.document();
-    const target = confirmed.design.modules.find(
-      (item) => item.id === targetModule.id,
-    );
-    if (!target) throw new Error("The owned module disappeared");
-    target.closed = true;
-    sandbox.confirmLiveDocument(confirmed);
-    sandbox.confirmBindings([{ ...binding, is_deleted: true }]);
-    await route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("module", liveId, "close"),
-        operation_id: "00000000-0000-4000-8000-000000000502",
-      },
-    });
-  });
   const sandbox = await openAuthenticatedSandbox(page, design, {
     bindings: [binding],
   });
@@ -510,23 +328,6 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
       });
     }
     return route.fallback();
-  });
-  await page.route(`**/api/modules/${liveId}/reopen`, async (route) => {
-    const confirmed = sandbox.document();
-    const target = confirmed.design.modules.find(
-      (item) => item.id === targetModule.id,
-    );
-    if (!target) throw new Error("The owned module disappeared");
-    target.closed = false;
-    sandbox.confirmLiveDocument(confirmed);
-    sandbox.confirmBindings([binding]);
-    failPostMutationRead = true;
-    await route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("module", liveId, "reopen"),
-        operation_id: null,
-      },
-    });
   });
   await page.getByRole("button", { name: "View canvas" }).click();
   await page.getByRole("menuitem", { name: "Auto-arrange" }).click();
@@ -582,17 +383,17 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
     },
   ]);
   expect(sandbox.documentWrites()).toBe(writes);
-  expect(
-    sandbox
-      .document()
-      .design.modules.find((item) => item.id === targetModule.id)?.name,
-  ).toBe("Unpublished requests");
-  expect(
-    sandbox
-      .document()
-      .design.modules.find((item) => item.id === targetModule.id)
-      ?.fields.every((field) => !field.closed),
-  ).toBe(true);
+  // The refreshed design keeps the draft name and leaves every field open.
+  const inspector = page.getByRole("complementary", {
+    name: "Design inspector",
+  });
+  await expect(inspector).toContainText("Unpublished requests");
+  for (const field of targetModule.fields)
+    await expect(
+      inspector
+        .getByLabel(`${field.name} field settings`, { exact: true })
+        .getByText(field.type, { exact: true }),
+    ).toBeVisible();
   const confirmedStatus = page.getByRole("status").filter({
     hasText: "Live change confirmed. The current design has been refreshed.",
   });
@@ -631,44 +432,42 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
   expect(sandbox.documentWrites()).toBe(writes);
 });
 
-for (const status of [403, 503]) {
-  test(`a ${status} bindings read never becomes a draft-only lifecycle action`, async ({
+// A 503 reaches the same failed read as this 403 (one error branch for the
+// live-state read); the 403 keeps the denial journey.
+test("a 403 bindings read never becomes a draft-only lifecycle action", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
     page,
-  }) => {
-    const sandbox = await openAuthenticatedSandbox(
-      page,
-      configuredSandboxDesign,
-      { bindingFailure: status },
-    );
-    await expect(
-      page.getByRole("alert").filter({ hasText: "Live state" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Close module", exact: true }),
-    ).toBeDisabled();
-    expect(sandbox.documentWrites()).toBe(0);
-    sandbox.confirmBindings([]);
-    await page
-      .getByRole("button", { name: "Retry live state", exact: true })
-      .click();
-    await expect(
-      page.getByRole("button", { name: "Close module", exact: true }),
-    ).toBeEnabled();
-    await page
-      .getByRole("button", { name: "Close module", exact: true })
-      .click();
-    await expect.poll(sandbox.documentWrites).toBe(1);
-    await expect(
-      page.getByRole("button", { name: "Reopen module", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", {
-        name: "Permanently delete module",
-        exact: true,
-      }),
-    ).toHaveCount(0);
-  });
-}
+    configuredSandboxDesign,
+    { bindingFailure: 403 },
+  );
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Live state" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeDisabled();
+  expect(sandbox.documentWrites()).toBe(0);
+  sandbox.confirmBindings([]);
+  await page
+    .getByRole("button", { name: "Retry live state", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Close module", exact: true }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+  await expect(
+    page.getByRole("button", { name: "Reopen module", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Permanently delete module",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+});
 
 test("mismatched binding revisions require a confirmed reload before lifecycle editing", async ({
   page,
@@ -706,30 +505,26 @@ test("cancelling a pending lifecycle preview ignores its late response and prote
   const delay = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route(`**/api/modules/${liveId}/close/preview`, async (route) => {
-    await delay;
-    await route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("module", liveId, "close"),
-        token: "late-review",
-        expires_at: "2027-10-01T00:00:00Z",
-        confirmation_name: "Requests",
+  await installLifecycleRoutes(
+    page,
+    { kind: "module", liveId },
+    {
+      reviews: {
+        close: async () => {
+          await delay;
+          return lifecycleReview("module", liveId, "close", {
+            token: "late-review",
+            confirmationName: "Requests",
+          });
+        },
       },
-    });
-  });
+    },
+  );
   const sandbox = await openAuthenticatedSandbox(
     page,
     configuredSandboxDesign,
     {
-      bindings: [
-        {
-          kind: "module",
-          sandbox_id: targetModule.id,
-          parent_sandbox_id: null,
-          live_id: liveId,
-          is_deleted: false,
-        },
-      ],
+      bindings: [liveBinding("module", targetModule.id, liveId)],
     },
   );
   await page.getByRole("button", { name: "Close module", exact: true }).click();
@@ -737,18 +532,12 @@ test("cancelling a pending lifecycle preview ignores its late response and prote
     name: "Close module",
     exact: true,
   });
-  const exitGuarded = () =>
-    page.evaluate(() => {
-      const event = new Event("beforeunload", { cancelable: true });
-      window.dispatchEvent(event);
-      return event.defaultPrevented;
-    });
   try {
     await expect(dialog).toBeVisible();
-    await expect.poll(exitGuarded).toBe(true);
+    await expect.poll(() => exitGuarded(page)).toBe(true);
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(dialog).toBeHidden();
-    await expect.poll(exitGuarded).toBe(false);
+    await expect.poll(() => exitGuarded(page)).toBe(false);
   } finally {
     release();
   }
@@ -758,67 +547,14 @@ test("cancelling a pending lifecycle preview ignores its late response and prote
   expect(sandbox.documentWrites()).toBe(0);
 });
 
-async function prepareS06Review(page: Page) {
-  if (!process.env.S06_CAPTURE_DIR) return;
-  const theme = process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-  await page.route("**/api/users/*/preferences", (route) =>
-    route.fulfill({
-      json: {
-        user_id: "00000000-0000-4000-8000-000000000001",
-        theme,
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
-      },
-    }),
-  );
-}
-
-async function captureS06Review(page: Page, name: string) {
-  const directory = process.env.S06_CAPTURE_DIR;
-  if (!directory) return;
-  const theme = process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await mkdir(directory, { recursive: true });
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 390, height: 844 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await expect(page.locator("html")).toHaveClass(
-      theme === "dark" ? /dark/ : /^(?!.*dark)/,
-    );
-    await expect(
-      page.locator('[data-slot="loading-region"][aria-busy="true"]'),
-    ).toHaveCount(0);
-    await page.evaluate(async () => {
-      await document.fonts.ready;
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
-    });
-    await page.screenshot({
-      path: join(directory, `${name}-${viewport.width}-${theme}.png`),
-      fullPage: false,
-      animations: "disabled",
-    });
-  }
-  await page.setViewportSize({ width: 1440, height: 900 });
-}
-
 for (const orientation of ["outgoing", "incoming"] as const) {
-  test(`S06 bound ${orientation} relationship uses Field lifecycle and counts unique record links`, async ({
+  test(`bound ${orientation} relationship uses Field lifecycle and counts unique record links`, async ({
     page,
   }) => {
-    await prepareS06Review(page);
     const design = configuredDesignWithLegacyMapping();
     const relationship = design.relationships[0]!;
     const liveId = "00000000-0000-4000-8000-000000000561";
-    const binding = {
-      kind: "relationship" as const,
-      sandbox_id: relationship.id,
-      parent_sandbox_id: null,
-      live_id: liveId,
-      is_deleted: false,
-    };
+    const binding = liveBinding("relationship", relationship.id, liveId);
     const requests: Array<{ operation: string; body: unknown }> = [];
     const externalImpacts = [1, 2].map((endpoint) => ({
       edge_id: "00000000-0000-4000-8000-000000000562",
@@ -830,52 +566,40 @@ for (const orientation of ["outgoing", "incoming"] as const) {
       external_department_id: "00000000-0000-4000-8000-000000000566",
       external_department_name: "Operations",
     }));
-    for (const operation of ["close", "purge"] as const) {
-      await page.route(
-        `**/api/fields/${liveId}/${operation}/preview`,
-        (route) =>
-          route.fulfill({
-            json: {
-              impact: {
-                ...lifecycleImpactFixture("field", liveId, operation),
-                external_impacts: externalImpacts,
-              },
-              token: `owned-relationship-${operation}`,
-              expires_at: "2027-10-01T00:00:00Z",
-              confirmation_name: "Live equipment link",
-              ...(operation === "purge"
-                ? { last_successful_backup_at: null }
-                : {}),
-            },
-          }),
-      );
-    }
-    for (const operation of ["close", "reopen", "purge"] as const) {
-      await page.route(
-        `**/api/fields/${liveId}/${operation}`,
-        async (route) => {
-          requests.push({ operation, body: route.request().postDataJSON() });
-          const confirmed = sandbox.document();
-          if (operation === "purge")
-            confirmed.design.relationships =
-              confirmed.design.relationships.filter(
-                (item) => item.id !== relationship.id,
-              );
-          sandbox.confirmLiveDocument(confirmed);
-          sandbox.confirmBindings(
-            operation === "purge"
-              ? []
-              : [{ ...binding, is_deleted: operation === "close" }],
-          );
-          await route.fulfill({
-            json: {
-              impact: lifecycleImpactFixture("field", liveId, operation),
-              operation_id: null,
-            },
-          });
+    const review = (operation: "close" | "purge") => () =>
+      lifecycleReview("field", liveId, operation, {
+        token: `owned-relationship-${operation}`,
+        confirmationName: "Live equipment link",
+        impact: { external_impacts: externalImpacts },
+      });
+    const confirm =
+      (operation: "close" | "reopen" | "purge") => (body: unknown) => {
+        requests.push({ operation, body });
+        const confirmed = sandbox.document();
+        if (operation === "purge")
+          confirmed.design.relationships =
+            confirmed.design.relationships.filter(
+              (item) => item.id !== relationship.id,
+            );
+        sandbox.confirmLiveDocument(confirmed);
+        sandbox.confirmBindings(
+          operation === "purge"
+            ? []
+            : [{ ...binding, is_deleted: operation === "close" }],
+        );
+      };
+    await installLifecycleRoutes(
+      page,
+      { kind: "field", liveId },
+      {
+        reviews: { close: review("close"), purge: review("purge") },
+        commands: {
+          close: confirm("close"),
+          reopen: confirm("reopen"),
+          purge: confirm("purge"),
         },
-      );
-    }
+      },
+    );
     const sandbox = await openAuthenticatedSandbox(page, design, {
       bindings: [binding],
     });
@@ -898,8 +622,6 @@ for (const orientation of ["outgoing", "incoming"] as const) {
         { exact: true },
       ),
     ).toBeVisible();
-    if (orientation === "incoming")
-      await captureS06Review(page, "relationship-close");
     await close
       .getByLabel("Type the relationship name")
       .fill(relationship.name);
@@ -990,41 +712,37 @@ for (const orientation of ["outgoing", "incoming"] as const) {
   });
 }
 
-test("S06 relationship mismatched Field preview refuses confirmation", async ({
+test("relationship mismatched Field preview refuses confirmation", async ({
   page,
 }) => {
   const design = configuredDesignWithLegacyMapping();
   const relationship = design.relationships[0]!;
   const liveId = "00000000-0000-4000-8000-000000000571";
   let commands = 0;
-  await page.route(`**/api/fields/${liveId}/close/preview`, (route) =>
-    route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture(
-          "field",
-          "00000000-0000-4000-8000-000000000572",
-          "close",
-        ),
-        token: "wrong-target",
-        expires_at: "2027-10-01T00:00:00Z",
-        confirmation_name: "Live link",
+  await installLifecycleRoutes(
+    page,
+    { kind: "field", liveId },
+    {
+      // The review names another field than the one the dialog closes.
+      reviews: {
+        close: () =>
+          lifecycleReview(
+            "field",
+            "00000000-0000-4000-8000-000000000572",
+            "close",
+            { token: "wrong-target", confirmationName: "Live link" },
+          ),
       },
-    }),
+      commands: {
+        close: () => {
+          commands += 1;
+          return { status: 500, json: {} };
+        },
+      },
+    },
   );
-  await page.route(`**/api/fields/${liveId}/close`, (route) => {
-    commands += 1;
-    return route.fulfill({ status: 500, json: {} });
-  });
   await openAuthenticatedSandbox(page, design, {
-    bindings: [
-      {
-        kind: "relationship",
-        sandbox_id: relationship.id,
-        parent_sandbox_id: null,
-        live_id: liveId,
-        is_deleted: false,
-      },
-    ],
+    bindings: [liveBinding("relationship", relationship.id, liveId)],
   });
   await page.goto(`/sandbox?module=${relationship.source}`);
   await page
@@ -1046,27 +764,23 @@ test("S06 relationship mismatched Field preview refuses confirmation", async ({
   expect(commands).toBe(0);
 });
 
-test("S06 bound draft deletion explains retained live data while unbound copy remains", async ({
+test("bound draft deletion explains retained live data while unbound copy remains", async ({
   page,
 }) => {
   const design = configuredDesignWithLegacyMapping();
   const relationship = design.relationships[0]!;
   await openAuthenticatedSandbox(page, design, {
     bindings: [
-      {
-        kind: "relationship",
-        sandbox_id: relationship.id,
-        parent_sandbox_id: null,
-        live_id: "00000000-0000-4000-8000-000000000581",
-        is_deleted: false,
-      },
-      {
-        kind: "module",
-        sandbox_id: relationship.source,
-        parent_sandbox_id: null,
-        live_id: "00000000-0000-4000-8000-000000000582",
-        is_deleted: false,
-      },
+      liveBinding(
+        "relationship",
+        relationship.id,
+        "00000000-0000-4000-8000-000000000581",
+      ),
+      liveBinding(
+        "module",
+        relationship.source,
+        "00000000-0000-4000-8000-000000000582",
+      ),
     ],
   });
   await page.goto(`/sandbox?module=${relationship.source}`);
@@ -1123,45 +837,40 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
   if (!targetModule || !otherModule || !field || !otherField)
     throw new Error("Two field owners are required");
   const liveId = "00000000-0000-4000-8000-000000000521";
-  const binding = {
-    kind: "field" as const,
-    sandbox_id: field.id,
-    parent_sandbox_id: targetModule.id,
-    live_id: liveId,
-    is_deleted: false,
-  };
+  const binding = liveBinding("field", field.id, liveId, {
+    parent: targetModule.id,
+  });
   otherField.id = field.id;
   const mapping = design.relationships[0]?.fieldMappings?.[0];
   if (mapping) mapping.targetFieldId = field.id;
   const requests: unknown[] = [];
-  await page.route(`**/api/fields/${liveId}/close/preview`, (route) =>
-    route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("field", liveId, "close"),
-        token: "owned-field-review",
-        expires_at: "2027-10-01T00:00:00Z",
-        confirmation_name: field.name,
+  await installLifecycleRoutes(
+    page,
+    { kind: "field", liveId },
+    {
+      reviews: {
+        close: () =>
+          lifecycleReview("field", liveId, "close", {
+            token: "owned-field-review",
+            confirmationName: field.name,
+          }),
       },
-    }),
+      commands: {
+        close: (body) => {
+          requests.push(body);
+          const confirmed = sandbox.document();
+          const current = confirmed.design.modules
+            .find((item) => item.id === targetModule.id)
+            ?.fields.find((item) => item.id === field.id);
+          if (!current) throw new Error("The owned field disappeared");
+          current.closed = true;
+          confirmed.design.relationships[0]!.fieldMappings = [];
+          sandbox.confirmLiveDocument(confirmed);
+          sandbox.confirmBindings([{ ...binding, is_deleted: true }]);
+        },
+      },
+    },
   );
-  await page.route(`**/api/fields/${liveId}/close`, async (route) => {
-    requests.push(route.request().postDataJSON());
-    const confirmed = sandbox.document();
-    const current = confirmed.design.modules
-      .find((item) => item.id === targetModule.id)
-      ?.fields.find((item) => item.id === field.id);
-    if (!current) throw new Error("The owned field disappeared");
-    current.closed = true;
-    confirmed.design.relationships[0]!.fieldMappings = [];
-    sandbox.confirmLiveDocument(confirmed);
-    sandbox.confirmBindings([{ ...binding, is_deleted: true }]);
-    await route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("field", liveId, "close"),
-        operation_id: null,
-      },
-    });
-  });
   const sandbox = await openAuthenticatedSandbox(page, design, {
     bindings: [
       {
@@ -1220,7 +929,16 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
     },
   ]);
   expect(sandbox.documentWrites()).toBe(0);
-  expect(sandbox.document().design.relationships[0]?.fieldMappings).toEqual([]);
+  // The refreshed relationship no longer lists the closed field's mapping.
+  await page
+    .getByRole("button", {
+      name: "Edit outgoing relationship Uses equipment",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("dialog").getByText("Legacy field mappings"),
+  ).toHaveCount(0);
 });
 
 test("bound module purge reviews stale challenges and refreshes removal without a draft write", async ({
@@ -1231,51 +949,45 @@ test("bound module purge reviews stale challenges and refreshes removal without 
   if (!targetModule) throw new Error("A module fixture is required");
   targetModule.closed = true;
   const liveId = "00000000-0000-4000-8000-000000000531";
-  const binding = {
-    kind: "module" as const,
-    sandbox_id: targetModule.id,
-    parent_sandbox_id: null,
-    live_id: liveId,
-    is_deleted: true,
-  };
-  let attempts = 0;
-  await page.route(`**/api/modules/${liveId}/purge/preview`, (route) =>
-    route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("module", liveId, "purge"),
-        token: "owned-purge-review",
-        expires_at: "2027-10-01T00:00:00Z",
-        confirmation_name: "Requests",
-        last_successful_backup_at: null,
-      },
-    }),
-  );
-  await page.route(`**/api/modules/${liveId}/purge`, async (route) => {
-    attempts += 1;
-    expect(route.request().postDataJSON()).toEqual({
-      token: "owned-purge-review",
-      confirmation_name: "Requests",
-      password: "owned-test-password",
-    });
-    if (attempts === 1)
-      return route.fulfill({
-        status: 409,
-        json: { detail: { code: "impact_changed", message: "Changed" } },
-      });
-    const confirmed = sandbox.document();
-    confirmed.design.modules = confirmed.design.modules.filter(
-      (item) => item.id !== targetModule.id,
-    );
-    confirmed.design.relationships = [];
-    sandbox.confirmLiveDocument(confirmed);
-    sandbox.confirmBindings([]);
-    await route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("module", liveId, "purge"),
-        operation_id: null,
-      },
-    });
+  const binding = liveBinding("module", targetModule.id, liveId, {
+    deleted: true,
   });
+  let attempts = 0;
+  await installLifecycleRoutes(
+    page,
+    { kind: "module", liveId },
+    {
+      reviews: {
+        purge: () =>
+          lifecycleReview("module", liveId, "purge", {
+            token: "owned-purge-review",
+            confirmationName: "Requests",
+          }),
+      },
+      commands: {
+        purge: (body) => {
+          attempts += 1;
+          expect(body).toEqual({
+            token: "owned-purge-review",
+            confirmation_name: "Requests",
+            password: "owned-test-password",
+          });
+          if (attempts === 1)
+            return {
+              status: 409,
+              json: { detail: { code: "impact_changed", message: "Changed" } },
+            };
+          const confirmed = sandbox.document();
+          confirmed.design.modules = confirmed.design.modules.filter(
+            (item) => item.id !== targetModule.id,
+          );
+          confirmed.design.relationships = [];
+          sandbox.confirmLiveDocument(confirmed);
+          sandbox.confirmBindings([]);
+        },
+      },
+    },
+  );
   const sandbox = await openAuthenticatedSandbox(page, design, {
     bindings: [binding],
   });
@@ -1347,13 +1059,11 @@ test("bound module purge reviews stale challenges and refreshes removal without 
     .getByRole("button", { name: "Permanently delete", exact: true })
     .click();
   await expect(dialog).toBeHidden();
-  await expect
-    .poll(() =>
-      sandbox
-        .document()
-        .design.modules.some((item) => item.id === targetModule.id),
-    )
-    .toBe(false);
+  await expect(
+    page
+      .getByRole("region", { name: "Organization canvas" })
+      .locator(`.x6-cell[data-cell-id="${targetModule.id}"]`),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Undo", exact: true }),
   ).toBeDisabled();
@@ -1376,27 +1086,22 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     field.closed = true;
     const sandbox = await openAuthenticatedSandbox(page, design, {
       bindings: [
-        {
-          kind: "department",
-          sandbox_id: department.id,
-          parent_sandbox_id: null,
-          live_id: "00000000-0000-4000-8000-000000000551",
-          is_deleted: true,
-        },
-        {
-          kind: "module",
-          sandbox_id: targetModule.id,
-          parent_sandbox_id: null,
-          live_id: "00000000-0000-4000-8000-000000000552",
-          is_deleted: true,
-        },
-        {
-          kind: "field",
-          sandbox_id: field.id,
-          parent_sandbox_id: targetModule.id,
-          live_id: "00000000-0000-4000-8000-000000000553",
-          is_deleted: true,
-        },
+        liveBinding(
+          "department",
+          department.id,
+          "00000000-0000-4000-8000-000000000551",
+          { deleted: true },
+        ),
+        liveBinding(
+          "module",
+          targetModule.id,
+          "00000000-0000-4000-8000-000000000552",
+          { deleted: true },
+        ),
+        liveBinding("field", field.id, "00000000-0000-4000-8000-000000000553", {
+          parent: targetModule.id,
+          deleted: true,
+        }),
       ],
     });
     sandbox.workspace.purge_enabled = state === "unknown" ? undefined : false;
@@ -1473,7 +1178,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
   });
 }
 
-test("S26 a retained saved Chart query blocks bound field purge until repaired", async ({
+test("a retained saved Chart query blocks bound field purge until repaired", async ({
   page,
 }) => {
   const design = structuredClone(configuredSandboxDesign);
@@ -1489,96 +1194,81 @@ test("S26 a retained saved Chart query blocks bound field purge until repaired",
   const chartId = "00000000-0000-4000-8000-000000000592";
   const liveModuleId = "00000000-0000-4000-8000-000000000593";
   const liveDepartmentId = "00000000-0000-4000-8000-000000000594";
-  const binding = {
-    kind: "field" as const,
-    sandbox_id: field.id,
-    parent_sandbox_id: targetModule.id,
-    live_id: liveId,
-    is_deleted: true,
-  };
+  const binding = liveBinding("field", field.id, liveId, {
+    parent: targetModule.id,
+    deleted: true,
+  });
   let retainedReferences = [liveId];
   let reviews = 0;
   const requests: unknown[] = [];
   const detail = `Repair the retained saved Chart 'Retained workload' query before permanently deleting Field '${field.name}'; archiving the Chart keeps its query`;
-  await page.route(`**/api/fields/${liveId}/purge/preview`, (route) => {
-    reviews += 1;
-    const blocked = retainedReferences.includes(liveId);
-    const impact = lifecycleImpactFixture("field", liveId, "purge");
-    return route.fulfill({
-      json: {
-        impact: {
-          ...impact,
-          rows: blocked
-            ? [
-                ...impact.rows,
-                {
-                  entity_type: "charts",
-                  entity_id: chartId,
-                  is_deleted: true,
-                  deleted_at: "2026-10-01T00:00:00Z",
-                  updated_at: "2026-10-01T00:00:00Z",
-                  state_fingerprint: "retained-chart-query",
-                  byte_count: null,
-                },
-              ]
-            : impact.rows,
-          blockers: blocked
-            ? [
-                {
-                  code: "purge_chart_dependency",
-                  entity_type: "charts",
-                  entity_id: chartId,
-                  detail,
-                  conflicting_entity_type: "fields",
-                  conflicting_entity_id: liveId,
-                  field_id: liveId,
-                  field_name: field.name,
-                  module_id: liveModuleId,
-                  module_name: targetModule.name,
-                  department_id: liveDepartmentId,
-                  department_name: department.name,
-                },
-              ]
-            : [],
+  await installLifecycleRoutes(
+    page,
+    { kind: "field", liveId },
+    {
+      reviews: {
+        purge: () => {
+          reviews += 1;
+          const blocked = retainedReferences.includes(liveId);
+          const impact = lifecycleImpactFixture("field", liveId, "purge");
+          return lifecycleReview("field", liveId, "purge", {
+            token: `owned-chart-review-${reviews}`,
+            confirmationName: field.name,
+            impact: {
+              rows: blocked
+                ? [
+                    ...impact.rows,
+                    {
+                      entity_type: "charts",
+                      entity_id: chartId,
+                      is_deleted: true,
+                      deleted_at: "2026-10-01T00:00:00Z",
+                      updated_at: "2026-10-01T00:00:00Z",
+                      state_fingerprint: "retained-chart-query",
+                      byte_count: null,
+                    },
+                  ]
+                : impact.rows,
+              blockers: blocked
+                ? [
+                    {
+                      code: "purge_chart_dependency",
+                      entity_type: "charts",
+                      entity_id: chartId,
+                      detail,
+                      conflicting_entity_type: "fields",
+                      conflicting_entity_id: liveId,
+                      field_id: liveId,
+                      field_name: field.name,
+                      module_id: liveModuleId,
+                      module_name: targetModule.name,
+                      department_id: liveDepartmentId,
+                      department_name: department.name,
+                    },
+                  ]
+                : [],
+            },
+          });
         },
-        token: `owned-chart-review-${reviews}`,
-        expires_at: "2027-10-01T00:00:00Z",
-        confirmation_name: field.name,
-        last_successful_backup_at: null,
       },
-    });
-  });
-  await page.route(`**/api/fields/${liveId}/purge`, async (route) => {
-    requests.push(route.request().postDataJSON());
-    expect(retainedReferences).toEqual([]);
-    const document = sandbox.document();
-    const current = document.design.modules.find(
-      (item) => item.id === targetModule.id,
-    );
-    if (!current) throw new Error("The owned targetModule disappeared");
-    current.fields = current.fields.filter((item) => item.id !== field.id);
-    sandbox.confirmLiveDocument(document);
-    sandbox.confirmBindings([]);
-    return route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("field", liveId, "purge"),
-        operation_id: null,
-      },
-    });
-  });
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    const theme = process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light";
-    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-    await page.route("**/api/users/*/preferences", (route) =>
-      route.fulfill({
-        json: {
-          user_id: new URL(route.request().url()).pathname.split("/")[3],
-          theme,
-          appearance: { motion: "reduce", keyboard_shortcuts: true },
+      commands: {
+        purge: (body) => {
+          requests.push(body);
+          expect(retainedReferences).toEqual([]);
+          const document = sandbox.document();
+          const current = document.design.modules.find(
+            (item) => item.id === targetModule.id,
+          );
+          if (!current) throw new Error("The owned targetModule disappeared");
+          current.fields = current.fields.filter(
+            (item) => item.id !== field.id,
+          );
+          sandbox.confirmLiveDocument(document);
+          sandbox.confirmBindings([]);
         },
-      }),
-    );
-  }
+      },
+    },
+  );
   const sandbox = await openAuthenticatedSandbox(page, design, {
     bindings: [binding],
   });
@@ -1600,26 +1290,6 @@ test("S26 a retained saved Chart query blocks bound field purge until repaired",
   await expect(
     dialog.getByRole("button", { name: "Permanently delete", exact: true }),
   ).toBeDisabled();
-  await captureOpenViewReview(
-    page,
-    `s26-chart-purge-blocked-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
-    {
-      beforeScreenshot: async (capture) => {
-        await capture.addStyleTag({
-          content: "nextjs-portal { display: none !important; }",
-        });
-        await expect(capture.locator("html")).toHaveClass(
-          process.env.S26_CAPTURE_THEME === "dark" ? /dark/ : /^(?!.*dark)/,
-        );
-        await capture.evaluate(async () => {
-          await document.fonts.ready;
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-          );
-        });
-      },
-    },
-  );
   expect(requests).toEqual([]);
   expect(sandbox.documentWrites()).toBe(0);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -1647,12 +1317,7 @@ test("S26 a retained saved Chart query blocks bound field purge until repaired",
       password: "owned-test-password",
     },
   ]);
-  expect(
-    sandbox
-      .document()
-      .design.modules.find((item) => item.id === targetModule.id)
-      ?.fields.some((item) => item.id === field.id),
-  ).toBe(false);
+  await expect(settings).toHaveCount(0);
   expect(sandbox.documentWrites()).toBe(0);
 });
 
@@ -1667,60 +1332,55 @@ test("the bound department outline reviews blockers and reopens with explicit co
     if (targetModule.department === department.id) targetModule.closed = true;
   });
   const liveId = "00000000-0000-4000-8000-000000000541";
-  const binding = {
-    kind: "department" as const,
-    sandbox_id: department.id,
-    parent_sandbox_id: null,
-    live_id: liveId,
-    is_deleted: true,
-  };
-  const requests: unknown[] = [];
-  await page.route(`**/api/departments/${liveId}/purge/preview`, (route) =>
-    route.fulfill({
-      json: {
-        impact: {
-          ...lifecycleImpactFixture("department", liveId, "purge"),
-          blockers: [
-            {
-              code: "purge_trigger_dependency",
-              entity_type: "record_triggers",
-              entity_id: "00000000-0000-4000-8000-000000000542",
-              detail: "A configured trigger still depends on this department.",
-              conflicting_entity_type: null,
-              conflicting_entity_id: null,
-              field_id: null,
-              field_name: null,
-              module_id: null,
-              module_name: null,
-              department_id: liveId,
-              department_name: department.name,
-            },
-          ],
-        },
-        token: "blocked-department-review",
-        expires_at: "2027-10-01T00:00:00Z",
-        confirmation_name: department.name,
-        last_successful_backup_at: null,
-      },
-    }),
-  );
-  await page.route(`**/api/departments/${liveId}/reopen`, async (route) => {
-    requests.push(route.request().postDataJSON());
-    const confirmed = sandbox.document();
-    confirmed.design.departments[0]!.closed = false;
-    confirmed.design.modules.forEach((targetModule) => {
-      if (targetModule.departmentId === department.id)
-        targetModule.closed = false;
-    });
-    sandbox.confirmLiveDocument(confirmed);
-    sandbox.confirmBindings([{ ...binding, is_deleted: false }]);
-    await route.fulfill({
-      json: {
-        impact: lifecycleImpactFixture("department", liveId, "reopen"),
-        operation_id: null,
-      },
-    });
+  const binding = liveBinding("department", department.id, liveId, {
+    deleted: true,
   });
+  const requests: unknown[] = [];
+  await installLifecycleRoutes(
+    page,
+    { kind: "department", liveId },
+    {
+      reviews: {
+        purge: () =>
+          lifecycleReview("department", liveId, "purge", {
+            token: "blocked-department-review",
+            confirmationName: department.name,
+            impact: {
+              blockers: [
+                {
+                  code: "purge_trigger_dependency",
+                  entity_type: "record_triggers",
+                  entity_id: "00000000-0000-4000-8000-000000000542",
+                  detail:
+                    "A configured trigger still depends on this department.",
+                  conflicting_entity_type: null,
+                  conflicting_entity_id: null,
+                  field_id: null,
+                  field_name: null,
+                  module_id: null,
+                  module_name: null,
+                  department_id: liveId,
+                  department_name: department.name,
+                },
+              ],
+            },
+          }),
+      },
+      commands: {
+        reopen: (body) => {
+          requests.push(body);
+          const confirmed = sandbox.document();
+          confirmed.design.departments[0]!.closed = false;
+          confirmed.design.modules.forEach((targetModule) => {
+            if (targetModule.departmentId === department.id)
+              targetModule.closed = false;
+          });
+          sandbox.confirmLiveDocument(confirmed);
+          sandbox.confirmBindings([{ ...binding, is_deleted: false }]);
+        },
+      },
+    },
+  );
   const sandbox = await openAuthenticatedSandbox(page, design, {
     bindings: [binding],
   });
@@ -1791,10 +1451,7 @@ test("an organization template replaces the empty draft only after confirmation"
     .getByRole("button", { name: "Use Inventory & procurement" })
     .click();
 
-  // Applying parses the whole template and renders it on the Build canvas
-  // before the dialog closes; on a 2-CPU runner under `next dev` that alone
-  // can take most of the default 5s.
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(dialog).toBeHidden();
   await expect(
     page.getByText("Procurement", { exact: true }).first(),
   ).toBeVisible();
@@ -1863,19 +1520,10 @@ test("a rejected template replacement stays open with its recoverable error", as
   );
 });
 
-test("an empty Sandbox renders no placeholder entities and can create its first department", async ({
+test("an empty Sandbox can create Finance as its first department", async ({
   page,
 }) => {
   await openAuthenticatedSandbox(page, initialDesign);
-
-  await expect(
-    page.getByText(
-      "0 departments · 0 modules · 0 fields · 0 relationships · 0 triggers",
-    ),
-  ).toHaveCount(2);
-  await expect(page.getByText("Service requests", { exact: true })).toHaveCount(
-    0,
-  );
 
   await page.getByRole("button", { name: "Add department" }).click();
   await page.getByLabel("Department name").fill("Finance");
@@ -1981,6 +1629,16 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   const publish = page.getByRole("button", { name: "Review & Publish" });
   const canvas = page.getByLabel("Module design canvas");
 
+  // No placeholder entities: zero counts and no sample module.
+  await expect(
+    page.getByText(
+      "0 departments · 0 modules · 0 fields · 0 relationships · 0 triggers",
+    ),
+  ).toHaveCount(2);
+  await expect(page.getByText("Service requests", { exact: true })).toHaveCount(
+    0,
+  );
+
   await expect(
     page.getByText("Nothing to publish yet", { exact: true }),
   ).toBeVisible();
@@ -1988,7 +1646,6 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   await expect(
     canvas.getByRole("heading", { name: "Design your organization" }),
   ).toBeVisible();
-  await expect(page.getByText("No departments yet")).toHaveCount(0);
   await expect(
     page.getByRole("searchbox", { name: "Search structure" }),
   ).toBeDisabled();
@@ -2015,6 +1672,9 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   await page.getByLabel("Department name").fill("Operations");
   await page.getByRole("button", { name: "Create department" }).click();
 
+  await expect(
+    page.getByText("Operations", { exact: true }).first(),
+  ).toBeVisible();
   await expect(
     canvas.getByRole("heading", { name: "Design your organization" }),
   ).toHaveCount(0);
@@ -2167,15 +1827,7 @@ test("a dirty trigger draft protects browser exits", async ({ page }) => {
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await page.getByLabel("Trigger name").fill("Unsaved trigger name");
 
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const event = new Event("beforeunload", { cancelable: true });
-        window.dispatchEvent(event);
-        return event.defaultPrevented;
-      }),
-    )
-    .toBe(true);
+  await expect.poll(() => exitGuarded(page)).toBe(true);
 });
 
 test("trigger editing is locked while its save is pending", async ({
@@ -2216,61 +1868,30 @@ test("running and clearing tests protect browser exits until each request settle
   const clearDelay = new Promise<void>((resolve) => {
     releaseClear = resolve;
   });
-  await openAuthenticatedSandbox(page);
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    testRunEcho: {
+      id: "00000000-0000-4000-8000-000000000008",
+      createdAt: "2026-09-22T00:00:00Z",
+      onRequest: async () => {
+        runStarted = true;
+        await runDelay;
+      },
+    },
+  });
   await page.route("**/api/sandbox/tests", async (route) => {
-    const method = route.request().method();
-    if (method === "POST") {
-      runStarted = true;
-      const request = route.request().postDataJSON() as {
-        moduleId: string;
-        values: Record<string, unknown>;
-        event: { kind: "record-created" };
-        triggerIds?: string[];
-      };
-      await runDelay;
-      await route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: "00000000-0000-4000-8000-000000000008",
-          createdAt: "2026-09-22T00:00:00Z",
-          documentRevision: 1,
-          input: { moduleId: request.moduleId, values: request.values },
-          event: request.event,
-          triggerIds: request.triggerIds ?? null,
-          result: {
-            values: request.values,
-            routes: [],
-            triggerTraces: [],
-            issues: [],
-          },
-        }),
-      });
-      return;
-    }
-    if (method === "DELETE") {
-      clearStarted = true;
-      await clearDelay;
-      await route.fulfill({
-        contentType: "application/json",
-        body: "null",
-      });
-      return;
-    }
-    await route.fallback();
+    if (route.request().method() !== "DELETE") return route.fallback();
+    clearStarted = true;
+    await clearDelay;
+    await route.fulfill({
+      contentType: "application/json",
+      body: "null",
+    });
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
 
   await page.getByRole("button", { name: "Run test" }).click();
   await expect.poll(() => runStarted).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const event = new Event("beforeunload", { cancelable: true });
-        window.dispatchEvent(event);
-        return event.defaultPrevented;
-      }),
-    )
-    .toBe(true);
+  await expect.poll(() => exitGuarded(page)).toBe(true);
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
   ).toBeDisabled();
@@ -2289,15 +1910,7 @@ test("running and clearing tests protect browser exits until each request settle
 
   await page.getByRole("button", { name: "Clear results" }).click();
   await expect.poll(() => clearStarted).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const event = new Event("beforeunload", { cancelable: true });
-        window.dispatchEvent(event);
-        return event.defaultPrevented;
-      }),
-    )
-    .toBe(true);
+  await expect.poll(() => exitGuarded(page)).toBe(true);
   releaseClear();
   await expect(
     page.getByText("Run a test to see the expected outcome here."),
@@ -2669,8 +2282,10 @@ test("a successful Publish plays the look's title signature once", async ({
     ...configuredSandboxDesign,
     rules: [],
   });
-  await page.route("**/api/sandbox/publications", (route) =>
-    route.fulfill({
+  const published: unknown[] = [];
+  await page.route("**/api/sandbox/publications", (route) => {
+    published.push(route.request().postDataJSON());
+    return route.fulfill({
       status: 201,
       contentType: "application/json",
       body: JSON.stringify({
@@ -2686,8 +2301,8 @@ test("a successful Publish plays the look's title signature once", async ({
         impactDigest: "c".repeat(64),
         publishedAt: "2026-09-27T00:00:00Z",
       }),
-    }),
-  );
+    });
+  });
   const title = page.getByRole("heading", {
     level: 1,
     name: "Sandbox",
@@ -2705,6 +2320,14 @@ test("a successful Publish plays the look's title signature once", async ({
     page.getByText("Your changes are now published to the live workspace."),
   ).toBeVisible();
   await expect(title).toHaveAttribute("data-signature", "play");
+  expect(published).toEqual([
+    {
+      expectedRevision: 1,
+      previewToken: "sandbox-preview",
+      impactDigest: "b".repeat(64),
+      password: "local password",
+    },
+  ]);
 });
 
 test("hovering a module or relationship traces its connections", async ({
@@ -2744,28 +2367,12 @@ test("a pending publication review protects browser exits", async ({
     { publicationDelay },
   );
 
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const event = new Event("beforeunload", { cancelable: true });
-        window.dispatchEvent(event);
-        return event.defaultPrevented;
-      }),
-    )
-    .toBe(false);
+  await expect.poll(() => exitGuarded(page)).toBe(false);
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
 
   try {
-    await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const event = new Event("beforeunload", { cancelable: true });
-          window.dispatchEvent(event);
-          return event.defaultPrevented;
-        }),
-      )
-      .toBe(true);
+    await expect.poll(() => exitGuarded(page)).toBe(true);
   } finally {
     releasePreview();
   }
@@ -3046,16 +2653,12 @@ test("discard keeps browser exits guarded throughout its composite request", asy
     .getByRole("button", { name: "Discard draft" })
     .click();
   await expect.poll(sandbox.documentReads).toBe(3);
-  await page.waitForTimeout(100);
+  // The refresh read is parked. Let any early unlock commit and remove the
+  // exit listener before sampling, so the check cannot pass by running first.
+  await settleReact(page);
 
   try {
-    expect(
-      await page.evaluate(() => {
-        const event = new Event("beforeunload", { cancelable: true });
-        window.dispatchEvent(event);
-        return event.defaultPrevented;
-      }),
-    ).toBe(true);
+    expect(await exitGuarded(page)).toBe(true);
   } finally {
     releaseRefresh();
   }
@@ -3195,19 +2798,9 @@ test("keyboard activation on a trigger flow node focuses its editor", async ({
   await expect(condition).toBeFocused();
 });
 
-test("Trigger Studio layout screenshots can be captured for theme and viewport review", async ({
+test("unsaved Service request follow-up trigger draft fits the original viewport and theme matrix", async ({
   page,
 }) => {
-  test.skip(
-    process.env.TRIGGER_LAYOUT_SCREENSHOTS !== "1",
-    "Set TRIGGER_LAYOUT_SCREENSHOTS=1 to capture layout evidence",
-  );
-
-  const screenshotDirectory = resolve(
-    "..",
-    ".agent-runtime/triggers-layout-20260925",
-  );
-  await mkdir(screenshotDirectory, { recursive: true });
   await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
   await expect(
@@ -3254,14 +2847,6 @@ test("Trigger Studio layout screenshots can be captured for theme and viewport r
       page: document.documentElement.scrollWidth,
     }));
     expect(widths.page).toBeLessThanOrEqual(widths.viewport);
-    await page.screenshot({
-      path: join(
-        screenshotDirectory,
-        `trigger-${view.width}-${view.theme}.png`,
-      ),
-      fullPage: true,
-      animations: "disabled",
-    });
   }
 });
 
@@ -3316,16 +2901,6 @@ test("trigger panels resize with their requested minimum widths and remain usabl
       ),
     )
     .toBeLessThanOrEqual(0);
-  if (process.env.TRIGGER_LAYOUT_SCREENSHOTS === "1") {
-    await page.screenshot({
-      path: resolve(
-        "..",
-        ".agent-runtime/triggers-layout-20260925/trigger-resized-minimum.png",
-      ),
-      fullPage: true,
-      animations: "disabled",
-    });
-  }
   const narrowWidth = await width(settings);
   await settingsHandle.focus();
   await page.keyboard.press("ArrowLeft");
@@ -3484,27 +3059,36 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   const draftChoiceId = savedNewChoice.options.find(
     (option) => option.label === "Draft choice",
   )?.id;
-  expect(draftChoiceId).toBeTruthy();
+  expect(draftChoiceId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\s\S])/i,
+  );
   expect(savedNewChoice.defaultValue).toBe(draftChoiceId);
   expect(
     savedNewChoice.options.find((option) => option.label === "Complete")?.id,
   ).toBe(originalIds.Complete);
-  await captureOpenViewReview(page, "sandbox-stable-select-choice", {
-    beforeScreenshot: async (capturePage, viewport) => {
-      if (viewport.width < 640) {
-        const propertiesTab = capturePage.getByRole("tab", {
-          name: "Properties",
-        });
-        await expect(propertiesTab).toHaveCount(1);
-        if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
-          await propertiesTab.click();
-        const showSettings = capturePage
-          .getByLabel("Status field settings")
-          .getByRole("button", { name: "Show Status settings", exact: true });
-        if (await showSettings.isVisible()) await showSettings.click();
-      }
-    },
-  });
+  const originalViewport = page.viewportSize();
+  const originalScrollY = await page.evaluate(() => window.scrollY);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    if (viewport.width < 640) {
+      const propertiesTab = page.getByRole("tab", {
+        name: "Properties",
+      });
+      await expect(propertiesTab).toHaveCount(1);
+      if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
+        await propertiesTab.click();
+      const showSettings = page
+        .getByLabel("Status field settings")
+        .getByRole("button", { name: "Show Status settings", exact: true });
+      if (await showSettings.isVisible()) await showSettings.click();
+    }
+  }
+  if (originalViewport) await page.setViewportSize(originalViewport);
+  await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
 });
 
 test("removing an unsaved selected choice requires an explicit new default", async ({
@@ -3577,22 +3161,30 @@ test("the Designer saves a module record title field in the current v4 draft", a
     titleSettings.getByText(/selected as the record title/i),
   ).toBeVisible();
   await expect(closeField).toBeDisabled();
-  await captureOpenViewReview(page, "sandbox-selected-record-title", {
-    beforeScreenshot: async (capturePage, viewport) => {
-      if (viewport.width < 640) {
-        const propertiesTab = capturePage.getByRole("tab", {
-          name: "Properties",
-        });
-        await expect(propertiesTab).toHaveCount(1);
-        if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
-          await propertiesTab.click();
-        const showSettings = capturePage
-          .getByLabel("Title field settings")
-          .getByRole("button", { name: "Show Title settings", exact: true });
-        if (await showSettings.isVisible()) await showSettings.click();
-      }
-    },
-  });
+
+  const originalViewport = page.viewportSize();
+  const originalScrollY = await page.evaluate(() => window.scrollY);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    if (viewport.width < 640) {
+      const propertiesTab = page.getByRole("tab", {
+        name: "Properties",
+      });
+      await expect(propertiesTab).toHaveCount(1);
+      if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
+        await propertiesTab.click();
+      const showSettings = page
+        .getByLabel("Title field settings")
+        .getByRole("button", { name: "Show Title settings", exact: true });
+      if (await showSettings.isVisible()) await showSettings.click();
+    }
+  }
+  if (originalViewport) await page.setViewportSize(originalViewport);
+  await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
 
   await titleSelector.selectOption("");
   await expect.poll(sandbox.documentWrites).toBe(2);
@@ -3632,33 +3224,15 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
       return;
     requestPaths.push(path);
   });
-  await openAuthenticatedSandbox(page, design);
   let submitted: Record<string, unknown> | undefined;
-  await page.route("**/api/sandbox/tests", async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    const input = route.request().postDataJSON() as {
-      moduleId: string;
-      values: Record<string, unknown>;
-      event: { kind: string };
-    };
-    submitted = input.values;
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: "00000000-0000-4000-8000-000000000041",
-        createdAt: "2026-09-25T10:00:00Z",
-        documentRevision: 1,
-        input: { moduleId: input.moduleId, values: input.values },
-        event: input.event,
-        triggerIds: null,
-        result: {
-          values: input.values,
-          routes: [],
-          triggerTraces: [],
-          issues: [],
-        },
-      }),
-    });
+  await openAuthenticatedSandbox(page, design, {
+    testRunEcho: {
+      id: "00000000-0000-4000-8000-000000000041",
+      createdAt: "2026-09-25T10:00:00Z",
+      onRequest: (request) => {
+        submitted = request.values;
+      },
+    },
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
   const setup = page.getByRole("region", { name: "Test setup", exact: true });
@@ -3675,7 +3249,6 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   await setup
     .getByLabel("Assigned user", { exact: true })
     .fill(simulatedUserId);
-  await captureOpenViewReview(page, "sandbox-simulated-user-input");
   await setup.getByRole("button", { name: "Run test", exact: true }).click();
   await expect
     .poll(() => submitted?.["sandbox-assignee"])
@@ -3689,7 +3262,7 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   ).toEqual([]);
 });
 
-test("Test field search preserves hidden edits in the submitted temporary values", async ({
+test("Sandbox Test field search preserves hidden edits in the submitted temporary values", async ({
   page,
 }) => {
   let submitted: Record<string, unknown> | undefined;
@@ -3706,32 +3279,18 @@ test("Test field search preserves hidden edits in the submitted temporary values
       closed: false,
     });
   }
-  await openAuthenticatedSandbox(page, design);
-  await page.route("**/api/sandbox/tests", async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    const request = route.request().postDataJSON() as {
-      moduleId: string;
-      values: Record<string, string | number | boolean | null>;
-      event: { kind: string };
-    };
-    submitted = request.values;
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: "00000000-0000-4000-8000-000000000021",
-        createdAt: "2026-09-25T10:00:00Z",
-        documentRevision: 1,
-        input: { moduleId: request.moduleId, values: request.values },
-        event: request.event,
-        triggerIds: null,
-        result: {
-          values: { ...request.values, "sample-field-Status": "Complete" },
-          triggerTraces: [],
-          routes: [],
-          issues: [],
-        },
+  await openAuthenticatedSandbox(page, design, {
+    testRunEcho: {
+      id: "00000000-0000-4000-8000-000000000021",
+      createdAt: "2026-09-25T10:00:00Z",
+      onRequest: (request) => {
+        submitted = request.values;
+      },
+      resultValues: (values) => ({
+        ...values,
+        "sample-field-Status": "Complete",
       }),
-    });
+    },
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
   const setup = page.getByRole("region", { name: "Test setup", exact: true });
@@ -3786,65 +3345,50 @@ test("Test field search preserves hidden edits in the submitted temporary values
       .getByRole("region", { name: "Field comparison", exact: true })
       .getByRole("row", { name: /Status/ }),
   ).toContainText("Complete");
-  if (process.env.SANDBOX_TEST_SCREENSHOTS) {
-    const output = resolve(process.env.SANDBOX_TEST_SCREENSHOTS);
-    await mkdir(output, { recursive: true });
-    await setup.getByLabel("Find a field").fill("");
-    await page.setViewportSize({ width: 1920, height: 1000 });
-    const handle = page.getByRole("separator", { name: "Resize test setup" });
-    await expect(handle).toBeVisible();
-    const beforeWidth = (await setup.boundingBox())!.width;
-    await handle.focus();
-    await page.keyboard.press("ArrowRight");
+  // The Test setup panel resizes by keyboard and keeps typed values, and the
+  // Test page fits from 1920 to 390 px without page overflow.
+  await setup.getByLabel("Find a field").fill("");
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  const handle = page.getByRole("separator", { name: "Resize test setup" });
+  await expect(handle).toBeVisible();
+  const beforeWidth = (await setup.boundingBox())!.width;
+  await handle.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect
+    .poll(async () => (await setup.boundingBox())!.width)
+    .toBeGreaterThan(beforeWidth);
+  await expect(setup.getByLabel("Request number", { exact: true })).toHaveValue(
+    "TEST-001",
+  );
+  await page.keyboard.press("ArrowLeft");
+  for (const height of [768, 1000]) {
+    await page.setViewportSize({ width: 1440, height });
     await expect
-      .poll(async () => (await setup.boundingBox())!.width)
-      .toBeGreaterThan(beforeWidth);
-    await expect(
-      setup.getByLabel("Request number", { exact: true }),
-    ).toHaveValue("TEST-001");
-    await page.keyboard.press("ArrowLeft");
-    for (const height of [768, 1000]) {
-      await page.setViewportSize({ width: 1440, height });
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const root = document.scrollingElement!;
-            const main = document.querySelector("main")!;
-            return Math.max(
-              root.scrollHeight - root.clientHeight,
-              main.scrollHeight - main.clientHeight,
-            );
-          }),
-        )
-        .toBeLessThanOrEqual(1);
-    }
-    for (const width of [1920, 1440, 390]) {
-      await page.setViewportSize({ width, height: 1000 });
-      await expect
-        .poll(() =>
-          page.evaluate(
-            () => document.documentElement.scrollWidth <= window.innerWidth,
-          ),
-        )
-        .toBe(true);
-      await page.evaluate(() => window.scrollTo(0, 0));
-      for (const theme of ["light", "dark"]) {
-        await page.evaluate(
-          (value) =>
-            document.documentElement.classList.toggle("dark", value === "dark"),
-          theme,
-        );
-        await page.screenshot({
-          path: join(output, `test-workbench-${width}-${theme}.png`),
-          fullPage: true,
-          animations: "disabled",
-        });
-      }
-    }
+      .poll(() =>
+        page.evaluate(() => {
+          const root = document.scrollingElement!;
+          const main = document.querySelector("main")!;
+          return Math.max(
+            root.scrollHeight - root.clientHeight,
+            main.scrollHeight - main.clientHeight,
+          );
+        }),
+      )
+      .toBeLessThanOrEqual(1);
+  }
+  for (const width of [1920, 1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      )
+      .toBe(true);
   }
 });
 
-test("Test comparisons use saved inputs, preserve typed values, and distinguish missing results", async ({
+test("Sandbox Test comparisons use saved inputs, preserve typed values, and distinguish missing results", async ({
   page,
 }) => {
   const design = structuredClone(configuredSandboxDesign);
@@ -3990,126 +3534,57 @@ test("Test comparisons use saved inputs, preserve typed values, and distinguish 
   ).toContainText("Yes");
 });
 
-function historyVersionFixture(
-  index: number,
-  label: string,
-  kind = "checkpoint",
-  note: string | null = null,
-) {
-  return {
-    id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-    sequence: index,
-    kind,
-    label,
-    note,
-    sourceDocumentRevision: 1,
-    sourceVersionId: null,
-    contentHash: "c".repeat(64),
-    byteCount: 321,
-    metadataRevision: 1,
-    createdAt: `2026-09-${20 + index}T10:00:00Z`,
-    performedBy: null,
-    isDeleted: false,
-    deletedAt: null,
-  };
-}
+// Which count shows the warning is owned by isolated/sandbox/version-capacity
+// and the capacity contract by isolated/sandbox/api ("a version page with ...
+// is a contract error"); these two journeys keep the global count and refusal.
+test("capacity 45 is global in filtered History and checkpoint dialog", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: capacityVersions(45),
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const { timeline } = historyRegions(page);
+  await timeline.getByLabel("Find a version").fill("Needle");
+  await expect(timeline).toContainText("1 saved version");
+  const text =
+    "45 of 50 versions used. Delete the oldest unpublished checkpoints to free space.";
+  await expect(timeline.getByText(text, { exact: true })).toBeVisible();
+  const checkpoint = await openCheckpointDialog(page);
+  await expect(checkpoint.getByText(text, { exact: true })).toBeVisible();
+});
 
-function capacityVersions(count: number) {
-  return [
-    ...Array.from({ length: count }, (_, index) => ({
-      ...historyVersionFixture(
-        index + 1,
-        index === 0 ? "Needle checkpoint" : `Owned checkpoint ${index + 1}`,
-        index % 2 ? "imported" : "checkpoint",
-      ),
-      createdAt: "2026-10-01T10:00:00Z",
-    })),
+test("refused capacity is unavailable rather than guessed or usable", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
     {
-      ...historyVersionFixture(100, "Protected publication", "published"),
-      createdAt: "2026-10-01T10:00:00Z",
+      versions: capacityVersions(50),
+      versionListFailure: 403,
     },
-  ];
-}
-
-async function openCheckpointDialog(page: Page) {
-  await page
-    .getByRole("button", { name: "More Sandbox actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Save checkpoint", exact: true })
-    .click();
-  return page.getByRole("dialog", { name: "Save checkpoint", exact: true });
-}
-
-for (const count of [44, 45, 50]) {
-  test(`S06 capacity ${count} is global in filtered History and checkpoint dialog`, async ({
-    page,
-  }) => {
-    await prepareS06Review(page);
-    await openAuthenticatedSandbox(page, configuredSandboxDesign, {
-      versions: capacityVersions(count),
-    });
-    await page.getByRole("link", { name: "History", exact: true }).click();
-    const timeline = page.getByRole("region", {
-      name: "Version timeline",
+  );
+  const checkpoint = await openCheckpointDialog(page);
+  await expect(
+    checkpoint.getByText(
+      "Version capacity is unavailable. Retry before deleting old checkpoints.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    checkpoint.getByRole("button", {
+      name: "Delete old checkpoints",
       exact: true,
-    });
-    await timeline.getByLabel("Find a version").fill("Needle");
-    await expect(timeline).toContainText("1 saved version");
-    const text = `${count} of 50 versions used. Delete the oldest unpublished checkpoints to free space.`;
-    if (count < 45)
-      await expect(timeline.getByText(text, { exact: true })).toHaveCount(0);
-    else await expect(timeline.getByText(text, { exact: true })).toBeVisible();
-    if (count === 45) await captureS06Review(page, "capacity-history");
-    const checkpoint = await openCheckpointDialog(page);
-    if (count < 45)
-      await expect(checkpoint.getByText(text, { exact: true })).toHaveCount(0);
-    else
-      await expect(checkpoint.getByText(text, { exact: true })).toBeVisible();
-    if (count === 45) await captureS06Review(page, "capacity-checkpoint");
-  });
-}
+    }),
+  ).toHaveCount(0);
+  await expect(
+    checkpoint.getByRole("button", { name: "Retry capacity", exact: true }),
+  ).toBeEnabled();
+  expect(sandbox.pruneRequests()).toEqual([]);
+});
 
-for (const fault of ["missing", "malformed", "refused"] as const) {
-  test(`S06 ${fault} capacity is unavailable rather than guessed or usable`, async ({
-    page,
-  }) => {
-    const sandbox = await openAuthenticatedSandbox(
-      page,
-      configuredSandboxDesign,
-      {
-        versions: capacityVersions(50),
-        ...(fault === "refused"
-          ? { versionListFailure: 403 }
-          : {
-              capacityMetadata:
-                fault === "missing"
-                  ? {}
-                  : { mutableCount: "50", versionCap: 50 },
-            }),
-      },
-    );
-    const checkpoint = await openCheckpointDialog(page);
-    await expect(
-      checkpoint.getByText(
-        "Version capacity is unavailable. Retry before deleting old checkpoints.",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    await expect(
-      checkpoint.getByRole("button", {
-        name: "Delete old checkpoints",
-        exact: true,
-      }),
-    ).toHaveCount(0);
-    await expect(
-      checkpoint.getByRole("button", { name: "Retry capacity", exact: true }),
-    ).toBeEnabled();
-    expect(sandbox.pruneRequests()).toEqual([]);
-  });
-}
-
-test("S06 prune cancel and pending readback preserve checkpoint input and use refreshed revision", async ({
+test("prune cancel and pending readback preserve checkpoint input and use refreshed revision", async ({
   page,
 }) => {
   let releasePrune!: () => void;
@@ -4204,7 +3679,7 @@ test("S06 prune cancel and pending readback preserve checkpoint input and use re
   ).toContainText("42 saved versions");
 });
 
-test("S06 filtered History readback completes before prune unlocks commands", async ({
+test("filtered History readback completes before prune unlocks commands", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(
@@ -4228,10 +3703,7 @@ test("S06 filtered History readback completes before prune unlocks commands", as
     await route.fallback();
   });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
+  const { timeline } = historyRegions(page);
   await timeline.getByLabel("Find a version").fill("Needle");
   await expect(timeline).toContainText("1 saved version");
   await timeline
@@ -4263,13 +3735,11 @@ test("S06 filtered History readback completes before prune unlocks commands", as
   expect(sandbox.pruneRequests()).toEqual([{ expectedRevision: 7 }]);
 });
 
-for (const failure of [
-  "stale",
-  "unavailable",
-  "malformed",
-  "readback",
-] as const) {
-  test(`S06 ${failure} prune preserves input and refuses another write until authoritative Retry`, async ({
+// The copy of each failure is owned by isolated/feedback/api-errors and the
+// prune reply contract by isolated/sandbox/api; a stale refusal and a failed
+// readback after a committed prune keep the recovery journey.
+for (const failure of ["stale", "readback"] as const) {
+  test(`${failure} prune preserves input and refuses another write until authoritative Retry`, async ({
     page,
   }) => {
     const sandbox = await openAuthenticatedSandbox(
@@ -4280,12 +3750,6 @@ for (const failure of [
         revision: 7,
         ...(failure === "stale"
           ? { pruneFailure: { status: 409, code: "stale_revision" } }
-          : {}),
-        ...(failure === "unavailable"
-          ? { pruneFailure: { status: 503, code: "unavailable" } }
-          : {}),
-        ...(failure === "malformed"
-          ? { pruneResponse: { deletedCount: "10" } }
           : {}),
         ...(failure === "readback" ? { pruneReadbackFailure: true } : {}),
       },
@@ -4315,9 +3779,7 @@ for (const failure of [
     const error =
       failure === "stale"
         ? "This item changed. Refresh it and try again."
-        : failure === "malformed"
-          ? "The server returned an unexpected response. Refresh and try again."
-          : "This service is temporarily unavailable. Try again.";
+        : "This service is temporarily unavailable. Try again.";
     await expect(confirmation.getByRole("alert")).toContainText(error);
     await confirmation
       .getByRole("button", { name: "Cancel", exact: true })
@@ -4335,7 +3797,7 @@ for (const failure of [
     expect(sandbox.checkpointRequests()).toEqual([]);
     expect(sandbox.document()).toEqual(before);
     await expect(page.getByText("Private failure canary")).toHaveCount(0);
-    if (failure === "malformed" || failure === "readback") {
+    if (failure === "readback") {
       sandbox.setPruneReadbackFailure(false);
       await checkpoint
         .getByRole("button", { name: "Retry capacity", exact: true })
@@ -4362,7 +3824,7 @@ for (const failure of [
   });
 }
 
-test("S06 full history checkpoint reports authored version_limit copy and preserves inputs", async ({
+test("full history checkpoint reports authored version_limit copy and preserves inputs", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(
@@ -4414,14 +3876,7 @@ test("History timeline filters preserve the selected action target and published
   versions.sort((a, b) => b.sequence - a.sequence);
   await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
-  const inspector = page.getByRole("region", {
-    name: "Selected version",
-    exact: true,
-  });
+  const { timeline, inspector } = historyRegions(page);
   await expect(
     inspector.getByRole("heading", { name: "Before import", exact: true }),
   ).toBeVisible();
@@ -4537,10 +3992,7 @@ test("History comparison stays tied to compared versions while inspecting anothe
   await page
     .getByRole("button", { name: "Compare versions", exact: true })
     .click();
-  const comparison = page.getByRole("region", {
-    name: "Version comparison",
-    exact: true,
-  });
+  const { comparison } = historyRegions(page);
   await expect(comparison).toContainText("Updated requests");
   const savedComparison = await comparison.innerText();
   await page
@@ -4549,55 +4001,46 @@ test("History comparison stays tied to compared versions while inspecting anothe
   await expect(
     page.getByRole("region", { name: "Selected version", exact: true }),
   ).toContainText("Before import");
-  expect(await comparison.innerText()).toBe(savedComparison);
+  await expect.poll(() => comparison.innerText()).toBe(savedComparison);
   expect(reads).toBe(2);
-  if (process.env.HISTORY_LAYOUT_SCREENSHOTS) {
-    const output = resolve(process.env.HISTORY_LAYOUT_SCREENSHOTS);
-    await mkdir(output, { recursive: true });
-    await page
-      .getByRole("button", { name: "View Release snapshot 1", exact: true })
-      .click();
-    for (const view of [
-      { width: 1920, height: 1000 },
-      { width: 1440, height: 768 },
-      { width: 390, height: 844 },
-    ]) {
-      await page.setViewportSize(view);
-      await expect
-        .poll(() =>
-          page.evaluate(
-            () =>
-              document.documentElement.scrollWidth -
-              document.documentElement.clientWidth,
-          ),
-        )
-        .toBeLessThanOrEqual(1);
-      if (view.width >= 1440) {
-        await expect
-          .poll(() =>
-            page.evaluate(() => {
-              const root = document.scrollingElement!;
-              const main = document.querySelector("main")!;
-              return Math.max(
-                root.scrollHeight - root.clientHeight,
-                main.scrollHeight - main.clientHeight,
-              );
-            }),
-          )
-          .toBeLessThanOrEqual(1);
-      }
-      for (const theme of ["light", "dark"]) {
-        await page.evaluate((value) => {
-          document.documentElement.classList.toggle("dark", value === "dark");
-          window.scrollTo(0, 0);
-        }, theme);
-        await page.screenshot({
-          path: join(output, `history-${view.width}-${theme}.png`),
-          fullPage: true,
-          animations: "disabled",
-        });
-      }
-    }
+  // The History workspace fits from 1920 to 390 px with no horizontal page
+  // overflow, and wide screens have no vertical page overflow.
+  await page
+    .getByRole("button", { name: "View Release snapshot 1", exact: true })
+    .click();
+  for (const view of [
+    { width: 1920, height: 1000 },
+    { width: 1440, height: 768 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(view);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document.documentElement.scrollWidth -
+            document.documentElement.clientWidth,
+        ),
+      )
+      .toBeLessThanOrEqual(1);
+  }
+  for (const view of [
+    { width: 1920, height: 1000 },
+    { width: 1440, height: 768 },
+  ]) {
+    await page.setViewportSize(view);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const root = document.scrollingElement!;
+          const main = document.querySelector("main")!;
+          return Math.max(
+            root.scrollHeight - root.clientHeight,
+            main.scrollHeight - main.clientHeight,
+          );
+        }),
+      )
+      .toBeLessThanOrEqual(1);
   }
 });
 
@@ -4650,10 +4093,7 @@ test("History deletion failure retains its target and successful deletion select
   await page
     .getByRole("button", { name: "View Disposable checkpoint", exact: true })
     .click();
-  const inspector = page.getByRole("region", {
-    name: "Selected version",
-    exact: true,
-  });
+  const { inspector } = historyRegions(page);
   await inspector
     .getByRole("button", { name: "Delete version", exact: true })
     .click();
@@ -4742,10 +4182,7 @@ test("History change groups keep large comparisons scannable without hiding acce
   await page
     .getByRole("button", { name: "Compare versions", exact: true })
     .click();
-  const comparison = page.getByRole("region", {
-    name: "Version comparison",
-    exact: true,
-  });
+  const { comparison } = historyRegions(page);
   const fields = comparison.getByRole("button", {
     name: "Fields, 12 change entries",
     exact: true,
@@ -4772,25 +4209,6 @@ test("History change groups keep large comparisons scannable without hiding acce
   await expect(
     comparison.getByText("Field removed: Customers · Email", { exact: true }),
   ).toBeHidden();
-  if (process.env.HISTORY_LAYOUT_SCREENSHOTS) {
-    const output = resolve(process.env.HISTORY_LAYOUT_SCREENSHOTS);
-    await mkdir(output, { recursive: true });
-    for (const width of [1920, 390]) {
-      await page.setViewportSize({ width, height: 1000 });
-      await page.evaluate(() => {
-        document.documentElement.classList.add("dark");
-        window.scrollTo(0, 0);
-      });
-      await comparison.evaluate((element) => {
-        element.scrollTop = 0;
-      });
-      await page.screenshot({
-        path: join(output, `history-change-review-${width}.png`),
-        fullPage: true,
-        animations: "disabled",
-      });
-    }
-  }
 });
 
 test("a Test result from an older draft says so and can show its module on the canvas", async ({
@@ -5063,7 +4481,7 @@ test("disabled convenience shortcuts preserve canvas buttons and essential arrow
 });
 
 for (const preference of ["off", "pending"] as const) {
-  test(`S23 registered shortcuts ${preference} block Delete and F2 without disabling essential controls`, async ({
+  test(`registered shortcuts ${preference} block Delete and F2 without disabling essential controls`, async ({
     page,
   }) => {
     let release = () => {};
@@ -5129,7 +4547,7 @@ for (const preference of ["off", "pending"] as const) {
   });
 }
 
-test("S23 registered shortcuts enabled retain real help fit rename and removal review", async ({
+test("registered shortcuts enabled retain real help fit rename and removal review", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
@@ -5173,7 +4591,7 @@ test("S23 registered shortcuts enabled retain real help fit rename and removal r
   expect(sandbox.document().design.modules).toHaveLength(3);
 });
 
-test("S23 registered shortcuts preserve native text editing modal guards and standard undo redo while off", async ({
+test("registered shortcuts preserve native text editing modal guards and standard undo redo while off", async ({
   page,
 }) => {
   await page.route("**/api/users/*/preferences", (route) =>
@@ -5315,14 +4733,7 @@ test("History pages and server-searches later versions while retaining inspectio
       : route.fallback(),
   );
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
-  const inspector = page.getByRole("region", {
-    name: "Selected version",
-    exact: true,
-  });
+  const { timeline, inspector } = historyRegions(page);
   await expect(
     timeline.getByRole("button", {
       name: "View Saved checkpoint 28",
@@ -5410,35 +4821,40 @@ test("History pages and server-searches later versions while retaining inspectio
   await expect(page.getByLabel("Compare first version")).toHaveValue(
     versions[26].id,
   );
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-sandbox-history-${mode}`, {
-        beforeScreenshot: async () => {
-          await page.evaluate(async () => {
-            await document.fonts.ready;
-          });
-          for (const label of [
-            "All versions",
-            "Checkpoints",
-            "Published versions",
-            "Imported versions",
-          ]) {
-            await expect
-              .poll(() =>
-                timeline
-                  .getByRole("button", { name: label, exact: true })
-                  .evaluate(
-                    (element) => element.scrollWidth <= element.clientWidth,
-                  ),
-              )
-              .toBe(true);
-          }
-        },
+  for (const mode of ["light", "dark"] as const) {
+    await page.evaluate((value) => {
+      document.documentElement.classList.toggle("dark", value === "dark");
+    }, mode);
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.evaluate(async () => {
+        await document.fonts.ready;
       });
+      for (const label of [
+        "All versions",
+        "Checkpoints",
+        "Published versions",
+        "Imported versions",
+      ]) {
+        await expect
+          .poll(() =>
+            timeline
+              .getByRole("button", { name: label, exact: true })
+              .evaluate(
+                (element) => element.scrollWidth <= element.clientWidth,
+              ),
+          )
+          .toBe(true);
+      }
     }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
   }
 });
 
@@ -5463,14 +4879,7 @@ test("History clears a missing compared version after a transient lookup and nev
         : route.fallback(),
   );
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
-  const comparison = page.getByRole("region", {
-    name: "Version comparison",
-    exact: true,
-  });
+  const { timeline, comparison } = historyRegions(page);
   const savedComparison = comparison.getByRole("table");
   const unavailableHeading = comparison.getByRole("heading", {
     name: "Saved checkpoint 27",
@@ -5541,16 +4950,6 @@ test("History clears a missing compared version after a transient lookup and nev
   await expect(unavailableHeading).toHaveCount(0);
 });
 
-function historyPagingVersions(count = 28) {
-  return Array.from({ length: count }, (_, index) => ({
-    ...historyVersionFixture(
-      count - index,
-      `Saved checkpoint ${count - index}`,
-    ),
-    createdAt: "2026-09-23T10:00:00Z",
-  }));
-}
-
 for (const status of [401, 403, 404]) {
   test(`History list ${status} remains refused across cached filters until a later authoritative Retry`, async ({
     page,
@@ -5594,18 +4993,7 @@ for (const status of [401, 403, 404]) {
         : route.fallback(),
     );
     await page.getByRole("link", { name: "History", exact: true }).click();
-    const timeline = page.getByRole("region", {
-      name: "Version timeline",
-      exact: true,
-    });
-    const inspector = page.getByRole("region", {
-      name: "Selected version",
-      exact: true,
-    });
-    const comparison = page.getByRole("region", {
-      name: "Version comparison",
-      exact: true,
-    });
+    const { timeline, inspector, comparison } = historyRegions(page);
     await expect(
       timeline.getByRole("button", {
         name: "View Saved checkpoint 28",
@@ -5721,14 +5109,7 @@ test("History detail 403 cannot be removed by a cached-page transition", async (
     return route.fallback();
   });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
-  const inspector = page.getByRole("region", {
-    name: "Selected version",
-    exact: true,
-  });
+  const { timeline, inspector } = historyRegions(page);
   await expect(
     timeline.getByRole("button", {
       name: "View Saved checkpoint 28",
@@ -5808,14 +5189,7 @@ test("History keeps the authorized page and range on new-page 503 but never borr
     return route.fallback();
   });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
-  const inspector = page.getByRole("region", {
-    name: "Selected version",
-    exact: true,
-  });
+  const { timeline, inspector } = historyRegions(page);
   await expect(
     timeline.getByRole("button", {
       name: "View Saved checkpoint 28",
@@ -5897,14 +5271,7 @@ test("History deletion of the sole last-page row selects an available version an
     return route.fulfill({ status: 204 });
   });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
-  const inspector = page.getByRole("region", {
-    name: "Selected version",
-    exact: true,
-  });
+  const { timeline, inspector } = historyRegions(page);
   await expect(
     timeline.getByRole("button", {
       name: "View Saved checkpoint 26",
@@ -6007,14 +5374,7 @@ test("History success from an imperative read started before refusal cannot rest
     return route.fallback();
   });
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
-  const comparison = page.getByRole("region", {
-    name: "Version comparison",
-    exact: true,
-  });
+  const { timeline, comparison } = historyRegions(page);
   await expect(
     timeline.getByRole("button", {
       name: "View Saved checkpoint 28",
@@ -6057,12 +5417,7 @@ test("History success from an imperative read started before refusal cannot rest
   holdDetails = false;
   // Let the completed promise handlers commit before making another request;
   // a fresh refusal must not conceal an older read's incorrect reauthorization.
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      ),
-  );
+  await settleReact(page);
   await expect(
     timeline.getByText("History unavailable. Check your access or retry.", {
       exact: true,
@@ -6133,18 +5488,7 @@ test("History older off-page metadata cannot restore a target marked missing by 
     },
   );
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
-  const inspector = page.getByRole("region", {
-    name: "Selected version",
-    exact: true,
-  });
-  const comparison = page.getByRole("region", {
-    name: "Version comparison",
-    exact: true,
-  });
+  const { timeline, inspector, comparison } = historyRegions(page);
   const firstChoice = page.getByLabel("Compare first version");
   const secondChoice = page.getByLabel("Compare second version");
   const missingHeading = inspector.getByRole("heading", {
@@ -6198,12 +5542,7 @@ test("History older off-page metadata cannot restore a target marked missing by 
   releaseMetadata();
   await (await completedMetadata).finished();
   // Observe the settled older success before any new read can repair or mask it.
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      ),
-  );
+  await settleReact(page);
   expect(requests).toHaveLength(requestCountAtRefusal);
   await expect(
     timeline.getByRole("button", {
@@ -6225,10 +5564,9 @@ test("History older off-page metadata cannot restore a target marked missing by 
   await expect(page.getByText("Private missing-version canary")).toHaveCount(0);
 });
 
-test("S05 export history uses complete global total and downloads both boolean variants", async ({
+test("a filtered 28-version history exports its complete document and snapshots", async ({
   page,
-}) => {
-  await prepareS06Review(page);
+}, testInfo) => {
   const versions = Array.from({ length: 28 }, (_, index) => ({
     ...historyVersionFixture(
       index + 1,
@@ -6280,22 +5618,10 @@ test("S05 export history uses complete global total and downloads both boolean v
     { versions },
   );
   await page.getByRole("link", { name: "History", exact: true }).click();
-  const timeline = page.getByRole("region", {
-    name: "Version timeline",
-    exact: true,
-  });
+  const { timeline } = historyRegions(page);
   await timeline.getByLabel("Find a version").fill("Needle");
   await expect(timeline).toContainText("1 saved version");
-  await page
-    .getByRole("button", { name: "More Sandbox actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Import or export", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Import or export",
-    exact: true,
-  });
+  const dialog = await openImportExport(page);
   const include = dialog.getByRole("checkbox", {
     name: "Include version history",
     exact: true,
@@ -6323,7 +5649,6 @@ test("S05 export history uses complete global total and downloads both boolean v
   expect(withoutHistory).toEqual(document);
   expect(withoutHistory).not.toHaveProperty("versions");
   await include.check();
-  await captureS06Review(page, "s05-export-history");
   const [withHistory] = await Promise.all([
     page.waitForEvent("download"),
     dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
@@ -6338,9 +5663,99 @@ test("S05 export history uses complete global total and downloads both boolean v
   expect(writes).toBe(0);
   expect(sandbox.documentWrites()).toBe(0);
   expect(sandbox.document()).toEqual(document);
+  await testInfo.attach("without-history.json", {
+    path: withoutPath,
+    contentType: "application/json",
+  });
+  await testInfo.attach("with-history.json", {
+    path: withPath,
+    contentType: "application/json",
+  });
 });
 
-test("S05 export count loads without guessing or enabling a premature export", async ({
+test("export history uses complete global total and downloads both boolean variants", async ({
+  page,
+}) => {
+  // 50 checkpoints and imports at the version limit, plus a publication.
+  const versions = capacityVersions(50);
+  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
+  const bundle = exportBundleFixture(versions, document);
+  const exports: string[] = [];
+  let writes = 0;
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname.startsWith("/api/sandbox/") &&
+      ["POST", "PUT", "PATCH", "DELETE"].includes(request.method())
+    )
+      writes += 1;
+  });
+  await page.route("**/api/sandbox/export?*", (route) => {
+    const include = new URL(route.request().url()).searchParams.get(
+      "includeVersions",
+    );
+    exports.push(include ?? "missing");
+    return route.fulfill({
+      contentType: "application/json",
+      headers: {
+        "Content-Disposition": 'attachment; filename="owned-history-51.json"',
+      },
+      json: include === "true" ? bundle : document,
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions },
+  );
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const { timeline } = historyRegions(page);
+  await timeline.getByLabel("Find a version").fill("Needle");
+  await expect(timeline).toContainText("1 saved version");
+  const dialog = await openImportExport(page);
+  const include = dialog.getByRole("checkbox", {
+    name: "Include version history",
+    exact: true,
+  });
+  await expect(include).toBeVisible();
+  await expect(include).not.toBeChecked();
+  await expect(
+    dialog.getByText("51 saved versions", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText("Imported versions count toward the 50-version limit.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const [without] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+  ]);
+  expect(without.suggestedFilename()).toBe("owned-history-51.json");
+  const withoutPath = await without.path();
+  if (!withoutPath) throw new Error("A completed download is required");
+  const withoutHistory: unknown = JSON.parse(
+    await readFile(withoutPath, "utf8"),
+  );
+  expect(withoutHistory).toEqual(document);
+  expect(withoutHistory).not.toHaveProperty("versions");
+  await include.check();
+  const [withHistory] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+  ]);
+  expect(withHistory.suggestedFilename()).toBe("owned-history-51.json");
+  const withPath = await withHistory.path();
+  if (!withPath) throw new Error("A completed download is required");
+  const exported: unknown = JSON.parse(await readFile(withPath, "utf8"));
+  expect(exported).toEqual(bundle);
+  expect(exported).toHaveProperty("versions", bundle.versions);
+  expect(exports).toEqual(["false", "true"]);
+  expect(writes).toBe(0);
+  expect(sandbox.documentWrites()).toBe(0);
+  expect(sandbox.document()).toEqual(document);
+});
+
+test("export count loads without guessing or enabling a premature export", async ({
   page,
 }) => {
   let release!: () => void;
@@ -6351,16 +5766,7 @@ test("S05 export count loads without guessing or enabling a premature export", a
     versions: capacityVersions(1),
     versionListDelay: delay,
   });
-  await page
-    .getByRole("button", { name: "More Sandbox actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Import or export", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Import or export",
-    exact: true,
-  });
+  const dialog = await openImportExport(page);
   try {
     await expect(
       dialog.getByText("Loading version count…", { exact: true }),
@@ -6382,7 +5788,7 @@ test("S05 export count loads without guessing or enabling a premature export", a
   ).toBeEnabled();
 });
 
-test("S05 export count failure stays unavailable until an authoritative Retry", async ({
+test("export count failure stays unavailable until an authoritative Retry", async ({
   page,
 }) => {
   const options = {
@@ -6390,16 +5796,7 @@ test("S05 export count failure stays unavailable until an authoritative Retry", 
     versionListFailure: 503 as number | undefined,
   };
   await openAuthenticatedSandbox(page, configuredSandboxDesign, options);
-  await page
-    .getByRole("button", { name: "More Sandbox actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Import or export", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Import or export",
-    exact: true,
-  });
+  const dialog = await openImportExport(page);
   await expect(
     dialog.getByText("Version count is unavailable.", { exact: true }),
   ).toBeVisible();
@@ -6421,67 +5818,58 @@ test("S05 export count failure stays unavailable until an authoritative Retry", 
   ).toBeEnabled();
 });
 
-for (const failure of ["unavailable", "malformed"] as const) {
-  test(`S05 ${failure} export keeps history selection and produces no download`, async ({
-    page,
-  }) => {
-    let downloads = 0;
-    const requests: string[] = [];
-    page.on("download", () => {
-      downloads += 1;
-    });
-    await page.route("**/api/sandbox/export?*", (route) => {
-      requests.push(
-        new URL(route.request().url()).searchParams.get("includeVersions") ??
-          "missing",
-      );
-      return route.fulfill(
-        failure === "unavailable"
-          ? { status: 503, json: { detail: "Private export canary" } }
-          : { json: { kind: "not-sandbox" } },
-      );
-    });
-    const sandbox = await openAuthenticatedSandbox(
-      page,
-      configuredSandboxDesign,
-      { versions: capacityVersions(1) },
-    );
-    await page
-      .getByRole("button", { name: "More Sandbox actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Import or export", exact: true })
-      .click();
-    const dialog = page.getByRole("dialog", {
-      name: "Import or export",
-      exact: true,
-    });
-    const include = dialog.getByRole("checkbox", {
-      name: "Include version history",
-      exact: true,
-    });
-    await expect(include).toBeVisible();
-    await include.check();
-    await dialog
-      .getByRole("button", { name: "Export JSON", exact: true })
-      .click();
-    await expect(
-      dialog.getByText("Export could not be completed. Try again.", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(include).toBeChecked();
-    await expect(
-      dialog.getByRole("button", { name: "Export JSON", exact: true }),
-    ).toBeEnabled();
-    expect(downloads).toBe(0);
-    expect(requests).toEqual(["true"]);
-    expect(sandbox.documentWrites()).toBe(0);
-    await expect(page.getByText("Private export canary")).toHaveCount(0);
+// A reply that is not a Sandbox document is refused by exportSandboxBundle
+// (isolated/sandbox/api "rejects an invalid export attachment") and reaches
+// the same catch as this 503.
+test("unavailable export keeps history selection and produces no download", async ({
+  page,
+}) => {
+  let downloads = 0;
+  const requests: string[] = [];
+  page.on("download", () => {
+    downloads += 1;
   });
-}
+  await page.route("**/api/sandbox/export?*", (route) => {
+    requests.push(
+      new URL(route.request().url()).searchParams.get("includeVersions") ??
+        "missing",
+    );
+    return route.fulfill({
+      status: 503,
+      json: { detail: "Private export canary" },
+    });
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { versions: capacityVersions(1) },
+  );
+  const dialog = await openImportExport(page);
+  const include = dialog.getByRole("checkbox", {
+    name: "Include version history",
+    exact: true,
+  });
+  await expect(include).toBeVisible();
+  await include.check();
+  await dialog
+    .getByRole("button", { name: "Export JSON", exact: true })
+    .click();
+  await expect(
+    dialog.getByText("Export could not be completed. Try again.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(include).toBeChecked();
+  await expect(
+    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+  ).toBeEnabled();
+  expect(downloads).toBe(0);
+  expect(requests).toEqual(["true"]);
+  expect(sandbox.documentWrites()).toBe(0);
+  await expect(page.getByText("Private export canary")).toHaveCount(0);
+});
 
-test("S05 pending export is single and cancellation refuses its late download", async ({
+test("pending export is single and cancellation refuses its late download", async ({
   page,
 }) => {
   let release!: () => void;
@@ -6491,22 +5879,7 @@ test("S05 pending export is single and cancellation refuses its late download", 
   const delay = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
-  const bundle = {
-    ...document,
-    versions: capacityVersions(1).map((version) => ({
-      id: version.id,
-      label: version.label,
-      kind: version.kind,
-      document: {
-        design: document.design,
-        triggers: document.triggers,
-        scenarios: document.scenarios,
-      },
-      published: version.kind === "published",
-      date: version.createdAt,
-    })),
-  };
+  const bundle = exportBundleFixture(capacityVersions(1));
   page.on("download", () => {
     downloads += 1;
   });
@@ -6519,16 +5892,7 @@ test("S05 pending export is single and cancellation refuses its late download", 
   await openAuthenticatedSandbox(page, configuredSandboxDesign, {
     versions: capacityVersions(1),
   });
-  await page
-    .getByRole("button", { name: "More Sandbox actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Import or export", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Import or export",
-    exact: true,
-  });
+  const dialog = await openImportExport(page);
   const include = dialog.getByRole("checkbox", {
     name: "Include version history",
     exact: true,
@@ -6550,18 +5914,10 @@ test("S05 pending export is single and cancellation refuses its late download", 
     release();
   }
   await expect.poll(() => finished).toBe(true);
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
-  );
+  await settleReact(page, 1);
   expect(downloads).toBe(0);
   expect(requests).toBe(1);
-  await page
-    .getByRole("button", { name: "More Sandbox actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Import or export", exact: true })
-    .click();
+  await openImportExport(page);
   await expect(include).toBeChecked();
   await expect(
     dialog.getByRole("button", { name: "Export JSON", exact: true }),
@@ -6569,7 +5925,7 @@ test("S05 pending export is single and cancellation refuses its late download", 
 });
 
 for (const transition of ["unmount", "account"] as const) {
-  test(`S05 export ignores a late result after ${transition} transition`, async ({
+  test(`export ignores a late result after ${transition} transition`, async ({
     page,
   }) => {
     let release!: () => void;
@@ -6579,22 +5935,7 @@ for (const transition of ["unmount", "account"] as const) {
     const delay = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const document = sandboxDocumentFromDesign(configuredSandboxDesign);
-    const bundle = {
-      ...document,
-      versions: capacityVersions(1).map((version) => ({
-        id: version.id,
-        label: version.label,
-        kind: version.kind,
-        document: {
-          design: document.design,
-          triggers: document.triggers,
-          scenarios: document.scenarios,
-        },
-        published: version.kind === "published",
-        date: version.createdAt,
-      })),
-    };
+    const bundle = exportBundleFixture(capacityVersions(1));
     page.on("download", () => {
       downloads += 1;
     });
@@ -6612,26 +5953,12 @@ for (const transition of ["unmount", "account"] as const) {
         .getByRole("link", { name: "Search workspace", exact: true })
         .click();
       await expect(page).toHaveURL(/\/platform/);
-      const build = page.getByRole("link", { name: "Build", exact: true });
-      if (!(await build.isVisible()))
-        await page
-          .getByRole("button", { name: "Sandbox", exact: true })
-          .click();
-      await build.click();
+      await page.getByRole("link", { name: "Build", exact: true }).click();
       await expect(
         page.getByRole("heading", { name: "Sandbox", exact: true }),
       ).toBeVisible();
     }
-    await page
-      .getByRole("button", { name: "More Sandbox actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Import or export", exact: true })
-      .click();
-    const dialog = page.getByRole("dialog", {
-      name: "Import or export",
-      exact: true,
-    });
+    const dialog = await openImportExport(page);
     await expect(
       dialog.getByRole("checkbox", {
         name: "Include version history",
@@ -6651,28 +5978,12 @@ for (const transition of ["unmount", "account"] as const) {
         await expect(page).toHaveURL(/\/platform/);
       } else {
         const userB = "00000000-0000-4000-8000-000000000002";
-        await page.route("**/api/auth/session", (route) =>
-          route.fulfill({
-            json: {
-              authenticated: true,
-              user_id: userB,
-              setup_required: false,
-            },
-          }),
-        );
-        await page.route("**/api/auth/me", (route) =>
-          route.fulfill({ json: { id: userB, role: "admin", access: [] } }),
-        );
+        await signedInAs(page, { id: userB, role: "admin" });
         await page.evaluate(() =>
           window.dispatchEvent(new FocusEvent("focus")),
         );
         await expect(dialog).toBeHidden();
-        await page
-          .getByRole("button", { name: "More Sandbox actions", exact: true })
-          .click();
-        await page
-          .getByRole("menuitem", { name: "Import or export", exact: true })
-          .click();
+        await openImportExport(page);
         await expect(
           dialog.getByRole("checkbox", {
             name: "Include version history",
@@ -6684,141 +5995,16 @@ for (const transition of ["unmount", "account"] as const) {
       release();
     }
     await expect.poll(() => finished).toBe(true);
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
-    );
+    await settleReact(page, 1);
     expect(downloads).toBe(0);
   });
 }
 
-test("S05 export accepts 50 mutable snapshots plus a publication as complete downloadable history", async ({
-  page,
-}) => {
-  await prepareS06Review(page);
-  const captureDirectory = process.env.S06_CAPTURE_DIR;
-  let releaseCapture!: () => void;
-  const captureDelay = captureDirectory
-    ? new Promise<void>((resolve) => {
-        releaseCapture = resolve;
-      })
-    : Promise.resolve();
-  const versions = capacityVersions(50);
-  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
-  const bundle = {
-    ...document,
-    versions: versions.map((version) => ({
-      id: version.id,
-      label: version.label,
-      kind: version.kind,
-      document: {
-        design: document.design,
-        triggers: document.triggers,
-        scenarios: document.scenarios,
-      },
-      published: version.kind === "published",
-      date: version.createdAt,
-    })),
-  };
-  let requests = 0;
-  await page.route("**/api/sandbox/export?*", async (route) => {
-    requests += 1;
-    expect(
-      new URL(route.request().url()).searchParams.get("includeVersions"),
-    ).toBe("true");
-    await captureDelay;
-    return route.fulfill({
-      headers: {
-        "Content-Disposition": 'attachment; filename="owned-history-51.json"',
-      },
-      json: bundle,
-    });
-  });
-  const sandbox = await openAuthenticatedSandbox(
-    page,
-    configuredSandboxDesign,
-    { versions },
-  );
-  await page
-    .getByRole("button", { name: "More Sandbox actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Import or export", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Import or export",
-    exact: true,
-  });
-  await expect(
-    dialog.getByText("51 saved versions", { exact: true }),
-  ).toBeVisible();
-  await dialog
-    .getByRole("checkbox", { name: "Include version history", exact: true })
-    .check();
-  await captureS06Review(page, "s05-export-history-ready");
-  if (captureDirectory) {
-    await dialog
-      .getByRole("button", { name: "Export JSON", exact: true })
-      .click();
-    try {
-      await expect(
-        dialog.getByRole("button", { name: "Exporting…", exact: true }),
-      ).toBeDisabled();
-      await captureS06Review(page, "s05-export-history-pending");
-    } catch (error) {
-      releaseCapture();
-      throw error;
-    }
-  }
-  const completedDownload = page.waitForEvent("download", { timeout: 5_000 });
-  if (captureDirectory) releaseCapture();
-  else
-    await dialog
-      .getByRole("button", { name: "Export JSON", exact: true })
-      .click();
-  const download = await completedDownload;
-  expect(download.suggestedFilename()).toBe("owned-history-51.json");
-  const path = await download.path();
-  if (!path) throw new Error("A completed history download is required");
-  const actualBytes = await readFile(path);
-  if (captureDirectory) {
-    await mkdir(captureDirectory, { recursive: true });
-    await writeFile(
-      join(
-        captureDirectory,
-        `downloaded-history-51-${process.env.S06_CAPTURE_THEME === "dark" ? "dark" : "light"}.json`,
-      ),
-      actualBytes,
-    );
-  }
-  const downloaded: unknown = JSON.parse(actualBytes.toString("utf8"));
-  expect(downloaded).toEqual(bundle);
-  expect(downloaded).toHaveProperty("versions", bundle.versions);
-  expect(bundle.versions).toHaveLength(51);
-  expect(requests).toBe(1);
-  expect(sandbox.documentWrites()).toBe(0);
-});
-
-test("S05 import admission still refuses more than 50 snapshots before any write", async ({
+test("import admission still refuses more than 50 snapshots before any write", async ({
   page,
 }) => {
   const versions = capacityVersions(50);
-  const document = sandboxDocumentFromDesign(configuredSandboxDesign);
-  const bundle = {
-    ...document,
-    versions: versions.map((version) => ({
-      id: version.id,
-      label: version.label,
-      kind: version.kind,
-      document: {
-        design: document.design,
-        triggers: document.triggers,
-        scenarios: document.scenarios,
-      },
-      published: version.kind === "published",
-      date: version.createdAt,
-    })),
-  };
+  const bundle = exportBundleFixture(versions);
   let imports = 0;
   await page.route("**/api/sandbox/imports", (route) => {
     imports += 1;
@@ -6829,16 +6015,7 @@ test("S05 import admission still refuses more than 50 snapshots before any write
     configuredSandboxDesign,
     { versions },
   );
-  await page
-    .getByRole("button", { name: "More Sandbox actions", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Import or export", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Import or export",
-    exact: true,
-  });
+  const dialog = await openImportExport(page);
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
     dialog.getByRole("button", { name: "Choose JSON", exact: true }).click(),

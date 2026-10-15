@@ -1,33 +1,24 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Page, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
+  sendChartInvalidation,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
-import { ApiError } from "../../src/lib/api";
-import type {
-  BoardWidget,
-  BoardLegacyWidgetConfig,
-} from "../../src/components/systems/boards/adapters/board-widgets-api";
-import { ServerBoardWidgetsDisplay } from "../../src/components/systems/boards/components/server-backed-board-widgets";
-import { buildBoardWidgetQueryPlan } from "../../src/components/systems/boards/domain/live-widget-query";
 import {
   aggregateBucketKeys,
   type AggregateBucket,
 } from "../../src/components/systems/openview/domain/aggregate-buckets";
+import { gate as newGate, type Gate } from "./helpers/gate";
+import { pageOf, wirePagination } from "../helpers/pagination";
+import { emptyWireQuery } from "../helpers/query-definitions";
 import {
-  emptyLiveWidgetsState,
-  classifyLiveWidgetFailure,
-  loadLiveWidgetData,
-  loadLiveWidgetMetadata,
-  transitionLiveWidgetsState,
-  type LiveWidgetData,
-  type LiveWidgetItem,
-  type LiveWidgetsState,
-} from "../../src/components/systems/boards/hooks/use-live-widgets";
+  wireBoard,
+  wireField,
+  wireRecord,
+  wireWorkspace,
+  wireBucket,
+} from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -36,31 +27,6 @@ const widgetId = "00000000-0000-4000-8000-000000000004";
 const fieldId = "00000000-0000-4000-8000-000000000005";
 const recordId = "00000000-0000-4000-8000-000000000006";
 const timestamp = "2026-09-23T00:00:00Z";
-const key = `${boardId}:2026-09-23`;
-
-const widget: BoardWidget & { config: BoardLegacyWidgetConfig; chartId: null } =
-  {
-    id: widgetId,
-    boardId,
-    name: "Live records",
-    widgetType: "records",
-    moduleId,
-    position: 0,
-    size: "M",
-    pinned: false,
-    chartId: null,
-    config: {
-      version: 1,
-      fields: [{ fieldId, expectedType: "text" }],
-      filters: [],
-      logic: "and",
-      metric: null,
-      visualization: "bar",
-      refresh: "manual",
-    },
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
 const wireWidget = {
   id: widgetId,
   board_id: boardId,
@@ -84,48 +50,59 @@ const wireWidget = {
   updated_at: timestamp,
 };
 
-function mockFetch(responder: (path: string) => Response) {
-  const original = globalThis.fetch;
-  const paths: string[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL) => {
-    const path = String(input);
-    paths.push(path);
-    return Promise.resolve(responder(path));
-  }) as typeof fetch;
-  return {
-    paths,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
+async function expectWidgetAppearanceMatrix(
+  page: Page,
+  assertState: (
+    viewport: { width: number; height: number },
+    mode: "light" | "dark",
+  ) => Promise<void>,
+) {
+  const previous = await page.evaluate(() => ({
+    mode: document.documentElement.classList.contains("dark")
+      ? ("dark" as const)
+      : ("light" as const),
+    reduceMotion: document.documentElement.dataset.motion === "reduced",
+  }));
+  try {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate(applyAppearancePreferences, {
+        mode,
+        reduceMotion: true,
+      });
+      const originalViewport = page.viewportSize();
+      const originalScrollY = await page.evaluate(() => window.scrollY);
+      try {
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
+          await assertState(viewport, mode);
+        }
+      } finally {
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+      }
+    }
+  } finally {
+    await page.evaluate(applyAppearancePreferences, previous);
+  }
 }
 
 async function installS26WidgetApi(page: Page, widgets: unknown[]) {
   await installOpenViewEventSource(page);
   const actor = "00000000-0000-4000-8000-000000000661";
-  const board = {
+  const board = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Query overview",
     description: null,
-    status: "active",
-    revision: 1,
     level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
-  };
-  const pageOf = (items: unknown[], limit = 25) => ({
-    items,
-    pagination: {
-      limit,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
   });
   await page.route("**/api/**", (route) => {
+    if (isEventStream(route)) return route.fallback();
     const url = new URL(route.request().url());
     const reply = (json: unknown) => route.fulfill({ json });
     if (url.pathname === "/api/auth/session")
@@ -139,49 +116,45 @@ async function installS26WidgetApi(page: Page, widgets: unknown[]) {
     if (url.pathname === `/api/users/${actor}/preferences`)
       return reply({
         user_id: actor,
-        theme: process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light",
+        theme: "light",
         appearance: { motion: "reduce", keyboard_shortcuts: true },
       });
     if (url.pathname === "/api/workspace")
-      return reply({
-        id: otherBoardId,
-        display_name: "OpenSlate",
-        legal_name: null,
-        description: null,
-        contact_email: null,
-        contact_phone: null,
-        postal_address: null,
-        logo_file_id: null,
-        locale: "en-US",
-        timezone: "UTC",
-        mark: "OS",
-        currency: "USD",
-        week_start: "monday",
-        business_hours: "09:00–18:00",
-        theme: "slate",
-        revision: 1,
-        today: "2026-10-07",
-        purge_enabled: true,
-      });
-    if (url.pathname === "/api/boards") return reply(pageOf([board]));
+      return reply(
+        wireWorkspace({
+          id: otherBoardId,
+          locale: "en-US",
+          timezone: "UTC",
+          currency: "USD",
+          today: "2026-10-07",
+          purge_enabled: true,
+        }),
+      );
+    if (url.pathname === "/api/boards")
+      return reply(pageOf([board], { limit: 25 }));
     if (url.pathname === `/api/boards/${boardId}`) return reply(board);
     if (url.pathname === `/api/boards/${boardId}/my-access`)
       return reply({ read: true, write: true, manage: true, level: "manage" });
     if (url.pathname === `/api/boards/${boardId}/widgets`)
       return reply({
-        ...pageOf(widgets, Number(url.searchParams.get("limit") ?? 12)),
+        ...pageOf(widgets, {
+          limit: Number(url.searchParams.get("limit") ?? 12),
+        }),
         board_revision: 1,
       });
     if (url.pathname === "/api/views/data-sources")
       return reply(
-        pageOf([
-          {
-            id: moduleId,
-            name: "Requests",
-            department_id: otherBoardId,
-            title_field_id: null,
-          },
-        ]),
+        pageOf(
+          [
+            {
+              id: moduleId,
+              name: "Requests",
+              department_id: otherBoardId,
+              title_field_id: null,
+            },
+          ],
+          { limit: 25 },
+        ),
       );
     return route.fulfill({ status: 404, json: { detail: "No route fixture" } });
   });
@@ -189,15 +162,9 @@ async function installS26WidgetApi(page: Page, widgets: unknown[]) {
 
 for (const sourceKind of ["inline", "reference"] as const) {
   for (const visualization of ["pie", "bar", "line"] as const) {
-    test(`S26 Board ${sourceKind} ${visualization} keeps all average groups exact with no additive Other`, async ({
+    test(`Board ${sourceKind} ${visualization} keeps all average groups exact with no additive Other`, async ({
       page,
     }) => {
-      if (process.env.OPENVIEW_CAPTURE_DIR)
-        await page.emulateMedia({
-          colorScheme:
-            process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light",
-          reducedMotion: "reduce",
-        });
       const chartId = "00000000-0000-4000-8000-000000000662";
       const measureId = "00000000-0000-4000-8000-000000000663";
       const query = {
@@ -206,16 +173,7 @@ for (const sourceKind of ["inline", "reference"] as const) {
         aggregation: "average",
         measure: { field_id: measureId, expected_type: "decimal" },
         dimension: { field_id: fieldId, expected_type: "text" },
-        definition: {
-          version: 1,
-          logic: "and",
-          columns: [],
-          filters: [],
-          sort: [],
-          deleted: "exclude",
-          search: null,
-          search_fields: [],
-        },
+        definition: emptyWireQuery(),
       };
       const nativeQuery =
         visualization === "line"
@@ -270,25 +228,21 @@ for (const sourceKind of ["inline", "reference"] as const) {
         requests.push(route.request().postDataJSON());
         return route.fulfill({
           json: {
-            items: Array.from({ length: 10 }, (_, index) => ({
-              key:
-                visualization === "line"
-                  ? `2025-${String(index + 1).padStart(2, "0")}-01`
-                  : `group-${index + 1}`,
-              label:
-                visualization === "line"
-                  ? `2025-${String(index + 1).padStart(2, "0")}-01`
-                  : `Work group ${index + 1}`,
-              value: index + 0.5,
-              record_count: index + 100,
-            })),
-            pagination: {
-              limit: 10,
-              offset: 0,
-              count: 10,
-              total: 10,
-              has_more: false,
-            },
+            items: Array.from({ length: 10 }, (_, index) =>
+              wireBucket({
+                key:
+                  visualization === "line"
+                    ? `2025-${String(index + 1).padStart(2, "0")}-01`
+                    : `group-${index + 1}`,
+                label:
+                  visualization === "line"
+                    ? `2025-${String(index + 1).padStart(2, "0")}-01`
+                    : `Work group ${index + 1}`,
+                value: index + 0.5,
+                record_count: index + 100,
+              }),
+            ),
+            pagination: wirePagination({ limit: 10, count: 10, total: 10 }),
           },
         });
       });
@@ -325,31 +279,6 @@ for (const sourceKind of ["inline", "reference"] as const) {
           ),
         ).toBeVisible();
       }
-      if (sourceKind === "reference" && visualization === "pie")
-        await captureOpenViewReview(
-          page,
-          `s26-board-native-reference-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
-          {
-            beforeScreenshot: async (capture) => {
-              await capture.addStyleTag({
-                content: "nextjs-portal { display: none !important; }",
-              });
-              await expect(capture.locator("html")).toHaveClass(
-                process.env.S26_CAPTURE_THEME === "dark"
-                  ? /dark/
-                  : /^(?!.*dark)/,
-              );
-              await capture.evaluate(async () => {
-                await document.fonts.ready;
-                await new Promise<void>((resolve) =>
-                  requestAnimationFrame(() =>
-                    requestAnimationFrame(() => resolve()),
-                  ),
-                );
-              });
-            },
-          },
-        );
       // Workspace-date readiness can start a second batch; each reference still requires a current read.
       if (sourceKind === "reference") expect(chartReads).toBeGreaterThan(0);
       else expect(chartReads).toBe(0);
@@ -423,29 +352,6 @@ function evidenceChart(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-function evidencePage(items: unknown[], limit = 12) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
-}
-function evidenceBarrier() {
-  let release!: () => void;
-  let signalStarted!: () => void;
-  const wait = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const started = new Promise<void>((resolve) => {
-    signalStarted = resolve;
-  });
-  return { wait, started, release, signalStarted };
-}
 async function installEvidenceBoardApi(
   page: Page,
   initial: EvidenceWidgetWire | null,
@@ -456,7 +362,7 @@ async function installEvidenceBoardApi(
     revision: 1,
   };
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
-  let saveGate: ReturnType<typeof evidenceBarrier> | null = null;
+  let saveGate: Gate | null = null;
   await page.route("**/api/boards/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (!path.startsWith(`/api/boards/${boardId}/widgets`))
@@ -465,7 +371,7 @@ async function installEvidenceBoardApi(
     if (method === "GET")
       return route.fulfill({
         json: {
-          ...evidencePage(state.widgets),
+          ...pageOf(state.widgets, { limit: 12 }),
           board_revision: state.revision,
         },
       });
@@ -554,7 +460,7 @@ async function installEvidenceBoardApi(
     state,
     writes,
     holdSave() {
-      saveGate = evidenceBarrier();
+      saveGate = newGate();
       return saveGate;
     },
   };
@@ -564,16 +470,16 @@ async function installEvidenceSnapshot(page: Page) {
   await page.route("**/api/records/aggregate-snapshot", (route) => {
     requests.push(route.request().postDataJSON());
     return route.fulfill({
-      json: evidencePage(
+      json: pageOf(
         [
-          {
+          wireBucket({
             key: "private",
             label: "Private Board group",
             value: 12.5,
             record_count: 127,
-          },
+          }),
         ],
-        1,
+        { limit: 1 },
       ),
     });
   });
@@ -599,7 +505,7 @@ async function openEvidenceSettings(page: Page, name: string) {
 async function installS27BoardFields(page: Page) {
   await page.route(`**/api/views/data-sources/${moduleId}/fields?*`, (route) =>
     route.fulfill({
-      json: evidencePage(
+      json: pageOf(
         [
           {
             id: fieldId,
@@ -620,23 +526,14 @@ async function installS27BoardFields(page: Page) {
             position: 1,
           },
         ],
-        100,
+        { limit: 100 },
       ),
     }),
   );
 }
 
 const s30DateFieldId = "00000000-0000-4000-8000-000000000690";
-const s30Definition = {
-  version: 1,
-  logic: "and",
-  columns: [],
-  filters: [],
-  sort: [],
-  deleted: "exclude",
-  search: null,
-  search_fields: [],
-};
+const s30Definition = emptyWireQuery();
 
 /** Only the HTTP boundaries used by the real Board editor and live tiles. */
 async function installS30WidgetData(page: Page) {
@@ -652,7 +549,7 @@ async function installS30WidgetData(page: Page) {
     config: {},
   }));
   await page.route(`**/api/views/data-sources/${moduleId}/fields?*`, (route) =>
-    route.fulfill({ json: evidencePage(fields, 100) }),
+    route.fulfill({ json: pageOf(fields, { limit: 100 }) }),
   );
   for (const field of fields)
     await page.route(`**/api/fields/${field.id}`, (route) =>
@@ -674,38 +571,41 @@ async function installS30WidgetData(page: Page) {
             )
           : null;
       return route.fulfill({
-        json: evidencePage(
+        json: pageOf(
           dates
-            ? dates.map((key, index) => ({
-                key,
-                label: key,
-                value:
-                  index === 0
-                    ? body.aggregation === "count"
-                      ? 7
-                      : "123456789012.1234"
-                    : null,
-                record_count: index === 0 ? 7 : 0,
-              }))
+            ? dates.map((key, index) =>
+                wireBucket({
+                  key,
+                  value:
+                    index === 0
+                      ? body.aggregation === "count"
+                        ? 7
+                        : "123456789012.1234"
+                      : null,
+                  record_count: index === 0 ? 7 : 0,
+                }),
+              )
             : [
-                {
+                wireBucket({
                   key: "measured",
                   label: "S30 measured group",
                   value: body.aggregation === "count" ? 7 : "123456789012.1234",
                   record_count: 7,
-                },
-                {
+                }),
+                wireBucket({
                   key: "missing",
                   label: "No measure",
                   value: body.aggregation === "count" ? 2 : null,
                   record_count: 2,
-                },
+                }),
               ],
-          dates
-            ? dates.length
-            : path === "aggregate-query"
-              ? Number(body.limit)
-              : 2,
+          {
+            limit: dates
+              ? dates.length
+              : path === "aggregate-query"
+                ? Number(body.limit)
+                : 2,
+          },
         ),
       });
     });
@@ -715,20 +615,16 @@ async function installS30WidgetData(page: Page) {
     return route.fulfill({
       json: {
         items: [
-          {
+          wireRecord({
             id: recordId,
             module_id: moduleId,
             data: {
               [fieldId]: "S30 priority row",
               [evidenceMeasureId]: "12.5000",
             },
-            display_values: {},
             created_at: timestamp,
             updated_at: timestamp,
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: null,
-          },
+          }),
         ],
         pagination: {
           limit: body.limit,
@@ -744,7 +640,7 @@ async function installS30WidgetData(page: Page) {
 }
 
 for (const kind of ["summary", "workload", "records", "chart"] as const) {
-  test(`S30 ${kind} create edit and reload round trips the shared query and presentation`, async ({
+  test(`${kind} create edit and reload round trips the shared query and presentation`, async ({
     page,
   }) => {
     const api = await installEvidenceBoardApi(page, null);
@@ -1005,7 +901,7 @@ for (const kind of ["summary", "workload", "records", "chart"] as const) {
 }
 
 for (const kind of ["workload", "records", "chart"] as const) {
-  test(`S30 legacy ${kind} opens complete instructions and saves an explicitly chosen query`, async ({
+  test(`legacy ${kind} opens complete instructions and saves an explicitly chosen query`, async ({
     page,
   }) => {
     const initial: EvidenceWidgetWire = {
@@ -1116,7 +1012,7 @@ for (const kind of ["workload", "records", "chart"] as const) {
   });
 }
 
-test("S30 legacy count-all summary filters remain one bounded records read after shared editing", async ({
+test("legacy count-all summary filters remain one bounded records read after shared editing", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, {
@@ -1188,7 +1084,7 @@ test("S30 legacy count-all summary filters remain one bounded records read after
   expect(data.aggregates).toEqual([]);
 });
 
-test("S30 explicit legacy aggregation survives presentation save instead of metric inference", async ({
+test("explicit legacy aggregation survives presentation save instead of metric inference", async ({
   page,
 }) => {
   const initial: EvidenceWidgetWire = {
@@ -1223,7 +1119,7 @@ test("S30 explicit legacy aggregation survives presentation save instead of metr
   });
 });
 
-test("S30 legacy line opens its workspace window and a late date read cannot restore removed settings", async ({
+test("legacy line opens its workspace window and a late date read cannot restore removed settings", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, {
@@ -1264,7 +1160,7 @@ test("S30 legacy line opens its workspace window and a late date read cannot res
   );
   await page.keyboard.press("Escape");
   await settings.getByRole("button", { name: "Cancel", exact: true }).click();
-  const gate = evidenceBarrier();
+  const gate = newGate();
   await page.route("**/api/workspace", async (route) => {
     gate.signalStarted();
     await gate.wait;
@@ -1306,7 +1202,7 @@ test("S30 legacy line opens its workspace window and a late date read cannot res
   expect(api.writes).toEqual([]);
 });
 
-test("S30 saved Chart creation rechecks current authority and stores only its reference", async ({
+test("saved Chart creation rechecks current authority and stores only its reference", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, null);
@@ -1314,7 +1210,7 @@ test("S30 saved Chart creation rechecks current authority and stores only its re
   let refused = false;
   let reads = 0;
   await page.route("**/api/charts?*", (route) =>
-    route.fulfill({ json: evidencePage([evidenceChart()], 25) }),
+    route.fulfill({ json: pageOf([evidenceChart()], { limit: 25 }) }),
   );
   await page.route(`**/api/charts/${evidenceChartId}`, (route) => {
     reads += 1;
@@ -1401,7 +1297,7 @@ test("S30 saved Chart creation rechecks current authority and stores only its re
   });
 });
 
-test("S27 Board query editing preserves full definition and outer name module size and pin", async ({
+test("Board query editing preserves full definition and outer name module size and pin", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
@@ -1410,38 +1306,27 @@ test("S27 Board query editing preserves full definition and outer name module si
   await page.goto(`/boards?board=${boardId}`);
   const settings = await openEvidenceSettings(page, "Retained Board query");
   await settings.getByLabel("Measure", { exact: true }).selectOption("min");
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  try {
+    await expectWidgetAppearanceMatrix(page, async (viewport) => {
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+      if (viewport.width === 390) {
+        await settings
+          .getByText("Chart source", { exact: true })
+          .evaluate((element) => element.scrollIntoView({ block: "start" }));
+      } else {
+        await settings
+          .getByRole("heading", { name: "Widget settings", exact: true })
+          .scrollIntoViewIfNeeded();
+      }
+      await expect(settings.getByLabel("Measure", { exact: true })).toHaveValue(
+        "min",
+      );
     });
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        if (viewport.width === 390) {
-          await settings
-            .getByText("Chart source", { exact: true })
-            .evaluate((element) => element.scrollIntoView({ block: "start" }));
-        } else {
-          await settings
-            .getByRole("heading", { name: "Widget settings", exact: true })
-            .scrollIntoViewIfNeeded();
-        }
-        await expect(
-          settings.getByLabel("Measure", { exact: true }),
-        ).toHaveValue("min");
-      },
-    };
-    await captureOpenViewReview(page, "s27-board-dialog-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s27-board-dialog-dark", options);
+  } finally {
+    await page.emulateMedia({ reducedMotion: null });
   }
   await settings
     .getByLabel("Widget name", { exact: true })
@@ -1484,14 +1369,14 @@ test("S27 Board query editing preserves full definition and outer name module si
   ]);
 });
 
-test("S27 correction F2 later field-page denial hides all catalog names but retains the typed Board query until fresh recovery", async ({
+test("later field-page denial hides all catalog names but retains the typed Board query until fresh recovery", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
   await installEvidenceSnapshot(page);
   await page.route("**/api/views/data-sources?*", (route) =>
     route.fulfill({
-      json: evidencePage(
+      json: pageOf(
         [
           {
             id: moduleId,
@@ -1500,7 +1385,7 @@ test("S27 correction F2 later field-page denial hides all catalog names but reta
             title_field_id: null,
           },
         ],
-        100,
+        { limit: 100 },
       ),
     }),
   );
@@ -1520,35 +1405,25 @@ test("S27 correction F2 later field-page denial hides all catalog names but reta
         });
       }
       return route.fulfill({
-        json: {
-          items: [
-            {
+        json: pageOf(
+          [
+            wireField({
               id: fieldId,
               module_id: moduleId,
               name: "Private dimension label",
               type: "text",
-              required: false,
               position: 0,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: evidenceMeasureId,
               module_id: moduleId,
               name: "Private measure label",
               type: "decimal",
-              required: false,
               position: 1,
-              config: {},
-            },
+            }),
           ],
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: 2,
-            total: 3,
-            has_more: true,
-          },
-        },
+          { limit: 100, total: 3, hasMore: true },
+        ),
       });
     },
   );
@@ -1594,47 +1469,28 @@ test("S27 correction F2 later field-page denial hides all catalog names but reta
     settings.getByRole("button", { name: "Save settings", exact: true }),
   ).toBeDisabled();
   expect(api.writes).toEqual([]);
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  try {
+    await expectWidgetAppearanceMatrix(page, async (viewport) => {
+      await page
+        .getByRole("dialog", { name: "Manage Board widgets", exact: true })
+        .getByLabel("Chart source", { exact: true })
+        .scrollIntoViewIfNeeded();
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+      await expect(
+        settings.getByRole("button", { name: "Save settings", exact: true }),
+      ).toBeDisabled();
+      for (const name of [
+        "Private catalog source",
+        "Private dimension label",
+        "Private measure label",
+      ])
+        await expect(manager).not.toContainText(name);
     });
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await capture
-          .getByRole("dialog", { name: "Manage Board widgets", exact: true })
-          .getByLabel("Chart source", { exact: true })
-          .scrollIntoViewIfNeeded();
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        await expect(
-          settings.getByRole("button", { name: "Save settings", exact: true }),
-        ).toBeDisabled();
-        for (const name of [
-          "Private catalog source",
-          "Private dimension label",
-          "Private measure label",
-        ])
-          await expect(manager).not.toContainText(name);
-      },
-    };
-    await captureOpenViewReview(
-      page,
-      "s27-correction-board-refusal-light",
-      options,
-    );
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(
-      page,
-      "s27-correction-board-refusal-dark",
-      options,
-    );
+  } finally {
+    await page.emulateMedia({ reducedMotion: null });
   }
   refused = false;
   await settings
@@ -1665,7 +1521,7 @@ test("S27 correction F2 later field-page denial hides all catalog names but reta
   expect(api.writes).toEqual([]);
 });
 
-test("S27 Board saved picker later-page denial withdraws cached names until the list is retried", async ({
+test("Board saved picker later-page denial withdraws cached names until the list is retried", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
@@ -1685,16 +1541,7 @@ test("S27 Board saved picker later-page denial withdraws cached names until the 
       });
     }
     return route.fulfill({
-      json: {
-        items: [evidenceChart()],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 2,
-          has_more: true,
-        },
-      },
+      json: pageOf([evidenceChart()], { limit: 25, total: 2, hasMore: true }),
     });
   });
   await page.route(`**/api/charts/${evidenceChartId}`, (route) =>
@@ -1750,14 +1597,14 @@ test("S27 Board saved picker later-page denial withdraws cached names until the 
   expect(api.writes).toEqual([]);
 });
 
-test("S27 Board inline to saved source stores only the reference and reauthorizes before writing", async ({
+test("Board inline to saved source stores only the reference and reauthorizes before writing", async ({
   page,
 }) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("inline"));
   await installS27BoardFields(page);
   await installEvidenceSnapshot(page);
   await page.route("**/api/charts?*", (route) =>
-    route.fulfill({ json: evidencePage([evidenceChart()], 25) }),
+    route.fulfill({ json: pageOf([evidenceChart()], { limit: 25 }) }),
   );
   let chartReads = 0;
   let refused = false;
@@ -1834,9 +1681,9 @@ test("S27 Board inline to saved source stores only the reference and reauthorize
 });
 
 for (const source of ["inline", "reference"] as const) {
-  test(`E evidence Board ${source} settings save reload duplicate and reorder preserve the complete source`, async ({
+  test(`Board ${source} settings save reload duplicate and reorder preserve the complete source`, async ({
     page,
-  }, testInfo) => {
+  }) => {
     const api = await installEvidenceBoardApi(page, evidenceWidget(source));
     await page.route(`**/api/charts/${evidenceChartId}`, (route) =>
       route.fulfill({ json: evidenceChart() }),
@@ -1966,10 +1813,6 @@ for (const source of ["inline", "reference"] as const) {
             : { version: 1, chart_type: "bar", query: evidenceQuery },
       });
     }
-    await testInfo.attach("board-settings-wire", {
-      body: JSON.stringify({ source, writes: api.writes, stored: api.state }),
-      contentType: "application/json",
-    });
   });
 }
 
@@ -2002,9 +1845,9 @@ for (const fault of [
   "wrong-family",
   "malformed",
 ] as const) {
-  test(`E evidence Board current Chart ${fault} hides private results with zero downstream reads`, async ({
+  test(`Board current Chart ${fault} hides private results with zero downstream reads`, async ({
     page,
-  }, testInfo) => {
+  }) => {
     const api = await installEvidenceBoardApi(
       page,
       evidenceWidget("reference"),
@@ -2025,16 +1868,16 @@ for (const fault of [
         refused,
       });
       return route.fulfill({
-        json: evidencePage(
+        json: pageOf(
           [
-            {
+            wireBucket({
               key: "private",
               label: "Private Board group",
               value: 12.5,
               record_count: 127,
-            },
+            }),
           ],
-          1,
+          { limit: 1 },
         ),
       });
     });
@@ -2068,44 +1911,34 @@ for (const fault of [
     const before = downstream.length;
     const originalReads = chartReads;
     refused = true;
-    try {
-      await sendOpenViewEvent(page, "invalidate", {
-        entity: "charts",
-        module_id: moduleId,
-      });
-      await expect.poll(() => chartReads).toBeGreaterThan(originalReads);
-      await expect(
-        page
-          .getByText("Private Board group", { exact: true })
-          .and(page.locator("span")),
-      ).toHaveCount(0);
-      await expect(page.getByText("12.5", { exact: true })).toHaveCount(0);
-      await expect(
-        page.getByText("Private source denial must not be displayed", {
-          exact: true,
-        }),
-      ).toHaveCount(0);
-      const overview = page.getByRole("region", {
-        name: "Record summaries",
+    await sendChartInvalidation(page, moduleId);
+    await expect.poll(() => chartReads).toBeGreaterThan(originalReads);
+    await expect(
+      page
+        .getByText("Private Board group", { exact: true })
+        .and(page.locator("span")),
+    ).toHaveCount(0);
+    await expect(page.getByText("12.5", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByText("Private source denial must not be displayed", {
         exact: true,
-      });
-      await expect(
-        overview.getByText(/unavailable|do not have access/i),
-      ).toBeVisible();
-      expect(downstream).toHaveLength(before);
-      expect(api.writes).toEqual([]);
-    } finally {
-      await testInfo.attach("current-chart-boundary", {
-        body: JSON.stringify({ fault, originalReads, chartReads, downstream }),
-        contentType: "application/json",
-      });
-    }
+      }),
+    ).toHaveCount(0);
+    const overview = page.getByRole("region", {
+      name: "Record summaries",
+      exact: true,
+    });
+    await expect(
+      overview.getByText(/unavailable|do not have access/i),
+    ).toBeVisible();
+    expect(downstream).toHaveLength(before);
+    expect(api.writes).toEqual([]);
   });
 }
 
-test("E evidence Board records Chart refusal stops both field metadata and record rows", async ({
+test("Board records Chart refusal stops both field metadata and record rows", async ({
   page,
-}, testInfo) => {
+}) => {
   const api = await installEvidenceBoardApi(page, {
     ...evidenceWidget("reference"),
     widget_type: "records",
@@ -2142,21 +1975,18 @@ test("E evidence Board records Chart refusal stops both field metadata and recor
   await page.route("**/api/records/query", (route) => {
     reads.push({ path: "/api/records/query", refused });
     return route.fulfill({
-      json: evidencePage(
+      json: pageOf(
         [
-          {
+          wireRecord({
             id: recordId,
             module_id: moduleId,
             data: { [fieldId]: "Private Board row" },
             display_values: { [fieldId]: "Private Board row" },
             created_at: timestamp,
             updated_at: timestamp,
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: null,
-          },
+          }),
         ],
-        5,
+        { limit: 5 },
       ),
     });
   });
@@ -2172,10 +2002,7 @@ test("E evidence Board records Chart refusal stops both field metadata and recor
   ).toBeVisible();
   const before = reads.length;
   refused = true;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page
       .getByRole("region", { name: "Record summaries", exact: true })
@@ -2191,19 +2018,14 @@ test("E evidence Board records Chart refusal stops both field metadata and recor
   expect(reads.some((item) => item.path === "/api/fields")).toBe(true);
   expect(reads.some((item) => item.path === "/api/records/query")).toBe(true);
   expect(api.writes).toEqual([]);
-  await testInfo.attach("records-chart-boundary", {
-    body: JSON.stringify(reads),
-    contentType: "application/json",
-  });
 });
 
-test("E evidence Board Chart hints and readable department move preserve dirty and pending settings", async ({
+test("Board Chart hints and readable department move preserve dirty and pending settings", async ({
   page,
-}, testInfo) => {
+}) => {
   const api = await installEvidenceBoardApi(page, evidenceWidget("reference"));
   let revision = 1;
   const sourceWrites: string[] = [];
-  const requests: unknown[] = [];
   await page.route(`**/api/charts/${evidenceChartId}`, (route) => {
     if (route.request().method() !== "GET") {
       sourceWrites.push(route.request().method());
@@ -2232,13 +2054,12 @@ test("E evidence Board Chart hints and readable department move preserve dirty a
     const request = route.request().postDataJSON() as {
       definition: { search: string };
     };
-    requests.push(request);
     const current = request.definition.search === "current region";
     const pending = request.definition.search === "pending region";
     return route.fulfill({
-      json: evidencePage(
+      json: pageOf(
         [
-          {
+          wireBucket({
             key: "current",
             label: current
               ? "Current Board region"
@@ -2247,9 +2068,9 @@ test("E evidence Board Chart hints and readable department move preserve dirty a
                 : "Private Board group",
             value: current ? 9.25 : pending ? 23.75 : 12.5,
             record_count: 127,
-          },
+          }),
         ],
-        1,
+        { limit: 1 },
       ),
     });
   });
@@ -2267,10 +2088,7 @@ test("E evidence Board Chart hints and readable department move preserve dirty a
   await settings.getByLabel("Size", { exact: true }).selectOption("S");
   await settings.getByLabel("Pin this widget", { exact: true }).check();
   revision = 2;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page
       .getByText("Current Board region", { exact: true })
@@ -2295,10 +2113,7 @@ test("E evidence Board Chart hints and readable department move preserve dirty a
       settings.getByRole("button", { name: "Save settings", exact: true }),
     ).toBeDisabled();
     revision = 3;
-    await sendOpenViewEvent(page, "invalidate", {
-      entity: "charts",
-      module_id: moduleId,
-    });
+    await sendChartInvalidation(page, moduleId);
     await expect(
       page
         .getByText("Pending Board region", { exact: true })
@@ -2341,23 +2156,14 @@ test("E evidence Board Chart hints and readable department move preserve dirty a
     });
   } finally {
     gate.release();
-    await testInfo.attach("chart-hint-draft-boundary", {
-      body: JSON.stringify({
-        requests,
-        writes: api.writes,
-        sourceWrites,
-        stored: api.state.widgets,
-      }),
-      contentType: "application/json",
-    });
   }
 });
 
 for (const replacement of ["board", "source", "account"] as const) {
   for (const heldOutcome of ["success", "refusal"] as const) {
-    test(`E evidence Board held Chart ${heldOutcome} after ${replacement} replacement cannot disclose overwrite or poison`, async ({
+    test(`Board held Chart ${heldOutcome} after ${replacement} replacement cannot disclose overwrite or poison`, async ({
       page,
-    }, testInfo) => {
+    }) => {
       const api = await installEvidenceBoardApi(
         page,
         evidenceWidget("reference"),
@@ -2366,8 +2172,8 @@ for (const replacement of ["board", "source", "account"] as const) {
       const nextActor = "00000000-0000-4000-8000-000000000685";
       let actor = "00000000-0000-4000-8000-000000000661";
       let held = false;
-      const gate = evidenceBarrier();
-      const replied = evidenceBarrier();
+      const gate = newGate();
+      const replied = newGate();
       const requests: Array<{ search: string; request: unknown }> = [];
       const nextQuery = {
         ...evidenceQuery,
@@ -2397,35 +2203,31 @@ for (const replacement of ["board", "source", "account"] as const) {
           },
         }),
       );
-      const replacementBoard = {
+      const replacementBoard = wireBoard({
         id: otherBoardId,
-        scope: "project",
-        department_id: null,
         name: "Replacement board",
         description: null,
-        status: "active",
-        revision: 1,
         level: "manage",
         created_at: timestamp,
         updated_at: timestamp,
-      };
+      });
       await page.route("**/api/boards**", (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === "/api/boards")
           return route.fulfill({
-            json: evidencePage(
+            json: pageOf(
               [
                 { ...replacementBoard, id: boardId, name: "Query overview" },
                 replacementBoard,
               ],
-              25,
+              { limit: 25 },
             ),
           });
         if (path === `/api/boards/${otherBoardId}`)
           return route.fulfill({ json: replacementBoard });
         if (path === `/api/boards/${otherBoardId}/widgets`)
           return route.fulfill({
-            json: { ...evidencePage([nextWidget]), board_revision: 1 },
+            json: { ...pageOf([nextWidget], { limit: 12 }), board_revision: 1 },
           });
         return route.fallback();
       });
@@ -2460,18 +2262,18 @@ for (const replacement of ["board", "source", "account"] as const) {
         requests.push({ search: request.definition.search, request });
         const current = request.definition.search === "replacement target";
         return route.fulfill({
-          json: evidencePage(
+          json: pageOf(
             [
-              {
+              wireBucket({
                 key: current ? "new" : "old",
                 label: current
                   ? "Replacement Board group"
                   : "Private Board group",
                 value: current ? 24.75 : 12.5,
                 record_count: 127,
-              },
+              }),
             ],
-            1,
+            { limit: 1 },
           ),
         });
       });
@@ -2487,10 +2289,7 @@ for (const replacement of ["board", "source", "account"] as const) {
       ).length;
       held = true;
       try {
-        await sendOpenViewEvent(page, "invalidate", {
-          entity: "charts",
-          module_id: moduleId,
-        });
+        await sendChartInvalidation(page, moduleId);
         await gate.started;
         if (replacement === "board") {
           await page
@@ -2538,10 +2337,7 @@ for (const replacement of ["board", "source", "account"] as const) {
           page.getByText("Old private source refusal", { exact: true }),
         ).toHaveCount(0);
         const fresh = page.waitForResponse("**/api/records/aggregate-snapshot");
-        await sendOpenViewEvent(page, "invalidate", {
-          entity: "charts",
-          module_id: moduleId,
-        });
+        await sendChartInvalidation(page, moduleId);
         await fresh;
         await expect(
           page
@@ -2555,640 +2351,10 @@ for (const replacement of ["board", "source", "account"] as const) {
         expect(api.writes).toEqual([]);
       } finally {
         gate.release();
-        await testInfo.attach("held-chart-target-boundary", {
-          body: JSON.stringify({
-            replacement,
-            heldOutcome,
-            actor,
-            oldQueries,
-            requests,
-            writes: api.writes,
-          }),
-          contentType: "application/json",
-        });
       }
     });
   }
 }
-
-test("Board metadata is server-filtered and a partial widget page is not treated as complete", async () => {
-  const mock = mockFetch(() =>
-    Response.json({
-      items: [wireWidget],
-      pagination: { limit: 12, offset: 0, count: 1, total: 2, has_more: true },
-      board_revision: 1,
-    }),
-  );
-  try {
-    await expect(loadLiveWidgetMetadata(boardId)).rejects.toThrow();
-    expect(mock.paths).toEqual([
-      `/api/boards/${boardId}/widgets?limit=12&offset=0&sort_by=position&sort_order=asc`,
-    ]);
-  } finally {
-    mock.restore();
-  }
-});
-
-test("summary data uses the OpenView boundary and a records.read denial cannot become widget data", async () => {
-  const mock = mockFetch((path) => {
-    if (path === "/api/records/query") {
-      return Response.json({ detail: "Forbidden" }, { status: 403 });
-    }
-    throw new Error(`Unexpected request: ${path}`);
-  });
-  try {
-    const plan = buildBoardWidgetQueryPlan({
-      ...widget,
-      widgetType: "summary",
-    });
-    if (plan.kind === "unavailable") throw new Error("Unexpected plan");
-    await expect(loadLiveWidgetData(plan)).rejects.toMatchObject({
-      status: 403,
-    });
-    expect(mock.paths).toEqual(["/api/records/query"]);
-  } finally {
-    mock.restore();
-  }
-});
-
-test("records widget resolves only configured fields by ID before querying rows", async () => {
-  const mock = mockFetch((path) => {
-    if (path === `/api/fields/${fieldId}`)
-      return Response.json({
-        id: fieldId,
-        module_id: moduleId,
-        name: "Request title",
-        type: "text",
-        required: false,
-        position: 350,
-        config: {},
-        is_deleted: false,
-      });
-    if (path === "/api/records/query")
-      return Response.json({
-        items: [],
-        pagination: {
-          limit: 5,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
-      });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-  try {
-    const plan = buildBoardWidgetQueryPlan(widget);
-    if (plan.kind !== "records") throw new Error("Unexpected plan");
-    await expect(loadLiveWidgetData(plan)).resolves.toMatchObject({
-      kind: "records",
-      fieldNames: { [fieldId]: "Request title" },
-    });
-    expect(mock.paths).toEqual([
-      `/api/fields/${fieldId}`,
-      "/api/records/query",
-    ]);
-  } finally {
-    mock.restore();
-  }
-});
-
-test("field denial and wrong-module or deleted fields never request record rows", async () => {
-  const plan = buildBoardWidgetQueryPlan(widget);
-  if (plan.kind !== "records") throw new Error("Unexpected plan");
-  for (const response of [
-    Response.json({ detail: "Forbidden" }, { status: 403 }),
-    Response.json({
-      id: fieldId,
-      module_id: otherBoardId,
-      name: "Wrong module",
-      type: "text",
-      required: false,
-      position: 0,
-      config: {},
-      is_deleted: false,
-    }),
-    Response.json({
-      id: fieldId,
-      module_id: moduleId,
-      name: "Deleted",
-      type: "text",
-      required: false,
-      position: 0,
-      config: {},
-      is_deleted: true,
-    }),
-  ]) {
-    const mock = mockFetch((path) => {
-      if (path === `/api/fields/${fieldId}`) return response;
-      throw new Error(`Record query must not run: ${path}`);
-    });
-    try {
-      await expect(loadLiveWidgetData(plan)).rejects.toThrow();
-      expect(mock.paths).toEqual([`/api/fields/${fieldId}`]);
-    } finally {
-      mock.restore();
-    }
-  }
-});
-
-test("authentication, audience, and missing-resource responses all revoke retained widget data", () => {
-  for (const status of [401, 403, 404]) {
-    expect(classifyLiveWidgetFailure(new ApiError(status, "Unavailable"))).toBe(
-      "access-lost",
-    );
-  }
-  expect(classifyLiveWidgetFailure(new ApiError(503, "Unavailable"))).toBe(
-    "transient",
-  );
-  expect(classifyLiveWidgetFailure(new TypeError("Network failed"))).toBe(
-    "transient",
-  );
-  expect(classifyLiveWidgetFailure(new Error("Invalid response"))).toBe("hard");
-});
-
-test("widget state clears on Board switch, changed configuration, and revoked access", () => {
-  const begin = transitionLiveWidgetsState(emptyLiveWidgetsState, {
-    type: "begin",
-    key,
-    sequence: 1,
-  });
-  const listed = transitionLiveWidgetsState(begin, {
-    type: "metadata",
-    key,
-    sequence: 1,
-    widgets: [widget],
-    workspaceToday: "2026-09-23",
-  });
-  expect(listed.items).toHaveLength(1);
-  const signature = listed.items[0].signature;
-  const data = {
-    kind: "records" as const,
-    fieldNames: { [fieldId]: "Request title" },
-    result: {
-      items: [
-        {
-          id: recordId,
-          moduleId,
-          data: { [fieldId]: "Private value" },
-          displayValues: {},
-          createdAt: timestamp,
-          updatedAt: timestamp,
-          deletedAt: null,
-          isDeleted: false,
-          performedBy: null,
-        },
-      ],
-      pagination: { limit: 5, offset: 0, count: 1, total: 1, hasMore: false },
-    },
-  };
-  const ready = transitionLiveWidgetsState(listed, {
-    type: "result",
-    key,
-    sequence: 1,
-    widgetId,
-    signature,
-    data,
-  });
-  expect(ready.items[0].data).toEqual(data);
-
-  const refreshing = transitionLiveWidgetsState(ready, {
-    type: "begin",
-    key,
-    sequence: 2,
-  });
-  expect(refreshing.items[0].data).toBeNull();
-  expect(renderWidgets(refreshing)).not.toContain("Private value");
-  const sameMetadata = transitionLiveWidgetsState(refreshing, {
-    type: "metadata",
-    key,
-    sequence: 2,
-    widgets: [widget],
-    workspaceToday: "2026-09-23",
-  });
-  expect(sameMetadata.items[0].data).toBeNull();
-  const changed = transitionLiveWidgetsState(refreshing, {
-    type: "metadata",
-    key,
-    sequence: 2,
-    widgets: [
-      {
-        ...widget,
-        config: {
-          ...widget.config,
-          filters: [
-            { fieldId, expectedType: "text", operator: "eq", value: "Other" },
-          ],
-        },
-      },
-    ],
-    workspaceToday: "2026-09-23",
-  });
-  expect(changed.items[0].data).toBeNull();
-  expect(changed.items[0].status).toBe("loading");
-  const audienceRemoved = transitionLiveWidgetsState(refreshing, {
-    type: "metadata",
-    key,
-    sequence: 2,
-    widgets: [],
-  });
-  expect(audienceRemoved.items).toEqual([]);
-  const stale = transitionLiveWidgetsState(changed, {
-    type: "result",
-    key,
-    sequence: 1,
-    widgetId,
-    signature,
-    data,
-  });
-  expect(stale).toEqual(changed);
-
-  const revoked = transitionLiveWidgetsState(refreshing, {
-    type: "reject",
-    key,
-    sequence: 2,
-    retain: false,
-    error: "Widgets unavailable",
-  });
-  expect(revoked.items).toEqual([]);
-  const switched = transitionLiveWidgetsState(ready, {
-    type: "begin",
-    key: `${otherBoardId}:2026-09-23`,
-    sequence: 3,
-  });
-  expect(switched.items).toEqual([]);
-  expect(
-    transitionLiveWidgetsState(switched, {
-      type: "result",
-      key,
-      sequence: 1,
-      widgetId,
-      signature,
-      data,
-    }),
-  ).toEqual(switched);
-});
-
-test("same-widget transient query or metadata failure settles last-good without endless loading", () => {
-  const summary = { ...widget, widgetType: "summary" as const };
-  const listed = transitionLiveWidgetsState(
-    transitionLiveWidgetsState(emptyLiveWidgetsState, {
-      type: "begin",
-      key,
-      sequence: 1,
-    }),
-    { type: "metadata", key, sequence: 1, widgets: [summary] },
-  );
-  const signature = listed.items[0].signature;
-  const data = {
-    kind: "records" as const,
-    fieldNames: {},
-    result: {
-      items: [],
-      pagination: { limit: 5, offset: 0, count: 0, total: 0, hasMore: false },
-    },
-  };
-  const ready = transitionLiveWidgetsState(listed, {
-    type: "result",
-    key,
-    sequence: 1,
-    widgetId,
-    signature,
-    data,
-  });
-  const refreshing = transitionLiveWidgetsState(ready, {
-    type: "begin",
-    key,
-    sequence: 2,
-  });
-  const metadataFailure = transitionLiveWidgetsState(refreshing, {
-    type: "reject",
-    key,
-    sequence: 2,
-    retain: true,
-    error: "Could not refresh widgets",
-  });
-  expect(metadataFailure.status).toBe("ready");
-  expect(metadataFailure.items[0]).toMatchObject({
-    status: "ready",
-    data,
-  });
-  const same = transitionLiveWidgetsState(refreshing, {
-    type: "metadata",
-    key,
-    sequence: 2,
-    widgets: [summary],
-  });
-  const transient = transitionLiveWidgetsState(same, {
-    type: "item-error",
-    key,
-    sequence: 2,
-    widgetId,
-    signature,
-    retain: true,
-    error: "Could not refresh",
-  });
-  expect(transient.items[0].data).toEqual(data);
-  const hard = transitionLiveWidgetsState(same, {
-    type: "item-error",
-    key,
-    sequence: 2,
-    widgetId,
-    signature,
-    retain: false,
-    error: "Data unavailable",
-  });
-  expect(hard.items[0].data).toBeNull();
-  expect(hard.items[0].status).toBe("error");
-});
-
-function renderWidgets(state: LiveWidgetsState): string {
-  return renderToStaticMarkup(
-    createElement(ServerBoardWidgetsDisplay, { state, onRetry: () => {} }),
-  );
-}
-
-function renderedText(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function widgetItem(
-  source: BoardWidget,
-  data: LiveWidgetData | null,
-  status: LiveWidgetItem["status"] = "ready",
-): LiveWidgetItem {
-  return {
-    widget: source,
-    plan: buildBoardWidgetQueryPlan(source, { workspaceToday: "2026-09-23" }),
-    signature: source.id,
-    status,
-    data,
-    error: null,
-  };
-}
-
-function displayState(items: LiveWidgetItem[]): LiveWidgetsState {
-  return { key, sequence: 1, status: "ready", items, error: null };
-}
-
-test("record widgets show authorized select and person labels instead of stored IDs", async () => {
-  const statusFieldId = "00000000-0000-4000-8000-000000000011";
-  const assigneeFieldId = "00000000-0000-4000-8000-000000000012";
-  const choiceId = "00000000-0000-4000-8000-000000000013";
-  const assigneeId = "00000000-0000-4000-8000-000000000014";
-  const recordsWidget: BoardWidget & {
-    config: BoardLegacyWidgetConfig;
-    chartId: null;
-  } = {
-    ...widget,
-    id: otherBoardId,
-    name: "Assignment queue",
-    config: {
-      ...widget.config,
-      fields: [
-        { fieldId: statusFieldId, expectedType: "select" },
-        { fieldId: assigneeFieldId, expectedType: "user" },
-      ],
-    },
-  };
-  const mock = mockFetch((path) => {
-    if (path === `/api/fields/${statusFieldId}`)
-      return Response.json({
-        id: statusFieldId,
-        module_id: moduleId,
-        name: "Status",
-        type: "select",
-        required: false,
-        position: 0,
-        config: { options: [{ id: choiceId, label: "In progress" }] },
-        is_deleted: false,
-      });
-    if (path === `/api/fields/${assigneeFieldId}`)
-      return Response.json({
-        id: assigneeFieldId,
-        module_id: moduleId,
-        name: "Assignee",
-        type: "user",
-        required: false,
-        position: 1,
-        config: {},
-        is_deleted: false,
-      });
-    if (path === "/api/records/query")
-      return Response.json({
-        items: [
-          {
-            id: recordId,
-            module_id: moduleId,
-            data: {
-              [statusFieldId]: choiceId,
-              [assigneeFieldId]: assigneeId,
-            },
-            display_values: {
-              [statusFieldId]: "In progress",
-              [assigneeFieldId]: "Alex Reader",
-            },
-            created_at: timestamp,
-            updated_at: timestamp,
-            deleted_at: null,
-            is_deleted: false,
-            performed_by: null,
-          },
-        ],
-        pagination: {
-          limit: 5,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
-      });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-
-  try {
-    const plan = buildBoardWidgetQueryPlan(recordsWidget);
-    if (plan.kind !== "records") throw new Error("Expected a records widget");
-    const data = await loadLiveWidgetData(plan);
-    const html = renderWidgets(displayState([widgetItem(recordsWidget, data)]));
-
-    expect(renderedText(html)).toContain("Status In progress");
-    expect(renderedText(html)).toContain("Assignee Alex Reader");
-    expect(html).not.toContain(choiceId);
-    expect(html).not.toContain(assigneeId);
-  } finally {
-    mock.restore();
-  }
-});
-
-test("live Board Overview renders exact summary count and escaped returned record values", () => {
-  const summary = {
-    ...widget,
-    name: "Operations summary",
-    widgetType: "summary" as const,
-  };
-  const records = {
-    ...widget,
-    id: otherBoardId,
-    name: "Open requests",
-    widgetType: "records" as const,
-  };
-  const html = renderWidgets(
-    displayState([
-      widgetItem(summary, {
-        kind: "records",
-        fieldNames: {},
-        result: {
-          items: [],
-          pagination: {
-            limit: 1,
-            offset: 0,
-            count: 0,
-            total: 7,
-            hasMore: true,
-          },
-        },
-      }),
-      widgetItem(records, {
-        kind: "records",
-        fieldNames: { [fieldId]: "Request title" },
-        result: {
-          items: [
-            {
-              id: recordId,
-              moduleId,
-              data: { [fieldId]: "Private <script>value</script>" },
-              displayValues: {},
-              createdAt: timestamp,
-              updatedAt: timestamp,
-              deletedAt: null,
-              isDeleted: false,
-              performedBy: null,
-            },
-          ],
-          pagination: {
-            limit: 5,
-            offset: 0,
-            count: 1,
-            total: 1,
-            hasMore: false,
-          },
-        },
-      }),
-    ]),
-  );
-  expect(html).toContain("Operations summary");
-  expect(renderedText(html)).toContain("7 Matching records");
-  expect(html).toContain("Open requests");
-  expect(html).toContain("Request title");
-  expect(html).not.toContain("Field 1");
-  expect(html).toContain("Private &lt;script&gt;value&lt;/script&gt;");
-  expect(html).not.toContain("sample-board");
-});
-
-test("record summary cards show the exact count of each summary", () => {
-  const summary = {
-    ...widget,
-    name: "Operations summary",
-    widgetType: "summary" as const,
-    pinned: true,
-    config: widget.config,
-  };
-  const targetedSummary = {
-    ...summary,
-    id: otherBoardId,
-    name: "Targeted summary",
-  };
-  const privateSummary = {
-    ...summary,
-    id: "00000000-0000-4000-8000-000000000007",
-    name: "Private summary",
-  };
-  const data = (total: number): LiveWidgetData => ({
-    kind: "records",
-    fieldNames: {},
-    result: {
-      items: [],
-      pagination: {
-        limit: 1,
-        offset: 0,
-        count: 0,
-        total,
-        hasMore: total > 0,
-      },
-    },
-  });
-  const html = renderWidgets(
-    displayState([
-      widgetItem(summary, data(24)),
-      widgetItem(targetedSummary, data(18)),
-      widgetItem(privateSummary, data(42)),
-    ]),
-  );
-
-  expect(html).toContain("Record summaries");
-  expect(html).not.toContain("Board overview");
-  const text = renderedText(html);
-  expect(text).toContain("24 Matching records");
-  expect(text).toContain("18 Matching records");
-  expect(text).toContain("42 Matching records");
-  expect(html).not.toContain(moduleId);
-  expect(html).not.toContain("audience");
-  expect(html).toContain("Pinned");
-});
-
-test("a widget's initial data failure keeps a retry action on that widget", () => {
-  const summary = { ...widget, widgetType: "summary" as const };
-  const failed = {
-    ...widgetItem(summary, null, "error"),
-    error: "Could not load summary data. Try again.",
-  };
-
-  const html = renderWidgets(displayState([failed]));
-
-  expect(html).toContain("Could not load summary data");
-  expect(renderedText(html)).toContain("Retry");
-});
-
-test("records card does not show values when a selected field label is missing", () => {
-  const records = { ...widget, name: "Open requests" };
-  const html = renderWidgets(
-    displayState([
-      widgetItem(records, {
-        kind: "records",
-        fieldNames: {},
-        result: {
-          items: [
-            {
-              id: recordId,
-              moduleId,
-              data: { [fieldId]: "Private salary" },
-              displayValues: {},
-              createdAt: timestamp,
-              updatedAt: timestamp,
-              deletedAt: null,
-              isDeleted: false,
-              performedBy: null,
-            },
-          ],
-          pagination: {
-            limit: 5,
-            offset: 0,
-            count: 1,
-            total: 1,
-            hasMore: false,
-          },
-        },
-      }),
-    ]),
-  );
-  expect(html).toContain("Field names unavailable");
-  expect(html).not.toContain("Private salary");
-  expect(html).not.toContain("Field 1");
-});
 
 for (const scenario of [
   {
@@ -3224,9 +2390,7 @@ for (const scenario of [
     nullGap: false,
   },
 ] as const) {
-  test(`S30 Board line points preserve ${scenario.name}`, async ({
-    page,
-  }, testInfo) => {
+  test(`Board line points preserve ${scenario.name}`, async ({ page }) => {
     await installS26WidgetApi(page, [
       {
         ...wireWidget,
@@ -3252,7 +2416,7 @@ for (const scenario of [
     await installS30WidgetData(page);
     await page.route("**/api/records/aggregate-snapshot", (route) =>
       route.fulfill({
-        json: evidencePage([...scenario.items], scenario.items.length),
+        json: pageOf([...scenario.items], { limit: scenario.items.length }),
       }),
     );
     await page.goto(`/boards?board=${boardId}`);
@@ -3300,57 +2464,46 @@ for (const scenario of [
               ?.getAttribute("d") ?? null,
         };
       });
-    try {
-      // Point visibility, not an exact-value list or a zero-length isolated path,
-      // is the retained Board geometry contract. Null buckets have no point.
-      await expect(points).toHaveCount(scenario.pointCount);
-      for (let index = 0; index < scenario.pointCount; index++)
-        await expect(points.nth(index)).toBeVisible();
-      await expect
-        .poll(async () => {
-          const geometry = await readGeometry();
-          const plot = geometry.plot;
-          return (
-            !!plot &&
-            geometry.points.length === scenario.pointCount &&
-            geometry.points.every(
-              (point) =>
-                Number.isFinite(point.x) &&
-                Number.isFinite(point.y) &&
-                point.radius > 0 &&
-                point.x >= plot.x - 1 &&
-                point.x <= plot.x + plot.width + 1 &&
-                point.y >= plot.y - 1 &&
-                point.y <= plot.y + plot.height + 1,
-            )
-          );
-        })
-        .toBe(true);
-      if (scenario.nullGap) {
-        await expect
-          .poll(async () => (await readGeometry()).path?.match(/M/g)?.length)
-          .toBe(2);
+    // Point visibility, not an exact-value list or a zero-length isolated path,
+    // is the retained Board geometry contract. Null buckets have no point.
+    await expect(points).toHaveCount(scenario.pointCount);
+    for (let index = 0; index < scenario.pointCount; index++)
+      await expect(points.nth(index)).toBeVisible();
+    await expect
+      .poll(async () => {
         const geometry = await readGeometry();
-        expect(geometry.points[0]!.x).toBeLessThan(geometry.points[1]!.x);
-        expect(geometry.points[0]!.y).toBeGreaterThan(geometry.points[1]!.y);
-      }
-      await expect(svg.locator(".recharts-label-list")).toHaveCount(0);
-    } finally {
-      await testInfo.attach("s30-line-point-geometry", {
-        body: JSON.stringify(
-          { scenario: scenario.name, ...(await readGeometry()) },
-          null,
-          2,
-        ),
-        contentType: "application/json",
-      });
+        const plot = geometry.plot;
+        return (
+          !!plot &&
+          geometry.points.length === scenario.pointCount &&
+          geometry.points.every(
+            (point) =>
+              Number.isFinite(point.x) &&
+              Number.isFinite(point.y) &&
+              point.radius > 0 &&
+              point.x >= plot.x - 1 &&
+              point.x <= plot.x + plot.width + 1 &&
+              point.y >= plot.y - 1 &&
+              point.y <= plot.y + plot.height + 1,
+          )
+        );
+      })
+      .toBe(true);
+    if (scenario.nullGap) {
+      await expect
+        .poll(async () => (await readGeometry()).path?.match(/M/g)?.length)
+        .toBe(2);
+      const geometry = await readGeometry();
+      expect(geometry.points[0]!.x).toBeLessThan(geometry.points[1]!.x);
+      expect(geometry.points[0]!.y).toBeGreaterThan(geometry.points[1]!.y);
     }
+    await expect(svg.locator(".recharts-label-list")).toHaveCount(0);
   });
 }
 
 test("live Board Overview renders supported group and date charts with exact value text", async ({
   page,
-}, testInfo) => {
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const workload = {
     ...wireWidget,
@@ -3392,8 +2545,18 @@ test("live Board Overview renders supported group and date charts with exact val
     },
   };
   const groups = [
-    { key: "open", label: "Open", value: "4.25", record_count: 4 },
-    { key: "closed", label: "Closed", value: "2.5", record_count: 2 },
+    wireBucket({
+      key: "open",
+      label: "Open",
+      value: "4.25",
+      record_count: 4,
+    }),
+    wireBucket({
+      key: "closed",
+      label: "Closed",
+      value: "2.5",
+      record_count: 2,
+    }),
   ];
   await installS26WidgetApi(page, [
     workload,
@@ -3430,27 +2593,30 @@ test("live Board Overview renders supported group and date charts with exact val
             )
           : null;
       return route.fulfill({
-        json: evidencePage(
+        json: pageOf(
           dates
-            ? dates.map((key, index) => ({
-                key,
-                label: key,
-                value:
-                  index === 0
-                    ? 3
-                    : index === 1
-                      ? null
-                      : index === dates.length - 1
-                        ? "4.2500"
-                        : 0,
-                record_count: index === 1 ? 0 : 2,
-              }))
+            ? dates.map((key, index) =>
+                wireBucket({
+                  key,
+                  value:
+                    index === 0
+                      ? 3
+                      : index === 1
+                        ? null
+                        : index === dates.length - 1
+                          ? "4.2500"
+                          : 0,
+                  record_count: index === 1 ? 0 : 2,
+                }),
+              )
             : groups,
-          dates
-            ? dates.length
-            : path === "aggregate-query"
-              ? Number(body.limit)
-              : 10000,
+          {
+            limit: dates
+              ? dates.length
+              : path === "aggregate-query"
+                ? Number(body.limit)
+                : 10000,
+          },
         ),
       });
     });
@@ -3579,110 +2745,92 @@ test("live Board Overview renders supported group and date charts with exact val
       });
     }, geometryFixtures);
   async function expectGeometryReady(phase: string) {
-    let readings: Awaited<ReturnType<typeof readGeometry>> = [];
     let previousGeometry = "";
-    try {
-      await expect(page.locator("svg.recharts-surface")).toHaveCount(
-        geometryFixtures.length,
-      );
-      await expect
-        .poll(
-          async () => {
-            const charts = await readGeometry();
-            readings = charts;
-            const geometry = JSON.stringify(charts);
-            const stable = geometry === previousGeometry;
-            previousGeometry = geometry;
-            const inside = (
-              box: { x: number; y: number; width: number; height: number },
-              area: { x: number; y: number; width: number; height: number },
-            ) =>
-              box.x >= area.x - 1 &&
-              box.y >= area.y - 1 &&
-              box.x + box.width <= area.x + area.width + 1 &&
-              box.y + box.height <= area.y + area.height + 1;
-            return (
-              stable &&
-              charts.length === geometryFixtures.length &&
-              charts.every((chart) => {
+    await expect(page.locator("svg.recharts-surface")).toHaveCount(
+      geometryFixtures.length,
+    );
+    await expect
+      .poll(
+        async () => {
+          const charts = await readGeometry();
+          const geometry = JSON.stringify(charts);
+          const stable = geometry === previousGeometry;
+          previousGeometry = geometry;
+          const inside = (
+            box: { x: number; y: number; width: number; height: number },
+            area: { x: number; y: number; width: number; height: number },
+          ) =>
+            box.x >= area.x - 1 &&
+            box.y >= area.y - 1 &&
+            box.x + box.width <= area.x + area.width + 1 &&
+            box.y + box.height <= area.y + area.height + 1;
+          return (
+            stable &&
+            charts.length === geometryFixtures.length &&
+            charts.every((chart) => {
+              if (
+                !chart.svg ||
+                !chart.viewBox ||
+                chart.expectedMarks === 0 ||
+                chart.svg.width <= 0 ||
+                chart.svg.height <= 0 ||
+                chart.container.width <= 0 ||
+                chart.container.height <= 0 ||
+                Math.abs(chart.svg.width - chart.container.width) > 1 ||
+                Math.abs(chart.svg.height - chart.container.height) > 1 ||
+                Math.abs(chart.viewBox.width - chart.container.width) > 1 ||
+                Math.abs(chart.viewBox.height - chart.container.height) > 1
+              )
+                return false;
+              const viewBox = chart.viewBox;
+              const plot = chart.plot ?? viewBox;
+              if (!inside(plot, viewBox)) return false;
+              if (
+                chart.marks.length !== chart.expectedMarks ||
+                chart.marks.some(
+                  (mark) =>
+                    mark.bounds.width <= 0 ||
+                    mark.bounds.height <= 0 ||
+                    !inside(mark.bounds, plot),
+                )
+              )
+                return false;
+              if (chart.line) {
+                const dash = Number.parseFloat(chart.line.dash);
                 if (
-                  !chart.svg ||
-                  !chart.viewBox ||
-                  chart.expectedMarks === 0 ||
-                  chart.svg.width <= 0 ||
-                  chart.svg.height <= 0 ||
-                  chart.container.width <= 0 ||
-                  chart.container.height <= 0 ||
-                  Math.abs(chart.svg.width - chart.container.width) > 1 ||
-                  Math.abs(chart.svg.height - chart.container.height) > 1 ||
-                  Math.abs(chart.viewBox.width - chart.container.width) > 1 ||
-                  Math.abs(chart.viewBox.height - chart.container.height) > 1
+                  chart.line.length <= 0 ||
+                  (chart.line.dash !== "none" &&
+                    (!Number.isFinite(dash) || dash < chart.line.length - 1))
                 )
                   return false;
-                const viewBox = chart.viewBox;
-                const plot = chart.plot ?? viewBox;
-                if (!inside(plot, viewBox)) return false;
-                if (
-                  chart.marks.length !== chart.expectedMarks ||
-                  chart.marks.some(
-                    (mark) =>
-                      mark.bounds.width <= 0 ||
-                      mark.bounds.height <= 0 ||
-                      !inside(mark.bounds, plot),
-                  )
-                )
-                  return false;
-                if (chart.line) {
-                  const dash = Number.parseFloat(chart.line.dash);
-                  if (
-                    chart.line.length <= 0 ||
-                    (chart.line.dash !== "none" &&
-                      (!Number.isFinite(dash) || dash < chart.line.length - 1))
-                  )
-                    return false;
-                }
-                if (
-                  chart.points.length !== chart.expectedPoints ||
-                  chart.points.some((point) => {
-                    const { x, y, width, height } = point.bounds;
-                    const centerX = x + width / 2;
-                    const centerY = y + height / 2;
-                    return (
-                      width <= 0 ||
-                      height <= 0 ||
-                      !inside(point.bounds, viewBox) ||
-                      centerX < plot.x - 1 ||
-                      centerX > plot.x + plot.width + 1 ||
-                      centerY < plot.y - 1 ||
-                      centerY > plot.y + plot.height + 1
-                    );
-                  })
-                )
-                  return false;
-                return true;
-              })
-            );
-          },
-          {
-            message: `${phase}: SVG viewBox must exist, with valid container size and stable final marks inside plot`,
-          },
-        )
-        .toBe(true);
-    } finally {
-      await testInfo.attach(`s30-chart-readiness-${phase}`, {
-        body: JSON.stringify(
-          {
-            nativeClock: true,
-            phase,
-            viewport: page.viewportSize(),
-            charts: readings,
-          },
-          null,
-          2,
-        ),
-        contentType: "application/json",
-      });
-    }
+              }
+              if (
+                chart.points.length !== chart.expectedPoints ||
+                chart.points.some((point) => {
+                  const { x, y, width, height } = point.bounds;
+                  const centerX = x + width / 2;
+                  const centerY = y + height / 2;
+                  return (
+                    width <= 0 ||
+                    height <= 0 ||
+                    !inside(point.bounds, viewBox) ||
+                    centerX < plot.x - 1 ||
+                    centerX > plot.x + plot.width + 1 ||
+                    centerY < plot.y - 1 ||
+                    centerY > plot.y + plot.height + 1
+                  );
+                })
+              )
+                return false;
+              return true;
+            })
+          );
+        },
+        {
+          message: `${phase}: SVG viewBox must exist, with valid container size and stable final marks inside plot`,
+        },
+      )
+      .toBe(true);
   }
   // The same protection exercises the native resize cases even without capture mode.
   for (const [phase, mode, width, height] of [
@@ -3699,190 +2847,20 @@ test("live Board Overview renders supported group and date charts with exact val
     });
     await expectGeometryReady(phase);
   }
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
-    await page.evaluate(() => document.fonts.ready);
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate(applyAppearancePreferences, {
-        mode,
-        reduceMotion: true,
-      });
-      await captureOpenViewReview(page, `s30-board-${mode}`, {
-        beforeScreenshot: async (capture, viewport) => {
-          // Native ResizeObserver delivery must settle every SVG and fixture mark,
-          // including after the capture helper changes the responsive viewport.
-          await expectGeometryReady(
-            `capture ${mode} ${viewport.width}x${viewport.height}`,
-          );
-          expect(
-            await capture.evaluate(
-              () => document.documentElement.scrollWidth <= innerWidth,
-            ),
-          ).toBe(true);
-          const fullPageHeight = await capture.evaluate(() =>
-            Math.max(
-              document.documentElement.scrollHeight,
-              document.body.scrollHeight,
-            ),
-          );
-          console.log(
-            `S30 Board ${mode} ${viewport.width}x${viewport.height}: full-page height ${fullPageHeight}px`,
-          );
-        },
-      });
-    }
-  }
-});
-
-test("live Board Overview makes empty, unavailable, loading, error, and retained refresh states clear", () => {
-  const empty = renderWidgets(displayState([]));
-  expect(empty).toContain("No widgets yet");
-  const loading = renderWidgets({ ...displayState([]), status: "loading" });
-  expect(loading).toContain("Loading Board widgets");
-  const denied = renderWidgets({
-    ...displayState([]),
-    status: "error",
-    error: "Widgets unavailable. Check your access or try again.",
+  await page.evaluate(() => document.fonts.ready);
+  await expectWidgetAppearanceMatrix(page, async (viewport, mode) => {
+    await expectGeometryReady(
+      `matrix ${mode} ${viewport.width}x${viewport.height}`,
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
   });
-  expect(denied).toContain("Widgets unavailable");
-  expect(denied).toContain("Retry");
-  expect(denied).not.toContain("Private value");
-  const line = {
-    ...widget,
-    name: "Daily trend",
-    widgetType: "chart" as const,
-    config: {
-      ...widget.config,
-      fields: [{ fieldId, expectedType: "date" as const }],
-      visualization: "line" as const,
-    },
-  };
-  const unavailable = widgetItem(line, null, "unavailable");
-  unavailable.plan = buildBoardWidgetQueryPlan(line);
-  expect(renderWidgets(displayState([unavailable]))).toContain(
-    "Workspace date is unavailable",
-  );
-  const summary = {
-    ...widget,
-    name: "Operations summary",
-    widgetType: "summary" as const,
-  };
-  const refreshing = widgetItem(
-    summary,
-    {
-      kind: "records",
-      fieldNames: {},
-      result: {
-        items: [],
-        pagination: { limit: 1, offset: 0, count: 0, total: 7, hasMore: true },
-      },
-    },
-    "loading",
-  );
-  const retained = renderWidgets({
-    ...displayState([refreshing]),
-    status: "loading",
-    error: "Could not refresh widgets. Try again.",
-  });
-  expect(renderedText(retained)).toContain("7 Matching records");
-  expect(retained).toContain("Showing the last loaded");
 });
 
-test("pie and line previews reject geometry that overflows while preserving exact values", () => {
-  const pie = {
-    ...widget,
-    name: "Large totals",
-    widgetType: "chart" as const,
-    config: { ...widget.config, visualization: "pie" as const },
-  };
-  const line = {
-    ...pie,
-    id: otherBoardId,
-    name: "Large daily spread",
-    config: {
-      ...pie.config,
-      visualization: "line" as const,
-      fields: [{ fieldId, expectedType: "date" as const }],
-    },
-  };
-  const huge = [
-    { key: "a", label: "A", value: "1e308", recordCount: 1 },
-    { key: "b", label: "B", value: "1e308", recordCount: 1 },
-  ];
-  const html = renderWidgets(
-    displayState([
-      widgetItem(pie, {
-        kind: "snapshot",
-        result: {
-          items: huge,
-          pagination: {
-            limit: 10000,
-            offset: 0,
-            count: 2,
-            total: 2,
-            hasMore: false,
-          },
-        },
-      }),
-      widgetItem(line, {
-        kind: "snapshot",
-        result: {
-          items: [
-            { ...huge[0], key: "2026-09-22" },
-            { ...huge[1], key: "2026-09-23", value: "-1e308" },
-          ],
-          pagination: {
-            limit: 10000,
-            offset: 0,
-            count: 2,
-            total: 2,
-            hasMore: false,
-          },
-        },
-      }),
-    ]),
-  );
-  expect(html).toContain("Values too large to chart");
-  expect(html).toContain("1e308");
-  expect(html).not.toContain("Infinity");
-  expect(html).not.toContain("NaN");
-});
-
-test("negative group values keep exact text without misleading positive bar lengths", () => {
-  const workload = {
-    ...widget,
-    name: "Net change",
-    widgetType: "workload" as const,
-  };
-  const html = renderWidgets(
-    displayState([
-      widgetItem(workload, {
-        kind: "aggregate",
-        result: {
-          items: [
-            { key: "in", label: "In", value: 5, recordCount: 5 },
-            { key: "out", label: "Out", value: -5, recordCount: 5 },
-          ],
-          pagination: {
-            limit: 8,
-            offset: 0,
-            count: 2,
-            total: 2,
-            hasMore: false,
-          },
-        },
-      }),
-    ]),
-  );
-  expect(html).toContain("Negative values cannot be shown as bars");
-  expect(html).toContain(">5<");
-  expect(html).toContain(">-5<");
-  expect(html).not.toContain("bg-chart-1 h-full");
-});
-
-test("S05 widget create and edit omit refresh even when the server returns a legacy interval", async ({
+test("widget create and edit omit refresh even when the server returns a legacy interval", async ({
   page,
 }) => {
   await installOpenViewEventSource(page);
@@ -3897,29 +2875,17 @@ test("S05 widget create and edit omit refresh even when the server returns a leg
     },
   ];
   const writes: Record<string, unknown>[] = [];
-  const board = {
+  const board = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Operations board",
     description: "Synthetic S05 widget controls",
-    status: "active",
     revision,
     level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
-  };
-  const list = (items: unknown[], limit = 25) => ({
-    items,
-    pagination: {
-      limit,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
   });
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
@@ -3935,7 +2901,7 @@ test("S05 widget create and edit omit refresh even when the server returns a leg
       return reply({ id: actor, role: "admin", access: [] });
     if (path === "/api/views/data-sources")
       return reply(
-        list(
+        pageOf(
           [
             {
               id: moduleId,
@@ -3944,16 +2910,19 @@ test("S05 widget create and edit omit refresh even when the server returns a leg
               title_field_id: null,
             },
           ],
-          25,
+          { limit: 25 },
         ),
       );
-    if (path === "/api/boards") return reply(list([{ ...board, revision }]));
+    if (path === "/api/boards")
+      return reply(pageOf([{ ...board, revision }], { limit: 25 }));
     if (path === `/api/boards/${boardId}`) return reply({ ...board, revision });
     if (path === `/api/boards/${boardId}/my-access`)
       return reply({ level: "manage", read: true, write: true, manage: true });
     if (path === `/api/boards/${boardId}/widgets` && request.method() === "GET")
       return reply({
-        ...list(widgets, Number(url.searchParams.get("limit") ?? 12)),
+        ...pageOf(widgets, {
+          limit: Number(url.searchParams.get("limit") ?? 12),
+        }),
         board_revision: revision,
       });
     if (
@@ -4040,7 +3009,7 @@ test("S05 widget create and edit omit refresh even when the server returns a leg
   ).toBeVisible();
 });
 
-test("S11 widget metadata and scoped record bursts refresh once on the shared stream", async ({
+test("widget metadata and scoped record bursts refresh once on the shared stream", async ({
   page,
 }) => {
   await installOpenViewEventSource(page);
@@ -4058,29 +3027,17 @@ test("S11 widget metadata and scoped record bursts refresh once on the shared st
   let count = 3;
   let queryReads = 0;
   const actor = "00000000-0000-4000-8000-000000000007";
-  const list = (items: unknown[], limit = 25) => ({
-    items,
-    pagination: {
-      limit,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  });
-  const board = {
+  const board = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: "Operations board",
     description: "Current requests",
-    status: "active",
     revision: 4,
     level: "manage",
     created_at: timestamp,
     updated_at: timestamp,
-  };
+  });
   await page.route("**/api/**", (route) => {
+    if (isEventStream(route)) return route.fallback();
     const path = new URL(route.request().url()).pathname;
     const reply = (json: unknown) => route.fulfill({ json });
     if (path === "/api/auth/session")
@@ -4091,11 +3048,11 @@ test("S11 widget metadata and scoped record bursts refresh once on the shared st
       });
     if (path === "/api/auth/me")
       return reply({ id: actor, role: "admin", access: [] });
-    if (path === "/api/boards") return reply(list([board]));
+    if (path === "/api/boards") return reply(pageOf([board], { limit: 25 }));
     if (path === `/api/boards/${boardId}`) return reply(board);
     if (path === `/api/boards/${boardId}/widgets`)
       return reply({
-        ...list(
+        ...pageOf(
           [
             {
               ...wireWidget,
@@ -4104,34 +3061,30 @@ test("S11 widget metadata and scoped record bursts refresh once on the shared st
               config: { ...wireWidget.config, fields: [] },
             },
           ],
-          12,
+          { limit: 12 },
         ),
         board_revision: 4,
       });
     if (path === "/api/records/query") {
       queryReads += 1;
-      return reply({
-        items: [
-          {
-            id: recordId,
-            module_id: moduleId,
-            data: {},
-            display_values: {},
-            is_deleted: false,
-            created_at: timestamp,
-            updated_at: timestamp,
-            deleted_at: null,
-            performed_by: null,
-          },
-        ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: count,
-          has_more: count > 1,
-        },
-      });
+      return reply(
+        pageOf(
+          [
+            {
+              id: recordId,
+              module_id: moduleId,
+              data: {},
+              display_values: {},
+              is_deleted: false,
+              created_at: timestamp,
+              updated_at: timestamp,
+              deleted_at: null,
+              performed_by: null,
+            },
+          ],
+          { limit: 1, total: count, hasMore: count > 1 },
+        ),
+      );
     }
     return route.fallback();
   });
@@ -4197,28 +3150,15 @@ test("S11 widget metadata and scoped record bursts refresh once on the shared st
       return state().active;
     }),
   ).toBe(1);
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
-    await page.evaluate(() => document.fonts.ready);
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate(applyAppearancePreferences, {
-        mode,
-        reduceMotion: true,
-      });
-      await captureOpenViewReview(page, `s11-live-widget-${mode}`, {
-        beforeScreenshot: async () => {
-          await expect(
-            page.getByRole("heading", { name, exact: true }),
-          ).toBeInViewport();
-          expect(
-            await page.evaluate(
-              () => document.documentElement.scrollWidth <= innerWidth,
-            ),
-          ).toBe(true);
-        },
-      });
-    }
-  }
+  await page.evaluate(() => document.fonts.ready);
+  await expectWidgetAppearanceMatrix(page, async () => {
+    await expect(
+      page.getByRole("heading", { name, exact: true }),
+    ).toBeInViewport();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  });
 });

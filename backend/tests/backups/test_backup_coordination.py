@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
 from app.core.config.instance import instance_target_for_process
 from app.core.database.session import AuditSession
@@ -101,10 +102,14 @@ def test_reset_lock_claim_commit_exact_reconciliation_and_rollback() -> None:
                     text("SELECT pg_advisory_unlock(:key)"), {"key": _RESET_ADVISORY_LOCK_KEY}
                 )
                 reset_connection.commit()
+
+        def claim_then_cancel(db: Session) -> None:
+            service.claim_run(db, instance, uuid4())
+            raise RuntimeError("cancelled")
+
         with pytest.raises(RuntimeError, match="cancelled"):
             with coordinated_session(engine, target) as db:
-                service.claim_run(db, instance, uuid4())
-                raise RuntimeError("cancelled")
+                claim_then_cancel(db)
         with AuditSession(engine) as db:
             assert db.get(BackupRun, run_id).state == "queued"
             assert service.unresolved_run(db, instance) is None

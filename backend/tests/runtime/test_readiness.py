@@ -9,77 +9,32 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
+from sqlalchemy.exc import OperationalError
 
 from app.core import readiness
 from app.core.config import Settings
 from app.main import create_app
 from tests.config_support import settings_values
+from tests.runtime.readiness_support import (
+    READINESS_PUBLISHABLE_KEY,
+    component,
+    install_provider_transport,
+    install_readiness_settings,
+    readiness_settings,
+    reset_readiness_state,
+)
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
 READINESS_BODY_CANARY = "provider-health-body-must-not-leak"
-READINESS_PUBLISHABLE_KEY = "sb_publishable_readiness_test_only"
 
 
 @pytest.fixture(autouse=True)
 def readiness_state() -> None:
-    _reset_readiness_state()
+    reset_readiness_state()
     try:
         yield
     finally:
-        _reset_readiness_state()
-
-
-def _reset_readiness_state() -> None:
-    executor = readiness._probe_executor
-    if executor is not None:
-        executor.shutdown(wait=False, cancel_futures=True)
-    readiness._probe_executor = None
-    readiness._snapshot_future = None
-    readiness.get_readiness_engine.cache_clear()
-
-
-def _readiness_settings(**overrides: object) -> Settings:
-    values = settings_values(
-        supabase_url="http://supabase.test",
-        supabase_publishable_key=READINESS_PUBLISHABLE_KEY,
-        readiness_caller_timeout_seconds=0.5,
-        smtp_host="mailpit",
-        smtp_port=1025,
-        smtp_admin_email="admin@openslate.test",
-    )
-    values.update(overrides)
-    return Settings(**values, _env_file=None)
-
-
-def _install_provider_transport(monkeypatch, handler):
-    transport = httpx.MockTransport(handler)
-
-    def client_factory(*args, **kwargs):
-        kwargs["transport"] = transport
-        return httpx.Client(*args, **kwargs)
-
-    # A private facade avoids replacing httpx.Client globally, which TestClient
-    # itself uses. The readiness module imports this module at implementation.
-    provider_http = SimpleNamespace(
-        Client=client_factory,
-        Timeout=httpx.Timeout,
-        HTTPError=httpx.HTTPError,
-        RequestError=httpx.RequestError,
-        TimeoutException=httpx.TimeoutException,
-    )
-    monkeypatch.setattr(readiness, "httpx", provider_http, raising=False)
-
-
-def _install_readiness_settings(monkeypatch, settings: Settings) -> None:
-    import app.main as main
-
-    monkeypatch.setattr(readiness, "get_settings", lambda: settings)
-    monkeypatch.setattr(main, "get_settings", lambda: settings)
-    monkeypatch.setattr(readiness, "_probe_database", lambda: True)
-
-
-def _component(status: str, *, required: bool = True) -> dict[str, object]:
-    return {"status": status, "required": required}
+        reset_readiness_state()
 
 
 def test_readiness_route_reports_auth_and_storage_as_separate_components(monkeypatch) -> None:
@@ -105,19 +60,19 @@ def test_readiness_route_reports_auth_and_storage_as_separate_components(monkeyp
             request=request,
         )
 
-    settings = _readiness_settings()
-    _install_readiness_settings(monkeypatch, settings)
-    _install_provider_transport(monkeypatch, provider)
+    settings = readiness_settings()
+    install_readiness_settings(monkeypatch, settings)
+    install_provider_transport(monkeypatch, provider)
 
     response = TestClient(create_app()).get("/api/ready")
 
     expected = {
         "status": "ready",
         "components": {
-            "database": _component("ready"),
-            "auth": _component("ready"),
-            "storage": _component("ready"),
-            "smtp": _component("ready"),
+            "database": component("ready"),
+            "auth": component("ready"),
+            "storage": component("ready"),
+            "smtp": component("ready"),
         },
     }
     assert response.status_code == 200
@@ -143,8 +98,8 @@ def test_readiness_provider_outage_is_component_specific_and_redacted(monkeypatc
         status = 503 if request.url.path == "/auth/v1/health" else 200
         return httpx.Response(status, content=READINESS_BODY_CANARY.encode(), request=request)
 
-    _install_readiness_settings(monkeypatch, _readiness_settings())
-    _install_provider_transport(monkeypatch, provider)
+    install_readiness_settings(monkeypatch, readiness_settings())
+    install_provider_transport(monkeypatch, provider)
 
     response = TestClient(create_app()).get("/api/ready")
 
@@ -152,10 +107,10 @@ def test_readiness_provider_outage_is_component_specific_and_redacted(monkeypatc
     assert response.json() == {
         "status": "not_ready",
         "components": {
-            "database": _component("ready"),
-            "auth": _component("unavailable"),
-            "storage": _component("ready"),
-            "smtp": _component("ready"),
+            "database": component("ready"),
+            "auth": component("unavailable"),
+            "storage": component("ready"),
+            "smtp": component("ready"),
         },
     }
     assert response.headers["Cache-Control"] == "no-store"
@@ -181,16 +136,16 @@ def test_smtp_readiness_requires_configuration_without_sending_mail(
         requests.append((request.method, request.url.path))
         return httpx.Response(200, request=request)
 
-    _install_readiness_settings(
+    install_readiness_settings(
         monkeypatch,
-        _readiness_settings(**{missing_fact: None}),
+        readiness_settings(**{missing_fact: None}),
     )
-    _install_provider_transport(monkeypatch, provider)
+    install_provider_transport(monkeypatch, provider)
 
     response = TestClient(create_app()).get("/api/ready")
 
     assert response.status_code == 503
-    assert response.json()["components"]["smtp"] == _component("not_configured")
+    assert response.json()["components"]["smtp"] == component("not_configured")
     assert requests == [
         ("GET", "/auth/v1/health"),
         ("GET", "/storage/v1/status"),
@@ -221,9 +176,9 @@ def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monk
             completed.set()
         return httpx.Response(200, request=request)
 
-    settings = _readiness_settings(readiness_caller_timeout_seconds=0.03)
-    _install_readiness_settings(monkeypatch, settings)
-    _install_provider_transport(monkeypatch, provider)
+    settings = readiness_settings(readiness_caller_timeout_seconds=0.03)
+    install_readiness_settings(monkeypatch, settings)
+    install_provider_transport(monkeypatch, provider)
     client = TestClient(create_app())
     gate = Barrier(3)
 
@@ -296,18 +251,18 @@ def test_timed_out_readiness_call_does_not_start_a_replacement_and_recovers(
     release = Event()
     completed = Event()
     call_count = 0
-    settings = _readiness_settings(readiness_caller_timeout_seconds=0.01)
+    settings = readiness_settings(readiness_caller_timeout_seconds=0.01)
 
     def report(ready: bool) -> readiness.ReadinessSnapshot:
         status = "ready" if ready else "unavailable"
         return {
             "status": "ready" if ready else "not_ready",
             "components": {
-                "database": _component(status),
-                "auth": _component(status),
-                "storage": _component(status),
-                "smtp": _component(status),
-                },
+                "database": component(status),
+                "auth": component(status),
+                "storage": component(status),
+                "smtp": component(status),
+            },
         }
 
     def probe(_partial=None) -> readiness.ReadinessSnapshot:
@@ -326,7 +281,16 @@ def test_timed_out_readiness_call_does_not_start_a_replacement_and_recovers(
     monkeypatch.setattr(readiness, "_probe_components", probe)
 
     try:
-        assert readiness.get_readiness_snapshot()["status"] == "not_ready"
+        # Nothing finished before the caller deadline: every probed component is unavailable.
+        assert readiness.get_readiness_snapshot() == {
+            "status": "not_ready",
+            "components": {
+                "database": component("unavailable"),
+                "auth": component("unavailable"),
+                "storage": component("unavailable"),
+                "smtp": component("ready"),
+            },
+        }
         assert started.wait(0.5)
         assert readiness.get_readiness_snapshot()["status"] == "not_ready"
         assert call_count == 1
@@ -360,3 +324,131 @@ def test_readiness_cleanup_disposes_the_pool_and_cancels_future_work(monkeypatch
     assert readiness._snapshot_future is None
     with pytest.raises(RuntimeError):
         executor.submit(lambda: None)
+
+
+def test_an_unreachable_database_is_reported_unavailable(monkeypatch) -> None:
+    engine = MagicMock()
+    engine.connect.side_effect = OperationalError("SELECT 1", {}, ConnectionRefusedError())
+    monkeypatch.setattr(readiness, "get_readiness_engine", lambda: engine)
+
+    assert readiness._probe_database() is False
+
+
+@pytest.mark.parametrize(
+    ("failure", "components"),
+    [
+        pytest.param(
+            "connection",
+            {"auth": component("ready"), "storage": component("unavailable")},
+            id="storage-connection-refused",
+        ),
+        pytest.param(
+            "redirect",
+            {"auth": component("unavailable"), "storage": component("ready")},
+            id="auth-redirect-not-followed",
+        ),
+    ],
+)
+def test_a_provider_that_refuses_or_redirects_is_unavailable(
+    monkeypatch, failure: str, components: dict[str, object]
+) -> None:
+    paths: list[str] = []
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if failure == "connection" and request.url.path == "/storage/v1/status":
+            raise httpx.ConnectError("refused", request=request)
+        if failure == "redirect" and request.url.path == "/auth/v1/health":
+            return httpx.Response(
+                302, headers={"Location": "http://supabase.test/elsewhere"}, request=request
+            )
+        return httpx.Response(200, request=request)
+
+    install_readiness_settings(monkeypatch, readiness_settings())
+    install_provider_transport(monkeypatch, provider)
+
+    response = TestClient(create_app()).get("/api/ready")
+
+    assert response.status_code == 503
+    assert response.json()["components"] == {
+        "database": component("ready"),
+        **components,
+        "smtp": component("ready"),
+    }
+    assert "/elsewhere" not in paths
+
+
+@pytest.mark.parametrize(
+    ("failure", "provider_status", "status"),
+    [
+        pytest.param("build", "unavailable", "not_ready", id="client-cannot-be-built"),
+        pytest.param("close", "ready", "ready", id="close-fails-after-both-probes"),
+    ],
+)
+def test_a_provider_client_failure_keeps_finished_probes_and_fails_the_rest_closed(
+    monkeypatch, failure: str, provider_status: str, status: str
+) -> None:
+    def provider(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request)
+
+    class Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            if failure == "build":
+                raise httpx.TransportError("client cannot be built")
+            self._client = httpx.Client(*args, transport=httpx.MockTransport(provider), **kwargs)
+
+        def __enter__(self) -> httpx.Client:
+            return self._client.__enter__()
+
+        def __exit__(self, *details: object) -> None:
+            self._client.__exit__(*details)
+            raise httpx.TransportError("client cannot be closed")
+
+    install_readiness_settings(monkeypatch, readiness_settings())
+    monkeypatch.setattr(
+        readiness, "httpx", SimpleNamespace(Client=Client, HTTPError=httpx.HTTPError)
+    )
+
+    snapshot = readiness._probe_components()
+
+    assert snapshot["components"] == {
+        "database": component("ready"),
+        "auth": component(provider_status),
+        "storage": component(provider_status),
+        "smtp": component("ready"),
+    }
+    assert snapshot["status"] == status
+
+
+BOUNDED = {"connect": 0.25, "read": 0.25, "write": 0.25, "pool": 0.25}
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "provider_status", "request_timeouts"),
+    [
+        pytest.param(0.5, "unavailable", [], id="deadline-reached-sends-nothing"),
+        pytest.param(0.25, "ready", [BOUNDED, BOUNDED], id="request-bounded-by-time-left"),
+    ],
+)
+def test_provider_probes_are_bounded_by_the_caller_deadline(
+    monkeypatch, elapsed: float, provider_status: str, request_timeouts: list[dict[str, float]]
+) -> None:
+    timeouts: list[dict[str, float | None]] = []
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        timeouts.append(request.extensions["timeout"])
+        return httpx.Response(200, request=request)
+
+    readings = iter([0.0])
+    # The deadline is read at 0.0; each provider probe then starts `elapsed` seconds later.
+    monkeypatch.setattr(readiness, "monotonic", lambda: next(readings, elapsed))
+    install_readiness_settings(
+        monkeypatch, readiness_settings(readiness_caller_timeout_seconds=0.5)
+    )
+    install_provider_transport(monkeypatch, provider)
+
+    snapshot = readiness._probe_components()
+
+    assert snapshot["components"]["auth"] == component(provider_status)
+    assert snapshot["components"]["storage"] == component(provider_status)
+    assert timeouts == request_timeouts

@@ -26,8 +26,20 @@ from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 
-pytest_plugins = ("tests.auth.test_provider_auth_integration",)
+pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
+
+
+class _SignalingServer(uvicorn.Server):
+    """Sets `ready` once uvicorn has finished startup and serves the template endpoint."""
+
+    def __init__(self, config: uvicorn.Config) -> None:
+        super().__init__(config)
+        self.ready = threading.Event()
+
+    async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+        await super().startup(sockets=sockets)
+        self.ready.set()
 
 
 @pytest.fixture
@@ -58,7 +70,7 @@ def provider_mail():
     assert template_port is not None, "Auth template URL lacks a port"
     listener.bind((bind_host, template_port))
     listener.listen(128)
-    server = uvicorn.Server(
+    server = _SignalingServer(
         uvicorn.Config(
             create_app(), lifespan="off", log_config=None, access_log=False, log_level="error"
         )
@@ -66,9 +78,7 @@ def provider_mail():
     thread = threading.Thread(target=lambda: server.run(sockets=[listener]), daemon=True)
     thread.start()
     try:
-        deadline = time.monotonic() + 5
-        while not server.started and thread.is_alive() and time.monotonic() < deadline:
-            time.sleep(0.02)
+        assert server.ready.wait(5), "Provider template endpoint did not start"
         assert server.started, "Provider template endpoint did not start"
         with httpx.Client(base_url=manifest["provider"]["mail_url"], timeout=5) as mail:
             yield mail

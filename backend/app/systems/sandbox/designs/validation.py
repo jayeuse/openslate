@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from app.systems.sandbox.designs.field_schemas import TypedValue
 from app.systems.sandbox.designs.field_validation import (
     DocumentValueError,
     validate_value,
@@ -440,9 +441,7 @@ def _validate_scenarios(
         )
 
 
-def _value_matches_field(field: DesignField, value: object) -> bool:
-    if value is not None and not isinstance(value, (str, int, float, bool)):
-        return False
+def _value_matches_field(field: DesignField, value: TypedValue) -> bool:
     try:
         validate_value(value, field_metadata(field))
     except DocumentValueError:

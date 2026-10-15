@@ -6,6 +6,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.access.policy.models import AccessLevel, Group, GroupAccess
+from app.systems.access.policy.scope import (
+    department_reader_ids,
+    group_reach,
+    level_for,
+    module_reader_ids,
+)
+from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.openview.charts.models import Chart
 from app.systems.openview.charts.router import router as chart_router
@@ -16,6 +24,7 @@ from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.charts.widget_reference_support import client as identity_client
+from tests.rbac.support import add_user, make_group_access
 from tests.sandbox_publications.support import (
     bound_department,
     bound_field,
@@ -306,3 +315,101 @@ def test_publication_moves_active_and_archived_charts_once_and_preserves_saved_q
         for saved in after.values():
             assert client.get(f"/api/charts/{saved['id']}").json() == saved
         assert db.get(Chart, before["Active"]["id"]).department_id == destination
+
+
+def _live_rows(db: Session, group_id: UUID) -> set[tuple[UUID, UUID | None, str]]:
+    return {
+        (row.department_id, row.module_id, row.level)
+        for row in db.scalars(
+            select(GroupAccess).where(
+                GroupAccess.group_id == group_id, GroupAccess.is_deleted.is_(False)
+            )
+        )
+    }
+
+
+def _access_audit_ids(db: Session) -> list[UUID]:
+    return list(
+        db.scalars(
+            select(AuditLog.id).where(AuditLog.entity_type == "group_access").order_by(AuditLog.id)
+        )
+    )
+
+
+def test_publication_moves_module_access_rows_with_their_module(integration_owner_db):
+    db = integration_owner_db
+    publisher, document = publish_structure(db)
+    moved = bound_module(db, "sample-requests")
+    unmoved = bound_module(db, "sample-equipment")
+    origin = bound_department(db, "sample-operations")
+    destination = bound_department(db, "sample-commercial")
+    member = add_user(db)
+    grant = make_group_access(db, [member], origin, moved, level=AccessLevel.WRITE)
+    group = db.get(Group, grant.group_id)
+    assert group is not None
+    bystander = add_user(db)
+    department_grant = make_group_access(db, [bystander], origin, level=AccessLevel.READ)
+    make_group_access(
+        db,
+        [],
+        origin,
+        unmoved,
+        level=AccessLevel.WRITE,
+        group=db.get(Group, department_grant.group_id),
+    )
+    # A row left in the destination by a move before grants followed modules, then
+    # the row an administrator wrote later: the later row wins, nothing escalates.
+    earlier = make_group_access(db, [], destination, moved, level=AccessLevel.MANAGE)
+    make_group_access(
+        db,
+        [],
+        origin,
+        moved,
+        level=AccessLevel.READ,
+        group=db.get(Group, earlier.group_id),
+    )
+    # The older row was edited last, so it wins even though its id is lower.
+    rewritten = make_group_access(db, [], destination, moved, level=AccessLevel.READ)
+    make_group_access(
+        db,
+        [],
+        origin,
+        moved,
+        level=AccessLevel.MANAGE,
+        group=db.get(Group, rewritten.group_id),
+    )
+    rewritten.level = AccessLevel.WRITE
+    db.flush()
+    moving = document.model_copy(deep=True)
+    _module(moving, "sample-requests").department_id = "sample-commercial"
+    set_audit_actor(db, publisher.id)
+
+    publish_revision(db, publisher, moving, "module-access-move")
+
+    db.expire_all()
+    assert _live_rows(db, group.id) == {(destination.id, moved.id, "write")}
+    assert _live_rows(db, department_grant.group_id) == {
+        (origin.id, None, "read"),
+        (origin.id, unmoved.id, "write"),
+    }
+    assert _live_rows(db, earlier.group_id) == {(destination.id, moved.id, "read")}
+    assert _live_rows(db, rewritten.group_id) == {(destination.id, moved.id, "write")}
+    assert level_for(db, member, destination.id, moved.id) == AccessLevel.WRITE
+    assert member.id in module_reader_ids(db, moved.id)
+    assert member.id in department_reader_ids(db, destination.id)
+    assert member.id not in department_reader_ids(db, origin.id)
+    assert group_reach(db, group.id) == frozenset({destination.id})
+    move_log = db.scalars(
+        select(AuditLog).where(
+            AuditLog.entity_type == "group_access",
+            AuditLog.entity_id == grant.id,
+            AuditLog.action == AuditAction.UPDATE,
+        )
+    ).one()
+    assert move_log.after["department_id"] == str(destination.id)
+    assert move_log.performed_by == publisher.id
+    before_logs = _access_audit_ids(db)
+
+    publish_revision(db, publisher, moving, "unchanged-module-access")
+
+    assert _access_audit_ids(db) == before_logs

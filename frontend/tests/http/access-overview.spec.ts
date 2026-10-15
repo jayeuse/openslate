@@ -1,6 +1,19 @@
-import { expect, test, type Page } from "./helpers/test";
+import {
+  expect,
+  expectNoHorizontalScroll,
+  heldResponse,
+  test,
+  type Page,
+} from "./helpers/test";
 
-import { DAY, group, ids, mockAccessApi, person } from "./helpers/access-api";
+import {
+  DAY,
+  fixtureId,
+  group,
+  ids,
+  mockAccessApi,
+  person,
+} from "./helpers/access-api";
 
 // The Overview tab against the mocked Access API (see helpers/access-api.ts).
 // People: Rosa and Dee (administrators), Ana (guest ending in 5 days, in a
@@ -44,6 +57,9 @@ test("health cards count what needs attention and open the filtered list", async
   const groups = page.getByRole("table", { name: "Groups" });
   await expect(groups.getByRole("row")).toHaveCount(2);
   await expect(groups.getByRole("row", { name: /New hires/ })).toBeVisible();
+  await expect(groups.getByRole("row", { name: /New hires/ })).toContainText(
+    "No access",
+  );
 
   await page.goto("/access?view=overview");
   await card(page, "Access ending soon")
@@ -57,6 +73,46 @@ test("health cards count what needs attention and open the filtered list", async
       name: /Ana Santos/,
     }),
   ).toBeVisible();
+});
+
+test("Overview counts use bounded filtered totals beyond the first page", async ({
+  page,
+}) => {
+  const api = await mockAccessApi(page);
+  api.groups.clear();
+  for (let index = 0; index < 121; index++) {
+    api.groups.set(
+      fixtureId(500 + index),
+      group(fixtureId(500 + index), `Empty ${index}`, [], []),
+    );
+    api.users.set(
+      fixtureId(2000 + index),
+      person({ id: fixtureId(2000 + index), username: `unassigned${index}` }),
+    );
+  }
+  const reads: URL[] = [];
+  for (const path of ["/api/users", "/api/access/groups"])
+    api.on("GET", path, (route) => {
+      reads.push(new URL(route.request().url()));
+      return "next";
+    });
+  await page.goto("/access?view=overview");
+  await expect(
+    page.getByRole("region", { name: "Groups without access", exact: true }),
+  ).toContainText("121");
+  await expect(
+    page.getByRole("region", { name: "Groups without members", exact: true }),
+  ).toContainText("121");
+  await expect(
+    page.getByRole("region", { name: "People without a group", exact: true }),
+  ).toContainText("124");
+  expect(
+    reads.every(
+      (url) =>
+        url.searchParams.get("limit") === "1" &&
+        url.searchParams.get("offset") === "0",
+    ),
+  ).toBe(true);
 });
 
 test("a single active administrator is flagged", async ({ page }) => {
@@ -150,16 +206,10 @@ for (const width of [1440, 390])
         "Guest access length (days)",
       ),
     ).toHaveValue("45");
-    expect(
-      await page.evaluate(
-        () =>
-          document.documentElement.scrollWidth <=
-          document.documentElement.clientWidth,
-      ),
-    ).toBe(true);
+    await expectNoHorizontalScroll(page);
   });
 
-test("13b: organization MFA summary keeps known absence separate from unknown and links to the same population", async ({
+test("organization MFA summary keeps known absence separate from unknown and links to the same population", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -201,7 +251,7 @@ test("13b: organization MFA summary keeps known absence separate from unknown an
   await expect.poll(() => api.listReads.at(-1)?.get("mfa")).toBe("unknown");
 });
 
-test("13b: unavailable monitoring summary never manufactures zero and explicit Retry recovers", async ({
+test("unavailable monitoring summary never manufactures zero and explicit Retry recovers", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);
@@ -219,13 +269,10 @@ test("13b: unavailable monitoring summary never manufactures zero and explicit R
         mfa_observed_at: "2026-10-01T00:00:00Z",
       });
   }
-  let release: (() => void) | undefined;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const gate = heldResponse();
   let unavailable = true;
   api.on("GET", "/api/users/summary", async (route) => {
-    await gate;
+    await gate.released;
     if (unavailable)
       await route.fulfill({
         status: 503,
@@ -250,7 +297,7 @@ test("13b: unavailable monitoring summary never manufactures zero and explicit R
   await expect(
     page.getByText(/0 without two-step verification|0 unknown/),
   ).toHaveCount(0);
-  release?.();
+  gate.release();
   const mfa = card(page, "Administrator two-step verification");
   await expect(mfa).toContainText(
     "Two-step verification status could not load.",
@@ -286,7 +333,7 @@ test("13b: unavailable monitoring summary never manufactures zero and explicit R
   ).toBeVisible();
 });
 
-test("13b: history summary counts the full eligible population and drilldowns filter before page totals", async ({
+test("history summary counts the full eligible population and drilldowns filter before page totals", async ({
   page,
 }) => {
   const now = Date.parse("2026-10-07T12:00:00Z");
@@ -421,7 +468,7 @@ test("13b: history summary counts the full eligible population and drilldowns fi
     .toMatchObject({ history: "inactive", inactive_days: "30", offset: "0" });
 });
 
-test("13b: inactivity days validate drafts, reach the API and isolate cached summaries by applied N", async ({
+test("inactivity days validate drafts, reach the API and isolate cached summaries by applied N", async ({
   page,
 }) => {
   const now = Date.parse("2026-10-07T12:00:00Z");
@@ -464,15 +511,19 @@ test("13b: inactivity days validate drafts, reach the API and isolate cached sum
     .toBe(true);
   const beforeInvalidDrafts = api.summaryQueries.length;
 
-  for (const value of ["", "0", "3651", "1.5", "-1"]) {
+  // Keep all five original submitted drafts; isolated inactive-days cases
+  // also cover the pure rule.
+  for (const [value, message] of [
+    ["", "Enter the number of days."],
+    ["0", "Enter a whole number from 1 to 3650."],
+    ["3651", "Enter a whole number from 1 to 3650."],
+    ["1.5", "Enter a whole number from 1 to 3650."],
+    ["-1", "Enter a whole number from 1 to 3650."],
+  ] as const) {
     await days.fill(value);
     await apply.click();
     await expect(days).toHaveAttribute("aria-invalid", "true");
-    await expect(
-      inactive.getByText(
-        /Enter (the number of days|a whole number from 1 to 3650)\./,
-      ),
-    ).toBeVisible();
+    await expect(inactive.getByText(message, { exact: true })).toBeVisible();
     await expect(inactive.getByText("2", { exact: true })).toBeVisible();
     expect(api.summaryQueries).toHaveLength(beforeInvalidDrafts);
   }

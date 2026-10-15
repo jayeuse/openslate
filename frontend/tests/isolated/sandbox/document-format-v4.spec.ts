@@ -6,7 +6,12 @@ import {
   SANDBOX_OLDER_FORMAT_MESSAGE,
   type SandboxDocumentV4,
 } from "../../../src/components/systems/sandbox/domain/document";
-import { configuredSandboxDesign } from "../../helpers/sandbox-fixtures";
+import { parseSandboxExportDocument } from "../../../src/components/systems/sandbox/domain/document-parser";
+import {
+  configuredSandboxDesign,
+  documentSelectField,
+  documentTextField,
+} from "../../helpers/sandbox-fixtures";
 
 const openOptionId = "00000000-0000-4000-8000-000000000031";
 const closedOptionId = "00000000-0000-4000-8000-000000000032";
@@ -25,29 +30,16 @@ function documentFixture(): SandboxDocumentV4 {
           closed: false,
           titleFieldId: "title",
           fields: [
-            {
-              id: "title",
-              name: "Title",
-              type: "Text",
-              required: true,
-              closed: false,
-              config: { kind: "text", defaultValue: "" },
-            },
-            {
+            documentTextField({ id: "title", name: "Title", required: true }),
+            documentSelectField({
               id: "status",
               name: "Status",
-              type: "Select",
-              required: false,
-              closed: false,
-              config: {
-                kind: "select",
-                defaultValue: openOptionId,
-                options: [
-                  { id: openOptionId, label: "Open" },
-                  { id: closedOptionId, label: "Closed" },
-                ],
-              },
-            },
+              defaultValue: openOptionId,
+              options: [
+                { id: openOptionId, label: "Open" },
+                { id: closedOptionId, label: "Closed" },
+              ],
+            }),
           ],
         },
       ],
@@ -220,16 +212,7 @@ test("v4 rejects unrelated direct and one-hop trigger references", () => {
       name: id,
       closed: false,
       titleFieldId: null,
-      fields: [
-        {
-          id: `${id}-text`,
-          name: "Text",
-          type: "Text",
-          required: false,
-          closed: false,
-          config: { kind: "text", defaultValue: "" },
-        },
-      ],
+      fields: [documentTextField({ id: `${id}-text`, name: "Text" })],
     });
     document.design.layout[id] = { x: 400, y: 48, width: 280, height: 160 };
   }
@@ -320,14 +303,9 @@ test("API document parsing admits repairable graph defects but portable parsing 
 
 test("v4 rejects unsafe optional and constrained field-reference assignments", () => {
   const optionalSource = documentFixture();
-  optionalSource.design.modules[0].fields.push({
-    id: "optional-text",
-    name: "Optional text",
-    type: "Text",
-    required: false,
-    closed: false,
-    config: { kind: "text", defaultValue: "" },
-  });
+  optionalSource.design.modules[0].fields.push(
+    documentTextField({ id: "optional-text", name: "Optional text" }),
+  );
   optionalSource.triggers[0].actions[1] = {
     id: "optional-source",
     kind: "set-field",
@@ -559,16 +537,7 @@ test("v4 validates field defaults and constrained scenario values", () => {
     name: "Duplicate target",
     closed: false,
     titleFieldId: null,
-    fields: [
-      {
-        id: "duplicate-title",
-        name: "Title",
-        type: "Text",
-        required: false,
-        closed: false,
-        config: { kind: "text", defaultValue: "" },
-      },
-    ],
+    fields: [documentTextField({ id: "duplicate-title", name: "Title" })],
   });
   duplicate.design.layout["duplicate-target"] = {
     x: 400,
@@ -610,16 +579,7 @@ test("v4 enforces scenario relationship cardinality", () => {
       name: "Target",
       closed: false,
       titleFieldId: null,
-      fields: [
-        {
-          id: "target-title",
-          name: "Title",
-          type: "Text",
-          required: false,
-          closed: false,
-          config: { kind: "text", defaultValue: "" },
-        },
-      ],
+      fields: [documentTextField({ id: "target-title", name: "Title" })],
     });
     document.design.layout.target = { x: 400, y: 48, width: 280, height: 160 };
     document.design.relationships = [
@@ -725,6 +685,55 @@ test("v4 portable history accepts the published kind emitted by the backend", ()
     document,
   });
 });
+
+function documentWithSnapshots(count: number): SandboxDocumentV4 {
+  const document = documentFixture();
+  document.versions = Array.from({ length: count }, (_, index) => ({
+    id: `version-${index + 1}`,
+    label: `Checkpoint ${index + 1}`,
+    kind: index === count - 1 ? "published" : "checkpoint",
+    published: index === count - 1,
+    date: "2026-09-20T00:00:00.000Z",
+    document: {
+      design: document.design,
+      triggers: document.triggers,
+      scenarios: document.scenarios,
+    },
+  }));
+  return document;
+}
+
+// Import admission counts every snapshot against the 50-version limit; an
+// export attachment can hold 50 checkpoints plus a publication.
+for (const row of [
+  {
+    name: "an import admits 50 snapshots",
+    parse: parseSandboxDocument,
+    count: 50,
+    refused: false,
+  },
+  {
+    name: "an import refuses 51 snapshots",
+    parse: parseSandboxDocument,
+    count: 51,
+    refused: true,
+  },
+  {
+    name: "an export attachment admits 51 snapshots",
+    parse: parseSandboxExportDocument,
+    count: 51,
+    refused: false,
+  },
+]) {
+  test(`version history limit: ${row.name}`, () => {
+    const document = documentWithSnapshots(row.count);
+    expect(row.parse(JSON.stringify(document))).toEqual(
+      row.refused
+        ? { ok: false, error: "Version limit exceeded" }
+        : { ok: true, document },
+    );
+  });
+}
 
 test("older format files are refused with one clear message and are not converted", () => {
   const versionOne = {

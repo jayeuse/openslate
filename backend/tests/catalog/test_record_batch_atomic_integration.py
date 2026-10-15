@@ -8,55 +8,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from uuid6 import uuid7
 
-from app.systems.manage.audit.models import AuditAction, AuditLog
-from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
 from app.systems.sandbox.records.models import Record
 from tests.catalog.record_batch_support import batch_world as batch_world
-from tests.catalog.record_batch_support import create, item, submit
+from tests.catalog.record_batch_support import compound, create, effects, item, submit
 from tests.catalog.record_batch_support import world as world
 from tests.rbac.support import add_department, add_module
 
 pytestmark = pytest.mark.integration
-
-
-def compound(row, *changes):
-    return {
-        "record_id": row["id"],
-        "revision": row["updated_at"],
-        "changes": [{"field_id": str(field_id), "value": value} for field_id, value in changes],
-    }
-
-
-def effects(db, row):
-    identifier = UUID(row["id"])
-    updates = list(
-        db.scalars(
-            select(AuditLog).where(
-                AuditLog.entity_type == "records",
-                AuditLog.entity_id == identifier,
-                AuditLog.action == AuditAction.UPDATE,
-            )
-        )
-    )
-    events = list(
-        db.scalars(
-            select(RecordTriggerEvent).where(
-                RecordTriggerEvent.record_id == identifier,
-                RecordTriggerEvent.event_kind == "field-changed",
-            )
-        )
-    )
-    notices = list(
-        db.scalars(
-            select(InAppNotification).where(
-                InAppNotification.kind == "record-assigned",
-                InAppNotification.subject_id == identifier,
-            )
-        )
-    )
-    return updates, events, notices
 
 
 @pytest.mark.parametrize("kind", ["date", "datetime"])

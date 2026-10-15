@@ -17,7 +17,7 @@ from operations.sample.population.people import (
     SamplePerson,
 )
 from operations.sample.population.run import SamplePopulationError
-from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 MANAGER = "internal_finance_lead"
 
@@ -31,9 +31,7 @@ def _id(key):
 
 
 def _isolated_workflow(tmp_path, monkeypatch, missing=None, *, complete=False):
-    dataset = build_dataset(
-        "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack("school")
-    )
+    dataset = sample_dataset(pack="school")
     people = {person.key: person for person in dataset.organization.actors.people}
     active = {
         key

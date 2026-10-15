@@ -16,7 +16,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import ORMExecuteState, Session
 
 from app.core.database import get_db
-from app.main import create_app
+from tests.route_app_support import route_app
 
 pytestmark = [
     pytest.mark.integration,
@@ -281,6 +281,6 @@ def test_guest_reads_relationships_but_cannot_change_them(relationship_http_fixt
 
 
 def test_registered_route_requires_bearer_credentials() -> None:
-    with TestClient(create_app()) as client:
+    with TestClient(route_app()) as client:
         response = client.get("/api/relationships")
     assert response.status_code == 401

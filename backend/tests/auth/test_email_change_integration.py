@@ -26,7 +26,7 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.test_provider_email_integration import _email_action
-from tests.auth.test_provider_mfa_integration import _totp
+from tests.auth.totp_support import totp
 from tests.conftest import guarded_create_engine
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
@@ -43,11 +43,13 @@ def email_change_account(provider_account, provider_mail):
         db.commit()
     with ExitStack() as stack:
         # Each journey owns its source budget; keep real anonymous rate limits on.
-        source = "2001:db8:" + ":".join(local_id.hex[i:i + 4] for i in range(0, 24, 4))
+        source = "2001:db8:" + ":".join(local_id.hex[i : i + 4] for i in range(0, 24, 4))
         primary, landing = (
-            stack.enter_context(TestClient(
-                create_app(), base_url=get_settings().public_origin, client=(source, 1234)
-            ))
+            stack.enter_context(
+                TestClient(
+                    create_app(), base_url=get_settings().public_origin, client=(source, 1234)
+                )
+            )
             for _ in range(2)
         )
         for browser in (primary, landing):
@@ -73,13 +75,17 @@ def _stored_state(owner, local_id):
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None
-        sessions = set(db.scalars(
-            select(IdentitySession.id).where(IdentitySession.user_id == local_id)
-        ))
-        confirmations = set(db.scalars(select(SecurityEvent.id).where(
-            SecurityEvent.subject_id == local_id,
-            SecurityEvent.event_type == "identity.email_change_confirmed",
-        )))
+        sessions = set(
+            db.scalars(select(IdentitySession.id).where(IdentitySession.user_id == local_id))
+        )
+        confirmations = set(
+            db.scalars(
+                select(SecurityEvent.id).where(
+                    SecurityEvent.subject_id == local_id,
+                    SecurityEvent.event_type == "identity.email_change_confirmed",
+                )
+            )
+        )
         return user.email, user.supabase_user_id, sessions, confirmations
 
 
@@ -109,7 +115,9 @@ def test_native_two_recipient_orders_preserve_partial_state_and_accept_new_email
     completed = landing.post("/api/auth/email/complete", json={"token_hash": final})
     assert completed.status_code == 200
     assert completed.json() == {
-        "authenticated": True, "confirmation_required": False, "setup_required": False,
+        "authenticated": True,
+        "confirmation_required": False,
+        "setup_required": False,
     }
     after = _stored_state(owner, local_id)
     assert after[:2] == (target, provider_id)
@@ -118,9 +126,10 @@ def test_native_two_recipient_orders_preserve_partial_state_and_accept_new_email
     assert provider.get_admin_user(provider_id).email_confirmed_at == confirmed_at
     landing.cookies.clear()
     assert landing.post("/api/auth/email/complete", json={"token_hash": final}).status_code == 400
-    assert landing.post(
-        "/api/auth/login", json={"email": target, "password": password}
-    ).status_code == 200
+    assert (
+        landing.post("/api/auth/login", json={"email": target, "password": password}).status_code
+        == 200
+    )
     assert landing.get("/api/auth/me").json()["id"] == str(local_id)
     assert _stored_state(owner, local_id)[3] == after[3]
 
@@ -150,8 +159,11 @@ def test_native_failed_final_admission_rolls_back_email_event_and_session_withou
         if failure == "all_row_collision":
             with Session(owner) as db:
                 collision = User(
-                    email=target, username=f"email-collision-{uuid4().hex[:16]}",
-                    role="member", status="disabled", is_deleted=True,
+                    email=target,
+                    username=f"email-collision-{uuid4().hex[:16]}",
+                    role="member",
+                    status="disabled",
+                    is_deleted=True,
                 )
                 db.add(collision)
                 db.commit()
@@ -174,9 +186,10 @@ def test_native_failed_final_admission_rolls_back_email_event_and_session_withou
                 db.delete(collision)
                 db.commit()
     # This is real normal admission after legitimate conflict removal, not a repair command.
-    assert landing.post(
-        "/api/auth/login", json={"email": target, "password": password}
-    ).status_code == 200
+    assert (
+        landing.post("/api/auth/login", json={"email": target, "password": password}).status_code
+        == 200
+    )
     after = _stored_state(owner, local_id)
     assert after[:2] == (target, provider_id)
     assert len(after[3] - before[3]) == 1
@@ -191,7 +204,7 @@ def test_native_final_email_session_requires_its_own_mfa_not_old_cookie_aal2(ema
     factor_id = enrolled.json()["id"]
     secret = enrolled.json()["totp"]["secret"]
     verification = f"/api/auth/mfa/factors/{factor_id}/verification"
-    assert primary.post(verification, json={"code": _totp(secret)}).status_code == 200
+    assert primary.post(verification, json={"code": totp(secret)}).status_code == 200
     assert primary.get("/api/auth/mfa").json()["assurance_level"] == "aal2"
     target = f"email-mfa-{uuid4().hex}@example.test"
     current, new = _start_change(primary, mail, email, target, password)
@@ -203,7 +216,7 @@ def test_native_final_email_session_requires_its_own_mfa_not_old_cookie_aal2(ema
     assert status.status_code == 200
     assert status.json()["assurance_level"] == "aal1" and status.json()["required"] is True
     landing.headers["X-CSRF-Token"] = landing.cookies.get("openslate_csrf")
-    assert landing.post(verification, json={"code": _totp(secret)}).status_code == 200
+    assert landing.post(verification, json={"code": totp(secret)}).status_code == 200
     self = landing.get("/api/auth/me")
     assert self.status_code == 200
     assert self.json()["id"] == str(local_id) and self.json()["email"] == target
@@ -245,7 +258,8 @@ def test_native_concurrent_out_of_band_admissions_serialize_fresh_email_and_one_
     def entering_lock(conn, _cursor, statement, _parameters, _context, _many):
         if (
             conn.info.get("s24_admission") == "second"
-            and "FROM users" in statement and "FOR UPDATE" in statement
+            and "FROM users" in statement
+            and "FOR UPDATE" in statement
         ):
             second_attempted.set()
 
@@ -331,7 +345,9 @@ def test_native_final_confirmation_rechecks_local_admission_eligibility(email_ch
         elif loss == "guest_expiry":
             sponsor = User(
                 email=f"email-sponsor-{uuid4().hex}@example.test",
-                username=f"email-sponsor-{uuid4().hex[:16]}", role="member", status="active",
+                username=f"email-sponsor-{uuid4().hex[:16]}",
+                role="member",
+                status="active",
             )
             db.add(sponsor)
             db.flush()
@@ -412,7 +428,7 @@ def test_native_admission_rechecks_after_provider_latency_without_partial_databa
 
 
 def test_native_confirmed_email_keeps_current_password_and_recovery_equalities(
-    email_change_account
+    email_change_account,
 ):
     primary, landing, mail, account = email_change_account
     email, password, _, local_id, owner = account
@@ -440,15 +456,18 @@ def test_native_confirmed_email_keeps_current_password_and_recovery_equalities(
         },
     )
     assert recovered.status_code == 204 and recovered.headers.get_list("set-cookie") == []
-    assert landing.post(
-        "/api/auth/login", json={"email": target, "password": recovered_password}
-    ).status_code == 200
+    assert (
+        landing.post(
+            "/api/auth/login", json={"email": target, "password": recovered_password}
+        ).status_code
+        == 200
+    )
     assert landing.get("/api/auth/me").json()["id"] == str(local_id)
     assert _stored_state(owner, local_id)[3] == confirmations
 
 
 def test_native_confirmed_email_preserves_admin_actor_and_old_target_binding_refusal(
-    email_change_account
+    email_change_account,
 ):
     from fastapi import HTTPException
 

@@ -32,7 +32,11 @@ export async function installEmailChangeApi(
     onAdmission: () => {},
     holdRequest: null as ReturnType<typeof profileGate> | null,
     holdComplete: null as ReturnType<typeof profileGate> | null,
-    requests: [] as { body: unknown; headers: Record<string, string> }[],
+    requests: [] as {
+      method: string;
+      body: unknown;
+      headers: Record<string, string>;
+    }[],
     completions: [] as {
       method: string;
       body: unknown;
@@ -72,12 +76,21 @@ export async function installEmailChangeApi(
     await page.context().clearCookies();
     await route.fulfill({ status: 204 });
   });
+  // Only POST requests an email change. Another method gets 405, so a caller
+  // sees the failure on the page; tests assert the recorded method.
   await page.route("**/api/auth/me/email", async (route) => {
-    expect(route.request().method()).toBe("POST");
     state.requests.push({
+      method: route.request().method(),
       body: route.request().postDataJSON(),
       headers: route.request().headers(),
     });
+    if (route.request().method() !== "POST") {
+      await route.fulfill({
+        status: 405,
+        json: { detail: "Method not allowed" },
+      });
+      return;
+    }
     const { requestStatus, requestBody, requestUnknown, holdRequest } = state;
     state.holdRequest = null;
     if (holdRequest) {
@@ -127,7 +140,7 @@ export async function installEmailChangeApi(
 export async function observeEmailSecretExposure(page: Page) {
   await page.addInitScript(() => {
     const state = { exposed: false };
-    Object.assign(window, { s24EmailSecrets: state });
+    Object.assign(window, { openslateEmailSecrets: state });
     const send = window.fetch.bind(window);
     window.fetch = (...args) => {
       const target = args[0];
@@ -151,8 +164,8 @@ export async function observeEmailSecretExposure(page: Page) {
 export async function expectNoEmailSecrets(page: Page) {
   const safe = await page.evaluate(() => {
     const state = (
-      window as unknown as { s24EmailSecrets: { exposed: boolean } }
-    ).s24EmailSecrets;
+      window as unknown as { openslateEmailSecrets: { exposed: boolean } }
+    ).openslateEmailSecrets;
     const values = [
       window.location.href,
       document.body.innerHTML,

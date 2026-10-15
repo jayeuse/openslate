@@ -1,9 +1,4 @@
 import { expect, test, type Page } from "@playwright/test";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
-import { ApiError } from "../../src/lib/api";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -12,17 +7,11 @@ import type {
   BoardManagementBoard,
   BoardPurgePreview,
 } from "../../src/components/systems/boards/adapters/board-management-api";
-import {
-  ServerBoardManagementDisplay,
-  boardCreateForDraft,
-  boardUpdateForDraft,
-  rebaseBoardDraft,
-  revokeBoardManagementState,
-  type BoardManagementDraft,
-  type BoardManagementView,
-} from "../../src/components/systems/boards/components/server-backed-board-management";
 
 import { group as accessGroupFixture } from "../isolated/access/fixtures";
+import { isEventStream } from "./helpers/test";
+import { pageOf } from "../helpers/pagination";
+import { wireBoard } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -39,33 +28,6 @@ const board: BoardManagementBoard = {
   createdAt: "2026-09-23T00:00:00Z",
   updatedAt: "2026-09-23T00:00:00Z",
 };
-const departmentBoard: BoardManagementBoard = {
-  ...board,
-  scope: "department",
-  departmentId,
-  name: "Operations",
-};
-const draft: BoardManagementDraft = {
-  name: "Dispatch updated",
-  description: "Keep my draft",
-};
-const baseView: BoardManagementView = {
-  mode: "manage",
-  board: departmentBoard,
-  access: "ready",
-  canManage: true,
-  draft,
-  pending: false,
-  conflict: false,
-  error: null,
-  notice: null,
-};
-
-function markup(view: BoardManagementView): string {
-  return renderToStaticMarkup(
-    createElement(ServerBoardManagementDisplay, { view }),
-  );
-}
 
 const purgePreview: BoardPurgePreview = {
   impact: {
@@ -110,10 +72,8 @@ async function installArchivedBoard(page: Page) {
     purge_enabled: true as boolean | undefined,
   };
   let workspaceFailure = false;
-  const archived = {
+  const archived = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: board.name,
     description: board.description,
     status: "archived",
@@ -121,8 +81,9 @@ async function installArchivedBoard(page: Page) {
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   await page.route("**/api/**", (route) => {
+    if (isEventStream(route)) return route.fallback();
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/auth/session")
       return route.fulfill({
@@ -140,16 +101,7 @@ async function installArchivedBoard(page: Page) {
       );
     if (path === "/api/boards")
       return route.fulfill({
-        json: {
-          items: [archived],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
-        },
+        json: pageOf([archived], { limit: 25 }),
       });
     if (path === `/api/boards/${boardId}`)
       return route.fulfill({ json: archived });
@@ -162,17 +114,7 @@ async function installArchivedBoard(page: Page) {
         json: { board_id: boardId, revision: board.revision, groups: [] },
       });
     return route.fulfill({
-      json: {
-        items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
-        board_revision: board.revision,
-      },
+      json: { ...pageOf([], { limit: 25 }), board_revision: board.revision },
     });
   });
   return {
@@ -182,225 +124,6 @@ async function installArchivedBoard(page: Page) {
     },
   };
 }
-
-test("a new Board is a project Board with only a name and description", () => {
-  const html = markup({ ...baseView, mode: "create", board: null });
-  expect(html).toContain("Create Board");
-  expect(html).not.toContain("Department");
-  expect(html).not.toContain("Default section");
-  expect(boardCreateForDraft(draft)).toEqual({
-    name: "Dispatch updated",
-    description: "Keep my draft",
-  });
-});
-
-test("a department Board keeps its department name and cannot be archived", () => {
-  const html = markup({ ...baseView, draft: { ...draft, name: "Operations" } });
-  expect(html).toContain("always has its department");
-  expect(html).toContain("readOnly");
-  expect(html).not.toContain("Archive Board");
-  expect(html).toContain("archived when its department closes");
-  expect(boardUpdateForDraft(departmentBoard, draft)).toEqual({
-    revision: 4,
-    description: "Keep my draft",
-  });
-  expect(
-    boardUpdateForDraft(departmentBoard, {
-      name: "Renamed",
-      description: "Daily handoffs",
-    }),
-  ).toBeNull();
-});
-
-test("the company Board can be renamed but not archived", () => {
-  const company = { ...board, scope: "company" as const, name: "Company" };
-  const html = markup({
-    ...baseView,
-    board: company,
-    draft: { name: "Company", description: "Daily handoffs" },
-  });
-  expect(html).not.toContain("Archive Board");
-  expect(html).toContain("The company Board is always open.");
-  expect(boardUpdateForDraft(company, { ...draft, name: "Everyone" })).toEqual({
-    revision: 4,
-    name: "Everyone",
-    description: "Keep my draft",
-  });
-});
-
-test("a project Board shows its group editor slot and can be archived", () => {
-  const html = renderToStaticMarkup(
-    createElement(ServerBoardManagementDisplay, {
-      view: { ...baseView, board, draft },
-      groups: createElement("p", null, "Group editor slot"),
-    }),
-  );
-  expect(html).toContain("Group editor slot");
-  expect(html.indexOf("Group editor slot")).toBeLessThan(
-    html.indexOf("Archive Board"),
-  );
-  expect(
-    renderToStaticMarkup(
-      createElement(ServerBoardManagementDisplay, {
-        view: baseView,
-        groups: createElement("p", null, "Group editor slot"),
-      }),
-    ),
-  ).not.toContain("Group editor slot");
-  expect(boardUpdateForDraft(board, draft)).toEqual({
-    revision: 4,
-    name: "Dispatch updated",
-    description: "Keep my draft",
-  });
-});
-
-test("existing Board management requires server-confirmed manage access", () => {
-  for (const view of [
-    { ...baseView, access: "loading" as const, canManage: false },
-    { ...baseView, access: "denied" as const, canManage: false },
-    { ...baseView, access: "ready" as const, canManage: false },
-  ]) {
-    const html = markup(view);
-    expect(html).not.toContain("Keep my draft");
-    expect(html).not.toContain("Save changes");
-    expect(html).not.toContain("Archive Board");
-  }
-});
-
-test("revision conflict retains the draft and blocks unreviewed overwrite", () => {
-  const html = markup({ ...baseView, conflict: true });
-  expect(html).toContain("Keep my draft");
-  expect(html).toContain("Changed by someone else — review latest");
-  expect(html).toContain("Refresh latest Board");
-  expect(html).toMatch(/disabled=""[^>]*>Save changes/);
-});
-
-test("conflict retry reapplies only locally changed fields onto the latest Board", () => {
-  const latest = {
-    ...board,
-    revision: 5,
-    description: "Changed remotely",
-  };
-  const originalDraft = { ...draft, description: "Daily handoffs" };
-  expect(rebaseBoardDraft(board, latest, originalDraft)).toEqual({
-    name: "Dispatch updated",
-    description: "Changed remotely",
-  });
-});
-
-test("Board access revocation clears private management state and invalidates pending responses", () => {
-  const accessRequest = { current: 2 };
-  const actionRequest = { current: 4 };
-  let currentBoard: BoardManagementBoard | null = board;
-  let currentDraft = draft;
-  let currentDraftBase: BoardManagementBoard | null = board;
-  let access = "ready";
-  let conflict = true;
-  let latestReady = true;
-  let error: string | null = "Old error";
-  let notice: string | null = "Private notice";
-  let confirmation: string | null = "archive";
-  let discardOpen = true;
-  let notifications = 0;
-  revokeBoardManagementState({
-    accessRequest,
-    actionRequest,
-    setBoard: (value) => {
-      currentBoard = value;
-    },
-    setDraft: (value) => {
-      currentDraft = value;
-    },
-    setDraftBase: (value) => {
-      currentDraftBase = value;
-    },
-    setAccess: (value) => {
-      access = value;
-    },
-    setConflict: (value) => {
-      conflict = value;
-    },
-    setLatestReady: (value) => {
-      latestReady = value;
-    },
-    setError: (value) => {
-      error = value;
-    },
-    setNotice: (value) => {
-      notice = value;
-    },
-    setConfirmation: (value) => {
-      confirmation = value;
-    },
-    setDiscardOpen: (value) => {
-      discardOpen = value;
-    },
-    onAccessDenied: () => {
-      notifications += 1;
-    },
-  });
-  expect([currentBoard, currentDraftBase]).toEqual([null, null]);
-  expect(currentDraft).toEqual({ name: "", description: "" });
-  expect([
-    access,
-    conflict,
-    latestReady,
-    error,
-    notice,
-    confirmation,
-    discardOpen,
-  ]).toEqual(["denied", false, false, null, null, null, false]);
-  expect([accessRequest.current, actionRequest.current]).toEqual([3, 5]);
-  expect(notifications).toBe(1);
-});
-
-test("manage-only denial clears its editor without revoking the authorized Board", () => {
-  let boardRevocations = 0;
-  const noOp = () => undefined;
-  revokeBoardManagementState(
-    {
-      accessRequest: { current: 0 },
-      actionRequest: { current: 0 },
-      setBoard: noOp,
-      setDraft: noOp,
-      setDraftBase: noOp,
-      setAccess: noOp,
-      setConflict: noOp,
-      setLatestReady: noOp,
-      setError: noOp,
-      setNotice: noOp,
-      setConfirmation: noOp,
-      setDiscardOpen: noOp,
-      onAccessDenied: () => {
-        boardRevocations += 1;
-      },
-    },
-    false,
-  );
-  expect(boardRevocations).toBe(0);
-});
-
-test("archived project Board offers restore without editable metadata", () => {
-  const html = markup({
-    ...baseView,
-    board: { ...board, status: "archived" },
-  });
-  expect(html).toContain("Restore Board");
-  expect(html).not.toContain("Save changes");
-});
-
-test("archived Board permanent-deletion controls are hidden from non-admins", () => {
-  const html = renderToStaticMarkup(
-    createElement(ServerBoardManagementDisplay, {
-      view: { ...baseView, board: { ...board, status: "archived" } },
-      purgePreview,
-      isAdmin: false,
-    } as Parameters<typeof ServerBoardManagementDisplay>[0]),
-  );
-  expect(html).not.toContain("Permanent deletion");
-  expect(html).not.toContain("Permanently delete Board");
-  expect(html).toContain("Restore Board");
-});
 
 for (const state of ["disabled", "unknown", "unavailable"] as const) {
   test(`an archived Board remains restorable while permanent deletion is ${state}`, async ({
@@ -428,39 +151,6 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     ).toHaveCount(0);
   });
 }
-
-test("Board purge preserves safe lifecycle messages when the server returns their actual status", async () => {
-  const management =
-    (await import("../../src/components/systems/boards/components/server-backed-board-management")) as unknown as {
-      boardPurgeFailureMessage: (
-        error: unknown,
-        stage: "preview" | "execute",
-      ) => string;
-    };
-  expect(typeof management.boardPurgeFailureMessage).toBe("function");
-  expect(
-    management.boardPurgeFailureMessage(
-      new ApiError(
-        403,
-        "Permanent delete is turned off for this installation.",
-        undefined,
-        "purge_disabled",
-      ),
-      "preview",
-    ),
-  ).toBe("Permanent delete is turned off for this installation.");
-  expect(
-    management.boardPurgeFailureMessage(
-      new ApiError(
-        422,
-        "The Board name confirmation did not match",
-        undefined,
-        "confirmation_name_mismatch",
-      ),
-      "execute",
-    ),
-  ).toBe("The Board name confirmation did not match");
-});
 
 test("Board purge explains its impact and keeps stale challenges recoverable without losing access", async ({
   page,
@@ -616,18 +306,14 @@ test("Board creation closes its form and confirms the created Board", async ({
   page,
 }) => {
   await installArchivedBoard(page);
-  const created = {
+  const created = wireBoard({
     id: departmentId,
-    scope: "project",
-    department_id: null,
     name: "New dispatch",
     description: "Owned feedback journey",
-    status: "active",
-    revision: 1,
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   await page.route("**/api/boards", (route) =>
     route.request().method() === "POST"
       ? route.fulfill({ status: 201, json: created })
@@ -709,30 +395,18 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
   page,
 }) => {
   await installArchivedBoard(page);
-  const activeBoard = {
+  const activeBoard = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: board.name,
     description: board.description,
-    status: "active",
     revision: board.revision,
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   await page.route("**/api/boards", (route) =>
     route.fulfill({
-      json: {
-        items: [activeBoard],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
-      },
+      json: pageOf([activeBoard], { limit: 25 }),
     }),
   );
   await page.route(`**/api/boards/${boardId}`, (route) =>
@@ -758,16 +432,12 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
     );
     const items = filtered.slice(offset, offset + limit);
     return route.fulfill({
-      json: {
-        items,
-        pagination: {
-          limit,
-          offset,
-          count: items.length,
-          total: filtered.length,
-          has_more: offset + items.length < filtered.length,
-        },
-      },
+      json: pageOf(items, {
+        limit,
+        offset,
+        total: filtered.length,
+        hasMore: offset + items.length < filtered.length,
+      }),
     });
   });
   await page.goto(`/boards?board=${boardId}&section=overview`);
@@ -779,9 +449,10 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
   await manage
     .getByRole("combobox", { name: "Add a group", exact: true })
     .click();
-  const groupSearch = page
-    .getByRole("combobox", { name: "Add a group", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }));
+  const groupSearch = page.getByRole("combobox", {
+    name: "Search add a group",
+    exact: true,
+  });
   await groupSearch.fill("Zora");
   await expect(
     page.getByRole("option", { name: "Zora group beyond one hundred" }),
@@ -814,14 +485,6 @@ test("Board group picker finds groups beyond one hundred and preserves the selec
   await expect(
     manage.getByRole("button", { name: "Save groups", exact: true }),
   ).toBeEnabled();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-board-groups-${mode}`);
-    }
-  }
 });
 
 const controlFileId = "00000000-0000-4000-8000-000000000041";
@@ -845,10 +508,8 @@ const controlFile = {
 
 async function installFileManagement(page: Page, startArchived = false) {
   const api = await installArchivedBoard(page);
-  const currentBoard = {
+  const currentBoard = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: board.name,
     description: board.description,
     status: startArchived ? "archived" : "active",
@@ -856,7 +517,7 @@ async function installFileManagement(page: Page, startArchived = false) {
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   let file = { ...controlFile };
   let fileReadsWhileArchived = 0;
   let purgeAttempts = 0;
@@ -880,16 +541,7 @@ async function installFileManagement(page: Page, startArchived = false) {
     const path = url.pathname;
     if (path === "/api/boards")
       return route.fulfill({
-        json: {
-          items: [currentBoard],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
-        },
+        json: pageOf([currentBoard], { limit: 25 }),
       });
     if (path === `/api/boards/${boardId}`)
       return route.fulfill({ json: currentBoard });
@@ -912,16 +564,7 @@ async function installFileManagement(page: Page, startArchived = false) {
           ? [{ ...file, board_id: malformedFile ? departmentId : boardId }]
           : [];
       return route.fulfill({
-        json: {
-          items,
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: items.length,
-            total: items.length,
-            has_more: false,
-          },
-        },
+        json: pageOf(items, { limit: 25 }),
       });
     }
     if (path === `/api/boards/${boardId}/files/${controlFileId}/archive`) {
@@ -992,7 +635,7 @@ async function installFileManagement(page: Page, startArchived = false) {
   };
 }
 
-test("S11 another Board invalidation refreshes the current bounded selector search in place", async ({
+test("another Board invalidation refreshes the current bounded selector search in place", async ({
   page,
 }) => {
   await installFileManagement(page);
@@ -1005,29 +648,19 @@ test("S11 another Board invalidation refreshes the current bounded selector sear
       const params = new URL(route.request().url()).searchParams;
       queries.push(params);
       return route.fulfill({
-        json: {
-          items: [
-            {
+        json: pageOf(
+          [
+            wireBoard({
               id: otherId,
-              scope: "project",
-              department_id: null,
               name,
               description: "",
-              status: "active",
-              revision: 1,
               level: "manage",
               created_at: board.createdAt,
               updated_at: board.updatedAt,
-            },
+            }),
           ],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
-        },
+          { limit: 25 },
+        ),
       });
     },
   );
@@ -1059,7 +692,7 @@ test("S11 another Board invalidation refreshes the current bounded selector sear
   await expect(page).toHaveURL(new RegExp(`board=${boardId}`));
 });
 
-test("S11 live unattached-file list and Board metadata retain the management draft", async ({
+test("live unattached-file list and Board metadata retain the management draft", async ({
   page,
 }) => {
   const api = await installFileManagement(page);
@@ -1103,21 +736,11 @@ test("S11 live unattached-file list and Board metadata retain the management dra
 });
 
 for (const changed of [false, true]) {
-  test(`S11 fresh file read ${changed ? "invalidates a held preview after remote purge" : "preserves an unchanged review and gates confirmation while loading"}`, async ({
+  test(`fresh file read ${changed ? "invalidates a held preview after remote purge" : "preserves an unchanged review and gates confirmation while loading"}`, async ({
     page,
   }) => {
     const api = await installFileManagement(page);
     api.archiveRemote();
-    if (process.env.OPENVIEW_CAPTURE_DIR)
-      await page.route("**/api/users/*/preferences", (route) =>
-        route.fulfill({
-          json: {
-            user_id: new URL(route.request().url()).pathname.split("/")[3],
-            theme: "light",
-            appearance: { motion: "reduce", keyboard_shortcuts: true },
-          },
-        }),
-      );
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -1169,28 +792,6 @@ for (const changed of [false, true]) {
         await review
           .getByLabel("Type the file name")
           .fill(controlFile.filename);
-        if (process.env.OPENVIEW_CAPTURE_DIR) {
-          await page.addStyleTag({
-            content: "nextjs-portal { display: none !important; }",
-          });
-          await page.evaluate(() => document.fonts.ready);
-          for (const mode of ["light", "dark"] as const) {
-            await page.evaluate(applyAppearancePreferences, {
-              mode,
-              reduceMotion: true,
-            });
-            await captureOpenViewReview(page, `s11-file-review-${mode}`, {
-              beforeScreenshot: async () => {
-                await expect(review).toBeInViewport();
-                expect(
-                  await page.evaluate(
-                    () => document.documentElement.scrollWidth <= innerWidth,
-                  ),
-                ).toBe(true);
-              },
-            });
-          }
-        }
         await review
           .getByLabel("Administrator password")
           .fill("synthetic-file-password");
@@ -1227,7 +828,7 @@ for (const changed of [false, true]) {
 }
 
 for (const startArchived of [false, true]) {
-  test(`S04 owned unattached file can be archived and purged before its ${startArchived ? "restored" : "active"} Board`, async ({
+  test(`owned unattached file can be archived and purged before its ${startArchived ? "restored" : "active"} Board`, async ({
     page,
   }) => {
     const api = await installFileManagement(page, startArchived);
@@ -1325,22 +926,19 @@ for (const startArchived of [false, true]) {
     expect(api.fileReadsWhileArchived).toBe(0);
   });
 }
-test("S04 correction: obsolete file preview cannot unlock a fresh Board review after real refresh", async ({
+test("obsolete file preview cannot unlock a fresh Board review after real refresh", async ({
   page,
 }) => {
   await installFileManagement(page);
-  let current = {
+  let current = wireBoard({
     id: boardId,
-    scope: "project",
-    department_id: null,
     name: board.name,
     description: board.description,
-    status: "active",
     revision: board.revision,
     level: "manage",
     created_at: board.createdAt,
     updated_at: board.updatedAt,
-  };
+  });
   let holdNext = false,
     detailHeld = false,
     fileHeld = false,
@@ -1372,16 +970,7 @@ test("S04 correction: obsolete file preview cannot unlock a fresh Board review a
     const items =
       wanted === "all" || wanted === current.status ? [current] : [];
     return route.fulfill({
-      json: {
-        items,
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: items.length,
-          total: items.length,
-          has_more: false,
-        },
-      },
+      json: pageOf(items, { limit: 25 }),
     });
   });
   await page.route(

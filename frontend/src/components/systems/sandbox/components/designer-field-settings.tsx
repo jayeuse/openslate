@@ -113,7 +113,7 @@ function optionLabels(options: string): string[] {
     .filter(Boolean);
 }
 
-function reconcileSelectOptions(
+export function reconcileSelectOptions(
   previousOptions: SelectOption[],
   labels: string[],
   newId: (index: number) => string,

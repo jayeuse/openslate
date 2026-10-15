@@ -1,4 +1,4 @@
-"""Owned HTTP fixtures for single-field record batch journeys."""
+"""Owned HTTP fixtures and item builders for single-change and compound record batches."""
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -6,10 +6,14 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.common.dependencies import CurrentIdentity, get_current_identity
 from app.systems.access.identity.models import IdentitySession
+from app.systems.manage.audit.models import AuditAction, AuditLog
+from app.systems.platform.scheduling.models import InAppNotification
+from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
 from tests.catalog.test_record_import_integration import _World
 from tests.catalog.test_record_import_integration import world as world
 
@@ -60,3 +64,41 @@ def submit(world: _World, items: list[dict[str, Any]]):
     return world.client.post(
         "/api/records/batch-update", json={"module_id": str(world.module.id), "items": items}
     )
+
+
+def compound(row, *changes):
+    return {
+        "record_id": row["id"],
+        "revision": row["updated_at"],
+        "changes": [{"field_id": str(field_id), "value": value} for field_id, value in changes],
+    }
+
+
+def effects(db, row):
+    identifier = UUID(row["id"])
+    updates = list(
+        db.scalars(
+            select(AuditLog).where(
+                AuditLog.entity_type == "records",
+                AuditLog.entity_id == identifier,
+                AuditLog.action == AuditAction.UPDATE,
+            )
+        )
+    )
+    events = list(
+        db.scalars(
+            select(RecordTriggerEvent).where(
+                RecordTriggerEvent.record_id == identifier,
+                RecordTriggerEvent.event_kind == "field-changed",
+            )
+        )
+    )
+    notices = list(
+        db.scalars(
+            select(InAppNotification).where(
+                InAppNotification.kind == "record-assigned",
+                InAppNotification.subject_id == identifier,
+            )
+        )
+    )
+    return updates, events, notices

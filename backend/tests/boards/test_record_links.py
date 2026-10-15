@@ -3,16 +3,11 @@
 from datetime import UTC, date, datetime
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
-from app.main import create_app
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.event_router import router as event_router
 from app.systems.boards.models import Board
@@ -31,6 +26,7 @@ from app.systems.sandbox.lifecycle.schemas import LifecycleOperation, LifecycleT
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.boards.support import admin, guest, member
+from tests.boards.support import client as board_client
 from tests.boards.test_post_routes import _actor, _board, _grant
 from tests.rbac.support import make_group_access
 
@@ -71,7 +67,7 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
     db.commit()
     path = f"/api/boards/{board.id}/events/{event.id}/record-links"
 
-    with _client(db, board_writer) as client:
+    with board_client(db, board_writer, router, event_router, post_router) as client:
         denied = client.post(
             path,
             json={"record_id": str(record.id), "board_revision": 1, "content_revision": 1},
@@ -87,7 +83,7 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
     make_group_access(db, [board_writer], source_department, module)
     reader_grant = make_group_access(db, [board_reader], source_department, module)
     db.commit()
-    with _client(db, board_writer) as client:
+    with board_client(db, board_writer, router, event_router, post_router) as client:
         created = client.post(
             path,
             json={"record_id": str(record.id), "board_revision": 1, "content_revision": 1},
@@ -97,7 +93,7 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
 
     record.data[str(title_field.id)] = "Private revised title"
     db.commit()
-    with _client(db, board_reader) as client:
+    with board_client(db, board_reader, router, event_router, post_router) as client:
         visible = client.get(path)
         assert visible.status_code == 200
         assert visible.json()["items"][0]["label"] == "Private revised title"
@@ -105,22 +101,12 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
 
     reader_grant.is_deleted = True
     db.commit()
-    with _client(db, board_reader) as client:
+    with board_client(db, board_reader, router, event_router, post_router) as client:
         hidden = client.get(path)
         assert hidden.status_code == 200
         link = hidden.json()["items"][0]
         assert link["available"] is False and link["url"] is None
         assert "Private" not in hidden.text
-
-
-def _client(db: Session, actor) -> TestClient:
-    app = FastAPI()
-    app.include_router(router, prefix="/api")
-    app.include_router(event_router, prefix="/api")
-    app.include_router(post_router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
 
 
 def _source(db: Session, *readers) -> tuple[Module, Record]:
@@ -136,12 +122,6 @@ def _source(db: Session, *readers) -> tuple[Module, Record]:
     db.add(record)
     db.flush()
     return module, record
-
-
-def test_record_link_routes_are_mounted() -> None:
-    paths = create_app().openapi()["paths"]
-    assert "get" in paths["/api/boards/{board_id}/events/{event_id}/record-links"]
-    assert "post" in paths["/api/boards/{board_id}/posts/{post_id}/record-links"]
 
 
 @pytest.mark.integration
@@ -175,7 +155,7 @@ def test_event_record_link_is_contextual_and_one_record_can_link_two_items(
     db.add_all((first, second))
     db.commit()
     path = f"/api/boards/{board.id}/events/{first.id}/record-links"
-    with _client(db, owner) as client:
+    with board_client(db, owner, router, event_router, post_router) as client:
         linked = client.post(
             path,
             json={
@@ -213,7 +193,7 @@ def test_event_record_link_is_contextual_and_one_record_can_link_two_items(
             },
         )
         assert second_link.status_code == 201, second_link.text
-    with _client(db, outsider) as client:
+    with board_client(db, outsider, router, event_router, post_router) as client:
         denied = client.get(path)
         assert denied.status_code == 404
         assert denied.headers["cache-control"] == "no-store"
@@ -247,7 +227,7 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
     db.add(item)
     db.commit()
     path = f"/api/boards/{board.id}/posts/{item.id}/record-links"
-    with _client(db, owner) as client:
+    with board_client(db, owner, router, event_router, post_router) as client:
         linked = client.post(
             path,
             json={
@@ -286,12 +266,13 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
         )
     )
     assert snapshot is not None
+    savepoint = db.begin_nested()
+    snapshot.is_deleted = True
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            snapshot.is_deleted = True
-            db.flush()
+        db.flush()
+    savepoint.rollback()
     db.refresh(snapshot)
-    with _client(db, owner) as client:
+    with board_client(db, owner, router, event_router, post_router) as client:
         removed = client.request(
             "DELETE",
             f"{path}/{link_id}",
@@ -302,7 +283,7 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
         )
         assert removed.status_code == 204, removed.text
         assert client.get(f"{path}?view=draft").json()["items"] == []
-    with _client(db, reader) as client:
+    with board_client(db, reader, router, event_router, post_router) as client:
         published = client.get(path)
         assert published.status_code == 200, published.text
         assert published.json()["items"][0]["record_id"] == str(record.id)
@@ -317,12 +298,12 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
     assert any(
         blocker.entity_type == "board_post_revision_record_links" for blocker in plan.blockers
     )
-    with _client(db, reader) as client:
+    with board_client(db, reader, router, event_router, post_router) as client:
         unavailable = client.get(path)
         assert unavailable.status_code == 200
         assert unavailable.json()["items"][0]["available"] is False
         assert unavailable.json()["items"][0]["url"] is None
-    with _client(db, owner) as client:
+    with board_client(db, owner, router, event_router, post_router) as client:
         deleted = client.request(
             "DELETE",
             f"/api/boards/{board.id}/posts/{item.id}",
@@ -370,7 +351,7 @@ def test_archived_event_record_link_blocks_record_module_and_department_purge_un
     db.add(event)
     db.commit()
     path = f"/api/boards/{board.id}/events/{event.id}"
-    with _client(db, owner) as client:
+    with board_client(db, owner, router, event_router, post_router) as client:
         linked = client.post(
             f"{path}/record-links",
             json={
@@ -409,7 +390,7 @@ def test_archived_event_record_link_blocks_record_module_and_department_purge_un
         "app.systems.sandbox.lifecycle.password.ProviderPasswordGrantClient.verify_password",
         lambda *args: purger.id,
     )
-    with _client(db, purger) as client:
+    with board_client(db, purger, router, event_router, post_router) as client:
         preview = client.post(f"{path}/purge/preview")
         assert preview.status_code == 200, preview.text
         deleted = client.post(
@@ -447,17 +428,18 @@ def test_record_link_cap_and_database_parent_guards(integration_owner_db: Sessio
     )
     db.add(event)
     db.flush()
+    savepoint = db.begin_nested()
+    db.add(
+        BoardRecordLink(
+            board_id=wrong_board.id,
+            event_id=event.id,
+            record_id=record.id,
+            module_id=module.id,
+        )
+    )
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.add(
-                BoardRecordLink(
-                    board_id=wrong_board.id,
-                    event_id=event.id,
-                    record_id=record.id,
-                    module_id=module.id,
-                )
-            )
-            db.flush()
+        db.flush()
+    savepoint.rollback()
     for index in range(20):
         source = Record(module_id=module.id, data={"index": index})
         db.add(source)
@@ -477,9 +459,9 @@ def test_record_link_cap_and_database_parent_guards(integration_owner_db: Sessio
         "board_revision": 1,
         "content_revision": 1,
     }
-    with _client(db, write_only) as client:
+    with board_client(db, write_only, router, event_router, post_router) as client:
         assert client.post(path, json=payload).status_code == 403
-    with _client(db, owner) as client:
+    with board_client(db, owner, router, event_router, post_router) as client:
         full = client.post(path, json=payload)
         assert full.status_code == 409
         assert full.json()["detail"]["code"] == "record_link_limit"

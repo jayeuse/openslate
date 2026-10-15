@@ -70,7 +70,7 @@ def test_crash_after_an_idle_prepare_does_not_block_the_next_tick(
         raise OSError("power lost")
 
     monkeypatch.setattr(Host, "finish_empty", crash_once)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="power lost"):
         execute(config, state, commands)
     assert execute(config, state, commands) == {"state": "idle"}
     assert not (state / "client-a" / "active.json").exists()

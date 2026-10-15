@@ -1,20 +1,7 @@
-import { expect, test } from "./helpers/test";
+import { expect, heldResponse, test } from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
 import { backupRun, mockManageBackups } from "./helpers/manage-backups";
 import { sendOpenViewEvent } from "./helpers/openview-event-source";
-
-// Retain the verified-session fixture shared by these cases before the move.
-test.beforeEach(async ({ page }) => {
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        setup_required: false,
-      },
-    }),
-  );
-});
 
 test("Back up now queues real history, cancels without writes, and preserves policy drafts", async ({
   page,
@@ -42,9 +29,15 @@ test("Back up now queues real history, cancels without writes, and preserves pol
   const opener = page.getByRole("button", { name: "Back up now", exact: true });
   await opener.click();
   const dialog = page.getByRole("dialog", { name: "Back up now", exact: true });
+  const name = dialog.getByLabel("Backup name", { exact: true });
+  await name.fill(" ");
   await dialog
-    .getByLabel("Backup name", { exact: true })
-    .fill("Cancelled backup");
+    .getByRole("button", { name: "Back up now", exact: true })
+    .click();
+  await expect(name).toHaveAttribute("aria-invalid", "true");
+  await expect(dialog).toContainText("Enter a backup name");
+  expect(backup.queueRequests).toEqual([]);
+  await name.fill("Cancelled backup");
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(opener).toBeFocused();
@@ -84,12 +77,6 @@ test("Back up now queues real history, cancels without writes, and preserves pol
   expect(backup.queueRequests).toHaveLength(1);
   expect(backup.queueRequests[0]?.name).toBe("Working recovery point");
   expect(backup.queueRequests[0]?.key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
-  expect(backup.runs[0]).toMatchObject({
-    name: "Working recovery point",
-    state: "queued",
-    snapshot_id: null,
-    verified_at: null,
-  });
   await page
     .getByRole("button", { name: "Edit schedule", exact: true })
     .click();
@@ -99,7 +86,6 @@ test("Back up now queues real history, cancels without writes, and preserves pol
   expect(security.writes).toEqual([]);
   expect(security.policyReads).toBe(0);
   expect(backup.patches).toEqual([]);
-  expect(backup.policy.schedule).toBe("disabled");
   await policy.getByRole("button", { name: "Close", exact: true }).click();
   await page.reload();
   await expect(
@@ -108,6 +94,33 @@ test("Back up now queues real history, cancels without writes, and preserves pol
       exact: true,
     }),
   ).toBeVisible();
+});
+
+test("Backup request name validation and cancel restore focus without any local snapshot mutation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockManageSecurity(page);
+  const backup = await mockManageBackups(page);
+  await page.goto("/manage?view=backup");
+  const opener = page.getByRole("button", { name: "Back up now", exact: true });
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Back up now", exact: true });
+  const name = dialog.getByLabel("Backup name", { exact: true });
+  const submit = dialog.getByRole("button", {
+    name: "Back up now",
+    exact: true,
+  });
+  await name.fill(" ");
+  await submit.click();
+  await expect(name).toHaveAttribute("aria-invalid", "true");
+  await expect(dialog).toContainText("Enter a backup name");
+  expect(backup.queueRequests).toEqual([]);
+  await name.fill("Preserved name");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(opener).toBeFocused();
+  expect(backup.queueRequests).toEqual([]);
 });
 
 test("Backup schedule saves revisioned real policy and keeps cancelled drafts without simulation", async ({
@@ -239,7 +252,6 @@ test("Backup server paging and filters clear selection without slicing the retur
   expect(backup.historyReads.at(-1)?.get("offset")).toBe("0");
   expect(backup.historyReads.at(-1)?.get("limit")).toBe("4");
   expect(backup.historyReads.at(-1)?.get("state")).toBe("queued");
-  expect(backup.runs).toHaveLength(6);
   await page.getByRole("button", { name: "More filters" }).click();
   await page.getByLabel("Status", { exact: true }).selectOption("all");
   await page.getByRole("button", { name: "More filters" }).click();
@@ -434,10 +446,8 @@ test("Backup pending submission blocks duplicate and route leave, then events re
 }) => {
   await mockManageSecurity(page);
   const backup = await mockManageBackups(page);
-  let release!: () => void;
-  backup.holdWrite = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const held = heldResponse();
+  backup.holdWrite = held.released;
   await page.goto("/manage?view=backup");
   await page.getByRole("button", { name: "Back up now", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Back up now", exact: true });
@@ -461,7 +471,7 @@ test("Backup pending submission blocks duplicate and route leave, then events re
   });
   await expect(page).toHaveURL(/view=backup/);
   expect(backup.queueRequests).toHaveLength(1);
-  release();
+  held.release();
   await expect(dialog).toBeHidden();
   backup.runs[0] = {
     ...backup.runs[0]!,

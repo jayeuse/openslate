@@ -197,6 +197,14 @@ def test_dashboard_contract_belongs_to_a_department_and_is_bounded_and_revisione
     with pytest.raises(ValidationError):
         DashboardWidgetSpec.model_validate({**widget, "widget_type": "text"})
     with pytest.raises(ValidationError):
+        DashboardCreate.model_validate(
+            {
+                "department_id": DEPARTMENT,
+                "name": "Unknown widget",
+                "widgets": [{"widget_type": "table", "config": {}}],
+            }
+        )
+    with pytest.raises(ValidationError):
         DashboardWidgetSpec.model_validate(
             {
                 **widget,

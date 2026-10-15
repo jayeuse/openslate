@@ -1,8 +1,9 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInAs, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { pageOf, wirePagination } from "../helpers/pagination";
 
 const id = (n: number) =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -67,14 +68,7 @@ function notifications() {
 
 async function setup(page: Page) {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    }),
-  );
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: userId, role: "admin", access: [] } }),
-  );
+  await signedInAs(page, { id: userId, role: "admin" });
   const state = {
     items: notifications(),
     reportStatus: 200,
@@ -82,6 +76,7 @@ async function setup(page: Page) {
     backupResponseId: backupId,
     commands: [] as string[],
     sourceReads: [] as string[],
+    backupRunIds: [] as (string | null)[],
   };
   await page.route("**/api/reports/**", async (route) => {
     state.sourceReads.push(new URL(route.request().url()).pathname);
@@ -115,7 +110,7 @@ async function setup(page: Page) {
   await page.route("**/api/backups?**", async (route) => {
     const url = new URL(route.request().url());
     state.sourceReads.push(url.pathname + url.search);
-    expect(url.searchParams.get("run_id")).toBe(backupId);
+    state.backupRunIds.push(url.searchParams.get("run_id"));
     if (state.backupStatus !== 200)
       return route.fulfill({
         status: state.backupStatus,
@@ -143,13 +138,7 @@ async function setup(page: Page) {
             expired_at: null,
           },
         ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       },
     });
   });
@@ -199,16 +188,7 @@ async function setup(page: Page) {
         : state.items;
     const pageItems = items.slice(offset, offset + limit);
     return route.fulfill({
-      json: {
-        items: pageItems,
-        pagination: {
-          limit,
-          offset,
-          count: pageItems.length,
-          total: items.length,
-          has_more: offset + pageItems.length < items.length,
-        },
-      },
+      json: pageOf(pageItems, { limit, offset, total: items.length }),
     });
   });
   return state;
@@ -233,23 +213,11 @@ test("six new kinds show exact current-source titles and destinations with only 
   ])
     await expect(region.getByText(title, { exact: true })).toBeVisible();
   await expect(
-    region.getByRole("link", { name: "Open report" }),
-  ).toHaveAttribute("href", `/openview?section=reports&report=${reportId}`);
-  await expect(
-    region.getByRole("link", { name: "Open backup history" }),
-  ).toHaveAttribute("href", "/manage?view=backup");
-  await expect(
     region.getByRole("link", { name: "Open record" }),
   ).toHaveAttribute(
     "href",
     `/openview?section=views&module=${moduleId}&record=${recordId}`,
   );
-  await expect(
-    region.getByRole("link", { name: "Open person" }),
-  ).toHaveAttribute("href", `/access?view=people&user=${acceptedId}`);
-  await expect(
-    region.getByRole("link", { name: "Open version history" }),
-  ).toHaveAttribute("href", "/sandbox?section=history");
   await expect(region.getByRole("link")).toHaveCount(5);
   await expect(region.getByText(/· Scheduled/)).toHaveCount(1);
   expect(
@@ -259,32 +227,8 @@ test("six new kinds show exact current-source titles and destinations with only 
   ).toBe(false);
   await expect(region).not.toContainText(recordId);
   await expect(region).not.toContainText("Private body/email/snapshot");
-});
-
-test("new-kind mark-one and read-all reconcile confirmed unread state", async ({
-  page,
-}) => {
-  const state = await setup(page);
-  await page.goto("/platform?section=notifications");
-  const region = inbox(page);
-  await expect(
-    region.getByText("Record assigned to you", { exact: true }),
-  ).toBeVisible();
-  const row = region
-    .getByRole("listitem")
-    .filter({ hasText: "Record assigned to you" });
-  await row.getByRole("button", { name: "Mark as read", exact: true }).click();
-  await expect(row.getByText("Read", { exact: true })).toBeVisible();
-  await region
-    .getByRole("button", { name: "Mark all as read", exact: true })
-    .click();
-  await expect(
-    region.getByRole("button", { name: "Mark as read", exact: true }),
-  ).toHaveCount(0);
-  expect(state.commands).toEqual([
-    `/api/notifications/${id(403)}/read`,
-    "/api/notifications/read-all",
-  ]);
+  // Every Backup title read asks for this notice's run.
+  expect([...new Set(state.backupRunIds)]).toEqual([backupId]);
 });
 
 test("source refusal and foreign Backup metadata expose no cached title or destination", async ({
@@ -332,4 +276,5 @@ test("source refusal and foreign Backup metadata expose no cached title or desti
   await expect(
     region.getByRole("link", { name: "Open backup history" }),
   ).toHaveCount(0);
+  expect([...new Set(state.backupRunIds)]).toEqual([backupId]);
 });

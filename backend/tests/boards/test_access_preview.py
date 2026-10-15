@@ -4,18 +4,16 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
-from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access_preview_router import router
 from app.systems.boards.models import Board
 from tests.boards.support import board_group, project_board
+from tests.boards.support import client as board_client
 
 pytestmark = pytest.mark.integration
 
@@ -28,6 +26,7 @@ def _user(
     status: UserStatus = UserStatus.ACTIVE,
     deleted: bool = False,
     invitation_sent_at: datetime | None = None,
+    invitation_accepted_at: datetime | None = None,
 ) -> User:
     guest = role == "guest"
     sponsor = _user(db) if guest else None
@@ -42,6 +41,7 @@ def _user(
         expires_at=datetime.now(UTC) + timedelta(days=30) if guest else None,
         is_deleted=deleted,
         invitation_sent_at=invitation_sent_at,
+        invitation_accepted_at=invitation_accepted_at,
     )
     db.add(user)
     db.flush()
@@ -53,15 +53,6 @@ def _board_for_manager(db: Session) -> tuple[User, Board]:
     board = project_board(db, "Access preview test")
     board_group(db, board, [manager], AccessLevel.MANAGE)
     return manager, board
-
-
-def _client(db: Session, actor: User | None) -> TestClient:
-    app = FastAPI()
-    app.include_router(router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    if actor is not None:
-        app.dependency_overrides[get_current_user] = lambda: actor
-    return TestClient(app)
 
 
 def _preview(client: TestClient, board: Board, target: User | UUID) -> dict[str, object]:
@@ -88,7 +79,7 @@ def test_manager_preview_shows_board_group_levels_and_the_guest_limit(
     guest = _user(db, role="guest")
     board_group(db, board, [writer, guest], AccessLevel.WRITE)
     board_group(db, board, [reader], AccessLevel.READ)
-    client = _client(db, manager)
+    client = board_client(db, manager, router)
 
     assert _preview(client, board, writer) == _levels("write")
     assert _preview(client, board, reader) == _levels("read")
@@ -110,13 +101,13 @@ def test_preview_and_chooser_require_board_manager(
         f"/api/boards/{board.id}/preview-users",
     )
     for path in paths:
-        assert _client(db, None).get(path).status_code == 401
-        hidden = _client(db, outsider).get(path)
-        missing = _client(db, outsider).get(path.replace(str(board.id), str(uuid7())))
+        assert board_client(db, None, router).get(path).status_code == 401
+        hidden = board_client(db, outsider, router).get(path)
+        missing = board_client(db, outsider, router).get(path.replace(str(board.id), str(uuid7())))
         assert hidden.status_code == missing.status_code == 404
         assert hidden.json() == missing.json() == {"detail": "Board not found"}
-        assert _client(db, reader).get(path).status_code == 403
-        assert _client(db, manager).get(path).status_code == 200
+        assert board_client(db, reader, router).get(path).status_code == 403
+        assert board_client(db, manager, router).get(path).status_code == 200
 
 
 def test_preview_rejects_unavailable_target_without_leaking_identity_state(
@@ -128,7 +119,7 @@ def test_preview_rejects_unavailable_target_without_leaking_identity_state(
     pending = _user(db, status=UserStatus.PENDING)
     deleted = _user(db, deleted=True)
     unaccepted = _user(db, invitation_sent_at=datetime.now(UTC))
-    client = _client(db, manager)
+    client = board_client(db, manager, router)
     missing = client.get(f"/api/boards/{board.id}/access-preview?user_id={uuid7()}")
     assert missing.status_code == 404
     for target in (disabled, pending, deleted, unaccepted):
@@ -147,7 +138,7 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
     _user(db, username="choice_pending", status=UserStatus.PENDING)
     _user(db, username="choice_deleted", deleted=True)
     _user(db, username="choice_unaccepted", invitation_sent_at=datetime.now(UTC))
-    client = _client(db, manager)
+    client = board_client(db, manager, router)
 
     response = client.get(f"/api/boards/{board.id}/preview-users?search=choice_&limit=2&offset=1")
     assert response.status_code == 200
@@ -166,6 +157,18 @@ def test_preview_user_chooser_filters_before_bounded_pagination_and_exposes_no_p
     ]
     assert client.get(f"/api/boards/{board.id}/preview-users?limit=101").status_code == 422
 
+    # An invitee who accepted the invitation is an established account and is listed.
+    invited = datetime.now(UTC) - timedelta(days=2)
+    accepted = _user(
+        db,
+        username="invitee_accepted",
+        invitation_sent_at=invited,
+        invitation_accepted_at=invited + timedelta(days=1),
+    )
+    listed = client.get(f"/api/boards/{board.id}/preview-users?search=invitee_").json()
+    assert listed["items"] == [{"id": str(accepted.id), "username": "invitee_accepted"}]
+    assert listed["pagination"]["total"] == 1
+
 
 def test_expired_active_identity_is_hidden_from_preview_and_chooser(
     integration_owner_db: Session,
@@ -175,13 +178,11 @@ def test_expired_active_identity_is_hidden_from_preview_and_chooser(
     expired = _user(db, username="choice_expired")
     expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db.flush()
-    client = _client(db, manager)
+    client = board_client(db, manager, router)
 
     chooser = client.get(f"/api/boards/{board.id}/preview-users?search=choice_expired")
     missing = client.get(f"/api/boards/{board.id}/access-preview?user_id={uuid7()}")
-    direct = client.get(
-        f"/api/boards/{board.id}/access-preview?user_id={expired.id}"
-    )
+    direct = client.get(f"/api/boards/{board.id}/access-preview?user_id={expired.id}")
 
     assert chooser.status_code == 200
     assert chooser.json()["items"] == []
@@ -199,16 +200,18 @@ def test_my_access_returns_only_the_readers_own_level(
     writer = _user(db)
     board_group(db, board, [reader, writer], AccessLevel.MANAGE)
     board_group(db, board, [writer], AccessLevel.WRITE)
-    client = _client(db, reader)
+    client = board_client(db, reader, router)
 
     response = client.get(f"/api/boards/{board.id}/my-access")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
     assert response.json() == _levels("read")
-    assert _client(db, writer).get(f"/api/boards/{board.id}/my-access").json() == _levels("manage")
-    assert _client(db, manager).get(f"/api/boards/{board.id}/my-access").json() == _levels(
-        "manage"
-    )
+    assert board_client(db, writer, router).get(
+        f"/api/boards/{board.id}/my-access"
+    ).json() == _levels("manage")
+    assert board_client(db, manager, router).get(
+        f"/api/boards/{board.id}/my-access"
+    ).json() == _levels("manage")
 
 
 def test_my_access_hides_invisible_boards(
@@ -221,11 +224,11 @@ def test_my_access_hides_invisible_boards(
     board_group(db, board, [inactive], AccessLevel.MANAGE)
     path = f"/api/boards/{board.id}/my-access"
 
-    assert _client(db, None).get(path).status_code == 401
-    missing = _client(db, outsider).get(f"/api/boards/{uuid7()}/my-access")
+    assert board_client(db, None, router).get(path).status_code == 401
+    missing = board_client(db, outsider, router).get(f"/api/boards/{uuid7()}/my-access")
     assert missing.status_code == 404
     for actor in (outsider, inactive):
-        hidden = _client(db, actor).get(path)
+        hidden = board_client(db, actor, router).get(path)
         assert hidden.status_code == 404
         assert hidden.json() == missing.json() == {"detail": "Board not found"}
 
@@ -237,7 +240,7 @@ def test_my_access_keeps_archived_board_readable_but_hides_soft_deleted_board(
     manager, board = _board_for_manager(db)
     board.status = "archived"
     db.flush()
-    client = _client(db, manager)
+    client = board_client(db, manager, router)
 
     archived = client.get(f"/api/boards/{board.id}/my-access")
     assert archived.status_code == 200

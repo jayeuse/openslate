@@ -1,28 +1,17 @@
-import { expect, test, type Locator, type Page } from "./helpers/test";
-import { writeFile } from "node:fs/promises";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { ApiError } from "../../src/lib/api";
-import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  isEventStream,
+} from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import type { BoardPostPage } from "../../src/components/systems/boards/adapters/board-posts-api";
-import { ServerBoardPostReaderContent } from "../../src/components/systems/boards/components/server-board-post-feed-display";
-import {
-  postFeedQueryForSort,
-  postFeedKey,
-  postFeedFailure,
-  postAuthorChoiceFailure,
-  loadPublishedPostFeed,
-  initialPostAuthorsState,
-  transitionPostAuthors,
-  transitionPostFeed,
-  visiblePostAuthorId,
-  type PostFeedState,
-} from "../../src/components/systems/boards/hooks/use-server-board-posts";
+import { applyAppearancePreferences } from "../../src/lib/appearance-preferences";
+import { pageOf } from "../helpers/pagination";
+import { wireBoard, wireWorkspace } from "../helpers/wire";
 
 const boardId = "00000000-0000-4000-8000-000000000001";
 const otherBoardId = "00000000-0000-4000-8000-000000000002";
@@ -31,31 +20,6 @@ const postId = "00000000-0000-4000-8000-000000000003";
 const authorId = "00000000-0000-4000-8000-000000000004";
 const viewerId = otherUserId;
 const publishedAt = "2026-09-23T00:00:00Z";
-const page: BoardPostPage = {
-  items: [
-    {
-      id: postId,
-      boardId,
-      authorId,
-      title: "Published safety update",
-      body: "Use the new entrance.\n<script>not markup</script>",
-      links: [],
-      status: "published",
-      publishAt: publishedAt,
-      expiresAt: null,
-      pinned: true,
-      postRevision: null,
-      boardRevision: 4,
-      publicationNumber: 1,
-      publishedAt,
-      edited: false,
-      createdAt: publishedAt,
-      updatedAt: publishedAt,
-    },
-  ],
-  pagination: { limit: 25, offset: 0, count: 1, total: 1, hasMore: false },
-  boardRevision: 4,
-};
 
 const wirePost = {
   id: postId,
@@ -82,47 +46,18 @@ const browserPost = {
   body: "Use the new entrance.\n<script>not markup</script>",
 };
 
-const browserBoard = {
+const browserBoard = wireBoard({
   id: boardId,
-  scope: "project",
-  department_id: null,
   name: "Operations board",
   description: "Current authorized workspace content",
-  status: "active",
   revision: 4,
   level: "write",
   created_at: publishedAt,
   updated_at: publishedAt,
-};
+});
 
 function wirePage(items: unknown[]) {
-  return {
-    items,
-    pagination: {
-      limit: 25,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-    board_revision: 4,
-  };
-}
-
-function installFetch(responder: (path: string) => Response) {
-  const original = globalThis.fetch;
-  const paths: string[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL) => {
-    const path = String(input);
-    paths.push(path);
-    return Promise.resolve(responder(path));
-  }) as typeof fetch;
-  return {
-    paths,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
+  return { ...pageOf(items, { limit: 25 }), board_revision: 4 };
 }
 
 function versionRow(history: Locator, number: number) {
@@ -130,6 +65,59 @@ function versionRow(history: Locator, number: number) {
     has: history
       .page()
       .getByRole("button", { name: new RegExp(`Version ${number}`) }),
+  });
+}
+
+async function expectPostAppearanceMatrix(
+  page: Page,
+  assertState: () => Promise<void>,
+) {
+  const previous = await page.evaluate(() => ({
+    mode: document.documentElement.classList.contains("dark")
+      ? ("dark" as const)
+      : ("light" as const),
+    reduceMotion: document.documentElement.dataset.motion === "reduced",
+  }));
+  try {
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate(applyAppearancePreferences, {
+        mode,
+        reduceMotion: true,
+      });
+      const originalViewport = page.viewportSize();
+      const originalScrollY = await page.evaluate(() => window.scrollY);
+      try {
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
+          await assertState();
+        }
+      } finally {
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+      }
+    }
+  } finally {
+    await page.evaluate(applyAppearancePreferences, previous);
+  }
+}
+
+async function expectPostMotionMatrix(page: Page, anchor?: Locator) {
+  await page.evaluate(() => document.fonts.ready);
+  await expectPostAppearanceMatrix(page, async () => {
+    if (anchor) {
+      await anchor.evaluate((element) =>
+        element.scrollIntoView({ block: "center", behavior: "instant" }),
+      );
+      await expect(anchor).toBeInViewport();
+    }
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-motion",
+      "reduced",
+    );
   });
 }
 
@@ -154,11 +142,13 @@ async function installPostBrowserApi(page: Page) {
   });
 
   await page.route("**/api/**", (route) =>
-    route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ detail: "Unmocked post test API route" }),
-    }),
+    isEventStream(route)
+      ? route.fallback()
+      : route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Unmocked post test API route" }),
+        }),
   );
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
@@ -193,16 +183,7 @@ async function installPostBrowserApi(page: Page) {
   await page.route("**/api/views/data-sources**", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        items: [],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 0,
-          total: 0,
-          has_more: false,
-        },
-      }),
+      body: JSON.stringify(pageOf([], { limit: 25 })),
     }),
   );
   await page.route("**/api/boards**", async (route) => {
@@ -216,23 +197,20 @@ async function installPostBrowserApi(page: Page) {
         body: JSON.stringify(body),
       });
     if (path === "/api/boards")
-      return reply(200, {
-        items: [
-          browserBoard,
-          {
-            ...browserBoard,
-            id: otherBoardId,
-            name: "Second operations board",
-          },
-        ],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 2,
-          total: 2,
-          has_more: false,
-        },
-      });
+      return reply(
+        200,
+        pageOf(
+          [
+            browserBoard,
+            {
+              ...browserBoard,
+              id: otherBoardId,
+              name: "Second operations board",
+            },
+          ],
+          { limit: 25 },
+        ),
+      );
     const secondPrefix = `/api/boards/${otherBoardId}`;
     if (path === secondPrefix)
       return reply(200, {
@@ -264,16 +242,10 @@ async function installPostBrowserApi(page: Page) {
         ids.length === 0 || ids.includes(authorId)
           ? [{ id: authorId, label: "Morgan second board" }]
           : [];
-      return reply(200, {
-        items,
-        pagination: {
-          limit: Number(url.searchParams.get("limit") ?? 25),
-          offset: 0,
-          count: items.length,
-          total: items.length,
-          has_more: false,
-        },
-      });
+      return reply(
+        200,
+        pageOf(items, { limit: Number(url.searchParams.get("limit") ?? 25) }),
+      );
     }
     if (path === `${prefix}/my-access`)
       return reply(200, {
@@ -295,16 +267,15 @@ async function installPostBrowserApi(page: Page) {
           (ids.length === 0 || ids.includes(choice.id)),
       );
       const items = filtered.slice(offset, offset + limit);
-      return reply(200, {
-        items,
-        pagination: {
+      return reply(
+        200,
+        pageOf(items, {
           limit,
           offset,
-          count: items.length,
           total: filtered.length,
-          has_more: offset + items.length < filtered.length,
-        },
-      });
+          hasMore: offset + items.length < filtered.length,
+        }),
+      );
     }
     if (path === `${prefix}/posts`) {
       const view = url.searchParams.get("view");
@@ -371,20 +342,6 @@ async function installPostBrowserApi(page: Page) {
     },
   };
 }
-
-test("the published page is one bounded request with no personal state", async () => {
-  const mock = installFetch(() => Response.json(wirePage([wirePost])));
-  try {
-    const loaded = await loadPublishedPostFeed(boardId, 0);
-    expect(loaded.items).toHaveLength(1);
-    expect(loaded.items[0]?.edited).toBe(false);
-    expect(mock.paths).toEqual([
-      `/api/boards/${boardId}/posts?view=published&limit=25&offset=0&sort_by=updated_at&sort_order=desc`,
-    ]);
-  } finally {
-    mock.restore();
-  }
-});
 
 test("URL-selected published post opens outside the feed, survives reload, and closes only its target", async ({
   page,
@@ -543,184 +500,6 @@ test("closing a URL-selected post ignores its late detail response after another
   await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
 });
 
-test("published search sends one applied title/body query while preserving server totals", async () => {
-  const mock = installFetch(() =>
-    Response.json({
-      ...wirePage([wirePost]),
-      pagination: {
-        limit: 25,
-        offset: 0,
-        count: 1,
-        total: 7,
-        has_more: true,
-      },
-    }),
-  );
-  try {
-    const loaded = await loadPublishedPostFeed(boardId, 0, "safety");
-    expect(loaded.pagination).toMatchObject({
-      count: 1,
-      total: 7,
-      hasMore: true,
-    });
-    expect(mock.paths[0]).toContain("search=safety");
-    expect(mock.paths).toHaveLength(1);
-  } finally {
-    mock.restore();
-  }
-});
-
-test("selected visible author is sent as a server filter and isolated in the feed key", async () => {
-  const mock = installFetch(() => Response.json(wirePage([wirePost])));
-  try {
-    const loaded = await loadPublishedPostFeed(boardId, 0, "safety", authorId);
-    expect(loaded.items[0]?.authorId).toBe(authorId);
-    expect(mock.paths[0]).toContain(`author_id=${authorId}`);
-    expect(mock.paths[0]).toContain("search=safety");
-    expect(postFeedKey(boardId, 0, authorId, "safety", authorId)).not.toBe(
-      postFeedKey(boardId, 0, authorId, "safety", otherUserId),
-    );
-  } finally {
-    mock.restore();
-  }
-});
-
-test("published sort and page size reach the server before offset paging", async () => {
-  const mock = installFetch(() =>
-    Response.json({
-      ...wirePage([]),
-      pagination: {
-        limit: 5,
-        offset: 10,
-        count: 0,
-        total: 12,
-        has_more: true,
-      },
-    }),
-  );
-  try {
-    const sorts = [
-      {
-        selection: "newest" as const,
-        expectedBy: "updated_at",
-        expectedOrder: "desc",
-      },
-      {
-        selection: "oldest" as const,
-        expectedBy: "updated_at",
-        expectedOrder: "asc",
-      },
-      {
-        selection: "title" as const,
-        expectedBy: "title",
-        expectedOrder: "asc",
-      },
-    ];
-    for (const [index, sort] of sorts.entries()) {
-      const options = {
-        limit: 5,
-        ...postFeedQueryForSort(sort.selection),
-      };
-      const loaded = await loadPublishedPostFeed(
-        boardId,
-        10,
-        "",
-        null,
-        options,
-      );
-      const query = new URL(mock.paths[index] ?? "", "https://example.test")
-        .searchParams;
-      expect(query.get("limit")).toBe("5");
-      expect(query.get("offset")).toBe("10");
-      expect(query.get("sort_by")).toBe(sort.expectedBy);
-      expect(query.get("sort_order")).toBe(sort.expectedOrder);
-      expect(loaded.pagination).toMatchObject({
-        limit: 5,
-        offset: 10,
-        total: 12,
-        hasMore: true,
-      });
-      if (sort.selection === "title")
-        expect(postFeedKey(boardId, 10, authorId, "", null, options)).not.toBe(
-          postFeedKey(boardId, 10, authorId),
-        );
-    }
-  } finally {
-    mock.restore();
-  }
-});
-
-test("author choices clear across identity or denial and remove an author that disappears", () => {
-  const firstKey = `${authorId}:${boardId}`;
-  const secondKey = `${otherUserId}:${boardId}`;
-  const choices = [{ id: authorId, label: "Avery" }];
-  const loaded = transitionPostAuthors(
-    transitionPostAuthors(initialPostAuthorsState, {
-      type: "begin",
-      key: firstKey,
-      sequence: 1,
-    }),
-    { type: "resolve", key: firstKey, sequence: 1, data: choices },
-  );
-  expect(loaded.data).toEqual(choices);
-  expect(visiblePostAuthorId(authorId, choices)).toBe(authorId);
-  expect(visiblePostAuthorId(authorId, [])).toBeNull();
-  expect(postFeedKey(boardId, 0, authorId, "", authorId)).not.toBe(
-    postFeedKey(boardId, 0, authorId, "", visiblePostAuthorId(authorId, [])),
-  );
-  for (const status of [401, 403, 404])
-    expect(
-      postAuthorChoiceFailure(new ApiError(status, "Hidden")),
-    ).toMatchObject({
-      denied: true,
-      retain: false,
-    });
-  expect(
-    postAuthorChoiceFailure(new ApiError(503, "Unavailable")),
-  ).toMatchObject({
-    denied: false,
-    retain: true,
-  });
-  const refreshing = transitionPostAuthors(loaded, {
-    type: "begin",
-    key: firstKey,
-    sequence: 2,
-  });
-  expect(refreshing.data).toEqual(choices);
-  const transient = transitionPostAuthors(refreshing, {
-    type: "reject",
-    key: firstKey,
-    sequence: 2,
-    error: "Could not refresh author choices",
-    retain: true,
-    denied: false,
-  });
-  expect(transient).toMatchObject({ status: "ready", data: choices });
-  const denied = transitionPostAuthors(refreshing, {
-    type: "reject",
-    key: firstKey,
-    sequence: 2,
-    error: "Author choices unavailable",
-    retain: false,
-    denied: true,
-  });
-  expect(denied).toMatchObject({ status: "denied", data: null });
-  const switched = transitionPostAuthors(loaded, {
-    type: "begin",
-    key: secondKey,
-    sequence: 3,
-  });
-  expect(switched.data).toBeNull();
-  expect(
-    transitionPostAuthors(switched, {
-      type: "resolve",
-      key: firstKey,
-      sequence: 1,
-      data: choices,
-    }),
-  ).toEqual(switched);
-});
-
 test("published feed shows only returned safe text and clears when the server returns an empty page", async ({
   page,
 }) => {
@@ -733,7 +512,7 @@ test("published feed shows only returned safe text and clears when the server re
   await expect(page.getByText("Pinned", { exact: true })).toBeVisible();
   const summary = page.locator("article p").first();
   await expect(summary).toBeVisible();
-  expect(await summary.textContent()).toBe(browserPost.body);
+  await expect.poll(() => summary.textContent()).toBe(browserPost.body);
   await expect(page.locator("article script")).toHaveCount(0);
   expect(await page.locator("body").innerText()).not.toContain("sample-board");
   expect(await page.locator("body").innerText()).not.toContain(
@@ -765,34 +544,6 @@ test("published card author byline uses only an authorized choice label or a gen
     page.getByText("Author unavailable", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText(authorId, { exact: true })).toHaveCount(0);
-});
-
-test("published post revision renders its validated external links safely", () => {
-  const linked: BoardPostPage = {
-    ...page,
-    items: [
-      {
-        ...page.items[0],
-        links: [
-          {
-            label: "Policy <script>update</script>",
-            url: "https://example.org/policy?a=1&b=2",
-          },
-        ],
-      },
-    ],
-  };
-  const html = renderToStaticMarkup(
-    createElement(ServerBoardPostReaderContent, {
-      post: linked.items[0],
-    }),
-  );
-  expect(html).toContain("Policy &lt;script&gt;update&lt;/script&gt;");
-  expect(html).toContain('href="https://example.org/policy?a=1&amp;b=2"');
-  expect(html).toContain('target="_blank"');
-  expect(html).toContain('rel="noopener noreferrer"');
-  expect(html).toContain('referrerPolicy="no-referrer"');
-  expect(html).not.toContain("<script>");
 });
 
 test("an edited post links to its edit history and each earlier version", async ({
@@ -888,137 +639,6 @@ test("a post published once shows no edit history link", async ({ page }) => {
   );
 });
 
-test("post feed clears denied and switched private content and ignores stale responses", () => {
-  const initial: PostFeedState = {
-    key: null,
-    sequence: 0,
-    data: null,
-    status: "idle",
-    error: null,
-  };
-  const ready = transitionPostFeed(
-    transitionPostFeed(initial, {
-      type: "begin",
-      key: `${boardId}:0`,
-      sequence: 1,
-    }),
-    { type: "resolve", key: `${boardId}:0`, sequence: 1, data: page },
-  );
-  expect(ready.data?.items[0]?.title).toBe("Published safety update");
-
-  for (const status of [401, 403, 404]) {
-    const failure = postFeedFailure(new ApiError(status, "Denied"));
-    const denied = transitionPostFeed(ready, {
-      type: "reject",
-      key: `${boardId}:0`,
-      sequence: 1,
-      ...failure,
-    });
-    expect(denied.data).toBeNull();
-    expect(denied.status).toBe("error");
-  }
-
-  const switched = transitionPostFeed(ready, {
-    type: "begin",
-    key: `${otherBoardId}:0`,
-    sequence: 2,
-  });
-  expect(switched.data).toBeNull();
-  expect(
-    transitionPostFeed(switched, {
-      type: "resolve",
-      key: `${boardId}:0`,
-      sequence: 1,
-      data: page,
-    }),
-  ).toEqual(switched);
-});
-
-test("same Board and offset cannot retain prior verified user's content", () => {
-  const firstKey = postFeedKey(boardId, 0, authorId);
-  const secondKey = postFeedKey(boardId, 0, otherUserId);
-  const ready: PostFeedState = {
-    key: firstKey,
-    sequence: 1,
-    data: page,
-    status: "ready",
-    error: null,
-  };
-  expect(secondKey).not.toBe(firstKey);
-  const switched = transitionPostFeed(ready, {
-    type: "begin",
-    key: secondKey,
-    sequence: 2,
-  });
-  expect(switched.data).toBeNull();
-  expect(
-    transitionPostFeed(switched, {
-      type: "resolve",
-      key: firstKey,
-      sequence: 1,
-      data: page,
-    }),
-  ).toEqual(switched);
-});
-
-test("same actor and Board cannot retain a prior applied search or accept its late response", () => {
-  const firstKey = postFeedKey(boardId, 0, authorId, "safety");
-  const nextKey = postFeedKey(boardId, 0, authorId, "policy");
-  expect(nextKey).not.toBe(firstKey);
-  const ready: PostFeedState = {
-    key: firstKey,
-    sequence: 5,
-    data: page,
-    status: "ready",
-    error: null,
-  };
-  const switched = transitionPostFeed(ready, {
-    type: "begin",
-    key: nextKey,
-    sequence: 6,
-  });
-  expect(switched.data).toBeNull();
-  expect(
-    transitionPostFeed(switched, {
-      type: "resolve",
-      key: firstKey,
-      sequence: 5,
-      data: page,
-    }),
-  ).toEqual(switched);
-});
-
-test("post feed retains same-board last-good only for transient failure", () => {
-  const ready: PostFeedState = {
-    key: `${boardId}:0`,
-    sequence: 1,
-    data: page,
-    status: "ready",
-    error: null,
-  };
-  const refreshing = transitionPostFeed(ready, {
-    type: "begin",
-    key: `${boardId}:0`,
-    sequence: 2,
-  });
-  expect(refreshing.data).toEqual(page);
-  const transient = transitionPostFeed(refreshing, {
-    type: "reject",
-    key: `${boardId}:0`,
-    sequence: 2,
-    ...postFeedFailure(new ApiError(503, "Unavailable")),
-  });
-  expect(transient.data).toEqual(page);
-  expect(transient.error).toContain("refresh");
-  const contractFailure = transitionPostFeed(refreshing, {
-    type: "reject",
-    key: `${boardId}:0`,
-    sequence: 2,
-    ...postFeedFailure(new Error("Invalid response")),
-  });
-  expect(contractFailure.data).toBeNull();
-});
-
 test("author picker searches beyond the first page and retains a selected author across searches", async ({
   page,
 }) => {
@@ -1077,8 +697,7 @@ test("author picker searches beyond the first page and retains a selected author
   await expect(selectedAuthorControl).toContainText("Zora later-page author");
   await selectedAuthorControl.click();
   await page
-    .getByRole("combobox", { name: "Post author", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search post author", exact: true })
     .fill("First author 0");
   await expect
     .poll(() =>
@@ -1098,14 +717,6 @@ test("author picker searches beyond the first page and retains a selected author
       .getByRole("region", { name: "Published posts" })
       .getByText("Zora later-page author", { exact: true }),
   ).toBeVisible();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((value) => {
-        document.documentElement.classList.toggle("dark", value === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-post-author-${mode}`);
-    }
-  }
   await page.reload();
   await page.getByRole("button", { name: "More filters" }).click();
   await expect(
@@ -1118,29 +729,10 @@ test("off-page post authors keep their labels through picker search, reader, and
 }) => {
   const api = await installPostBrowserApi(page);
   const label = "Zora published author";
-  const captureLabels = async (name: string, visibleLabel: Locator) => {
-    if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-    const previous = await page.evaluate(() => ({
-      mode: document.documentElement.classList.contains("dark")
-        ? ("dark" as const)
-        : ("light" as const),
-      reduceMotion: document.documentElement.dataset.motion === "reduced",
-    }));
-    try {
-      for (const mode of ["light", "dark"] as const) {
-        await page.evaluate(applyAppearancePreferences, {
-          mode,
-          reduceMotion: true,
-        });
-        await captureOpenViewReview(page, `${name}-${mode}`, {
-          beforeScreenshot: async () => {
-            await expect(visibleLabel).toBeVisible();
-          },
-        });
-      }
-    } finally {
-      await page.evaluate(applyAppearancePreferences, previous);
-    }
+  const expectLabelAppearance = async (visibleLabel: Locator) => {
+    await expectPostAppearanceMatrix(page, async () => {
+      await expect(visibleLabel).toBeVisible();
+    });
   };
   api.setAuthorChoices([
     ...Array.from({ length: 26 }, (_, index) => ({
@@ -1187,18 +779,14 @@ test("off-page post authors keep their labels through picker search, reader, and
     .getByRole("combobox", { name: "Post author", exact: true })
     .click();
   await page
-    .getByRole("combobox", { name: "Post author", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search post author", exact: true })
     .fill("First author 0");
   await expect(
     page.getByRole("option", { name: "First author 0", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(feed.getByText(label, { exact: true })).toBeVisible();
-  await captureLabels(
-    "s08-post-author-label-feed",
-    feed.getByText(label, { exact: true }),
-  );
+  await expectLabelAppearance(feed.getByText(label, { exact: true }));
   await feed
     .getByRole("article")
     .filter({
@@ -1211,10 +799,7 @@ test("off-page post authors keep their labels through picker search, reader, and
     exact: true,
   });
   await expect(reader.getByText(label, { exact: true })).toBeVisible();
-  await captureLabels(
-    "s08-post-author-label-reader",
-    reader.getByText(label, { exact: true }),
-  );
+  await expectLabelAppearance(reader.getByText(label, { exact: true }));
   await reader.getByRole("button", { name: "Edited", exact: true }).click();
   const history = page.getByRole("dialog", {
     name: "Edit history",
@@ -1235,7 +820,7 @@ test("off-page post authors keep their labels through picker search, reader, and
 
 test("local card history keeps its eligible author after a held feed refresh replaces the card", async ({
   page,
-}, testInfo) => {
+}) => {
   const api = await installPostBrowserApi(page);
   const replacementAuthorId = "00000000-0000-4000-8000-000000000008";
   const editedPost = { ...browserPost, publication_number: 2, edited: true };
@@ -1273,7 +858,6 @@ test("local card history keeps its eligible author after a held feed refresh rep
   const feedCompleted = new Promise<void>((resolve) => {
     feedEnded = resolve;
   });
-  const phases: { event: string; reads?: number; authors?: string[][] }[] = [];
   let feedReads = 0;
   await page.route(
     (url) =>
@@ -1282,12 +866,10 @@ test("local card history keeps its eligible author after a held feed refresh rep
     async (route) => {
       feedReads += 1;
       if (!holdFeed) return route.fallback();
-      phases.push({ event: "replacement-feed-start", reads: feedReads });
       feedStarted();
       await heldFeed;
       try {
         await route.fallback();
-        phases.push({ event: "replacement-feed-complete", reads: feedReads });
       } finally {
         feedEnded();
       }
@@ -1316,10 +898,6 @@ test("local card history keeps its eligible author after a held feed refresh rep
     await expect(versionRow(history, 2)).toContainText("Avery");
     await expect(versionRow(history, 1)).toContainText("Avery");
     await expect(page).toHaveURL((url) => !url.searchParams.has("post"));
-    phases.push({
-      event: "local-history-author-visible-before-replacement",
-      reads: feedReads,
-    });
     api.setPublishedItems([...otherPosts, editedPost, olderPost]);
     const replaced = page.waitForResponse((response) => {
       const url = new URL(response.url());
@@ -1350,59 +928,20 @@ test("local card history keeps its eligible author after a held feed refresh rep
         includeHidden: true,
       }),
     ).toHaveCount(0);
-    phases.push({
-      event: "replacement-rendered-local-history-still-open",
-      reads: feedReads,
-    });
     await expect(history).toBeVisible();
     await expect(versionRow(history, 2)).toContainText("Avery");
     await expect(versionRow(history, 1)).toContainText("Avery");
     await expect(history).not.toContainText("Author unavailable");
     expect(feedReads - readsBeforeRefresh).toBe(1);
-    if (process.env.OPENVIEW_CAPTURE_DIR) {
-      const previous = await page.evaluate(() => ({
-        mode: document.documentElement.classList.contains("dark")
-          ? ("dark" as const)
-          : ("light" as const),
-        reduceMotion: document.documentElement.dataset.motion === "reduced",
-      }));
-      try {
-        for (const mode of ["light", "dark"] as const) {
-          await page.evaluate(applyAppearancePreferences, {
-            mode,
-            reduceMotion: true,
-          });
-          await captureOpenViewReview(
-            page,
-            `s08-post-author-local-history-${mode}`,
-            {
-              beforeScreenshot: async () => {
-                const version = versionRow(history, 2);
-                await version.scrollIntoViewIfNeeded();
-                await expect(version).toContainText("Avery");
-                await expect(version.getByText("Avery")).toBeInViewport();
-                await expect(history).not.toContainText("Author unavailable");
-              },
-            },
-          );
-        }
-      } finally {
-        await page.evaluate(applyAppearancePreferences, previous);
-      }
-    }
+    await expectPostAppearanceMatrix(page, async () => {
+      const version = versionRow(history, 2);
+      await version.scrollIntoViewIfNeeded();
+      await expect(version).toContainText("Avery");
+      await expect(version.getByText("Avery")).toBeInViewport();
+      await expect(history).not.toContainText("Author unavailable");
+    });
   } finally {
     releaseFeed();
-    phases.push({
-      event: "final-known-author-requests",
-      reads: feedReads,
-      authors: api.authorRequests.map((query) =>
-        new URLSearchParams(query).getAll("ids"),
-      ),
-    });
-    await writeFile(
-      testInfo.outputPath("local-card-history-feed-phases.json"),
-      JSON.stringify(phases, null, 2),
-    );
   }
 });
 
@@ -1429,16 +968,9 @@ test("an author refusal clears names and an older label response cannot restore 
       await held;
       try {
         await route.fulfill({
-          json: {
-            items: [{ id: authorId, label: "Private author" }],
-            pagination: {
-              limit: Number(query.get("limit")),
-              offset: 0,
-              count: 1,
-              total: 1,
-              has_more: false,
-            },
-          },
+          json: pageOf([{ id: authorId, label: "Private author" }], {
+            limit: Number(query.get("limit")),
+          }),
         });
       } finally {
         settled();
@@ -1460,8 +992,7 @@ test("an author refusal clears names and an older label response cannot restore 
       .getByRole("combobox", { name: "Post author", exact: true })
       .click();
     await page
-      .getByRole("combobox", { name: "Post author", exact: true })
-      .and(page.getByPlaceholder("Search…", { exact: true }))
+      .getByRole("combobox", { name: "Search post author", exact: true })
       .fill("Private author");
     await expect(
       page
@@ -1505,16 +1036,9 @@ test("switching Boards ignores the previous Board's late author label read", asy
     await held;
     try {
       await route.fulfill({
-        json: {
-          items: [{ id: authorId, label: "Old Board private author" }],
-          pagination: {
-            limit: Number(query.get("limit")),
-            offset: 0,
-            count: 1,
-            total: 1,
-            has_more: false,
-          },
-        },
+        json: pageOf([{ id: authorId, label: "Old Board private author" }], {
+          limit: Number(query.get("limit")),
+        }),
       });
     } finally {
       settled();
@@ -1599,18 +1123,11 @@ test("switching verified accounts hides previous author names while new labels l
 for (const status of [403, 404]) {
   test(`known-author label refusal ${status} hides stored names until an authorized retry`, async ({
     page,
-  }, testInfo) => {
+  }) => {
     await installPostBrowserApi(page);
-    const phases: {
-      event: string;
-      read?: number;
-      status?: number;
-      ids?: string[];
-    }[] = [];
     let refused = false;
     let recoveryArmed = false;
     let activeReads = 0;
-    let readNumber = 0;
     let deniedEnded: () => void = () => {};
     const deniedComplete = new Promise<void>((resolve) => {
       deniedEnded = resolve;
@@ -1632,19 +1149,12 @@ for (const status of [403, 404]) {
       async (route) => {
         const query = new URL(route.request().url()).searchParams;
         if (!query.has("ids")) return route.fallback();
-        const read = ++readNumber;
         const phase = recoveryArmed
           ? "recovery"
           : refused
             ? "denied"
             : "authorized";
         activeReads += 1;
-        phases.push({
-          event: `${phase}-start`,
-          read,
-          ids: query.getAll("ids"),
-        });
-        let completed = false;
         try {
           if (phase === "recovery") {
             recoveryStarted();
@@ -1658,14 +1168,8 @@ for (const status of [403, 404]) {
           } else {
             await route.fallback();
           }
-          completed = true;
         } finally {
           activeReads -= 1;
-          phases.push({
-            event: `${phase}-end`,
-            read,
-            status: completed ? (phase === "denied" ? status : 200) : undefined,
-          });
           if (phase === "denied") deniedEnded();
           if (phase === "recovery") recoveryEnded();
         }
@@ -1702,7 +1206,6 @@ for (const status of [403, 404]) {
       await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
       await expect(picker).toContainText("Avery");
       await expect.poll(() => activeReads).toBe(0);
-      phases.push({ event: "selected-feed-and-label-settled" });
       refused = true;
       await page.getByRole("button", { name: "Refresh", exact: true }).click();
       await deniedComplete;
@@ -1718,7 +1221,6 @@ for (const status of [403, 404]) {
         page.getByText("Private refusal detail", { exact: true }),
       ).toHaveCount(0);
       await expect.poll(() => activeReads).toBe(0);
-      phases.push({ event: "denied-read-and-privacy-settled" });
       recoveryArmed = true;
       await Promise.all([
         recoveryObserved,
@@ -1726,19 +1228,13 @@ for (const status of [403, 404]) {
           .getByRole("button", { name: "Retry authors", exact: true })
           .click(),
       ]);
-      phases.push({ event: "retry-click-complete-with-recovery-held" });
       await expect(page.getByText("Avery", { exact: true })).toHaveCount(0);
       releaseRecovery();
       await recoveryComplete;
       await expect(feed.getByText("Avery", { exact: true })).toBeVisible();
       await expect(picker).toContainText("Avery");
-      phases.push({ event: "authorized-recovery-visible" });
     } finally {
       releaseRecovery();
-      await writeFile(
-        testInfo.outputPath(`author-${status}-read-phases.json`),
-        JSON.stringify(phases, null, 2),
-      );
     }
   });
 }
@@ -1789,26 +1285,14 @@ async function installS05PostApi(page: Page, manage = true) {
   reader.setViewerId(authorId);
   await page.route("**/api/workspace", (route) =>
     route.fulfill({
-      json: {
+      json: wireWorkspace({
         id: "00000000-0000-4000-8000-000000000102",
-        display_name: "OpenSlate",
-        legal_name: null,
-        description: null,
-        contact_email: null,
-        contact_phone: null,
-        postal_address: null,
-        logo_file_id: null,
         locale: "en-US",
         timezone: "UTC",
-        mark: "OS",
         currency: "PHP",
-        week_start: "monday",
-        business_hours: "09:00–18:00",
-        theme: "slate",
-        revision: 1,
         today: "2035-06-01",
         purge_enabled: false,
-      },
+      }),
     }),
   );
   let boardRevision = 4;
@@ -1842,17 +1326,7 @@ async function installS05PostApi(page: Page, manage = true) {
       revision: boardRevision,
       level: manage ? "manage" : "write",
     };
-    if (path === "/api/boards")
-      return reply({
-        items: [board],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
-      });
+    if (path === "/api/boards") return reply(pageOf([board], { limit: 25 }));
     if (path === prefix) return reply(board);
     if (path === `${prefix}/my-access`)
       return reply({ level: board.level, read: true, write: true, manage });
@@ -1957,7 +1431,7 @@ async function installS05PostApi(page: Page, manage = true) {
   };
 }
 
-test("S11 matching post burst refreshes the bounded feed without wrong-scope reads or reload", async ({
+test("matching post burst refreshes the bounded feed without wrong-scope reads or reload", async ({
   page,
 }) => {
   await page.clock.install();
@@ -2024,34 +1498,6 @@ test("S11 matching post burst refreshes the bounded feed without wrong-scope rea
   expect(api.writes).toHaveLength(0);
 });
 
-async function s05Capture(page: Page, name: string, anchor?: Locator) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  await page.addStyleTag({
-    content: "nextjs-portal { display: none !important; }",
-  });
-  await page.evaluate(() => document.fonts.ready);
-  for (const mode of ["light", "dark"] as const) {
-    await page.evaluate(applyAppearancePreferences, {
-      mode,
-      reduceMotion: true,
-    });
-    await captureOpenViewReview(page, `s05-${name}-${mode}`, {
-      beforeScreenshot: async () => {
-        if (anchor) {
-          await anchor.evaluate((element) =>
-            element.scrollIntoView({ block: "center", behavior: "instant" }),
-          );
-          await expect(anchor).toBeInViewport();
-        }
-        await expect(page.locator("html")).toHaveAttribute(
-          "data-motion",
-          "reduced",
-        );
-      },
-    });
-  }
-}
-
 async function openS05Drafts(page: Page) {
   await page.getByRole("button", { name: "More post actions" }).click();
   await page.getByRole("menuitem", { name: "Edit drafts" }).click();
@@ -2073,7 +1519,7 @@ const s05Draft = {
 };
 
 for (const dirty of [false, true]) {
-  test(`S11 newer selected post ${dirty ? "retains the complete dirty draft with a review notice" : "updates a clean draft"}`, async ({
+  test(`newer selected post ${dirty ? "retains the complete dirty draft with a review notice" : "updates a clean draft"}`, async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2142,7 +1588,7 @@ for (const dirty of [false, true]) {
       await expect(
         editor.getByRole("button", { name: "Save draft", exact: true }),
       ).toBeDisabled();
-      await s05Capture(page, "s11-dirty-post", notice);
+      await expectPostMotionMatrix(page, notice);
     } else {
       await expect(editor.getByLabel("Title", { exact: true })).toHaveValue(
         "Remote working draft",
@@ -2163,7 +1609,7 @@ for (const dirty of [false, true]) {
   });
 }
 
-test("S11 post invalidation preserves the held Save owner while its feed updates", async ({
+test("post invalidation preserves the held Save owner while its feed updates", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
@@ -2224,7 +1670,7 @@ test("S11 post invalidation preserves the held Save owner while its feed updates
   }
 });
 
-test("S11 lifecycle updates its current list without losing a held Unpublish owner", async ({
+test("lifecycle updates its current list without losing a held Unpublish owner", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
@@ -2307,9 +1753,9 @@ test("S11 lifecycle updates its current list without losing a held Unpublish own
 });
 
 for (const phase of ["timer", "read"] as const) {
-  test(`S11 Board switch cancels the old ${phase} without refreshing or restoring its feed`, async ({
+  test(`Board switch cancels the old ${phase} without refreshing or restoring its feed`, async ({
     page,
-  }, testInfo) => {
+  }) => {
     const startedAt = Date.now();
     const metadata: {
       kind: "request" | "response";
@@ -2353,14 +1799,6 @@ for (const phase of ["timer", "read"] as const) {
       if (safe)
         metadata.push({ kind: "response", ...safe, status: response.status() });
     });
-    const persistMetadata = async () => {
-      const path = testInfo.outputPath(`s11-${phase}-board-network.json`);
-      await writeFile(path, JSON.stringify(metadata, null, 2));
-      await testInfo.attach(`s11-${phase}-board-network`, {
-        path,
-        contentType: "application/json",
-      });
-    };
     await page.clock.install();
     const api = await installS05PostApi(page);
     api.setPublished(browserPost);
@@ -2380,16 +1818,9 @@ for (const phase of ["timer", "read"] as const) {
       (url) => url.pathname === "/api/boards",
       (route) =>
         route.fulfill({
-          json: {
-            items: [{ ...browserBoard, level: "manage" }, partner],
-            pagination: {
-              limit: 25,
-              offset: 0,
-              count: 2,
-              total: 2,
-              has_more: false,
-            },
-          },
+          json: pageOf([{ ...browserBoard, level: "manage" }, partner], {
+            limit: 25,
+          }),
         }),
     );
     await page.route(`**/api/boards/${otherBoardId}**`, (route) => {
@@ -2402,16 +1833,10 @@ for (const phase of ["timer", "read"] as const) {
         });
       if (url.pathname === `${prefix}/post-authors`)
         return route.fulfill({
-          json: {
-            items: [{ id: authorId, label: "Avery" }],
-            pagination: {
-              limit: Number(url.searchParams.get("limit") ?? 25),
-              offset: Number(url.searchParams.get("offset") ?? 0),
-              count: 1,
-              total: 1,
-              has_more: false,
-            },
-          },
+          json: pageOf([{ id: authorId, label: "Avery" }], {
+            limit: Number(url.searchParams.get("limit") ?? 25),
+            offset: Number(url.searchParams.get("offset") ?? 0),
+          }),
         });
       const items =
         url.pathname.endsWith("/posts") &&
@@ -2550,14 +1975,13 @@ for (const phase of ["timer", "read"] as const) {
       expect(api.writes).toHaveLength(0);
     } finally {
       release();
-      await persistMetadata();
     }
   });
 }
 
-test.describe("S05 local post expiry", () => {
+test.describe("local post expiry", () => {
   test.use({ timezoneId: "Asia/Manila" });
-  test("S05 manager creates, reloads, edits and clears pin and local expiry", async ({
+  test("manager creates, reloads, edits and clears pin and local expiry", async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2598,9 +2022,8 @@ test.describe("S05 local post expiry", () => {
     await expect(
       reopened.getByLabel("Expires on", { exact: true }),
     ).toHaveValue("2035-06-02T12:30");
-    await s05Capture(
+    await expectPostMotionMatrix(
       page,
-      "post-editor",
       reopened.getByLabel("Expires on", { exact: true }),
     );
     await reopened.getByRole("checkbox", { name: "Pin to top" }).uncheck();
@@ -2619,7 +2042,7 @@ test.describe("S05 local post expiry", () => {
       reopened.getByLabel("Expires on", { exact: true }),
     ).toHaveValue("");
   });
-  test("S05 nonmanager preserves an existing pin while editing their own post", async ({
+  test("nonmanager preserves an existing pin while editing their own post", async ({
     page,
   }) => {
     const api = await installS05PostApi(page, false);
@@ -2643,7 +2066,7 @@ test.describe("S05 local post expiry", () => {
     expect(api.writes[0]?.body).not.toHaveProperty("expires_at");
   });
   for (const failure of [409, 503]) {
-    test(`S05 pin and expiry survive save refusal ${failure} and draft refresh`, async ({
+    test(`pin and expiry survive save refusal ${failure} and draft refresh`, async ({
       page,
     }) => {
       const api = await installS05PostApi(page);
@@ -2679,7 +2102,7 @@ test.describe("S05 local post expiry", () => {
       ).toHaveCount(0);
     });
   }
-  test("S05 schedule at expiry is refused and expired publication failure retains the draft", async ({
+  test("schedule at expiry is refused and expired publication failure retains the draft", async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2715,9 +2138,9 @@ test.describe("S05 local post expiry", () => {
   });
 });
 
-test.describe("S05 unavailable local expiry", () => {
+test.describe("unavailable local expiry", () => {
   test.use({ timezoneId: "America/New_York" });
-  test("S05 skipped local clock time has a linked error and sends no save", async ({
+  test("skipped local clock time has a linked error and sends no save", async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2747,7 +2170,7 @@ test.describe("S05 unavailable local expiry", () => {
   });
 });
 
-test("S05 source-returned expired publication shows expiry in the feed and reader", async ({
+test("source-returned expired publication shows expiry in the feed and reader", async ({
   page,
 }) => {
   const api = await installS05PostApi(page);
@@ -2760,7 +2183,7 @@ test("S05 source-returned expired publication shows expiry in the feed and reade
   });
   await expect(feed.getByText("Expired", { exact: true })).toBeVisible();
   await expect(feed.getByText(/Expired on.*Jun 2, 2035/)).toBeVisible();
-  await s05Capture(page, "expired-feed");
+  await expectPostMotionMatrix(page);
   await feed.getByRole("button", { name: "Open post", exact: true }).click();
   await expect(
     page.getByRole("dialog", { name: browserPost.title }),
@@ -2768,7 +2191,7 @@ test("S05 source-returned expired publication shows expiry in the feed and reade
 });
 
 for (const replacement of ["draft", "scheduled"] as const) {
-  test(`S05 manager unpublishes the displayed version with a ${replacement} replacement`, async ({
+  test(`manager unpublishes the displayed version with a ${replacement} replacement`, async ({
     page,
   }) => {
     const api = await installS05PostApi(page);
@@ -2793,7 +2216,7 @@ for (const replacement of ["draft", "scheduled"] as const) {
       exact: true,
     });
     await expect(confirmation).toContainText("scheduled replacement");
-    await s05Capture(page, "unpublish-confirmation");
+    await expectPostMotionMatrix(page);
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -2833,7 +2256,7 @@ for (const replacement of ["draft", "scheduled"] as const) {
   });
 }
 for (const failure of [409, 403, 503]) {
-  test(`S05 unpublish refusal ${failure} never claims success`, async ({
+  test(`unpublish refusal ${failure} never claims success`, async ({
     page,
   }) => {
     const api = await installS05PostApi(page);

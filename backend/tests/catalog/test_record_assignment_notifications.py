@@ -11,7 +11,7 @@ from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
 from app.systems.sandbox.records.models import Record
 from tests.catalog.test_record_import_integration import _preview
 from tests.catalog.test_record_import_integration import world as world
-from tests.platform_scheduling.test_notification_routes import _client
+from tests.platform_scheduling.support import notification_client as _client
 
 pytestmark = pytest.mark.integration
 

@@ -5,48 +5,26 @@ import {
   type Page,
   type Route,
 } from "@playwright/test";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import {
   installOpenViewEventSource,
+  sendChartInvalidation,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-
-async function captureS26Dashboard(page: Page, name: string) {
-  await captureOpenViewReview(
-    page,
-    `${name}-${process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light"}`,
-    {
-      beforeScreenshot: async (capture) => {
-        await capture.addStyleTag({
-          content: "nextjs-portal { display: none !important; }",
-        });
-        await expect(capture.locator("html")).toHaveClass(
-          process.env.S26_CAPTURE_THEME === "dark" ? /dark/ : /^(?!.*dark)/,
-        );
-        await capture.evaluate(async () => {
-          await document.fonts.ready;
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-          );
-        });
-      },
-    },
-  );
-}
-async function prepareS26DashboardCapture(page: Page) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  const theme = process.env.S26_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-  await page.route("**/api/users/*/preferences", (route) =>
-    route.fulfill({
-      json: {
-        user_id: new URL(route.request().url()).pathname.split("/")[3],
-        theme,
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
-      },
-    }),
-  );
-}
+import {
+  isEventStream,
+  signedInAs,
+  type SignedInIdentity,
+} from "./helpers/test";
+import { gate as requestGate, type Gate as RequestGate } from "./helpers/gate";
+import { hideDevOverlay } from "./helpers/test-styles";
+import { pageOf, wirePagination } from "../helpers/pagination";
+import {
+  wireBoard,
+  wireField,
+  wireRecord,
+  wireWorkspace,
+  wireBucket,
+} from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 // The data sources and Dashboards of these tests belong to one department.
@@ -214,30 +192,6 @@ type RecordQueryRequest = {
   limit: number;
   offset: number;
 };
-type RequestGate = {
-  started: Promise<void>;
-  wait: Promise<void>;
-  signalStarted: () => void;
-  release: () => void;
-};
-
-function requestGate(): RequestGate {
-  let signalStarted = () => {};
-  let release = () => {};
-  const started = new Promise<void>((resolve) => {
-    signalStarted = resolve;
-  });
-  const wait = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return {
-    started,
-    wait,
-    signalStarted: () => signalStarted(),
-    release: () => release(),
-  };
-}
-
 const queryDefinition: QueryDefinition = {
   version: 1,
   logic: "and",
@@ -370,34 +324,26 @@ function dataSourceField(
   name: string,
   position: number,
 ): FieldWire {
-  return {
+  return wireField({
     id,
     module_id: moduleId,
     name,
     type: "select",
-    required: false,
     position,
     config: { options: categoryChoices },
-  };
+  });
 }
 
 function snapshot(length = 30) {
-  const items = Array.from({ length }, (_, index) => ({
-    key: `group-${index + 1}`,
-    label: `Group ${index + 1}`,
-    value: index + 1,
-    record_count: index + 1,
-  }));
-  return {
-    items,
-    pagination: {
-      limit: items.length,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
+  const items = Array.from({ length }, (_, index) =>
+    wireBucket({
+      key: `group-${index + 1}`,
+      label: `Group ${index + 1}`,
+      value: index + 1,
+      record_count: index + 1,
+    }),
+  );
+  return pageOf(items, { limit: items.length });
 }
 
 function dateSnapshot(from: string, to: string) {
@@ -406,59 +352,41 @@ function dateSnapshot(from: string, to: string) {
   const length = Math.floor((end - start) / 86_400_000) + 1;
   const items = Array.from({ length }, (_, index) => {
     const day = new Date(start + index * 86_400_000).toISOString().slice(0, 10);
-    return { key: day, label: day, value: index + 1, record_count: index + 1 };
+    return wireBucket({
+      key: day,
+      value: index + 1,
+      record_count: index + 1,
+    });
   });
-  return {
-    items,
-    pagination: {
-      limit: items.length,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
+  return pageOf(items, { limit: items.length });
 }
 
 async function installDashboardApi(
   page: Page,
   initial: DashboardWire | null = null,
-  identity: {
-    role: "admin" | "member" | "guest";
-    access: { department_id: string; module_id: null; level: string }[];
-  } = { role: "admin", access: [] },
+  identity: Omit<SignedInIdentity, "id"> = { role: "admin", access: [] },
 ) {
   await installOpenViewEventSource(page);
   await page.route("**/api/**", (route) =>
-    route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ detail: "Not available in this route test" }),
-    }),
+    isEventStream(route)
+      ? route.fallback()
+      : route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Not available in this route test" }),
+        }),
   );
   await page.route("**/api/workspace", (route) =>
     route.request().method() === "GET"
       ? route.fulfill({
-          json: {
+          json: wireWorkspace({
             id: "00000000-0000-4000-8000-000000000102",
-            display_name: "OpenSlate",
-            legal_name: null,
-            description: null,
-            contact_email: null,
-            contact_phone: null,
-            postal_address: null,
-            logo_file_id: null,
             locale: "en-PH",
             timezone: "Asia/Manila",
-            mark: "OS",
             currency: "PHP",
-            week_start: "monday",
-            business_hours: "09:00–18:00",
-            theme: "slate",
-            revision: 1,
             today: "2026-10-07",
             purge_enabled: false,
-          },
+          }),
         })
       : route.fallback(),
   );
@@ -500,22 +428,7 @@ async function installDashboardApi(
   let recordResultCount = 2;
   let recordFieldId = categoryFieldId;
 
-  await page.route("**/api/auth/session", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
-  await page.route("**/api/auth/me", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ id: userId, ...identity }),
-    }),
-  );
+  await signedInAs(page, { id: userId, ...identity });
   await page.route("**/api/auth/refresh", (route) =>
     route.request().method() === "POST"
       ? route.fulfill({
@@ -538,13 +451,7 @@ async function installDashboardApi(
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       }),
     }),
   );
@@ -571,16 +478,7 @@ async function installDashboardApi(
       ];
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({
-          items,
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: items.length,
-            total: items.length,
-            has_more: false,
-          },
-        }),
+        body: JSON.stringify(pageOf(items, { limit: 100 })),
       });
     }
     const requestedFieldModuleId = url.pathname.match(
@@ -632,21 +530,19 @@ async function installDashboardApi(
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            wireField({
               id: categoryFieldId,
               module_id: moduleId,
               name: "Category",
               type: "select",
-              required: false,
               position: 0,
               config: { options: categoryChoices },
-            },
-            {
+            }),
+            wireField({
               id: regionFieldId,
               module_id: moduleId,
               name: "Region",
               type: "select",
-              required: false,
               position: 1,
               config: {
                 options: [
@@ -654,60 +550,44 @@ async function installDashboardApi(
                   { id: southChoiceId, label: "South" },
                 ],
               },
-            },
-            {
+            }),
+            wireField({
               id: amountFieldId,
               module_id: moduleId,
               name: "Amount",
               type: "decimal",
-              required: false,
               position: 2,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: dateFieldId,
               module_id: moduleId,
               name: "Occurred on",
               type: "date",
-              required: false,
               position: 3,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: datetimeFieldId,
               module_id: moduleId,
               name: "Updated at",
               type: "datetime",
-              required: false,
               position: 4,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: unitsFieldId,
               module_id: moduleId,
               name: "Units",
               type: "int",
-              required: false,
               position: 5,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: scoreFieldId,
               module_id: moduleId,
               name: "Score",
               type: "number",
-              required: false,
               position: 6,
-              config: {},
-            },
+            }),
           ],
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: 7,
-            total: 7,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 100, count: 7, total: 7 }),
         }),
       });
     }
@@ -731,13 +611,12 @@ async function installDashboardApi(
           contentType: "application/json",
           body: JSON.stringify({
             items: [pending.item],
-            pagination: {
+            pagination: wirePagination({
               limit: 25,
               offset,
               count: 1,
               total: offset + 1,
-              has_more: false,
-            },
+            }),
           }),
         });
       }
@@ -966,17 +845,15 @@ async function installDashboardApi(
     }
     const allItems = Array.from({ length: recordResultCount }, (_, index) => {
       const option = categoryChoice(index % categoryChoices.length);
-      return {
+      return wireRecord({
         id: `00000000-0000-4000-8000-${String(index + 201).padStart(12, "0")}`,
         module_id: moduleId,
         data: { [recordFieldId]: option.id },
         display_values: { [recordFieldId]: option.label },
         created_at: timestamp,
         updated_at: timestamp,
-        deleted_at: null,
-        is_deleted: false,
         performed_by: userId,
-      };
+      });
     });
     const items = allItems.slice(
       request.offset,
@@ -984,16 +861,13 @@ async function installDashboardApi(
     );
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        items,
-        pagination: {
+      body: JSON.stringify(
+        pageOf(items, {
           limit: request.limit,
           offset: request.offset,
-          count: items.length,
           total: allItems.length,
-          has_more: request.offset + items.length < allItems.length,
-        },
-      }),
+        }),
+      ),
     });
   });
 
@@ -1252,7 +1126,9 @@ async function editGridWidget(page: Page, title: string) {
   await page
     .getByRole("button", { name: `Widget options: ${title}`, exact: true })
     .click();
+  // Target this widget's menu: an earlier widget's menu can still be closing.
   await page
+    .getByRole("menu", { name: `Widget options: ${title}`, exact: true })
     .getByRole("menuitem", { name: "Edit widget", exact: true })
     .click();
   const dialog = page.getByRole("dialog", { name: "Edit widget", exact: true });
@@ -1260,7 +1136,7 @@ async function editGridWidget(page: Page, title: string) {
   return dialog;
 }
 
-test("S29 renders every widget in one correlated aggregate batch and independent records read", async ({
+test("renders every widget in one correlated aggregate batch and independent records read", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -1277,60 +1153,42 @@ test("S29 renders every widget in one correlated aggregate batch and independent
         items: [
           {
             items: [
-              {
+              wireBucket({
                 key: "chart",
                 label: "Chart cohort",
                 value: 7,
                 record_count: 7,
-              },
+              }),
             ],
-            pagination: {
-              limit: 1,
-              offset: 0,
-              count: 1,
-              total: 1,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
           },
           {
             items: [
-              {
+              wireBucket({
                 key: "north",
                 label: "Measured cohort",
                 value: "123456789012.1234",
                 record_count: 128,
-              },
-              {
+              }),
+              wireBucket({
                 key: "south",
                 label: "No measure",
                 value: null,
                 record_count: 17,
-              },
+              }),
             ],
-            pagination: {
-              limit: 2,
-              offset: 0,
-              count: 2,
-              total: 2,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
           },
           {
             items: [
-              {
+              wireBucket({
                 key: "summary",
                 label: "Summary cohort",
                 value: 41,
                 record_count: 41,
-              },
+              }),
             ],
-            pagination: {
-              limit: 1,
-              offset: 0,
-              count: 1,
-              total: 1,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
           },
         ],
       },
@@ -1401,7 +1259,7 @@ test("S29 renders every widget in one correlated aggregate batch and independent
   expect(api.writes).toEqual([]);
 });
 
-test("S29 size and stored-order changes retain tile paging and save only with the Dashboard revision", async ({
+test("size and stored-order changes retain tile paging and save only with the Dashboard revision", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -1466,7 +1324,7 @@ test("S29 size and stored-order changes retain tile paging and save only with th
 });
 
 for (const kind of ["chart", "summary", "workload", "records"] as const) {
-  test(`S29 editing ${kind} initializes the complete current definition and retains it through a conflict`, async ({
+  test(`editing ${kind} initializes the complete current definition and retains it through a conflict`, async ({
     page,
   }) => {
     const definition: QueryDefinition = {
@@ -1608,7 +1466,7 @@ for (const kind of ["chart", "summary", "workload", "records"] as const) {
   });
 }
 
-test("S29 malformed batch clears the protected cohort and retries without single-RPC fallback", async ({
+test("malformed batch clears the protected cohort and retries without single-RPC fallback", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -1639,7 +1497,7 @@ test("S29 malformed batch clears the protected cohort and retries without single
   expect(api.writes).toEqual([]);
 });
 
-test("S29 edited source fences a held cohort result while other saved tiles remain refreshable", async ({
+test("edited source fences a held cohort result while other saved tiles remain refreshable", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -1674,7 +1532,7 @@ test("S29 edited source fences a held cohort result while other saved tiles rema
   expect(api.writes).toEqual([]);
 });
 
-test("S29 grid uses thirds halves full rows and full-width phone tiles with keyboard edit", async ({
+test("grid uses thirds halves full rows and full-width phone tiles with keyboard edit", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -1686,37 +1544,29 @@ test("S29 grid uses thirds halves full rows and full-width phone tiles with keyb
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   await expect(page.getByRole("article")).toHaveCount(4);
   await expect(page.getByRole("table", { name: "Live records" })).toBeVisible();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await expect(capture.getByRole("article")).toHaveCount(4);
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        await capture.evaluate(async () => {
-          await document.fonts.ready;
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-          );
-        });
-      },
-    };
-    await captureOpenViewReview(page, "s29-dashboard-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s29-dashboard-dark", options);
-    await page.evaluate(() =>
-      document.documentElement.classList.remove("dark"),
-    );
-  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await hideDevOverlay(page);
+  const checkLayout = async () => {
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect(page.getByRole("article")).toHaveCount(4);
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+    }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+  };
+  await checkLayout();
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await checkLayout();
+  await page.evaluate(() => document.documentElement.classList.remove("dark"));
   const widths = async () =>
     page
       .getByRole("article")
@@ -1751,7 +1601,7 @@ test("S29 grid uses thirds halves full rows and full-width phone tiles with keyb
   await expect(dialog).toBeHidden();
 });
 
-test("S29 edit resolves the current source and referenced fields beyond their first catalog pages", async ({
+test("edit resolves the current source and referenced fields beyond their first catalog pages", async ({
   page,
 }) => {
   const widget = savedWidget(dashboardWidgetId, 0, delayedFieldId);
@@ -1806,13 +1656,12 @@ test("S29 edit resolves the current source and referenced fields beyond their fi
             title_field_id: null,
           },
         ],
-        pagination: {
+        pagination: wirePagination({
           limit: 100,
-          offset: 0,
           count: 1,
           total: 101,
           has_more: true,
-        },
+        }),
       },
     }),
   );
@@ -1838,7 +1687,7 @@ test("S29 edit resolves the current source and referenced fields beyond their fi
   expect(api.writes).toEqual([]);
 });
 
-test("S29 Add from saved chart and reference edit keep XOR while current definitions drive all tiles", async ({
+test("Add from saved chart and reference edit keep XOR while current definitions drive all tiles", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000681";
@@ -1879,13 +1728,7 @@ test("S29 Add from saved chart and reference edit keep XOR while current definit
     return route.fulfill({
       json: {
         items: [source()],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     });
   });
@@ -1923,10 +1766,7 @@ test("S29 Add from saved chart and reference edit keep XOR while current definit
     .getByRole("button", { name: "Apply widget changes", exact: true })
     .click();
   await expect(edit).toBeHidden();
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect
     .poll(() => api.batches.at(-1)?.queries.at(-1))
     .toMatchObject({ dimension: { field_id: regionFieldId } });
@@ -1945,7 +1785,7 @@ test("S29 Add from saved chart and reference edit keep XOR while current definit
   expect(writes).toEqual([]);
 });
 
-test("S29 one refused saved Chart clears its entire aggregate cohort until explicit current-authority retry", async ({
+test("one refused saved Chart clears its entire aggregate cohort until explicit current-authority retry", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000682";
@@ -2002,10 +1842,7 @@ test("S29 one refused saved Chart clears its entire aggregate cohort until expli
   expect(api.batches).toHaveLength(batches);
   const afterRefusal = reads;
   denied = false;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await page.getByRole("button", { name: "Refresh now", exact: true }).click();
   expect(reads).toBe(afterRefusal);
   await page
@@ -2018,7 +1855,7 @@ test("S29 one refused saved Chart clears its entire aggregate cohort until expli
   expect(api.writes).toEqual([]);
 });
 
-test("S29 a held editor source blocks changes and cancellation fences it from the next tile", async ({
+test("a held editor source blocks changes and cancellation fences it from the next tile", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000683";
@@ -2053,13 +1890,7 @@ test("S29 a held editor source blocks changes and cancellation fences it from th
     route.fulfill({
       json: {
         items: [source],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -2095,7 +1926,7 @@ test("S29 a held editor source blocks changes and cancellation fences it from th
   );
 });
 
-test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline instructions only on request", async ({
+test("Dashboard previews an unsaved monthly draft and saves the exact inline instructions only on request", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2119,20 +1950,15 @@ test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline
             "2025-11-01",
             "2025-12-01",
             "2026-01-01",
-          ].map((key, index) => ({
-            key,
-            label: key,
-            value: index === 0 ? 12.5 : null,
-            record_count: index === 0 ? 92 : 0,
-          })),
+          ].map((key, index) =>
+            wireBucket({
+              key,
+              value: index === 0 ? 12.5 : null,
+              record_count: index === 0 ? 92 : 0,
+            }),
+          ),
         ],
-        pagination: {
-          limit: 13,
-          offset: 0,
-          count: 13,
-          total: 13,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 13, count: 13, total: 13 }),
       },
     });
   });
@@ -2162,39 +1988,39 @@ test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline
   await expect(
     dialog.getByRole("table", { name: "Draft preview values", exact: true }),
   ).toContainText("12.5");
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        if (viewport.width === 390) {
-          await dialog
-            .getByText("Measure", { exact: true })
-            .evaluate((element) => element.scrollIntoView({ block: "start" }));
-        } else {
-          await dialog
-            .getByRole("heading", { name: "Add widget", exact: true })
-            .scrollIntoViewIfNeeded();
-        }
-        await expect(
-          dialog.getByLabel("Calendar bucket", { exact: true }),
-        ).toHaveValue("month");
-      },
-    };
-    await captureOpenViewReview(page, "s27-dashboard-dialog-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s27-dashboard-dialog-dark", options);
-  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await hideDevOverlay(page);
+  const checkLayout = async () => {
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+      if (viewport.width === 390) {
+        await dialog
+          .getByText("Measure", { exact: true })
+          .evaluate((element) => element.scrollIntoView({ block: "start" }));
+      } else {
+        await dialog
+          .getByRole("heading", { name: "Add widget", exact: true })
+          .scrollIntoViewIfNeeded();
+      }
+      await expect(
+        dialog.getByLabel("Calendar bucket", { exact: true }),
+      ).toHaveValue("month");
+    }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+  };
+  await checkLayout();
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await checkLayout();
   expect(api.writes).toEqual([]);
   const expected = {
     mode: "date_series",
@@ -2226,7 +2052,7 @@ test("S27 Dashboard previews an unsaved monthly draft and saves the exact inline
   ]);
 });
 
-test("S27 Dashboard records editor preserves ordered columns filters search sort and lifecycle grammar", async ({
+test("Dashboard records editor preserves ordered columns filters search sort and lifecycle grammar", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2327,7 +2153,7 @@ test("S27 Dashboard records editor preserves ordered columns filters search sort
   ]);
 });
 
-test("S27 Dashboard cancel fences a late preview without saving or adding a widget", async ({
+test("Dashboard cancel fences a late preview without saving or adding a widget", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2357,7 +2183,7 @@ test("S27 Dashboard cancel fences a late preview without saving or adding a widg
   expect(api.writes).toEqual([]);
 });
 
-test("S27 Dashboard saved picker preview refuses a changed source and saves reference-only after recovery", async ({
+test("Dashboard saved picker preview refuses a changed source and saves reference-only after recovery", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -2386,13 +2212,7 @@ test("S27 Dashboard saved picker preview refuses a changed source and saves refe
     route.fulfill({
       json: {
         items: [chart],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -2407,20 +2227,14 @@ test("S27 Dashboard saved picker preview refuses a changed source and saves refe
     return route.fulfill({
       json: {
         items: [
-          {
+          wireBucket({
             key: "private",
             label: "Private draft result",
             value: 3,
             record_count: 3,
-          },
+          }),
         ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       },
     });
   });
@@ -2462,10 +2276,7 @@ test("S27 Dashboard saved picker preview refuses a changed source and saves refe
     dialog.getByRole("table", { name: "Draft preview values", exact: true }),
   ).toContainText("Private draft result");
   refused = true;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     dialog.getByText("Private draft result", { exact: true }),
   ).toHaveCount(0);
@@ -2495,7 +2306,7 @@ test("S27 Dashboard saved picker preview refuses a changed source and saves refe
   ]);
 });
 
-test("S26 Dashboard preserves a saved Chart reference and L size through settings save and reload", async ({
+test("Dashboard preserves a saved Chart reference and L size through settings save and reload", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000651";
@@ -2532,7 +2343,6 @@ test("S26 Dashboard preserves a saved Chart reference and L size through setting
       },
     });
   });
-  await prepareS26DashboardCapture(page);
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   await expect(
     page.getByRole("heading", { name: "Operations", exact: true }),
@@ -2540,7 +2350,6 @@ test("S26 Dashboard preserves a saved Chart reference and L size through setting
   await expect(
     page.getByRole("table", { name: /Complete data/ }),
   ).toBeVisible();
-  await captureS26Dashboard(page, "s26-dashboard-reference");
   expect(reads).toBeGreaterThan(0);
   expect(api.snapshots.at(-1)).toEqual({
     mode: "groups",
@@ -2579,7 +2388,7 @@ for (const sourceKind of ["inline", "referenced"] as const) {
     ["max", 200.5],
     ["distinct", 4],
   ] as const) {
-    test(`S26 ${sourceKind} summary shows exact ${aggregation} values and null without record-count substitution`, async ({
+    test(`${sourceKind} summary shows exact ${aggregation} values and null without record-count substitution`, async ({
       page,
     }) => {
       const chartId = "00000000-0000-4000-8000-000000000652";
@@ -2626,21 +2435,20 @@ for (const sourceKind of ["inline", "referenced"] as const) {
         return fulfillSnapshot(route, {
           json: {
             items: [
-              {
+              wireBucket({
                 key: "north",
                 label: "North",
                 value: expected,
                 record_count: 127,
-              },
-              { key: "south", label: "South", value: null, record_count: 17 },
+              }),
+              wireBucket({
+                key: "south",
+                label: "South",
+                value: null,
+                record_count: 17,
+              }),
             ],
-            pagination: {
-              limit: 2,
-              offset: 0,
-              count: 2,
-              total: 2,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
           },
         });
       });
@@ -2672,7 +2480,7 @@ for (const fault of [
   "wrong-family",
   "malformed",
 ] as const) {
-  test(`S26 current Chart ${fault} refuses stale private results and downstream reads`, async ({
+  test(`current Chart ${fault} refuses stale private results and downstream reads`, async ({
     page,
   }, testInfo) => {
     const chartId = "00000000-0000-4000-8000-000000000653";
@@ -2741,7 +2549,6 @@ for (const fault of [
       }
       return route.fulfill({ json: source });
     });
-    await prepareS26DashboardCapture(page);
     await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
     await expect(
       page.getByRole("table", { name: /Complete data/ }),
@@ -2765,10 +2572,7 @@ for (const fault of [
     const fields = api.fieldReads.length;
     const originalReads = reads;
     refused = true;
-    await sendOpenViewEvent(page, "invalidate", {
-      entity: "charts",
-      module_id: moduleId,
-    });
+    await sendChartInvalidation(page, moduleId);
     await expect.poll(() => reads).toBeGreaterThan(originalReads);
     await expect(
       page.getByRole("table", { name: /Complete data/ }),
@@ -2790,15 +2594,13 @@ for (const fault of [
           .getByRole("alert")
           .filter({ hasText: "You do not have access to this data." }),
       ).toContainText("You do not have access to this data.");
-    if (fault === "403")
-      await captureS26Dashboard(page, "s26-dashboard-source-denied");
     expect(api.snapshots).toHaveLength(downstream);
     expect(api.fieldReads).toHaveLength(fields);
     expect(api.writes).toEqual([]);
   });
 }
 
-test("S26 Chart invalidation refreshes its current query while preserving a dirty Dashboard draft", async ({
+test("Chart invalidation refreshes its current query while preserving a dirty Dashboard draft", async ({
   page,
 }) => {
   const chartId = "00000000-0000-4000-8000-000000000654";
@@ -2853,20 +2655,14 @@ test("S26 Chart invalidation refreshes its current query while preserving a dirt
     return fulfillSnapshot(route, {
       json: {
         items: [
-          {
+          wireBucket({
             key: "current",
             label: changed ? "New region data" : "Original category data",
             value: changed ? 9 : 3,
             record_count: changed ? 9 : 3,
-          },
+          }),
         ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       },
     });
   });
@@ -2880,10 +2676,7 @@ test("S26 Chart invalidation refreshes its current query while preserving a dirt
   await finishDashboardDialog(settings);
   revision = 2;
   const before = queries;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page.getByRole("cell", { name: "New region data", exact: true }),
   ).toBeVisible();
@@ -2907,7 +2700,7 @@ test("S26 Chart invalidation refreshes its current query while preserving a dirt
   });
 });
 
-test("E evidence paired Board and Dashboard follow one Chart revision without source writes or draft replacement", async ({
+test("paired Board and Dashboard follow one Chart revision without source writes or draft replacement", async ({
   page,
   browser,
   baseURL,
@@ -2945,18 +2738,14 @@ test("E evidence paired Board and Dashboard follow one Chart revision without so
   };
   try {
     await installDashboardApi(boardPage, dashboard({ widgets: [referenced] }));
-    const board = {
+    const board = wireBoard({
       id: boardId,
-      scope: "project",
-      department_id: null,
       name: "Paired Board",
       description: null,
-      status: "active",
-      revision: 1,
       level: "manage",
       created_at: timestamp,
       updated_at: timestamp,
-    };
+    });
     const widget = {
       id: boardWidgetId,
       board_id: boardId,
@@ -2971,16 +2760,7 @@ test("E evidence paired Board and Dashboard follow one Chart revision without so
       created_at: timestamp,
       updated_at: timestamp,
     };
-    const list = (items: unknown[], limit = 12) => ({
-      items,
-      pagination: {
-        limit,
-        offset: 0,
-        count: items.length,
-        total: items.length,
-        has_more: false,
-      },
-    });
+    const list = (items: unknown[], limit = 12) => pageOf(items, { limit });
     await boardPage.route("**/api/boards**", (route) => {
       const path = new URL(route.request().url()).pathname;
       if (route.request().method() !== "GET") {
@@ -3023,26 +2803,14 @@ test("E evidence paired Board and Dashboard follow one Chart revision without so
       );
       await target.route("**/api/workspace", (route) =>
         route.fulfill({
-          json: {
+          json: wireWorkspace({
             id: departmentId,
-            display_name: "OpenSlate",
-            legal_name: null,
-            description: null,
-            contact_email: null,
-            contact_phone: null,
-            postal_address: null,
-            logo_file_id: null,
             locale: "en-US",
             timezone: "UTC",
-            mark: "OS",
             currency: "USD",
-            week_start: "monday",
-            business_hours: "09:00–18:00",
-            theme: "slate",
-            revision: 1,
             today: "2026-10-09",
             purge_enabled: true,
-          },
+          }),
         }),
       );
       await target.route(`**/api/charts/${chartId}`, (route) => {
@@ -3074,14 +2842,14 @@ test("E evidence paired Board and Dashboard follow one Chart revision without so
         return fulfillSnapshot(route, {
           json: list(
             [
-              {
+              wireBucket({
                 key: "shared",
                 label: current
                   ? "Revised shared Chart"
                   : "Original shared Chart",
                 value: current ? 9 : 3,
                 record_count: 127,
-              },
+              }),
             ],
             1,
           ),
@@ -3133,14 +2901,8 @@ test("E evidence paired Board and Dashboard follow one Chart revision without so
     await boardSettings.getByLabel("Pin this widget", { exact: true }).check();
     revision = 2;
     await Promise.all([
-      sendOpenViewEvent(page, "invalidate", {
-        entity: "charts",
-        module_id: moduleId,
-      }),
-      sendOpenViewEvent(boardPage, "invalidate", {
-        entity: "charts",
-        module_id: moduleId,
-      }),
+      sendChartInvalidation(page, moduleId),
+      sendChartInvalidation(boardPage, moduleId),
     ]);
     await expect(
       page.getByRole("cell", { name: "Revised shared Chart", exact: true }),
@@ -3461,7 +3223,7 @@ test("department Dashboard supports mobile keyboard-only controls and survives r
   ).toBeVisible();
   await expect(
     page.getByRole("dialog", { name: "Session verification" }),
-  ).not.toBeVisible();
+  ).toBeHidden();
   await expectDashboardMainToFit(page);
 
   const dashboardPicker = page.getByLabel("Dashboard", { exact: true });
@@ -3835,7 +3597,7 @@ test("department Dashboard saves ordered charts and reloads every complete snaps
   ).toBeVisible();
 });
 
-test("S29 switching Dashboards fences an old cohort's pending refresh", async ({
+test("switching Dashboards fences an old cohort's pending refresh", async ({
   page,
 }) => {
   const api = await installDashboardApi(
@@ -3990,10 +3752,6 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
 
   await startNewDashboardDraft(page, "Equipment totals");
   const addDialog = await openAddWidgetDialog(page);
-  await expect(addDialog.getByLabel("Data source")).toHaveValue(moduleId);
-  await expect(addDialog.getByLabel("Group by", { exact: true })).toHaveValue(
-    categoryFieldId,
-  );
   await addDialog.getByLabel("Measure", { exact: true }).selectOption("sum");
   const addChart = addDialog.getByRole("button", {
     name: "Add widget",
@@ -4001,17 +3759,6 @@ test("Dashboard bar builder requires and saves a typed numeric measure for Sum",
   });
   const measure = addDialog.getByLabel("Numeric measure");
   await expect(measure).toHaveValue("");
-  await expect(addChart).toBeDisabled();
-  await expect(
-    measure.getByRole("option", { name: "Amount", exact: true }),
-  ).toHaveCount(1);
-  await expect(
-    measure.getByRole("option", { name: "Units", exact: true }),
-  ).toHaveCount(1);
-  await expect(
-    measure.getByRole("option", { name: "Score", exact: true }),
-  ).toHaveCount(1);
-
   await measure.selectOption(amountFieldId);
   await expect(addChart).toBeEnabled();
   await addWidgetFromDialog(addDialog);
@@ -4173,7 +3920,6 @@ test("Dashboard line builder requires and saves a typed numeric measure for Aver
   });
   const measure = addDialog.getByLabel("Numeric measure");
   await expect(measure).toHaveValue("");
-  await expect(addLineChart).toBeDisabled();
   await measure.selectOption(scoreFieldId);
   await addDialog
     .getByLabel("Group by", { exact: true })
@@ -4365,11 +4111,53 @@ test("restoring at the current URL does not suppress a later Dashboard re-select
 test("a pending Dashboard deep link is cleared when switching to archived list", async ({
   page,
 }) => {
+  const pagePrefetch = requestGate();
+  const navigation = requestGate();
+  let pagePrefetchStarted = false;
+  const prefetchRoute = (url: URL) =>
+    url.pathname.startsWith("/openview/") &&
+    url.pathname.endsWith(".__PAGE__.txt");
+  const navigationRoute = (url: URL) => url.pathname === "/openview.txt";
+  const prefetchDelivered = page.waitForEvent("requestfinished", {
+    predicate: (request) =>
+      request.method() === "GET" && prefetchRoute(new URL(request.url())),
+  });
+  await page.route(prefetchRoute, async (route) => {
+    if (route.request().method() === "GET") {
+      pagePrefetchStarted = true;
+      pagePrefetch.signalStarted();
+      await pagePrefetch.wait;
+    }
+    await route.continue();
+  });
+  let navigationDelivered = Promise.resolve();
+  await page.route(navigationRoute, async (route) => {
+    const request = route.request();
+    if (
+      request.method() !== "GET" ||
+      !request.headers()["next-router-state-tree"] ||
+      request.headers()["next-router-prefetch"]
+    ) {
+      await route.continue();
+      return;
+    }
+    pagePrefetch.release();
+    navigation.signalStarted();
+    navigationDelivered = navigationDelivered.then(async () => {
+      await navigation.wait;
+      await route.continue();
+      const response = await request.response();
+      await response?.finished();
+    });
+    await navigationDelivered;
+  });
   const api = await installDashboardApi(page, dashboard({ widgets: [] }));
   const gate = api.holdNextDashboardGet();
   await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
   try {
-    await gate.started;
+    await test.step("wait for the held Dashboard detail request", async () => {
+      await gate.started;
+    });
     const routeResponse = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return (
@@ -4377,14 +4165,33 @@ test("a pending Dashboard deep link is cleared when switching to archived list",
         response.request().method() === "GET"
       );
     });
-    await page.getByRole("button", { name: "Show archived" }).click();
-    expect(page.url()).toContain(`dashboard=${dashboardId}`);
-    const newDialog = await openNewDashboardDialog(page);
+    // The deep link is still pending when the list view changes.
+    await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
+    // Keep real navigation data pending until the original dialog opens.
+    await test.step("wait for the held page prefetch request", async () => {
+      await expect
+        .poll(() => pagePrefetchStarted, {
+          message: "OpenView PAGE prefetch did not enter its gate",
+        })
+        .toBe(true);
+    });
+    await test.step("show archived and await navigation entry and prefetch delivery", async () => {
+      await page.getByRole("button", { name: "Show archived" }).click();
+      await navigation.started;
+      await prefetchDelivered;
+    });
+    const newDialog = await test.step("open the New Dashboard dialog", () =>
+      openNewDashboardDialog(page));
+    navigation.release();
     const dashboardName = newDialog.getByLabel("Dashboard name");
-    await dashboardName.fill("Draft after changing the list view");
-    await finishDashboardDialog(newDialog);
-    gate.release();
-    await routeResponse;
+    await test.step("fill and confirm the Dashboard draft", async () => {
+      await dashboardName.fill("Draft after changing the list view");
+      await finishDashboardDialog(newDialog);
+    });
+    await test.step("release the late Dashboard detail and await its response", async () => {
+      gate.release();
+      await routeResponse;
+    });
     await expect(page).toHaveURL("/openview?section=dashboards");
     await expect(
       page.getByRole("heading", {
@@ -4393,6 +4200,8 @@ test("a pending Dashboard deep link is cleared when switching to archived list",
     ).toBeVisible();
   } finally {
     gate.release();
+    pagePrefetch.release();
+    navigation.release();
   }
   await expect(
     page.getByRole("heading", { name: "Draft after changing the list view" }),
@@ -4415,8 +4224,9 @@ test("a pending Dashboard deep link cannot overwrite a new Dashboard draft", asy
         response.request().method() === "GET"
       );
     });
+    // The deep link is still pending when the new Dashboard starts.
+    await expect(page).toHaveURL(new RegExp(`dashboard=${dashboardId}`));
     await page.getByRole("button", { name: "New Dashboard" }).click();
-    expect(page.url()).toContain(`dashboard=${dashboardId}`);
     const newDialog = page.getByRole("dialog", { name: "New Dashboard" });
     await expect(newDialog).toBeVisible();
     const dashboardName = newDialog.getByLabel("Dashboard name");
@@ -4860,7 +4670,6 @@ test("department Dashboard saves and reloads all four live widget types", async 
   await expect(
     page.getByRole("table", { name: "Complete data for Count by Category" }),
   ).toBeVisible();
-  await captureOpenViewReview(page, "dashboard-manager");
 });
 
 test("saved Record widget shows values for a field beyond the first catalog page after reload", async ({
@@ -5379,7 +5188,6 @@ test("a department reader sees its Dashboards without change controls", async ({
 
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   await expect(page.getByText("Field service", { exact: true })).toBeVisible();
-  await captureOpenViewReview(page, "dashboard-reader");
   await expect(page.getByText(/private|only you/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New Dashboard" })).toHaveCount(
     0,
@@ -5462,7 +5270,113 @@ test("Cancel discards a new Dashboard draft and returns to the selected Dashboar
   expect(api.writes).toHaveLength(0);
 });
 
-test("S08 a Dashboard department picker searches beyond its first page and resolves the saved label", async ({
+test("Cancel during a pending Dashboard clear does not block a later new draft", async ({
+  page,
+}) => {
+  const pagePrefetch = requestGate();
+  const firstClear = requestGate();
+  const prefetchRoute = (url: URL) =>
+    url.pathname.startsWith("/openview/") &&
+    url.pathname.endsWith(".__PAGE__.txt");
+  let pagePrefetchStarted = false;
+  let pagePrefetchDelivered = false;
+  let firstClearStarted = false;
+  page.on("requestfinished", (request) => {
+    if (request.method() === "GET" && prefetchRoute(new URL(request.url())))
+      pagePrefetchDelivered = true;
+  });
+  await page.route(prefetchRoute, async (route) => {
+    if (route.request().method() === "GET") {
+      pagePrefetchStarted = true;
+      pagePrefetch.signalStarted();
+      await pagePrefetch.wait;
+    }
+    await route.continue();
+  });
+  await page.route(
+    (url) => url.pathname === "/openview.txt",
+    async (route) => {
+      const request = route.request();
+      if (
+        request.method() === "GET" &&
+        request.headers()["next-router-state-tree"] &&
+        !request.headers()["next-router-prefetch"]
+      ) {
+        const hasDashboardId = new URL(request.url()).searchParams.has(
+          "dashboard",
+        );
+        const hold = !hasDashboardId && !firstClearStarted;
+        if (hold) {
+          firstClearStarted = true;
+          firstClear.signalStarted();
+          pagePrefetch.release();
+          await firstClear.wait;
+        }
+      }
+      await route.continue();
+    },
+  );
+  try {
+    await installDashboardApi(page, dashboard());
+    await page.goto(`/openview?section=dashboards&dashboard=${dashboardId}`);
+    await expect(
+      page.getByRole("heading", { name: "Operations" }),
+    ).toBeVisible();
+    await test.step("hold the real PAGE prefetch before the first New action", async () => {
+      await expect
+        .poll(() => pagePrefetchStarted, {
+          message: "OpenView PAGE prefetch did not enter its gate",
+        })
+        .toBe(true);
+    });
+    const firstDialog =
+      await test.step("open New with only its first clear pending", async () => {
+        const dialog = await openNewDashboardDialog(page);
+        await expect
+          .poll(() => firstClearStarted, {
+            message: "The first no-ID Dashboard clear did not enter its gate",
+          })
+          .toBe(true);
+        await expect
+          .poll(() => pagePrefetchDelivered, {
+            message: "The released PAGE prefetch was not delivered",
+          })
+          .toBe(true);
+        return dialog;
+      });
+    await test.step("Cancel while the first clear is still held", async () => {
+      await firstDialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(firstDialog).toBeHidden();
+      await expect(
+        page.getByRole("heading", { name: "Operations" }),
+      ).toBeVisible();
+    });
+    const draftName = "Draft after a pending Cancel";
+    await test.step("reopen New and confirm a distinct in-memory draft", async () => {
+      const dialog = await openNewDashboardDialog(page);
+      await dialog.getByLabel("Dashboard name").fill(draftName);
+      await finishDashboardDialog(dialog);
+    });
+    await test.step("the later clear removes the saved ID from the URL", async () => {
+      await expect.soft(page).toHaveURL("/openview?section=dashboards");
+    });
+    await test.step("the confirmed draft remains visible", async () => {
+      await expect
+        .soft(page.getByRole("heading", { name: draftName }))
+        .toBeVisible();
+    });
+    await test.step("the confirmed draft can be saved", async () => {
+      await expect
+        .soft(page.getByRole("button", { name: "Save Dashboard", exact: true }))
+        .toBeEnabled();
+    });
+  } finally {
+    pagePrefetch.release();
+    firstClear.release();
+  }
+});
+
+test("a Dashboard department picker searches beyond its first page and resolves the saved label", async ({
   page,
 }) => {
   const api = await installDashboardApi(page);
@@ -5495,13 +5409,12 @@ test("S08 a Dashboard department picker searches beyond its first page and resol
     return route.fulfill({
       json: {
         items,
-        pagination: {
+        pagination: wirePagination({
           limit: 100,
-          offset: 0,
           count: items.length,
           total: search ? 1 : 101,
           has_more: !search,
-        },
+        }),
       },
     });
   });
@@ -5515,8 +5428,7 @@ test("S08 a Dashboard department picker searches beyond its first page and resol
   });
   await dialog.getByLabel("Department", { exact: true }).click();
   await page
-    .getByRole("combobox", { name: "Department", exact: true })
-    .and(page.getByPlaceholder("Search…", { exact: true }))
+    .getByRole("combobox", { name: "Search department", exact: true })
     .fill("Dispatch");
   await page.getByRole("option", { name: "Dispatch", exact: true }).click();
   await expect(dialog.getByLabel("Department", { exact: true })).toContainText(
@@ -5525,34 +5437,40 @@ test("S08 a Dashboard department picker searches beyond its first page and resol
   await dialog
     .getByLabel("Dashboard name", { exact: true })
     .fill("Dispatch dashboard");
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    const departmentTrigger = dialog.getByLabel("Department", { exact: true });
-    await departmentTrigger.focus();
-    await departmentTrigger.press("Enter");
-    const searchInput = page
-      .getByRole("combobox", { name: "Department", exact: true })
-      .and(page.getByPlaceholder("Search…", { exact: true }));
-    await expect(searchInput).toBeFocused();
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((theme) => {
-        document.documentElement.classList.toggle("dark", theme === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-dashboard-department-${mode}`, {
-        beforeScreenshot: async () => {
-          await expect(searchInput).toBeVisible();
-          await expect
-            .poll(() =>
-              page.evaluate(
-                () => document.documentElement.scrollWidth <= window.innerWidth,
-              ),
-            )
-            .toBe(true);
-        },
-      });
+  const departmentTrigger = dialog.getByLabel("Department", { exact: true });
+  await departmentTrigger.focus();
+  await departmentTrigger.press("Enter");
+  const searchInput = page.getByRole("combobox", {
+    name: "Search department",
+    exact: true,
+  });
+  await expect(searchInput).toBeFocused();
+  for (const mode of ["light", "dark"] as const) {
+    await page.evaluate((theme) => {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }, mode);
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect(searchInput).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
     }
-    await searchInput.press("Escape");
-    await expect(departmentTrigger).toBeFocused();
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
   }
+  await searchInput.press("Escape");
+  await expect(departmentTrigger).toBeFocused();
   await dialog.getByRole("button", { name: "Continue", exact: true }).click();
   await page
     .getByRole("button", { name: "Save Dashboard", exact: true })

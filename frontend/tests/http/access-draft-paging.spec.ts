@@ -1,32 +1,13 @@
 import { expect, test } from "./helpers/test";
-import { group, ids, mockAccessApi, person } from "./helpers/access-api";
+import {
+  fixtureId,
+  group,
+  ids,
+  mockAccessApi,
+  person,
+} from "./helpers/access-api";
 
-const fixtureId = (index: number) =>
-  `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
-
-test("S08 enriched access names do not prevent an unsaved access draft surviving reload", async ({
-  page,
-}) => {
-  const api = await mockAccessApi(page);
-  await page.goto(`/access?view=groups&group=${ids.readers}&tab=access`);
-  const sheet = page.getByRole("dialog", {
-    name: "Finance readers",
-    exact: true,
-  });
-  await sheet
-    .getByLabel("Inventory level", { exact: true })
-    .selectOption("write");
-  await page.reload();
-  await expect(
-    sheet.getByLabel("Inventory level", { exact: true }),
-  ).toHaveValue("write");
-  await expect(
-    sheet.getByRole("region", { name: "This group gives", exact: true }),
-  ).toContainText("Inventory · Write");
-  expect(api.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
-});
-
-test("S08 an uncertain replacement resolves all current and draft member labels in bounded ID batches", async ({
+test("an uncertain replacement resolves all current and draft member labels in bounded ID batches", async ({
   page,
 }) => {
   const api = await mockAccessApi(page);

@@ -1,6 +1,10 @@
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { expect, test, type Page, type Locator } from "./helpers/test";
+import {
+  expect,
+  heldResponse,
+  test,
+  type Page,
+  type Locator,
+} from "./helpers/test";
 import {
   cardTarget,
   cardViewer,
@@ -13,10 +17,7 @@ import {
   cardPage,
   type CardSurface,
 } from "./helpers/person-card-api";
-import {
-  profileGate,
-  observeProfilePhotoRevocations,
-} from "./helpers/profile-api";
+import { observeProfilePhotoRevocations } from "./helpers/profile-api";
 import { boardId } from "./helpers/boards-api";
 
 const card = (page: Page) =>
@@ -53,11 +54,11 @@ test("Person card intent loads one target, keyboard opens and Escape restores fo
   const api = await installPersonCardApi(page);
   await visit(page, api);
   expect(api.reads).toHaveLength(0);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.hold = hold;
   try {
     await trigger(page).focus();
-    await hold.begun;
+    await hold.entered;
     await page.keyboard.press("Enter");
     await expect(card(page)).toBeVisible();
     await expect(card(page).locator('[aria-busy="true"]')).toBeVisible();
@@ -81,6 +82,7 @@ test("Person card guest DTO omits private keys and nullable member values remain
   page,
 }) => {
   const api = await installPersonCardApi(page, "platform", "guest");
+  await page.setViewportSize({ width: 390, height: 844 });
   await visit(page, api);
   await trigger(page).click();
   await expect(card(page)).toContainText("Equipment coordinator");
@@ -113,6 +115,15 @@ test("Person card guest DTO omits private keys and nullable member values remain
     card(page).getByText("Not provided", { exact: true }),
   ).toHaveCount(4);
   await expect(card(page).getByText("ana@example.test")).toHaveCount(0);
+  const bounds = await card(page).boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
   expect(api.writes).toEqual([]);
 });
 
@@ -253,11 +264,11 @@ test("Person card ignores a late removed target and a late previous-account repl
 }) => {
   const api = await installPersonCardApi(page);
   await visit(page, api);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.hold = hold;
   try {
     await trigger(page).click();
-    await hold.begun;
+    await hold.entered;
     await page.keyboard.press("Escape");
     await page.getByRole("searchbox", { name: "Search workspace" }).fill("Ben");
     await expect(trigger(page, "Ben Cruz")).toBeVisible();
@@ -268,14 +279,14 @@ test("Person card ignores a late removed target and a late previous-account repl
     await page.keyboard.press("Escape");
     await page.getByRole("searchbox", { name: "Search workspace" }).fill("Ana");
     await expect(trigger(page)).toBeVisible();
-    const accountHold = profileGate();
+    const accountHold = heldResponse();
     await trigger(page).click();
     await expectMemberCard(page);
     api.hold = accountHold;
     await card(page)
       .getByRole("button", { name: "Reload person card", exact: true })
       .click();
-    await accountHold.begun;
+    await accountHold.entered;
     api.viewer = secondViewer;
     api.cards.set(cardTarget, {
       ...memberCard,
@@ -323,11 +334,11 @@ test("Person card private avatar is target-bound, revoked on close and unavailab
   ).toBe(true);
   await page.keyboard.press("Escape");
   await expect.poll(() => revoked.includes(url!)).toBe(true);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.holdAvatar = hold;
   try {
     await trigger(page).click();
-    await hold.begun;
+    await hold.entered;
     api.status = 404;
     hold.release();
     await expect(card(page).getByRole("alert")).toContainText(
@@ -348,12 +359,12 @@ test("Person card accepts current text and drops bytes when the avatar disappear
     ...memberCard,
     avatar_url: `/api/users/${cardTarget}/avatar`,
   });
-  const hold = profileGate();
+  const hold = heldResponse();
   api.holdAvatar = hold;
   try {
     await visit(page, api);
     await trigger(page).click();
-    await hold.begun;
+    await hold.entered;
     api.cards.set(cardTarget, {
       ...memberCard,
       email: "current@example.test",
@@ -369,31 +380,30 @@ test("Person card accepts current text and drops bytes when the avatar disappear
   }
 });
 
-for (const fault of ["mime", "headers", "empty", "oversize"] as const) {
-  test(`Person card rejects ${fault} avatar bytes and keeps accepted text with explicit photo retry`, async ({
-    page,
-  }) => {
-    const api = await installPersonCardApi(page);
-    api.cards.set(cardTarget, {
-      ...memberCard,
-      avatar_url: `/api/users/${cardTarget}/avatar`,
-    });
-    api.avatarFault = fault;
-    await visit(page, api);
-    await trigger(page).click();
-    await expectMemberCard(page);
-    await expect(card(page).getByRole("alert")).toContainText(
-      "Photo unavailable",
-    );
-    await expect(card(page).getByRole("img")).toHaveCount(0);
-    api.avatarFault = null;
-    await card(page)
-      .getByRole("button", { name: "Retry photo", exact: true })
-      .click();
-    await expect(card(page).getByRole("img")).toHaveAttribute("src", /^blob:/);
-    expect(api.writes).toEqual([]);
+// The other byte faults are rows of isolated/shell/profile-api.spec.ts.
+test("Person card rejects mime avatar bytes and keeps accepted text with explicit photo retry", async ({
+  page,
+}) => {
+  const api = await installPersonCardApi(page);
+  api.cards.set(cardTarget, {
+    ...memberCard,
+    avatar_url: `/api/users/${cardTarget}/avatar`,
   });
-}
+  api.avatarFault = "mime";
+  await visit(page, api);
+  await trigger(page).click();
+  await expectMemberCard(page);
+  await expect(card(page).getByRole("alert")).toContainText(
+    "Photo unavailable",
+  );
+  await expect(card(page).getByRole("img")).toHaveCount(0);
+  api.avatarFault = null;
+  await card(page)
+    .getByRole("button", { name: "Retry photo", exact: true })
+    .click();
+  await expect(card(page).getByRole("img")).toHaveAttribute("src", /^blob:/);
+  expect(api.writes).toEqual([]);
+});
 
 test("Person card calendar resolves visible author ids once and never requests an administrator catalog", async ({
   page,
@@ -404,11 +414,11 @@ test("Person card calendar resolves visible author ids once and never requests a
     const url = new URL(request.url());
     if (url.pathname === "/api/users") catalogs.push(url.href);
   });
-  const hold = profileGate();
+  const hold = heldResponse();
   api.hold = hold;
   try {
     await page.goto(api.href);
-    await hold.begun;
+    await hold.entered;
     await expect(
       page.getByText("Loading person…", { exact: true }),
     ).toHaveCount(2);
@@ -550,30 +560,23 @@ for (const surface of [
   });
 }
 
-test("Person card four captures on each requested surface: desktop and mobile in light and dark", async ({
-  page,
-}, info) => {
-  test.setTimeout(90_000);
-  test.skip(
-    process.env.CAPTURE_S22_PERSON_CARD !== "1",
-    "Opt-in bounded S22 capture procedure",
-  );
-  const directory = info.outputPath("captures");
-  await mkdir(directory, { recursive: true });
-  for (const surface of [
-    "access",
-    "posts",
-    "openview",
-    "calendar",
-    "platform",
-  ] as const) {
-    const api = await installPersonCardApi(page, surface, "admin");
-    for (const theme of ["light", "dark"] as const) {
-      api.theme = theme;
-      for (const viewport of [
-        { width: 1440, height: 900 },
-        { width: 390, height: 844 },
-      ]) {
+for (const surface of [
+  "access",
+  "posts",
+  "openview",
+  "calendar",
+  "platform",
+] as const) {
+  for (const theme of ["light", "dark"] as const) {
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      test(`Person card populated ${surface} fits ${viewport.width}x${viewport.height} in ${theme}`, async ({
+        page,
+      }) => {
+        const api = await installPersonCardApi(page, surface, "admin");
+        api.theme = theme;
         await page.setViewportSize(viewport);
         await visit(page, api, surface);
         await trigger(page).first().click();
@@ -596,14 +599,7 @@ test("Person card four captures on each requested surface: desktop and mobile in
             ),
           )
           .toBe(true);
-        await page.screenshot({
-          path: join(
-            directory,
-            `${surface}-${theme}-${viewport.width}x${viewport.height}.png`,
-          ),
-          animations: "disabled",
-        });
-      }
+      });
     }
   }
-});
+}

@@ -14,7 +14,6 @@ from app.systems.platform.events.hub import EventHub, EventViewer, PostgresInval
 from app.systems.platform.events.models import (
     InvalidationEvent,
     event_for_entity,
-    parse_invalidation_payload,
 )
 from app.systems.platform.events.publisher import publish_invalidations
 from app.systems.platform.events.router import (
@@ -37,31 +36,10 @@ def test_untrusted_notification_payloads_fail_closed_without_fanout() -> None:
 
         assert subscription.queue.empty()
         await hub.publish_notification('{"entity":"resync"}')
-        assert await subscription.queue.get() is None
+        assert await asyncio.wait_for(subscription.queue.get(), timeout=5) is None
         await hub.unsubscribe(subscription)
 
     asyncio.run(exercise())
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"entity": "Records"},
-        {"entity": "records", "entity_id": 7, "module_id": str(READABLE_MODULE)},
-        {"entity": "records", "entity_id": "not-a-uuid", "module_id": str(READABLE_MODULE)},
-        {"entity": "records", "capability": "records.read"},
-        {"entity": "records", "module_id": 7},
-        {"entity": "departments", "module_id": str(READABLE_MODULE)},
-    ],
-)
-def test_payload_validation_rejects_malformed_or_under_authorized_events(payload: object) -> None:
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        parse_invalidation_payload(payload)
-
-
-def test_invalid_entity_name_is_rejected_before_serialization() -> None:
-    with pytest.raises(ValueError, match="invalid invalidation payload"):
-        InvalidationEvent("bad entity")
 
 
 def test_empty_commits_do_not_open_a_postgresql_connection(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,11 +5,17 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from tests.auth.test_supabase_auth_core import _settings
+from app.core.integrations.supabase_auth import (
+    InvalidProviderCredentials,
+    ProviderUserNotFound,
+    SupabaseAuthClient,
+    SupabaseAuthUnavailable,
+)
+from app.core.integrations.supabase_mfa import SupabaseMfaClient
+from tests.auth.provider_jwt_support import provider_settings
 
 
 def test_admin_invite_has_server_owned_marker_and_email_action_is_explicit() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
 
     local_user_id, operation_id, provider_user_id = uuid4(), uuid4(), uuid4()
     seen: list[httpx.Request] = []
@@ -42,7 +48,7 @@ def test_admin_invite_has_server_owned_marker_and_email_action_is_explicit() -> 
             )
         return httpx.Response(404)
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     created = client.admin_create_invitation_user(
         "person@example.test", local_user_id, operation_id
     )
@@ -60,7 +66,6 @@ def test_admin_invite_has_server_owned_marker_and_email_action_is_explicit() -> 
 
 
 def test_recovery_and_password_update_use_provider_user_session() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
 
     provider_user_id = uuid4()
     seen: list[httpx.Request] = []
@@ -73,7 +78,7 @@ def test_recovery_and_password_update_use_provider_user_session() -> None:
             return httpx.Response(200, json={"id": str(provider_user_id)})
         return httpx.Response(404)
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     client.request_recovery("person@example.test")
     changed = client.update_password("verified-access", "new password")
     assert changed.id == provider_user_id
@@ -84,8 +89,6 @@ def test_recovery_and_password_update_use_provider_user_session() -> None:
 
 def test_secure_email_change_keeps_partial_confirmation_distinct_from_new_session() -> None:
     import json
-
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
 
     provider_id = uuid4()
     seen: list[httpx.Request] = []
@@ -113,7 +116,7 @@ def test_secure_email_change_keeps_partial_confirmation_distinct_from_new_sessio
             },
         )
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     assert client.request_email_change("current-access", "new@example.test").id == provider_id
     partial = client.verify_email_change("a" * 56)
     assert partial.tokens is None
@@ -145,10 +148,10 @@ def test_secure_email_change_keeps_partial_confirmation_distinct_from_new_sessio
     ],
 )
 def test_secure_email_change_refuses_malformed_or_ambiguous_confirmation(payload: object) -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
 
     client = SupabaseAuthClient(
-        _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+        provider_settings(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)),
     )
     with pytest.raises(SupabaseAuthUnavailable):
         client.verify_email_change("a" * 56)
@@ -168,10 +171,14 @@ def test_secure_email_change_refuses_malformed_or_ambiguous_confirmation(payload
 def test_secure_email_change_keeps_denial_distinct_from_uncertain_provider_result(
     status, exception
 ):
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
+
+    expected = {
+        "InvalidProviderCredentials": InvalidProviderCredentials,
+        "SupabaseAuthUnavailable": SupabaseAuthUnavailable,
+    }[exception]
 
     client = SupabaseAuthClient(
-        _settings(),
+        provider_settings(),
         transport=httpx.MockTransport(
             lambda _: httpx.Response(status, json={"error": "private-provider-detail"})
         ),
@@ -180,14 +187,13 @@ def test_secure_email_change_keeps_denial_distinct_from_uncertain_provider_resul
         lambda: client.verify_email_change("a" * 56),
         lambda: client.request_email_change("current", "new@example.test"),
     ):
-        with pytest.raises(Exception) as caught:
+        with pytest.raises(expected) as caught:
             action()
         assert type(caught.value).__name__ == exception
         assert "private-provider-detail" not in str(caught.value)
 
 
 def test_admin_reconciliation_filters_exact_email_and_operation_marker() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
 
     local_user_id, operation_id, provider_user_id = uuid4(), uuid4(), uuid4()
     seen: list[httpx.Request] = []
@@ -218,7 +224,7 @@ def test_admin_reconciliation_filters_exact_email_and_operation_marker() -> None
             },
         )
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     matched = client.find_invitation_user("person@example.test", local_user_id, operation_id)
     assert matched is not None and matched.id == provider_user_id
     assert seen[0].url.params["filter"] == "person@example.test"
@@ -226,26 +232,25 @@ def test_admin_reconciliation_filters_exact_email_and_operation_marker() -> None
 
 
 def test_admin_user_404_is_distinct_from_other_provider_failures() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
 
     provider_id = uuid4()
     missing = SupabaseAuthClient(
-        _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(404))
+        provider_settings(), transport=httpx.MockTransport(lambda _: httpx.Response(404))
     )
-    with pytest.raises(Exception) as absent:
+    with pytest.raises(ProviderUserNotFound) as absent:
         missing.get_admin_user(provider_id)
     assert type(absent.value).__name__ == "ProviderUserNotFound"
 
     for status in (401, 403, 422, 500):
         denied = SupabaseAuthClient(
-            _settings(), transport=httpx.MockTransport(lambda _, s=status: httpx.Response(s))
+            provider_settings(),
+            transport=httpx.MockTransport(lambda _, s=status: httpx.Response(s)),
         )
         with pytest.raises(SupabaseAuthUnavailable):
             denied.get_admin_user(provider_id)
 
 
 def test_admin_delete_uses_exact_identity_and_requires_authoritative_result() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
 
     provider_id = uuid4()
     seen: list[httpx.Request] = []
@@ -254,7 +259,7 @@ def test_admin_delete_uses_exact_identity_and_requires_authoritative_result() ->
         seen.append(request)
         return httpx.Response(204)
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     client.admin_delete_user(provider_id)
     assert seen[0].method == "DELETE"
     assert seen[0].url.path == f"/auth/v1/admin/users/{provider_id}"
@@ -262,14 +267,14 @@ def test_admin_delete_uses_exact_identity_and_requires_authoritative_result() ->
 
     for status in (401, 403, 422, 500):
         failed = SupabaseAuthClient(
-            _settings(), transport=httpx.MockTransport(lambda _, s=status: httpx.Response(s))
+            provider_settings(),
+            transport=httpx.MockTransport(lambda _, s=status: httpx.Response(s)),
         )
         with pytest.raises(SupabaseAuthUnavailable):
             failed.admin_delete_user(provider_id)
 
 
 def test_admin_factor_recovery_uses_pinned_array_and_deleted_factor_protocol() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
 
     provider_id, factor_id = uuid4(), uuid4()
     seen: list[httpx.Request] = []
@@ -280,7 +285,7 @@ def test_admin_factor_recovery_uses_pinned_array_and_deleted_factor_protocol() -
             return httpx.Response(200, json=[{"id": str(factor_id), "secret": "must-not-escape"}])
         return httpx.Response(200, json={"id": str(factor_id), "secret": "must-not-escape"})
 
-    client = SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+    client = SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     assert client.admin_list_factors(provider_id) == [factor_id]
     assert client.admin_delete_factor(provider_id, factor_id) is None
     assert [(request.method, request.url.path) for request in seen] == [
@@ -293,21 +298,20 @@ def test_admin_factor_recovery_uses_pinned_array_and_deleted_factor_protocol() -
 
 @pytest.mark.parametrize("payload", [{}, [{"id": "invalid"}], [{}, {}]])
 def test_admin_factor_list_refuses_non_authoritative_payloads(payload: object) -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
 
     client = SupabaseAuthClient(
-        _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+        provider_settings(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)),
     )
     with pytest.raises(SupabaseAuthUnavailable):
         client.admin_list_factors(uuid4())
 
 
 def test_admin_factor_list_refuses_duplicate_ids() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
 
     factor = {"id": str(uuid4())}
     client = SupabaseAuthClient(
-        _settings(),
+        provider_settings(),
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json=[factor, factor])),
     )
     with pytest.raises(SupabaseAuthUnavailable):
@@ -316,10 +320,9 @@ def test_admin_factor_list_refuses_duplicate_ids() -> None:
 
 @pytest.mark.parametrize("status", [401, 403, 404, 500])
 def test_admin_factor_recovery_refuses_provider_failure(status: int) -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
 
     client = SupabaseAuthClient(
-        _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(status))
+        provider_settings(), transport=httpx.MockTransport(lambda _: httpx.Response(status))
     )
     with pytest.raises(SupabaseAuthUnavailable):
         client.admin_list_factors(uuid4())
@@ -329,10 +332,10 @@ def test_admin_factor_recovery_refuses_provider_failure(status: int) -> None:
 
 @pytest.mark.parametrize("payload", [{}, {"id": "invalid"}, {"id": str(uuid4())}])
 def test_admin_factor_delete_requires_the_requested_factor(payload: object) -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
 
     client = SupabaseAuthClient(
-        _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+        provider_settings(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)),
     )
     with pytest.raises(SupabaseAuthUnavailable):
         client.admin_delete_factor(uuid4(), uuid4())
@@ -348,11 +351,10 @@ def test_admin_factor_delete_requires_the_requested_factor(payload: object) -> N
     ],
 )
 def test_provider_user_refuses_malformed_present_factor_state(factors: object) -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
 
     provider_id = uuid4()
     client = SupabaseAuthClient(
-        _settings(),
+        provider_settings(),
         transport=httpx.MockTransport(
             lambda _: httpx.Response(200, json={"id": str(provider_id), "factors": factors})
         ),
@@ -362,7 +364,6 @@ def test_provider_user_refuses_malformed_present_factor_state(factors: object) -
 
 
 def test_provider_user_exposes_only_immutable_minimal_factors() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
 
     provider_id, factor_id = uuid4(), uuid4()
     payload = {
@@ -377,7 +378,8 @@ def test_provider_user_exposes_only_immutable_minimal_factors() -> None:
         ],
     }
     client = SupabaseAuthClient(
-        _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+        provider_settings(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)),
     )
     user = client.get_admin_user(provider_id)
     assert isinstance(user.factors, tuple)
@@ -389,8 +391,6 @@ def test_provider_user_exposes_only_immutable_minimal_factors() -> None:
 
 
 def test_user_totp_protocol_enrolls_challenges_verifies_and_unenrolls() -> None:
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
-    from app.core.integrations.supabase_mfa import SupabaseMfaClient
 
     provider_id, factor_id, challenge_id = uuid4(), uuid4(), uuid4()
     seen = []
@@ -429,7 +429,7 @@ def test_user_totp_protocol_enrolls_challenges_verifies_and_unenrolls() -> None:
         return httpx.Response(200, json={"id": str(factor_id)})
 
     client = SupabaseMfaClient(
-        SupabaseAuthClient(_settings(), transport=httpx.MockTransport(respond))
+        SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
     )
     enrolled = client.enroll_totp("user-access", friendly_name="Authenticator")
     assert enrolled.id == factor_id
@@ -456,12 +456,15 @@ def test_user_totp_protocol_enrolls_challenges_verifies_and_unenrolls() -> None:
     ],
 )
 def test_user_totp_failure_keeps_provider_denial_distinct_from_outage(status, exception):
-    from app.core.integrations.supabase_auth import SupabaseAuthClient
-    from app.core.integrations.supabase_mfa import SupabaseMfaClient
+
+    expected = {
+        "InvalidProviderCredentials": InvalidProviderCredentials,
+        "SupabaseAuthUnavailable": SupabaseAuthUnavailable,
+    }[exception]
 
     client = SupabaseMfaClient(
         SupabaseAuthClient(
-            _settings(), transport=httpx.MockTransport(lambda _: httpx.Response(status))
+            provider_settings(), transport=httpx.MockTransport(lambda _: httpx.Response(status))
         )
     )
     for action in (
@@ -469,14 +472,12 @@ def test_user_totp_failure_keeps_provider_denial_distinct_from_outage(status, ex
         lambda: client.challenge_and_verify("user-access", uuid4(), "123456"),
         lambda: client.unenroll("user-access", uuid4()),
     ):
-        with pytest.raises(Exception) as caught:
+        with pytest.raises(expected) as caught:
             action()
         assert type(caught.value).__name__ == exception
 
 
 def test_user_totp_refuses_malformed_enrollment_challenge_and_unmatched_delete():
-    from app.core.integrations.supabase_auth import SupabaseAuthClient, SupabaseAuthUnavailable
-    from app.core.integrations.supabase_mfa import SupabaseMfaClient
 
     for payload in (
         {},
@@ -485,7 +486,7 @@ def test_user_totp_refuses_malformed_enrollment_challenge_and_unmatched_delete()
     ):
         client = SupabaseMfaClient(
             SupabaseAuthClient(
-                _settings(),
+                provider_settings(),
                 transport=httpx.MockTransport(
                     lambda _, data=payload: httpx.Response(200, json=data)
                 ),

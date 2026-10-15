@@ -1,18 +1,19 @@
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 from secrets import token_urlsafe
 from typing import Any
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.sandbox.fields.models import FieldType
+from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.validation import (
     field_config,
+    parse_field_key,
     validate_field_value,
     validate_record_data,
 )
@@ -20,19 +21,28 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import (
     RecordValidationError,
+    prepare_record_creation,
+    validate_live_user_assignments,
     validate_record_mutation,
 )
 from app.systems.sandbox.records.router import update_record
 from app.systems.sandbox.records.schemas import RecordUpdate
-from tests.catalog.field_record_support import make_field, make_module
+from tests.catalog.field_record_support import (
+    OUTSIDER_ID,
+    READER_ID,
+    make_field,
+    make_module,
+)
+from tests.catalog.field_record_support import module_readers as module_readers
 from tests.rbac.support import make_user
+from tests.repository import REPOSITORY_ROOT
 
 REJECTED_VALUE_CANARY = token_urlsafe(32)
 
 
 def _load_record_field_validation_cases() -> list[dict[str, Any]]:
     fixture_path = (
-        Path(__file__).resolve().parents[3] / "contracts" / ("record-field-validation-cases.json")
+        REPOSITORY_ROOT / "contracts" / ("record-field-validation-cases.json")
     )
     with fixture_path.open(encoding="utf-8") as fixture:
         return json.load(fixture)["cases"]
@@ -70,6 +80,8 @@ def test_required_text_record_values_reject_null_and_empty(value: object) -> Non
         validate_record_mutation({str(field.id): value}, {}, [field])
 
     assert [issue.code for issue in raised.value.issues] == ["required_field"]
+    with pytest.raises(ValueError, match=f"^Field {field.id} is required$"):
+        validate_field_value(field, value)
 
 
 def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
@@ -77,9 +89,9 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         "minLength": 1,
         "maxLength": 4,
     }
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Text field minLength must be a nonnegative integer"):
         field_config(FieldType.TEXT, {"minLength": True})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Text field minLength cannot exceed maxLength"):
         field_config(FieldType.TEXT, {"minLength": 5, "maxLength": 4})
 
     assert field_config(
@@ -109,12 +121,12 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         )
         == "999.99"
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Decimal maximum has too many integer digits"):
         field_config(FieldType.DECIMAL, {"maximum": "1" * 39})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Decimal maximum has too many fractional digits"):
         field_config(FieldType.DECIMAL, {"maximum": "1." + "1" * 19})
     assert field_config(FieldType.DECIMAL, {"minimum": "0.00"}) == {"minimum": "0"}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Decimal minimum must be a valid decimal string"):
         field_config(FieldType.DECIMAL, {"minimum": 1.0})
     numeric_bound = 10**500
     assert field_config(FieldType.INTEGER, {"minimum": numeric_bound}) == {"minimum": numeric_bound}
@@ -131,9 +143,11 @@ def test_field_config_validates_text_and_canonicalizes_decimal_bounds() -> None:
         FieldType.TEXT,
         config={"minLength": 2, "maxLength": 4},
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=f"Field {text_field.id} is shorter than its minimum length"
+    ):
         validate_field_value(text_field, "x")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=f"Field {text_field.id} exceeds its maximum length"):
         validate_field_value(text_field, "12345")
 
 
@@ -229,23 +243,25 @@ def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
         validate_field_value(make_field(module_id, FieldType.DECIMAL), maximum_precision_value)
         == maximum_precision_value
     )
-    with pytest.raises(ValueError):
+    not_decimal = "Decimal value must be a valid decimal string"
+    too_precise = "Decimal value has too many fractional digits"
+    with pytest.raises(ValueError, match=not_decimal):
         validate_field_value(field, "1e0")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=not_decimal):
         validate_field_value(field, " 1")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=too_precise):
         validate_field_value(field, "1.5000000000000000001")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=f"Field {field.id} exceeds its maximum$"):
         validate_field_value(field, "2")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=too_precise):
         validate_field_value(field, "-0.0000000000000000001")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Decimal value has too many integer digits"):
         validate_field_value(field, "1" * 39)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=too_precise):
         validate_field_value(field, "1." + "1" * 19)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=not_decimal):
         validate_field_value(field, "+1")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=not_decimal):
         validate_field_value(field, "01")
 
 
@@ -258,6 +274,17 @@ def test_decimal_validation_enforces_lexical_limits_and_exact_bounds() -> None:
         (FieldType.DECIMAL, {"minimum": "2"}, "1", "below its minimum"),
         (FieldType.DECIMAL, {"minimum": 0}, "1", "invalid decimal configuration"),
         (FieldType.SELECT, {}, "open", "configured options"),
+        (FieldType.NUMBER, {"step": 0}, 1, "invalid numeric configuration"),
+        (FieldType.NUMBER, {"step": -1}, 1, "invalid numeric configuration"),
+        (FieldType.TEXT, {"minLength": True}, "ab", "invalid text configuration"),
+        (FieldType.TEXT, {"maxLength": True}, "ab", "invalid text configuration"),
+        (FieldType.DATE, {"earliest": "bad"}, "2026-01-15", "invalid date configuration"),
+        (
+            FieldType.DATE,
+            {"earliest": "2026-02-01", "latest": "2026-01-01"},
+            "2026-01-15",
+            "invalid date configuration",
+        ),
     ],
 )
 def test_record_validation_rejects_malformed_persisted_field_configuration(
@@ -287,6 +314,17 @@ def test_record_data_validation_rejects_unknown_relationship_and_missing_require
     with pytest.raises(ValueError, match="is required"):
         validate_record_data({}, [required, relationship])
     validate_record_data({str(required.id): "present"}, [required, relationship])
+    with pytest.raises(ValueError, match=f"^Field {required.id} is required$"):
+        validate_record_data({}, [relationship, required])
+    optional = make_field(module_id, FieldType.INTEGER)
+    validate_record_data({str(required.id): "present"}, [relationship, required, optional])
+    with pytest.raises(ValueError, match=f"^Field {optional.id} must be an integer$"):
+        validate_record_data(
+            {str(required.id): "present", str(optional.id): "1"},
+            [relationship, required, optional],
+        )
+    with pytest.raises(ValueError, match="^Invalid field key: not-a-field-id$"):
+        parse_field_key("not-a-field-id")
 
 
 def test_record_mutation_aggregates_errors_and_normalizes_active_values() -> None:
@@ -339,6 +377,284 @@ def test_record_mutation_caps_deterministic_errors() -> None:
     ]
 
 
+def _issues(error: RecordValidationError) -> list[tuple[str, UUID | None, str]]:
+    return [(issue.code, issue.field_id, issue.message) for issue in error.issues]
+
+
+def _relationship(module_id: UUID, *, required: bool = False, deleted: bool = False) -> Field:
+    field = make_field(module_id, FieldType.RELATIONSHIP, required=required, deleted=deleted)
+    field.relationship_target_module_id = uuid7()
+    field.relationship_multiple_targets = False
+    field.relationship_multiple_sources = False
+    return field
+
+
+def test_record_mutation_reports_each_issue_with_its_field_and_message() -> None:
+    # Field IDs are UUIDv7, so creation order is the sorted key order the phases walk.
+    module_id = uuid7()
+    closed_link_kept = _relationship(module_id, deleted=True)
+    closed_link_added = _relationship(module_id, deleted=True)
+    closed_link_retyped = _relationship(module_id, deleted=True)
+    closed_link_changed = _relationship(module_id, deleted=True)
+    closed_text = make_field(module_id, deleted=True)
+    closed_required = make_field(module_id, required=True, deleted=True)
+    active_link = _relationship(module_id)
+    required_link = _relationship(module_id, required=True)
+    optional_integer = make_field(module_id, FieldType.INTEGER)
+    required_text = make_field(module_id, required=True)
+    required_omitted = make_field(module_id, required=True)
+    for position, field in enumerate([active_link, required_link, optional_integer, required_text]):
+        field.position = position
+    required_omitted.position = 4
+    unknown_key = str(uuid7())
+    fields = [
+        required_omitted,
+        required_text,
+        optional_integer,
+        required_link,
+        active_link,
+        closed_required,
+        closed_text,
+        closed_link_changed,
+        closed_link_retyped,
+        closed_link_added,
+        closed_link_kept,
+    ]
+    current = {
+        str(closed_link_kept.id): "kept",
+        str(closed_link_retyped.id): 1,
+        str(closed_link_changed.id): "before",
+        str(closed_text.id): "legacy",
+    }
+    requested = {
+        "not-a-field-id": "do not echo",
+        unknown_key: "extra",
+        str(required_text.id): None,
+        str(optional_integer.id): "",
+        str(active_link.id): "linked",
+        str(closed_text.id): "changed",
+        str(closed_link_changed.id): "after",
+        str(closed_link_retyped.id): True,
+        str(closed_link_added.id): "added",
+        str(closed_link_kept.id): "kept",
+    }
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation(requested, current, fields)
+
+    closed = "Closed field values cannot be changed"
+    separate = "Relationship fields are managed separately"
+    assert _issues(raised.value) == [
+        ("relationship_field", closed_link_kept.id, separate),
+        ("closed_field_mutation", closed_link_added.id, closed),
+        ("closed_field_mutation", closed_link_retyped.id, closed),
+        ("closed_field_mutation", closed_link_changed.id, closed),
+        ("closed_field_mutation", closed_text.id, closed),
+        ("relationship_field", active_link.id, separate),
+        (
+            "invalid_field_value",
+            optional_integer.id,
+            f"Field {optional_integer.id} must be an integer",
+        ),
+        ("required_field", required_text.id, "Field is required"),
+        ("unknown_field", UUID(unknown_key), "Unknown or inactive field"),
+        ("invalid_field_key", None, "Field key is invalid"),
+        ("required_field", required_omitted.id, "Field is required"),
+    ]
+    assert raised.value.truncated is False
+    assert raised.value.has_closed_field_mutation is True
+
+
+@pytest.mark.parametrize(
+    ("submitted", "code", "message", "conflict"),
+    [
+        ("kept", "relationship_field", "Relationship fields are managed separately", False),
+        ("changed", "closed_field_mutation", "Closed field values cannot be changed", True),
+    ],
+)
+def test_a_closed_relationship_value_conflicts_only_when_it_changes(
+    submitted: str, code: str, message: str, conflict: bool
+) -> None:
+    module_id = uuid7()
+    closed_link = _relationship(module_id, deleted=True)
+    text = make_field(module_id)
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation(
+            {str(closed_link.id): submitted, str(text.id): "value"},
+            {str(closed_link.id): "kept"},
+            [closed_link, text],
+        )
+
+    assert _issues(raised.value) == [(code, closed_link.id, message)]
+    assert raised.value.truncated is False
+    assert raised.value.has_closed_field_mutation is conflict
+
+
+def test_a_closed_value_change_past_the_issue_cap_still_conflicts() -> None:
+    module_id = uuid7()
+    kept_links = [_relationship(module_id, deleted=True) for _ in range(20)]
+    closed_text = make_field(module_id, deleted=True)
+    current = {str(field.id): "kept" for field in kept_links} | {str(closed_text.id): "old"}
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation(
+            current | {str(closed_text.id): "new"}, current, [*kept_links, closed_text]
+        )
+
+    assert {issue.code for issue in raised.value.issues} == {"relationship_field"}
+    assert len(raised.value.issues) == 20
+    assert raised.value.truncated is True
+    assert raised.value.has_closed_field_mutation is True
+
+
+def test_record_mutation_orders_issues_by_key_whatever_the_values() -> None:
+    first = "0190f2c4-0000-7000-8000-00000000000a"
+    second = "0190f2c4-0000-7000-8000-00000000000b"
+    third = "0190f2c4-0000-7000-8000-00000000000c"
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_record_mutation({third: "same", second: "same", first: "same"}, {}, [])
+
+    assert [str(issue.field_id) for issue in raised.value.issues] == [first, second, third]
+
+
+NOT_A_READER = "User must be an active reader of this module"
+
+
+def test_only_explicit_active_user_values_must_be_module_readers(module_readers) -> None:
+    db, module_id = module_readers
+    reader = make_field(module_id, FieldType.USER)
+    closed_user = make_field(module_id, FieldType.USER, deleted=True)
+    text = make_field(module_id)
+    omitted = make_field(module_id, FieldType.USER)
+    cleared = make_field(module_id, FieldType.USER)
+    number = make_field(module_id, FieldType.USER)
+    malformed = make_field(module_id, FieldType.USER)
+    outsider = make_field(module_id, FieldType.USER)
+    data = {
+        str(reader.id): READER_ID,
+        str(closed_user.id): OUTSIDER_ID,
+        str(text.id): OUTSIDER_ID,
+        str(cleared.id): None,
+        str(number.id): 5,
+        str(malformed.id): "not-a-user",
+        str(outsider.id): OUTSIDER_ID,
+    }
+    fields = [reader, closed_user, text, omitted, cleared, number, malformed, outsider]
+
+    validate_live_user_assignments(db, module_id, {str(reader.id): READER_ID}, fields)
+    with pytest.raises(RecordValidationError) as raised:
+        validate_live_user_assignments(db, module_id, data, fields)
+
+    assert _issues(raised.value) == [
+        ("invalid_field_value", number.id, NOT_A_READER),
+        ("invalid_field_value", malformed.id, NOT_A_READER),
+        ("invalid_field_value", outsider.id, NOT_A_READER),
+    ]
+    assert raised.value.truncated is False
+    assert raised.value.has_closed_field_mutation is False
+
+
+@pytest.mark.parametrize(("assigned", "reported", "truncated"), [(20, 20, False), (21, 20, True)])
+def test_user_value_issues_are_capped_at_twenty(
+    module_readers, assigned: int, reported: int, truncated: bool
+) -> None:
+    db, module_id = module_readers
+    fields = [make_field(module_id, FieldType.USER) for _ in range(assigned)]
+
+    with pytest.raises(RecordValidationError) as raised:
+        validate_live_user_assignments(
+            db, module_id, {str(field.id): OUTSIDER_ID for field in fields}, fields
+        )
+
+    assert len(raised.value.issues) == reported
+    assert raised.value.truncated is truncated
+
+
+def test_record_creation_applies_published_defaults_to_omitted_primitive_values(
+    module_readers,
+) -> None:
+    db, module_id = module_readers
+    closed = make_field(module_id, deleted=True, config={"defaultValue": "closed default"})
+    link = _relationship(module_id)
+    link.config = {"defaultValue": "link default"}
+    submitted = make_field(module_id, config={"defaultValue": "default"})
+    applied = make_field(module_id, required=True, config={"defaultValue": "applied default"})
+    no_default = make_field(module_id, FieldType.INTEGER)
+    assignee = make_field(module_id, FieldType.USER)
+
+    assert prepare_record_creation(
+        db,
+        module_id,
+        {str(submitted.id): "mine", str(assignee.id): READER_ID},
+        [closed, link, submitted, applied, no_default, assignee],
+    ) == {
+        str(submitted.id): "mine",
+        str(applied.id): "applied default",
+        str(assignee.id): READER_ID,
+    }
+
+
+USER_ID = "0192f0c4-6b1e-7c3a-9d2e-4f5a6b7c8d9e"
+
+
+@pytest.mark.parametrize(
+    ("field_type", "config", "value"),
+    [
+        (FieldType.NUMBER, {"maximum": 1}, 1),
+        (FieldType.NUMBER, {"step": 0.5}, 1.5),
+        (FieldType.NUMBER, {"step": 2}, 4),
+        (FieldType.TEXT, {"minLength": 2}, "ab"),
+        (FieldType.EMAIL, {}, "ops@example.test"),
+        (FieldType.EMAIL, {}, ""),
+        (FieldType.URL, {}, "https://example.test/path"),
+        (FieldType.URL, {}, ""),
+        (FieldType.USER, {}, USER_ID),
+    ],
+)
+def test_record_values_on_their_limits_are_accepted_unchanged(
+    field_type: FieldType, config: dict[str, object], value: object
+) -> None:
+    field = make_field(uuid7(), field_type, config=config)
+
+    assert validate_field_value(field, value) == value
+
+
+@pytest.mark.parametrize(
+    ("field_type", "value", "message"),
+    [
+        (FieldType.NUMBER, "1", "must be a number"),
+        (FieldType.EMAIL, "not-an-email", "must be an email address"),
+        (FieldType.URL, "ftp://example.test", "must be an http or https URL"),
+        (FieldType.USER, 5, "must be a user ID"),
+        (FieldType.USER, "not-a-user", "must be a user ID"),
+        (FieldType.USER, USER_ID.upper(), "must be a user ID"),
+    ],
+)
+def test_record_values_of_the_wrong_kind_are_refused(
+    field_type: FieldType, value: object, message: str
+) -> None:
+    field = make_field(uuid7(), field_type)
+
+    with pytest.raises(ValueError, match=f"^Field {field.id} {message}$"):
+        validate_field_value(field, value)
+
+
+# The message each field type raises for the shared fixture's "invalid" value.
+INVALID_VALUE_MESSAGES = {
+    FieldType.TEXT: "^Field {id} must be text$",
+    FieldType.NUMBER: "^Field {id} must be a number$",
+    FieldType.DECIMAL: "^Decimal value must be a valid decimal string$",
+    FieldType.INTEGER: "^Field {id} must be an integer$",
+    FieldType.BOOLEAN: "^Field {id} must be boolean$",
+    FieldType.DATE: "^Field {id} must be an ISO date$",
+    FieldType.DATETIME: "^Field {id} must be an ISO datetime$",
+    FieldType.SELECT: "^Field {id} must be one of the configured options$",
+    FieldType.RELATIONSHIP: "^Relationship field {id} is managed separately$",
+}
+
+
 @pytest.mark.parametrize(
     "case",
     RECORD_FIELD_VALIDATION_CASES,
@@ -355,10 +671,12 @@ def test_shared_record_field_validation_cases(case: dict[str, Any]) -> None:
     if case["validAccepted"] is True:
         assert validate_field_value(field, case["valid"]) == case["normalized"]
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(
+            ValueError, match=f"Relationship field {field.id} is managed separately"
+        ):
             validate_field_value(field, case["valid"])
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=INVALID_VALUE_MESSAGES[field_type].format(id=field.id)):
         validate_field_value(field, case["invalid"])
 
 

@@ -1,8 +1,11 @@
-import { type Page } from "./test";
+import { heldResponse, type Page } from "./test";
 import { ids, mockAccessApi } from "./access-api";
 import { boardId, board, installBoardApi } from "./boards-api";
 import { installOpenViewEventSource } from "./openview-event-source";
-import { avatarPng, profileGate, profilePreferences } from "./profile-api";
+import { avatarPng, profilePreferences } from "./profile-api";
+import { pageOf } from "../../helpers/pagination";
+import { emptyWireQuery } from "../../helpers/query-definitions";
+import { wireRecord, wireView } from "../../helpers/wire";
 
 export const cardTarget = ids.ana;
 export const secondTarget = ids.ben;
@@ -17,7 +20,7 @@ const titleField = "00000000-0000-4000-8000-000000000907";
 const userField = "00000000-0000-4000-8000-000000000908";
 const stamp = "2026-09-25T00:00:00Z";
 
-// Literal S20 DTOs: no backend id, no department, no schema imports.
+// Literal person card DTOs: no backend id, no department, no schema imports.
 export const publicCard = {
   display_name: "Ana Santos",
   job_title: "Equipment coordinator" as string | null,
@@ -30,16 +33,7 @@ export const memberCard = {
   bio: "Coordinates equipment and maintenance." as string | null,
 };
 export function cardPage(items: unknown[], limit = 100) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
+  return pageOf(items, { limit });
 }
 
 export type CardSurface =
@@ -92,24 +86,16 @@ async function installSurface(
       position,
       config: {},
     }));
-    const view = {
+    const view = wireView({
       id: cardView,
       module_id: cardModule,
       name: "Assigned equipment",
-      is_default: false,
-      definition: {
-        version: 1,
-        logic: "and",
+      definition: emptyWireQuery({
         columns: [
           { field_id: titleField, expected_type: "text" },
           { field_id: userField, expected_type: "user" },
         ],
-        filters: [],
-        sort: [],
-        deleted: "exclude",
-        search: null,
-        search_fields: [],
-      },
+      }),
       presentation: {
         version: 1,
         layout: "table",
@@ -125,29 +111,24 @@ async function installSurface(
         date_range: "month",
         scale: null,
       },
-      revision: 1,
-      is_deleted: false,
-      can_edit: true,
       created_at: stamp,
       updated_at: stamp,
-    };
+    });
     if (primaryUser) {
       view.definition.columns.reverse();
       view.presentation.column_field_ids.reverse();
       view.presentation.primary_field_id = userField;
       view.presentation.secondary_field_id = titleField;
     }
-    const record = {
+    const record = wireRecord({
       id: cardRecord,
       module_id: cardModule,
       data: { [titleField]: "Pump inspection", [userField]: cardTarget },
       display_values: { [userField]: "Ana Santos" },
       created_at: stamp,
       updated_at: stamp,
-      deleted_at: null,
-      is_deleted: false,
       performed_by: cardViewer,
-    };
+    });
     await page.route("**/api/views**", (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === "/api/views/data-sources")
@@ -341,8 +322,8 @@ export async function installPersonCardApi(
     reads: [] as { viewer: string; target: string }[],
     avatarReads: [] as string[],
     writes: [] as string[],
-    hold: null as ReturnType<typeof profileGate> | null,
-    holdAvatar: null as ReturnType<typeof profileGate> | null,
+    hold: null as ReturnType<typeof heldResponse> | null,
+    holdAvatar: null as ReturnType<typeof heldResponse> | null,
     avatarFault: null as "mime" | "headers" | "empty" | "oversize" | null,
   };
   page.on("request", (request) => {
@@ -381,8 +362,8 @@ export async function installPersonCardApi(
     state.reads.push({ viewer: state.viewer, target });
     const hold = state.hold;
     state.hold = null;
-    hold?.start();
-    if (hold) await hold.waiting;
+    hold?.enter();
+    if (hold) await hold.released;
     await route.fulfill({
       status,
       headers: { "Cache-Control": "private, no-store" },
@@ -397,8 +378,8 @@ export async function installPersonCardApi(
     // Every read waits while the gate is closed: a Strict Mode remount can
     // abort the first read and send a second one.
     const hold = state.holdAvatar;
-    hold?.start();
-    if (hold) await hold.waiting;
+    hold?.enter();
+    if (hold) await hold.released;
     await route.fulfill({
       status: state.avatarStatus,
       contentType: state.avatarFault === "mime" ? "image/svg+xml" : "image/png",

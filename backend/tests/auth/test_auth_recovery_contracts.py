@@ -22,7 +22,7 @@ from app.core.integrations.supabase_auth import (
 from app.systems.access.identity.schemas import ActionTokenCompleteRequest, RecoveryRequest
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.auth.test_auth_router_contracts import _request, _role, _user
+from tests.auth.local_identity_support import contract_request, contract_role, contract_user
 
 pytestmark = pytest.mark.usefixtures("local_auth_router_settings")
 
@@ -41,7 +41,7 @@ def committed_security_events(monkeypatch) -> list[tuple[str, str]]:
 
 
 def _action(monkeypatch, db, *, pending=False):
-    user = _user(status=UserStatus.PENDING if pending else UserStatus.ACTIVE)
+    user = contract_user(status=UserStatus.PENDING if pending else UserStatus.ACTIVE)
     user.supabase_user_id = uuid7()
     user.provider_invitation_operation_id = uuid7()
     user.invitation_sent_at = datetime.now(UTC)
@@ -62,10 +62,9 @@ def _action(monkeypatch, db, *, pending=False):
     client.get_user.return_value = verified
     client.update_password.return_value = verified
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: client)
+    # The profile lock reads ``user``; the administrator lock is one statement on the mock.
     db.scalar.return_value = user
     db.scalars.return_value = []
-    monkeypatch.setattr(acceptance, "_lock_administrator_changes", lambda *_a: None)
-    monkeypatch.setattr(acceptance, "_lock_profile", lambda *_a: user)
     events = []
     monkeypatch.setattr(
         acceptance, "_security_event", lambda **kw: events.append(kw["outcome"].value)
@@ -87,7 +86,7 @@ def test_recovery_completes_with_provider_password_update_without_app_session(
 ):
     db = Mock(spec=Session)
     user, client, _ = _action(monkeypatch, db)
-    assert auth_router.complete_recovery(_payload(), _request(), db).status_code == 204
+    assert auth_router.complete_recovery(_payload(), contract_request(), db).status_code == 204
     client.verify_email_action.assert_called_once_with("a" * 56, "recovery")
     client.update_password.assert_called_once_with("action-access", _payload().password)
     client.sign_out.assert_called_once_with("action-access", scope="global")
@@ -98,7 +97,7 @@ def test_recovery_completes_with_provider_password_update_without_app_session(
 def test_invitation_completion_records_attempt_and_commits_success_with_activation(monkeypatch):
     db = Mock(spec=Session)
     user, client, events = _action(monkeypatch, db, pending=True)
-    assert auth_router.complete_invitation(_payload(), _request(), db).status_code == 204
+    assert auth_router.complete_invitation(_payload(), contract_request(), db).status_code == 204
     assert user.status == UserStatus.ACTIVE.value
     assert user.invitation_accepted_at is not None
     assert events == ["attempt", "success"]
@@ -114,7 +113,7 @@ def test_invitation_completion_records_failure_for_invalid_provider_token(monkey
     record = Mock()
     monkeypatch.setattr(auth_router, "record_invitation_acceptance_failure", record)
     with pytest.raises(HTTPException) as error:
-        auth_router.complete_invitation(_payload(), _request(), db)
+        auth_router.complete_invitation(_payload(), contract_request(), db)
     assert error.value.status_code == 400
     record.assert_called_once_with(operation_id, None, "invitation token is invalid")
     client.update_password.assert_not_called()
@@ -125,7 +124,7 @@ def test_invitation_completion_is_limited_before_provider_or_durable_audit_attem
     _, client, events = _action(monkeypatch, db, pending=True)
     monkeypatch.setattr(auth_router, "invitation_completion_permitted", lambda *_a, **_kw: False)
     with pytest.raises(HTTPException) as error:
-        auth_router.complete_invitation(_payload(), _request(), db)
+        auth_router.complete_invitation(_payload(), contract_request(), db)
     assert error.value.status_code == 429
     client.verify_email_action.assert_not_called()
     assert events == []
@@ -136,7 +135,7 @@ def test_invitation_completion_fails_closed_when_admission_persistence_fails(mon
     _, client, events = _action(monkeypatch, db, pending=True)
     db.commit.side_effect = SQLAlchemyError("private database details")
     with pytest.raises(HTTPException) as error:
-        auth_router.complete_invitation(_payload(), _request(), db)
+        auth_router.complete_invitation(_payload(), contract_request(), db)
     assert error.value.status_code == 503
     client.verify_email_action.assert_not_called()
     assert events == []
@@ -148,7 +147,7 @@ def test_invitation_completion_records_failure_when_activation_cannot_commit(mon
     _, client, events = _action(monkeypatch, db, pending=True)
     db.commit.side_effect = [None, SQLAlchemyError("private database details")]
     with pytest.raises(HTTPException) as error:
-        auth_router.complete_invitation(_payload(), _request(), db)
+        auth_router.complete_invitation(_payload(), contract_request(), db)
     assert error.value.status_code == 503
     assert events == ["attempt", "success", "failure"]
     client.sign_out.assert_called_once_with("action-access", scope="global")
@@ -170,7 +169,7 @@ def test_recovery_cannot_change_password_for_an_ineligible_local_user(monkeypatc
 
         db.scalar.side_effect = expire_after_provider_verification
     with pytest.raises(HTTPException) as error:
-        auth_router.complete_recovery(_payload(), _request(), db)
+        auth_router.complete_recovery(_payload(), contract_request(), db)
     assert error.value.status_code == 400
     client.update_password.assert_not_called()
     client.sign_out.assert_called_once_with("action-access", scope="local")
@@ -191,7 +190,9 @@ def test_recovery_request_has_identical_response_for_known_and_unknown_emails(
     for email in ("known@example.test", "unknown@example.test"):
         before = len(committed_security_events)
         assert (
-            auth_router.request_recovery(RecoveryRequest(email=email), _request(), db).status_code
+            auth_router.request_recovery(
+                RecoveryRequest(email=email), contract_request(), db
+            ).status_code
             == 204
         )
         recorded_per_email.append(committed_security_events[before:])
@@ -208,7 +209,7 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
 ) -> None:
     db = Mock(spec=Session)
     db.info = {}
-    user = _user()
+    user = contract_user()
     session_id = uuid7()
     client = Mock()
     monkeypatch.setattr(dependencies, "get_supabase_auth_client", lambda: client)
@@ -221,7 +222,7 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
     monkeypatch.setattr(dependencies, "set_audit_actor", actor)
 
     identity = dependencies.get_current_identity(
-        _request(origin=None, authorization="Bearer access-token"),
+        contract_request(origin=None, authorization="Bearer access-token"),
         SimpleNamespace(credentials="access-token"),
         db,
     )
@@ -230,13 +231,15 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
 
     with pytest.raises(HTTPException) as mixed:
         dependencies.get_current_identity(
-            _request(cookies="openslate_access=cookie", authorization="Bearer access-token"),
+            contract_request(
+                cookies="openslate_access=cookie", authorization="Bearer access-token"
+            ),
             SimpleNamespace(credentials="access-token"),
             db,
         )
     assert mixed.value.status_code == 401
 
-    cookie_request = _request(cookies="openslate_access=cookie")
+    cookie_request = contract_request(cookies="openslate_access=cookie")
     cookie_request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     db.get.return_value = SimpleNamespace(csrf_token_digest="digest")
     monkeypatch.setattr(dependencies, "validate_csrf", lambda *_args: False)
@@ -246,12 +249,12 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
 
 
 def test_dependency_authorization_fails_closed_for_stale_admin_and_setup_identity() -> None:
-    setup = CurrentIdentity(_user(), uuid7(), False, True)
+    setup = CurrentIdentity(contract_user(), uuid7(), False, True)
     with pytest.raises(HTTPException) as setup_denied:
         dependencies.get_current_user(setup)
     assert setup_denied.value.status_code == 401
 
-    actor = _user(role=_role(UserRole.ADMIN))
+    actor = contract_user(role=contract_role(UserRole.ADMIN))
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor]
     assert dependencies.require_fresh_exact_admin(db, actor.id) is actor
@@ -263,12 +266,12 @@ def test_dependency_authorization_fails_closed_for_stale_admin_and_setup_identit
 
     assert dependencies.require_admin(actor) is actor
     with pytest.raises(HTTPException) as denied:
-        dependencies.require_admin(_user())
+        dependencies.require_admin(contract_user())
     assert denied.value.status_code == 403
 
 
 def test_fresh_exact_admin_rejects_a_member_that_was_an_administrator() -> None:
-    demoted = _user(role=_role(UserRole.MEMBER))
+    demoted = contract_user(role=contract_role(UserRole.MEMBER))
     db = Mock(spec=Session)
     db.scalar.side_effect = [demoted]
 
@@ -279,7 +282,7 @@ def test_fresh_exact_admin_rejects_a_member_that_was_an_administrator() -> None:
 
 
 def test_fresh_exact_admin_rejects_an_expired_identity() -> None:
-    actor = _user(role=_role(UserRole.ADMIN))
+    actor = contract_user(role=contract_role(UserRole.ADMIN))
     actor.expires_at = datetime.now(UTC)
     exact_admin_db = Mock(spec=Session)
     exact_admin_db.scalar.side_effect = [actor]
@@ -303,7 +306,7 @@ def test_weak_action_password_returns_safe_422_without_consuming_token(monkeypat
     action = auth_router.complete_invitation if kind == "invite" else auth_router.complete_recovery
 
     with pytest.raises(HTTPException) as denied:
-        action(payload, _request(), db)
+        action(payload, contract_request(), db)
 
     assert denied.value.status_code == 422
     assert denied.value.detail["code"] == "password_policy_violation"

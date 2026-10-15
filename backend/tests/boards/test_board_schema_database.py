@@ -50,13 +50,14 @@ REPLACED_FUNCTIONS = (
 
 
 def _rejects(db: Session, change: object) -> None:
+    savepoint = db.begin_nested()
+    if callable(change):
+        change()
+    else:
+        db.add(change)
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            if callable(change):
-                change()
-            else:
-                db.add(change)
-            db.flush()
+        db.flush()
+    savepoint.rollback()
 
 
 def _file(db: Session, board: Board, creator: User) -> File:

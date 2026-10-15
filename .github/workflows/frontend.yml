@@ -26,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - id: scope
         name: Classify changes
@@ -43,9 +44,11 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install locked frontend dependencies
@@ -63,19 +66,79 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install locked frontend dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
       - name: Build the production frontend
         run: npm run build
+      - name: Keep the static export for the browser tests
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-export
+          path: frontend/out/
+          if-no-files-found: error
+          retention-days: 1
+
+  isolated:
+    needs: changes
+    if: needs.changes.outputs.run_frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      # The development-ingress test drives next dev in Chromium.
+      - name: Restore the pinned Playwright browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+      - name: Install pinned Playwright Chromium
+        run: npm exec --no -- playwright install --with-deps chromium
+      - name: Run isolated frontend tests
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/isolated.json
+        run: npm test -- --project=isolated --reporter=line,json
+      - name: Record the checked-out test identity
+        if: ${{ always() }}
+        run: |
+          mkdir -p test-results/ci
+          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=isolated\nshard=none\n' \
+            "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" \
+            > test-results/ci/isolated.metadata.txt
+          test -s test-results/ci/isolated.json
+      - name: Keep the native Playwright report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-playwright-isolated
+          path: |
+            frontend/test-results/ci/isolated.json
+            frontend/test-results/ci/isolated.metadata.txt
+          retention-days: 14
+          if-no-files-found: error
 
   test:
     name: test (${{ matrix.suite }})
-    needs: changes
+    needs: [changes, build]
     if: needs.changes.outputs.run_frontend == 'true'
     runs-on: ubuntu-latest
     # The browser install pulls apt packages and can be slow on a busy mirror;
@@ -84,48 +147,53 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Isolated tests finish in seconds; only the slow dev-server http project is sharded.
-        # Each http shard runs one Playwright worker: on a 2-vCPU runner, two browsers
-        # beside `next dev` starve page rendering and fail a different test each run.
+        # The http project runs against the static export through the production
+        # static-site code (frontend/playwright.config.ts). Whole-file shards use
+        # verified CI duration weights; current native collection owns membership.
         include:
-          - suite: isolated
-            args: --project=isolated
-          - suite: http 1/12
-            args: --project=http --shard=1/12
-          - suite: http 2/12
-            args: --project=http --shard=2/12
-          - suite: http 3/12
-            args: --project=http --shard=3/12
-          - suite: http 4/12
-            args: --project=http --shard=4/12
-          - suite: http 5/12
-            args: --project=http --shard=5/12
-          - suite: http 6/12
-            args: --project=http --shard=6/12
-          - suite: http 7/12
-            args: --project=http --shard=7/12
-          - suite: http 8/12
-            args: --project=http --shard=8/12
-          - suite: http 9/12
-            args: --project=http --shard=9/12
-          - suite: http 10/12
-            args: --project=http --shard=10/12
-          - suite: http 11/12
-            args: --project=http --shard=11/12
-          - suite: http 12/12
-            args: --project=http --shard=12/12
+          - suite: http 1/6
+            duration-shard: 1
+          - suite: http 2/6
+            duration-shard: 2
+          - suite: http 3/6
+            duration-shard: 3
+          - suite: http 4/6
+            duration-shard: 4
+          - suite: http 5/6
+            duration-shard: 5
+          - suite: http 6/6
+            duration-shard: 6
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install locked frontend dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          # Match the development machine (uv 0.12); bump both together.
+          version: "0.12.x"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Install the locked backend that serves the static export
+        working-directory: backend
+        run: uv sync --locked
+      - name: Restore the static export
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-export
+          path: frontend/out/
       - name: Restore the pinned Playwright browser
         uses: actions/cache@v6
         with:
@@ -133,9 +201,21 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
       - name: Install pinned Playwright Chromium
         run: npm exec --no -- playwright install --with-deps chromium
-      - name: Run retained frontend tests
+      - name: Plan whole-file duration shards from current native collection
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/collection.json
+        run: |
+          mkdir -p test-results/ci
+          npm test -- --project=http --list --reporter=json
+          python3 ../scripts/playwright_shards.py plan \
+            --collection test-results/ci/collection.json --weights tests/http/.test-durations.json \
+            --shard ${{ matrix.duration-shard }} --shards 6 \
+            --test-list test-results/ci/selected.txt --receipt test-results/ci/assignment.json
+      - name: Run browser tests against the static export
         timeout-minutes: 15
-        run: npm test -- ${{ matrix.args }}
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/ci/http-${{ strategy.job-index }}.json
+        run: npm test -- --project=http --workers=2 --test-list=test-results/ci/selected.txt --reporter=line,json
       - name: Keep failure context and traces
         if: failure()
         uses: actions/upload-artifact@v7
@@ -144,9 +224,33 @@ jobs:
           path: frontend/test-results/playwright/
           retention-days: 7
           if-no-files-found: ignore
+      - name: Record the checked-out test identity
+        if: ${{ always() }}
+        env:
+          REPORT_SHARD: ${{ matrix.suite }}
+          REPORT_DURATION_SHARD: ${{ matrix.duration-shard }}
+        run: |
+          mkdir -p test-results/ci
+          printf 'revision=%s\ntree=%s\nrun_id=%s\nrun_attempt=%s\njob=%s\nproject=http\nshard=%s\nduration-shard=%s/6\n' \
+            "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB" "$REPORT_SHARD" "$REPORT_DURATION_SHARD" \
+            > test-results/ci/http-${{ strategy.job-index }}.metadata.txt
+          test -s test-results/ci/http-${{ strategy.job-index }}.json
+      - name: Keep the native Playwright report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-playwright-http-${{ strategy.job-index }}
+          path: |
+            frontend/test-results/ci/http-${{ strategy.job-index }}.json
+            frontend/test-results/ci/http-${{ strategy.job-index }}.metadata.txt
+            frontend/test-results/ci/selected.txt
+            frontend/test-results/ci/assignment.json
+          retention-days: 14
+          if-no-files-found: error
 
   verify:
-    needs: [changes, check, build, test]
+    needs: [changes, check, build, isolated, test]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -156,6 +260,7 @@ jobs:
           RUN_FRONTEND: ${{ needs.changes.outputs.run_frontend }}
           CHECK: ${{ needs.check.result }}
           BUILD: ${{ needs.build.result }}
+          ISOLATED: ${{ needs.isolated.result }}
           TEST: ${{ needs.test.result }}
           REASON: ${{ needs.changes.outputs.reason_frontend }}
         run: |
@@ -163,10 +268,12 @@ jobs:
           if [ "$RUN_FRONTEND" = "true" ]; then
             test "$CHECK" = "success"
             test "$BUILD" = "success"
+            test "$ISOLATED" = "success"
             test "$TEST" = "success"
           else
             test "$CHECK" = "skipped"
             test "$BUILD" = "skipped"
+            test "$ISOLATED" = "skipped"
             test "$TEST" = "skipped"
             printf 'Frontend check satisfied without execution: %s\n' "$REASON"
           fi

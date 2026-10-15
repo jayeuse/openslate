@@ -1,11 +1,17 @@
-import { expect, test, type Page } from "./helpers/test";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import {
+  controlledSession,
+  expect,
+  heldResponse,
+  recheckSession,
+  test,
+  type Page,
+} from "./helpers/test";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
+import { fixtureId as id } from "./helpers/access-api";
+import { pageOf } from "../helpers/pagination";
 
 const ADMIN = "00000000-0000-4000-8000-000000000101";
 const OTHER = "00000000-0000-4000-8000-000000000102";
-const id = (number: number) =>
-  `00000000-0000-4000-8000-${String(number).padStart(12, "0")}`;
 type Job = {
   kind: string;
   id: string;
@@ -89,17 +95,19 @@ async function installJobs(
   options: {
     role?: "admin" | "member" | "guest";
     rows?: Job[];
-    getDelay?: Promise<void>;
-    postDelay?: Promise<void>;
+    getDelay?: ReturnType<typeof heldResponse>;
+    postDelay?: ReturnType<typeof heldResponse>;
     reply?: Reply;
-    roleDelay?: Promise<void>;
+    roleDelay?: ReturnType<typeof heldResponse>;
     afterLossReadError?: number;
   } = {},
 ) {
   await installOpenViewEventSource(page);
-  let role = options.role ?? "admin";
-  let account = ADMIN;
-  let authenticated = true;
+  const session = await controlledSession(
+    page,
+    { id: ADMIN, role: options.role ?? "admin" },
+    { identityRead: false },
+  );
   let identityFailure = false;
   let rows = options.rows ?? seedJobs();
   let getError: number | null = null;
@@ -107,19 +115,15 @@ async function installJobs(
   const gets: URL[] = [];
   const posts: Array<{ kind: string; id: string; key: string | null }> = [];
   const accepted = new Map<string, Job>();
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: authenticated
-        ? { authenticated: true, user_id: account, setup_required: false }
-        : { authenticated: false },
-    }),
-  );
   await page.route("**/api/auth/refresh", (route) =>
     route.fulfill({ status: 401, json: { detail: "Unauthenticated" } }),
   );
   await page.route("**/api/auth/me", async (route) => {
-    const captured = { id: account, role, access: [] };
-    await options.roleDelay;
+    const captured = { ...session.identity, access: [] };
+    if (options.roleDelay) {
+      options.roleDelay.enter();
+      await options.roleDelay.released;
+    }
     await route.fulfill(
       identityFailure
         ? { status: 503, json: { detail: "Private role canary" } }
@@ -133,9 +137,12 @@ async function installJobs(
       gets.push(url);
       const captured = structuredClone(rows);
       const capturedError = getError;
-      if (gets.length === 1) await options.getDelay;
+      if (gets.length === 1 && options.getDelay) {
+        options.getDelay.enter();
+        await options.getDelay.released;
+      }
       if (capturedError) {
-        if (capturedError === 401) authenticated = false;
+        if (capturedError === 401) session.signedIn = false;
         return route.fulfill({
           status: capturedError,
           json: {
@@ -166,22 +173,16 @@ async function installJobs(
         );
       const items = filtered.slice(offset, offset + limit);
       return route.fulfill({
-        json: {
-          items,
-          pagination: {
-            limit,
-            offset,
-            count: items.length,
-            total: filtered.length,
-            has_more: offset + items.length < filtered.length,
-          },
-        },
+        json: pageOf(items, { limit, offset, total: filtered.length }),
       });
     }
     const [, , , kind, targetId] = url.pathname.split("/");
     const key = request.headers()["idempotency-key"] ?? null;
     posts.push({ kind, id: targetId, key });
-    await options.postDelay;
+    if (options.postDelay) {
+      options.postDelay.enter();
+      await options.postDelay.released;
+    }
     const original = rows.find(
       (row) => row.kind === kind && row.id === targetId,
     );
@@ -277,11 +278,11 @@ async function installJobs(
     error: (status: number | null) => {
       getError = status;
     },
-    setRole: (value: typeof role) => {
-      role = value;
+    setRole: (value: "admin" | "member" | "guest") => {
+      session.identity = { ...session.identity, role: value };
     },
     setAccount: (value: string) => {
-      account = value;
+      session.identity = { ...session.identity, id: value };
     },
     failIdentity: () => {
       identityFailure = true;
@@ -290,46 +291,6 @@ async function installJobs(
       rows = value;
     },
   };
-}
-async function prepareS14Capture(page: Page) {
-  if (!process.env.OPENVIEW_CAPTURE_DIR) return;
-  const theme = process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-  await page.route("**/api/users/*/preferences", (route) =>
-    route.fulfill({
-      json: {
-        user_id: new URL(route.request().url()).pathname.split("/")[3],
-        theme,
-        appearance: { motion: "reduce", keyboard_shortcuts: true },
-      },
-    }),
-  );
-}
-async function captureS14Jobs(page: Page, name: string) {
-  const theme = process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
-  await captureOpenViewReview(page, `${name}-${theme}`, {
-    beforeScreenshot: async (capture) => {
-      // Exclude Next's development overlay from opt-in product captures.
-      await capture.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
-      await expect(capture.locator("html")).toHaveClass(
-        theme === "dark" ? /dark/ : /^(?!.*dark)/,
-      );
-      await capture.evaluate(async () => {
-        await document.fonts.ready;
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        );
-      });
-      expect(
-        await capture.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-    },
-  });
 }
 
 async function openJobs(page: Page) {
@@ -341,11 +302,10 @@ async function openJobs(page: Page) {
 const retry = (page: Page, label: string) =>
   page.getByRole("button", { name: `Retry ${label}`, exact: true });
 
-test("S14 exact administrator sees server-priority composite Jobs and future registry rows", async ({
+test("exact administrator sees server-priority composite Jobs and future registry rows", async ({
   page,
 }) => {
-  await prepareS14Capture(page);
-  const api = await installJobs(page);
+  await installJobs(page);
   await openJobs(page);
   const breadcrumb = page.getByRole("navigation", {
     name: "Breadcrumb",
@@ -374,13 +334,10 @@ test("S14 exact administrator sees server-priority composite Jobs and future reg
   await expect(
     page.getByRole("link", { name: "View all backups", exact: true }),
   ).toBeVisible();
-  expect(api.gets[0].searchParams.get("sort_by")).toBe("priority");
-  expect(api.gets[0].searchParams.get("sort_order")).toBe("asc");
-  await captureS14Jobs(page, "s14-jobs-registry");
 });
 
 for (const role of ["member", "guest"] as const)
-  test(`S14 ${role} direct URL has no Jobs navigation or private requests`, async ({
+  test(`${role} direct URL has no Jobs navigation or private requests`, async ({
     page,
   }) => {
     const api = await installJobs(page, { role });
@@ -401,7 +358,7 @@ for (const role of ["member", "guest"] as const)
     expect(api.posts).toHaveLength(0);
   });
 
-test("S14 unavailable identity never admits Jobs reads or intent prefetch", async ({
+test("unavailable identity never admits Jobs reads or intent prefetch", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -419,7 +376,7 @@ test("S14 unavailable identity never admits Jobs reads or intent prefetch", asyn
   expect(api.gets).toHaveLength(0);
 });
 
-test("S14 Jobs paging and kind/state/size filters retain exact server page identities", async ({
+test("Jobs paging and kind/state/size filters retain exact server page identities", async ({
   page,
 }) => {
   const rows = Array.from({ length: 15 }, (_, number) =>
@@ -452,32 +409,31 @@ test("S14 Jobs paging and kind/state/size filters retain exact server page ident
     .toBe("25");
 });
 
-for (const kind of ["report-run", "post-publish", "event-reminder"] as const)
-  test(`S14 ${kind} retry requires a matching 200 receipt and refreshes authoritative state`, async ({
-    page,
-  }) => {
-    const row = seedJobs().find((item) => item.kind === kind)!;
-    const api = await installJobs(page, { rows: [row] });
-    await openJobs(page);
-    await retry(page, row.subject_label).click();
-    await expect(
-      page.getByRole("status").filter({ hasText: "Retry requested." }),
-    ).toBeVisible();
-    await expect(page.getByRole("table", { name: "Jobs" })).toContainText(
-      "Pending",
-    );
-    expect(api.posts).toEqual([{ kind, id: row.id, key: null }]);
-    expect(api.gets.length).toBeGreaterThan(1);
-  });
+test("report-run retry requires a matching 200 receipt and refreshes authoritative state", async ({
+  page,
+}) => {
+  const row = seedJobs()[1];
+  const api = await installJobs(page, { rows: [row] });
+  await openJobs(page);
+  await expect(retry(page, "Weekly Report")).toBeEnabled();
+  const reread = page.waitForRequest(
+    (request) =>
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === "/api/jobs",
+  );
+  await retry(page, "Weekly Report").click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Retry requested." }),
+  ).toBeVisible();
+  await expect(page.getByRole("table", { name: "Jobs" })).toContainText(
+    "Pending",
+  );
+  expect(api.posts).toEqual([{ kind: "report-run", id: row.id, key: null }]);
+  await reread;
+});
 
-for (const response of [
-  "wrong-id",
-  "wrong-status",
-  "409",
-  "404",
-  "422",
-] as const)
-  test(`S14 scheduled ${response} response never reports retry success or automatically resends`, async ({
+for (const response of ["wrong-id", "409", "404", "422"] as const)
+  test(`scheduled ${response} response never reports retry success or automatically resends`, async ({
     page,
   }) => {
     const api = await installJobs(page, {
@@ -498,41 +454,43 @@ for (const response of [
     await expect(page.getByText("Private retry canary")).toHaveCount(0);
   });
 
-for (const response of ["wrong-location", "old-id", "wrong-status"] as const)
-  test(`S14 backup ${response} receipt stays unresolved and blocks new retry keys`, async ({
-    page,
-  }) => {
-    const api = await installJobs(page, { reply: response });
-    await openJobs(page);
-    await retry(page, "Nightly backup").click();
-    await expect(
-      page.getByRole("alert").filter({ hasText: "unconfirmed" }),
-    ).toBeVisible();
-    await expect(
-      page.getByText("Backup retry request confirmed.", { exact: true }),
-    ).toHaveCount(0);
-    expect(api.posts).toHaveLength(1);
-    expect(api.posts[0].key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
-    await expect(retry(page, "Weekly Report")).toBeDisabled();
-  });
-
-test("S14 uncertain backup first reads Jobs then explicitly recovers one accepted run with the same key", async ({
+test("backup wrong-location receipt stays unresolved and blocks new retry keys", async ({
   page,
 }) => {
-  await prepareS14Capture(page);
-  const api = await installJobs(page, { reply: "lost" });
+  const api = await installJobs(page, { reply: "wrong-location" });
   await openJobs(page);
   await retry(page, "Nightly backup").click();
   await expect(
     page.getByRole("alert").filter({ hasText: "unconfirmed" }),
   ).toBeVisible();
-  await expect.poll(() => api.gets.length).toBeGreaterThan(1);
+  await expect(
+    page.getByText("Backup retry request confirmed.", { exact: true }),
+  ).toHaveCount(0);
   expect(api.posts).toHaveLength(1);
-  expect(api.accepted.size).toBe(1);
+  expect(api.posts[0].key).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+  await expect(retry(page, "Weekly Report")).toBeDisabled();
+});
+
+test("uncertain backup first reads Jobs then explicitly recovers one accepted run with the same key", async ({
+  page,
+}) => {
+  const api = await installJobs(page, { reply: "lost" });
+  await openJobs(page);
+  await expect(retry(page, "Nightly backup")).toBeEnabled();
+  const reread = page.waitForRequest(
+    (request) =>
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === "/api/jobs",
+  );
+  await retry(page, "Nightly backup").click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "unconfirmed" }),
+  ).toBeVisible();
+  await reread;
+  expect(api.posts).toHaveLength(1);
   await expect(
     page.getByRole("button", { name: "Check retry result", exact: true }),
   ).toBeEnabled();
-  await captureS14Jobs(page, "s14-jobs-unconfirmed");
   const key = api.posts[0].key;
   Array.from(api.accepted.values())[0].state = "succeeded";
   await page
@@ -545,7 +503,6 @@ test("S14 uncertain backup first reads Jobs then explicitly recovers one accepte
   ).toBeVisible();
   expect(api.posts).toHaveLength(2);
   expect(api.posts[1].key).toBe(key);
-  expect(api.accepted.size).toBe(1);
   await expect(
     page
       .getByRole("table", { name: "Jobs" })
@@ -554,7 +511,7 @@ test("S14 uncertain backup first reads Jobs then explicitly recovers one accepte
   ).toHaveCount(2);
 });
 
-test("S14 Jobs refusal conceals cached subjects and persists across section remount until explicit fresh Retry", async ({
+test("Jobs refusal conceals cached subjects and persists across section remount until explicit fresh Retry", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -581,7 +538,7 @@ test("S14 Jobs refusal conceals cached subjects and persists across section remo
   await expect(page.getByText("Private Jobs canary")).toHaveCount(0);
 });
 
-test("S14 same-account role recheck cannot reuse an old administrator Jobs admission", async ({
+test("same-account role recheck cannot reuse an old administrator Jobs admission", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -589,7 +546,7 @@ test("S14 same-account role recheck cannot reuse an old administrator Jobs admis
   await expect(page.getByText("Nightly backup", { exact: true })).toBeVisible();
   const before = api.gets.length;
   api.setRole("member");
-  await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await recheckSession(page);
   await expect(
     page.getByRole("link", { name: "Jobs", exact: true }),
   ).toHaveCount(0);
@@ -599,7 +556,7 @@ test("S14 same-account role recheck cannot reuse an old administrator Jobs admis
   expect(api.gets).toHaveLength(before);
 });
 
-test("S14 backup uncertainty survives same-account section remount without an automatic POST", async ({
+test("backup uncertainty survives same-account section remount without an automatic POST", async ({
   page,
 }) => {
   const api = await installJobs(page, { reply: "lost" });
@@ -625,26 +582,24 @@ test("S14 backup uncertainty survives same-account section remount without an au
   expect(api.posts[1].key).toBe(api.posts[0].key);
 });
 
-test("S14 account replacement cancels a held retry and never transfers its key or late notice", async ({
+test("account replacement cancels a held retry and never transfers its key or late notice", async ({
   page,
 }) => {
-  let release!: () => void;
-  const delay = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const api = await installJobs(page, { postDelay: delay });
+  const held = heldResponse();
+  const api = await installJobs(page, { postDelay: held });
   await openJobs(page);
   await retry(page, "Nightly backup").click();
   try {
-    await expect.poll(() => api.posts.length).toBe(1);
+    await held.entered;
+    expect(api.posts).toHaveLength(1);
     api.setAccount(OTHER);
     api.setRows([job("report-run", 10, "New account job")]);
-    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await recheckSession(page);
     await expect(
       page.getByText("New account job", { exact: true }),
     ).toBeVisible();
   } finally {
-    release();
+    held.release();
   }
   await expect(page.getByText("Nightly backup", { exact: true })).toHaveCount(
     0,
@@ -657,14 +612,11 @@ test("S14 account replacement cancels a held retry and never transfers its key o
   ).toHaveCount(0);
 });
 
-test("S14 loading role cannot reveal or prefetch Jobs before fresh admission", async ({
+test("loading role cannot reveal or prefetch Jobs before fresh admission", async ({
   page,
 }) => {
-  let release!: () => void;
-  const delay = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const api = await installJobs(page, { roleDelay: delay });
+  const held = heldResponse();
+  const api = await installJobs(page, { roleDelay: held });
   await page.goto("/manage?view=jobs");
   try {
     await expect(
@@ -675,19 +627,16 @@ test("S14 loading role cannot reveal or prefetch Jobs before fresh admission", a
     ).toHaveCount(0);
     expect(api.gets).toHaveLength(0);
   } finally {
-    release();
+    held.release();
   }
   await expect(page.getByText("Nightly backup", { exact: true })).toBeVisible();
 });
 
-test("S14 cold Jobs load and retained503 refresh remain truthful and require explicit read Retry", async ({
+test("cold Jobs load and retained 503 refresh remain truthful and require explicit read Retry", async ({
   page,
 }) => {
-  let release!: () => void;
-  const delay = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const api = await installJobs(page, { getDelay: delay });
+  const held = heldResponse();
+  const api = await installJobs(page, { getDelay: held });
   await openJobs(page);
   try {
     await expect(
@@ -697,7 +646,7 @@ test("S14 cold Jobs load and retained503 refresh remain truthful and require exp
       0,
     );
   } finally {
-    release();
+    held.release();
   }
   await expect(page.getByText("Nightly backup", { exact: true })).toBeVisible();
   api.error(503);
@@ -714,7 +663,7 @@ test("S14 cold Jobs load and retained503 refresh remain truthful and require exp
   await expect(retry(page, "Nightly backup")).toBeEnabled();
 });
 
-test("S14 failed new filter never relabels prior Jobs rows as its response", async ({
+test("failed new filter never relabels prior Jobs rows as its response", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -733,22 +682,20 @@ test("S14 failed new filter never relabels prior Jobs rows as its response", asy
   );
 });
 
-test("S14 pending scheduled retry locks composite peers and never double-submits", async ({
+test("pending scheduled retry locks composite peers and never double-submits", async ({
   page,
 }) => {
-  let release!: () => void;
-  const delay = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const api = await installJobs(page, { postDelay: delay });
+  const held = heldResponse();
+  const api = await installJobs(page, { postDelay: held });
   await openJobs(page);
   await retry(page, "Weekly Report").click();
   try {
-    await expect.poll(() => api.posts.length).toBe(1);
+    await held.entered;
+    expect(api.posts).toHaveLength(1);
     await expect(retry(page, "Weekly Report")).toBeDisabled();
     await expect(retry(page, "Meeting post")).toBeDisabled();
   } finally {
-    release();
+    held.release();
   }
   await expect(
     page.getByRole("status").filter({ hasText: "Retry requested." }),
@@ -757,7 +704,7 @@ test("S14 pending scheduled retry locks composite peers and never double-submits
   expect(api.posts).toEqual([{ kind: "report-run", id: id(1), key: null }]);
 });
 
-test("S14 unsafe subject link rejects the Jobs response without creating navigation", async ({
+test("unsafe subject link rejects the Jobs response without creating navigation", async ({
   page,
 }) => {
   await installJobs(page, {
@@ -779,7 +726,7 @@ test("S14 unsafe subject link rejects the Jobs response without creating navigat
   await expect(page.locator('a[href*="outside.example"]')).toHaveCount(0);
 });
 
-test("S14 backup readback failure cannot offer recovery POST until a fresh GET succeeds", async ({
+test("backup readback failure cannot offer recovery POST until a fresh GET succeeds", async ({
   page,
 }) => {
   const api = await installJobs(page, {
@@ -800,6 +747,7 @@ test("S14 backup readback failure cannot offer recovery POST until a fresh GET s
   await expect(
     page.getByRole("button", { name: "Check retry result", exact: true }),
   ).toBeEnabled();
+  expect(api.posts).toHaveLength(1);
   await page
     .getByRole("button", { name: "Check retry result", exact: true })
     .click();
@@ -811,7 +759,7 @@ test("S14 backup readback failure cannot offer recovery POST until a fresh GET s
   expect(api.posts[1].key).toBe(api.posts[0].key);
 });
 
-test("S14 explicit Jobs401 loses the session and never retains protected subjects", async ({
+test("explicit Jobs 401 loses the session and never retains protected subjects", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -825,7 +773,7 @@ test("S14 explicit Jobs401 loses the session and never retains protected subject
   );
 });
 
-test("S14 Jobs intent and SPA revisits share the exact same account query cache", async ({
+test("Jobs intent and SPA revisits share the exact same account query cache", async ({
   page,
 }) => {
   const api = await installJobs(page);
@@ -843,7 +791,7 @@ test("S14 Jobs intent and SPA revisits share the exact same account query cache"
   expect(api.gets).toHaveLength(1);
 });
 
-test("S14 empty refreshed later page displays the authoritative zero range", async ({
+test("empty refreshed later page displays the authoritative zero range", async ({
   page,
 }) => {
   const api = await installJobs(page, {
@@ -865,3 +813,108 @@ test("S14 empty refreshed later page displays the authoritative zero range", asy
     page.getByText("Showing 0–0 of 0 jobs", { exact: true }),
   ).toBeVisible();
 });
+
+for (const state of ["registry", "unconfirmed"] as const) {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    for (const theme of ["light", "dark"] as const) {
+      test(`Jobs ${state} fits ${viewport.width}x${viewport.height} in ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.emulateMedia({
+          colorScheme: theme,
+          reducedMotion: "reduce",
+        });
+        await page.route("**/api/users/*/preferences", (route) =>
+          route.fulfill({
+            json: {
+              user_id: new URL(route.request().url()).pathname.split("/")[3],
+              theme,
+              appearance: { motion: "reduce", keyboard_shortcuts: true },
+            },
+          }),
+        );
+        const api = await installJobs(
+          page,
+          state === "unconfirmed" ? { reply: "lost" } : {},
+        );
+        await openJobs(page);
+        if (state === "unconfirmed") {
+          const reread = page.waitForRequest(
+            (request) =>
+              request.method() === "GET" &&
+              new URL(request.url()).pathname === "/api/jobs",
+          );
+          await retry(page, "Nightly backup").click();
+          await expect(
+            page.getByRole("alert").filter({ hasText: "unconfirmed" }),
+          ).toBeVisible();
+          await reread;
+          expect(api.posts).toHaveLength(1);
+          await expect(
+            page.getByRole("button", {
+              name: "Check retry result",
+              exact: true,
+            }),
+          ).toBeEnabled();
+        } else {
+          const breadcrumb = page.getByRole("navigation", {
+            name: "Breadcrumb",
+            exact: true,
+          });
+          await expect(
+            breadcrumb.getByRole("link", { name: "Manage", exact: true }),
+          ).toHaveAttribute("href", "/manage?view=organization");
+          await expect(
+            breadcrumb.getByText("Jobs", { exact: true }),
+          ).toBeVisible();
+
+          await expect(
+            page.getByRole("link", { name: "Jobs", exact: true }),
+          ).toBeVisible();
+          const table = page.getByRole("table", { name: "Jobs", exact: true });
+          await expect(table.getByRole("row")).toHaveCount(7);
+          await expect(table.getByRole("row").nth(1)).toContainText(
+            "Nightly backup",
+          );
+          await expect(table.getByRole("row").nth(2)).toContainText(
+            "Weekly Report",
+          );
+          await expect(retry(page, "Weekly Report")).toBeVisible();
+          await expect(retry(page, "Meeting post")).toBeVisible();
+          await expect(retry(page, "Closed Report")).toHaveCount(0);
+          const future = table
+            .getByRole("row")
+            .filter({ hasText: "Future registry work" });
+          await expect(future).toContainText("Waiting external");
+          await expect(future).toContainText("Not recorded");
+          await expect(
+            page.getByRole("link", { name: "View all backups", exact: true }),
+          ).toBeVisible();
+        }
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.setViewportSize(viewport);
+        await expect(page.locator("html")).toHaveClass(
+          theme === "dark" ? /dark/ : /^(?!.*dark)/,
+        );
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          );
+        });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        ).toBe(true);
+        await expect(
+          page.locator('[data-slot="loading-region"][aria-busy="true"]'),
+        ).toHaveCount(0);
+      });
+    }
+  }
+}

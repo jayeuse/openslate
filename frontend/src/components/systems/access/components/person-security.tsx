@@ -29,7 +29,6 @@ import {
 } from "@/components/systems/shared/runtime/workspace-identity";
 import { ApiError } from "@/lib/api";
 import { requestSessionRecheck } from "@/lib/auth-api";
-import { apiErrorMessage } from "@/lib/api-errors";
 import {
   afterPersonSecurityChange,
   personSecurityOptions,
@@ -39,10 +38,18 @@ import {
   resetPersonMfa,
   personSecurityPartial,
 } from "../adapters/security-api";
+import {
+  personSecurityFailure,
+  personSecurityPartialOutcome,
+  personSecuritySuccess,
+  sessionsNotReloaded,
+  withSessionsReloadFailure,
+  type PersonSecurityAction,
+} from "../helpers/person-security-outcome";
 import { useAccessDraftRegistration } from "../state/draft-navigation";
 import type { AccessUser } from "../state/api";
 
-type Action = "email" | "revoke" | "reset";
+type Action = PersonSecurityAction;
 const copies = {
   email: {
     title: "Send recovery email?",
@@ -63,8 +70,6 @@ const copies = {
       "This removes their authenticator app and signs them out everywhere. They can set up two-step verification again after they sign in.",
   },
 } as const;
-const unconfirmed =
-  "This change may be only partly saved. Check the person's settings, then try again.";
 
 /** Live observations and explicitly confirmed commands belong to this actor/person. */
 export function PersonSecurity({ person }: { person: AccessUser }) {
@@ -171,13 +176,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           controller.signal,
         );
       if (!current(controller, generation)) return;
-      setNotice(
-        selected === "reset"
-          ? "Two-step verification reset. They are signed out everywhere."
-          : selected === "revoke"
-            ? `Signed out everywhere. Recovery email sent to ${person.email}.`
-            : `Recovery email sent to ${person.email}.`,
-      );
+      setNotice(personSecuritySuccess(selected, person.email));
       if (self && selected !== "email") {
         await completeSignOut();
         return;
@@ -187,9 +186,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
       } catch {
         if (current(controller, generation)) {
           setReadAccepted(false);
-          setError(
-            "The change is done, but sessions could not reload. Reload before you do anything else.",
-          );
+          setError(sessionsNotReloaded);
         }
         return;
       }
@@ -199,41 +196,14 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
       const partial = personSecurityPartial(caught);
       setReadAccepted(false);
       if (partial) {
-        const signedOut = partial.local_revocation === "committed";
-        // A sent email with a known sign-out result is a success, even when
-        // the server could not finish its own record of the change.
-        const sent =
-          selected !== "reset" &&
-          partial.email_request === "accepted" &&
-          partial.local_revocation !== "unconfirmed";
-        if (sent) {
-          setNotice(
-            signedOut
-              ? `Signed out everywhere. Recovery email sent to ${person.email}.`
-              : `Recovery email sent to ${person.email}.`,
-          );
-        } else if (selected === "reset") {
-          setError(
-            signedOut
-              ? partial.factors_cleared === true
-                ? "Two-step verification reset. They are signed out everywhere. This change may be only partly saved."
-                : "Signed out everywhere. Their authenticator app may not be removed. Check the person's settings, then try again."
-              : unconfirmed,
-          );
-        } else {
-          // "unconfirmed" email may have gone out; never invite a blind resend.
-          const email =
-            partial.email_request === "unconfirmed"
-              ? "We could not confirm the recovery email was sent. Ask the person before you send another."
-              : "The recovery email did not send. Try again.";
-          setError(
-            signedOut
-              ? `Signed out everywhere. ${email}`
-              : partial.local_revocation === "not_requested"
-                ? email
-                : unconfirmed,
-          );
-        }
+        const outcome = personSecurityPartialOutcome(
+          selected,
+          partial,
+          person.email,
+        );
+        const sent = outcome.sent;
+        if (outcome.sent) setNotice(outcome.notice);
+        else setError(outcome.error);
         if (self && partial.local_revocation === "committed") {
           await completeSignOut();
           return;
@@ -242,12 +212,8 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
           await afterPersonSecurityChange(client, person.id);
           if (sent && current(controller, generation)) void refresh();
         } catch {
-          if (current(controller, generation)) {
-            const reload = "Sessions could not reload.";
-            setError((message) =>
-              message ? `${message} ${reload}` : `${reload} Reload security.`,
-            );
-          }
+          if (current(controller, generation))
+            setError(withSessionsReloadFailure);
         }
         if (
           self &&
@@ -256,14 +222,7 @@ export function PersonSecurity({ person }: { person: AccessUser }) {
         )
           requestSessionRecheck();
       } else {
-        setError(
-          caught instanceof ApiError && caught.status === 401
-            ? "Your session must be verified again."
-            : apiErrorMessage(
-                caught,
-                "This change could not be confirmed. Reload security, then try again.",
-              ),
-        );
+        setError(personSecurityFailure(caught));
         if (caught instanceof ApiError && caught.status === 401)
           requestSessionRecheck();
         else if (!(caught instanceof ApiError && caught.status === 403)) {

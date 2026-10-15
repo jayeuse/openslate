@@ -1,6 +1,5 @@
 "use client";
 
-import type { QueryClient } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 import type { z } from "zod";
 import { ApiError, apiFetch, type ApiRequestInit } from "@/lib/api";
@@ -27,7 +26,6 @@ type Latch = {
   latestSuccess: number;
   /** Start number of the newest refused read; null while not refused. */
   deniedAt: number | null;
-  client: QueryClient | null;
   listeners: Set<() => void>;
 };
 
@@ -36,7 +34,6 @@ const latch: Latch = {
   sequence: 0,
   latestSuccess: 0,
   deniedAt: null,
-  client: null,
   listeners: new Set(),
 };
 
@@ -49,15 +46,14 @@ function isRefusal(error: unknown): boolean {
 }
 
 /**
- * Starts a fresh latch for the account whose cache this client is. Called
- * once per verified account by the query provider.
+ * Starts a fresh latch for a newly verified account. Called once per account
+ * by the query provider.
  */
-export function bindOpenViewAccess(client: QueryClient): void {
+export function bindOpenViewAccess(): void {
   latch.epoch += 1;
   latch.sequence = 0;
   latch.latestSuccess = 0;
   latch.deniedAt = null;
-  latch.client = client;
   notify();
 }
 
@@ -66,14 +62,12 @@ function refuse(startedAt: number) {
   if (latch.latestSuccess > startedAt) return;
   const wasDenied = latch.deniedAt !== null;
   latch.deniedAt = Math.max(latch.deniedAt ?? 0, startedAt);
-  // Cached reads in flight started before this answer arrived; cancel them
-  // so none restores data the latch should hide. A reverted cancel keeps the
-  // previous state (hidden) and never settles as a success.
-  for (const query of latch.client?.getQueryCache().findAll({
-    queryKey: ["openview"],
-    fetchStatus: "fetching",
-  }) ?? [])
-    void query.cancel({ revert: true });
+  // Reads in flight are left to settle. One that started before this refusal
+  // cannot clear it (authorize requires a later start), and the refused read
+  // must keep its error so its screen holds the denial through its own Retry
+  // (use-server-views-resource.ts). Cancelling in-flight queries here also
+  // reverted the refused query itself, which is still fetching when its 403
+  // arrives, and so dropped the denial.
   if (!wasDenied) notify();
 }
 

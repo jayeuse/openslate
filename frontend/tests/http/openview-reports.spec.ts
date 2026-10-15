@@ -1,13 +1,17 @@
 import {
   expect,
+  signedInAs,
   test,
   type Locator,
   type Page,
   type Route,
 } from "./helpers/test";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { readFile } from "node:fs/promises";
 import { profilePreferences } from "./helpers/profile-api";
+import { pageOf, wirePagination } from "../helpers/pagination";
+import { gate } from "./helpers/gate";
+import { wireField } from "../helpers/wire";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const ownerId = "00000000-0000-4000-8000-000000000102";
@@ -22,19 +26,6 @@ const timestamp = "2026-09-24T00:00:00Z";
 const readOnlyDepartmentId = "00000000-0000-4000-8000-000000000110";
 const readOnlyModuleId = "00000000-0000-4000-8000-000000000111";
 const readOnlyReportId = "00000000-0000-4000-8000-000000000112";
-
-function pageOf<T>(items: T[], limit = 25, offset = 0, total = items.length) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: offset + items.length < total,
-    },
-  };
-}
 
 const report = {
   id: reportId,
@@ -131,41 +122,26 @@ async function installReportsApi(
     report_name: "Shared operations review",
     status: "succeeded",
   }));
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: userId,
-        role: options.role ?? "member",
-        access: [
-          {
-            department_id: ownerId,
-            module_id: null,
-            level: options.level ?? "manage",
-          },
-          ...(options.readOnlySource
-            ? [
-                {
-                  department_id: readOnlyDepartmentId,
-                  module_id: readOnlyModuleId,
-                  level: "read",
-                },
-              ]
-            : []),
-        ],
-      }),
-    }),
-  );
+  await signedInAs(page, {
+    id: userId,
+    role: options.role ?? "member",
+    access: [
+      {
+        department_id: ownerId,
+        module_id: null,
+        level: options.level ?? "manage",
+      },
+      ...(options.readOnlySource
+        ? [
+            {
+              department_id: readOnlyDepartmentId,
+              module_id: readOnlyModuleId,
+              level: "read" as const,
+            },
+          ]
+        : []),
+    ],
+  });
   await page.route("**/api/departments**", (route) =>
     route.fulfill({
       json: pageOf(
@@ -193,7 +169,7 @@ async function installReportsApi(
               ]
             : []),
         ],
-        100,
+        { limit: 100 },
       ),
     }),
   );
@@ -222,7 +198,7 @@ async function installReportsApi(
                   ]
                 : []),
             ],
-            100,
+            { limit: 100 },
           ),
         ),
       });
@@ -231,7 +207,7 @@ async function installReportsApi(
       body: JSON.stringify(
         pageOf(
           [
-            {
+            wireField({
               id: fieldId,
               // Answer for the requested module: /api/views/data-sources/<id>/fields.
               module_id: path.split("/")[4],
@@ -239,10 +215,9 @@ async function installReportsApi(
               type: "text",
               required: true,
               position: 0,
-              config: {},
-            },
+            }),
           ],
-          100,
+          { limit: 100 },
         ),
       ),
     });
@@ -317,12 +292,11 @@ async function installReportsApi(
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageOf(
-            sharedRuns.slice(offset, offset + limit),
+          pageOf(sharedRuns.slice(offset, offset + limit), {
             limit,
             offset,
-            sharedRuns.length,
-          ),
+            total: sharedRuns.length,
+          }),
         ),
       });
     }
@@ -338,6 +312,7 @@ async function installReportsApi(
                   ...(copiedReport ? [copiedReport] : []),
                   ...(options.readOnlySource ? [readOnlyReport] : []),
                 ],
+            { limit: 25 },
           ),
         ),
       });
@@ -422,12 +397,11 @@ async function installReportsApi(
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageOf(
-            ownerRuns.slice(offset, offset + limit),
+          pageOf(ownerRuns.slice(offset, offset + limit), {
             limit,
             offset,
-            ownerRuns.length,
-          ),
+            total: ownerRuns.length,
+          }),
         ),
       });
     }
@@ -514,7 +488,6 @@ test.describe("Reports in a non-UTC browser timezone", () => {
     );
     await page.getByRole("button", { name: "Create schedule" }).click();
     await expect(page.getByText("Schedule saved and enabled.")).toBeVisible();
-    await captureOpenViewReview(page, "report-manager-schedule");
     await page.getByRole("tab", { name: "Saved outputs" }).click();
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: /Download CSV/ }).click();
@@ -527,7 +500,7 @@ test.describe("Reports in a non-UTC browser timezone", () => {
   });
 });
 
-test("S21 Report metadata follows personal display while schedule inputs and frozen CSV remain unchanged", async ({
+test("Report metadata follows personal display while schedule inputs and frozen CSV remain unchanged", async ({
   page,
 }, testInfo) => {
   await installReportsApi(page, false, report, {
@@ -750,42 +723,62 @@ test("owned and shared output page sizes reset independently to the first page",
   await expect(ownedPageSize).toHaveValue("10");
 });
 
-test("failed owned output page does not relabel old results or leave their actions available", async ({
-  page,
-}) => {
-  await installReportsApi(page, false, report, {
-    ownerRunCount: 26,
-    failOwnedSecondPage: true,
+for (const list of [
+  {
+    name: "owned",
+    sharedOnly: false,
+    options: { ownerRunCount: 26, failOwnedSecondPage: true },
+    pages: "Saved output pages",
+    failure: "Report history could not be loaded",
+    open: async (page: Page): Promise<Locator> => {
+      await page.getByRole("button", { name: "Operations review" }).click();
+      await expect(
+        page.getByRole("table", { name: "Saved outputs" }),
+      ).toBeVisible();
+      return page.locator("body");
+    },
+  },
+  {
+    name: "available",
+    sharedOnly: true,
+    options: { failSharedSecondPage: true },
+    pages: "Available output pages",
+    failure: "Available runs could not be loaded",
+    open: async (page: Page): Promise<Locator> => {
+      await page.getByRole("button", { name: "Available outputs" }).click();
+      return page.getByRole("dialog", { name: "Available outputs" });
+    },
+  },
+]) {
+  test(`failed ${list.name} output page does not relabel old results or leave their actions available`, async ({
+    page,
+  }) => {
+    await installReportsApi(page, list.sharedOnly, report, list.options);
+    await page.goto("/openview?section=reports");
+    const outputs = await list.open(page);
+    await expect(
+      outputs.getByText("Recipe version 1", { exact: true }),
+    ).toBeVisible();
+    await outputs
+      .getByRole("navigation", { name: list.pages })
+      .getByRole("button", { name: "Go to next page" })
+      .click();
+    await expect(
+      outputs.getByRole("alert").filter({ hasText: list.failure }),
+    ).toBeVisible();
+    await expect(
+      outputs.getByText("Recipe version 1", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      outputs.getByRole("button", { name: /Download CSV/ }),
+    ).toHaveCount(0);
+    await expect(
+      outputs.getByRole("button", { name: /Print output from/ }),
+    ).toHaveCount(0);
+    await outputs.getByRole("button", { name: "Retry" }).click();
+    await expect(outputs.getByText("Recipe version 26")).toBeVisible();
   });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  await expect(
-    page.getByRole("table", { name: "Saved outputs" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Recipe version 1", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("navigation", { name: "Saved output pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  await expect(
-    page
-      .getByRole("alert")
-      .filter({ hasText: "Report history could not be loaded" }),
-  ).toBeVisible();
-  await expect(page.getByText("Recipe version 1", { exact: true })).toHaveCount(
-    0,
-  );
-  await expect(page.getByRole("button", { name: /Download CSV/ })).toHaveCount(
-    0,
-  );
-  await expect(
-    page.getByRole("button", { name: /Print output from/ }),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByText("Recipe version 26")).toBeVisible();
-});
+}
 
 test("a confirmed new run caps the selected page size when history refresh fails", async ({
   page,
@@ -829,38 +822,6 @@ test("a confirmed new run caps the selected page size when history refresh fails
     outputs.getByRole("cell", { name: "Recipe version 5" }),
   ).toBeVisible();
   await expect(page.getByText("Showing 6–6 of 6")).toBeVisible();
-});
-
-test("failed available output page does not relabel old results or leave their actions available", async ({
-  page,
-}) => {
-  await installReportsApi(page, true, report, { failSharedSecondPage: true });
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Available outputs" }).click();
-  const outputs = page.getByRole("dialog", { name: "Available outputs" });
-  await expect(
-    outputs.getByText("Recipe version 1", { exact: true }),
-  ).toBeVisible();
-  await outputs
-    .getByRole("navigation", { name: "Available output pages" })
-    .getByRole("button", { name: "Go to next page" })
-    .click();
-  await expect(
-    outputs
-      .getByRole("alert")
-      .filter({ hasText: "Available runs could not be loaded" }),
-  ).toBeVisible();
-  await expect(
-    outputs.getByText("Recipe version 1", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    outputs.getByRole("button", { name: /Download CSV/ }),
-  ).toHaveCount(0);
-  await expect(
-    outputs.getByRole("button", { name: /Print output from/ }),
-  ).toHaveCount(0);
-  await outputs.getByRole("button", { name: "Retry" }).click();
-  await expect(outputs.getByText("Recipe version 26")).toBeVisible();
 });
 
 test("saved and available output actions fit a narrow viewport", async ({
@@ -937,7 +898,6 @@ test("a module reader runs a Report but cannot change, copy or schedule it", asy
   await expect(
     page.getByText("Only a manager of this module changes the schedule."),
   ).toBeVisible();
-  await captureOpenViewReview(page, "report-reader-schedule");
   expect(api.counts().manualRuns).toBe(0);
 });
 
@@ -1003,13 +963,7 @@ test("saved Report cards name the department of their module", async ({
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       },
     }),
   );
@@ -1019,94 +973,79 @@ test("saved Report cards name the department of their module", async ({
   await expect(card).toHaveAccessibleName("Operations review Field operations");
 });
 
-test("duplicating a saved Report creates a separate draft on its first Save", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page);
-  await page.goto("/openview?section=reports");
-  await page.getByRole("button", { name: "Operations review" }).click();
-  await page.getByRole("button", { name: "Duplicate" }).click();
+for (const entry of [
+  {
+    title: "duplicating a saved Report",
+    start: async (page: Page) => {
+      await page.getByRole("button", { name: "Operations review" }).click();
+      await page.getByRole("button", { name: "Duplicate" }).click();
+    },
+  },
+  {
+    title: "starting from a saved Report in the template chooser",
+    start: async (page: Page) => {
+      await page.getByLabel("Start from saved Report").selectOption(reportId);
+      await page
+        .getByRole("button", { name: "Start from saved Report" })
+        .click();
+    },
+  },
+]) {
+  test(`${entry.title} creates a separate draft on its first Save`, async ({
+    page,
+  }) => {
+    const api = await installReportsApi(page);
+    await page.goto("/openview?section=reports");
+    await entry.start(page);
 
-  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
-    "Copy of Operations review",
-  );
-  await expect(
-    page.getByText("Save to create a separate Report."),
-  ).toBeVisible();
-  expect(api.reportCreates()).toBe(0);
+    await expect(
+      page.getByRole("textbox", { name: "Report name" }),
+    ).toHaveValue("Copy of Operations review");
+    await expect(
+      page.getByText("Save to create a separate Report."),
+    ).toBeVisible();
+    expect(api.reportCreates()).toBe(0);
+    expect(api.reportUpdates()).toBe(0);
 
-  await page.getByRole("button", { name: "Create Report" }).click();
-  await expect(
-    page.locator("#main-content").getByText("Report created."),
-  ).toBeVisible();
-  expect(api.reportCreates()).toBe(1);
-  expect(api.reportUpdates()).toBe(0);
-  expect(api.createdReports()[0]?.response).toMatchObject({
-    id: duplicateReportId,
-    name: "Copy of Operations review",
-    recipe: report.recipe,
-  });
-  await page.reload();
-  await page
-    .getByRole("button", {
+    await page.getByRole("button", { name: "Create Report" }).click();
+    await expect(
+      page.locator("#main-content").getByText("Report created."),
+    ).toBeVisible();
+    expect(api.reportCreates()).toBe(1);
+    expect(api.reportUpdates()).toBe(0);
+    expect(api.createdReports()[0]?.request).toMatchObject({
+      name: "Copy of Operations review",
+      recipe: report.recipe,
+    });
+    expect(api.createdReports()[0]?.response).toMatchObject({
+      id: duplicateReportId,
+      name: "Copy of Operations review",
+      recipe: report.recipe,
+    });
+    await page.reload();
+    const original = page.getByRole("button", {
       name: "Operations review Field operations",
       exact: true,
-    })
-    .click();
-  await page.getByRole("button", { name: "Edit report" }).click();
-  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
-    "Operations review",
-  );
-  await page.getByRole("button", { name: "Close editor" }).click();
-  await page
-    .getByRole("button", {
+    });
+    const copy = page.getByRole("button", {
       name: "Copy of Operations review Field operations",
       exact: true,
-    })
-    .click();
-  await page.getByRole("button", { name: "Edit report" }).click();
-  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
-    "Copy of Operations review",
-  );
-});
-
-test("a saved Report can start an independent new Report through the template chooser", async ({
-  page,
-}) => {
-  const api = await installReportsApi(page);
-  await page.goto("/openview?section=reports");
-  await page.getByLabel("Start from saved Report").selectOption(reportId);
-  await page.getByRole("button", { name: "Start from saved Report" }).click();
-
-  await expect(page.getByRole("textbox", { name: "Report name" })).toHaveValue(
-    "Copy of Operations review",
-  );
-  expect(api.reportCreates()).toBe(0);
-  expect(api.reportUpdates()).toBe(0);
-  await page.getByRole("button", { name: "Create Report" }).click();
-  await expect(
-    page.locator("#main-content").getByText("Report created."),
-  ).toBeVisible();
-  expect(api.reportCreates()).toBe(1);
-  expect(api.reportUpdates()).toBe(0);
-  expect(api.createdReports()[0]?.request).toMatchObject({
-    name: "Copy of Operations review",
-    recipe: report.recipe,
+    });
+    await expect(original).toBeVisible();
+    await expect(copy).toBeVisible();
+    await original.click();
+    await page.getByRole("button", { name: "Edit report" }).click();
+    await expect(
+      page.getByRole("textbox", { name: "Report name" }),
+    ).toHaveValue("Operations review");
+    await page.getByRole("button", { name: "Close editor" }).click();
+    await copy.click();
+    await page.getByRole("button", { name: "Edit report" }).click();
+    await expect(
+      page.getByRole("textbox", { name: "Report name" }),
+    ).toHaveValue("Copy of Operations review");
   });
-  await page.reload();
-  await expect(
-    page.getByRole("button", {
-      name: "Operations review Field operations",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", {
-      name: "Copy of Operations review Field operations",
-      exact: true,
-    }),
-  ).toBeVisible();
-});
+}
 
 test("unsaved Report edits guard workspace navigation", async ({ page }) => {
   const api = await installReportsApi(page);
@@ -1199,7 +1138,7 @@ test("Report recipes open on demand and preserve cross-tab drafts when closed", 
   await expect(editor.getByRole("checkbox", { name: "Asset" })).toBeChecked();
   await editor.getByRole("button", { name: "Create Report" }).click();
 
-  await expect(editor).not.toBeVisible();
+  await expect(editor).toBeHidden();
   await expect(
     page.locator("#main-content").getByText("Report created."),
   ).toBeVisible();
@@ -1244,21 +1183,19 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
       body: JSON.stringify(
         pageOf(
           [
-            {
+            wireField({
               id: fieldId,
               module_id: moduleId,
               name: "Asset",
               type: "text",
               required: true,
               position: 0,
-              config: {},
-            },
-            {
+            }),
+            wireField({
               id: selectFieldId,
               module_id: moduleId,
               name: "Status",
               type: "select",
-              required: false,
               position: 1,
               config: {
                 options: [
@@ -1266,18 +1203,17 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
                   { id: inspectionChoiceId, label: "Inspection due" },
                 ],
               },
-            },
-            {
+            }),
+            wireField({
               id: userFieldId,
               module_id: moduleId,
               name: "Assignee",
               type: "user",
-              required: false,
               position: 2,
               config: { kind: "user" },
-            },
+            }),
           ],
-          100,
+          { limit: 100 },
         ),
       ),
     }),
@@ -1294,7 +1230,7 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
               username: "alex.reader",
             },
           ],
-          100,
+          { limit: 100 },
         ),
       ),
     }),
@@ -1337,10 +1273,9 @@ test("Report filters display Select labels, submit stable IDs, and use module-el
     0,
   );
   expect(globalUserRequests).toEqual([]);
-  await captureOpenViewReview(page, "reports-select-person-filters");
 
   await editor.getByRole("button", { name: "Create Report" }).click();
-  await expect(editor).not.toBeVisible();
+  await expect(editor).toBeHidden();
   expect(api.createdReports()[0]?.request).toMatchObject({
     recipe: {
       filters: [
@@ -1451,7 +1386,9 @@ test("notification URL opens the exact Report and run beyond the first catalog a
   expect(api.counts().csvReads).toBe(0);
 });
 
-test("Report-only links retain their exact selection and dirty recipe navigation uses Stay and Leave", async ({
+// The navigation guard itself (Keep editing, Discard and continue) is owned by
+// "unsaved Report edits guard workspace navigation".
+test("Report-only links retain their exact selection and Back restores it after leaving a dirty recipe", async ({
   page,
 }) => {
   await installReportsApi(page, true);
@@ -1463,20 +1400,10 @@ test("Report-only links retain their exact selection and dirty recipe navigation
     .fill("Unsaved operations review");
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("link", { name: "Search workspace" }).click();
-  const guard = page.getByRole("alertdialog", {
-    name: "Discard unsaved Report changes?",
-  });
-  await expect(guard).toBeVisible();
-  await guard.getByRole("button", { name: "Keep editing" }).click();
-  await expect(
-    page.getByRole("heading", {
-      name: "Unsaved operations review",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`report=${reportId}`));
-  await page.getByRole("link", { name: "Search workspace" }).click();
-  await guard.getByRole("button", { name: "Discard and continue" }).click();
+  await page
+    .getByRole("alertdialog", { name: "Discard unsaved Report changes?" })
+    .getByRole("button", { name: "Discard and continue" })
+    .click();
   await expect(
     page.getByRole("searchbox", { name: "Search workspace" }),
   ).toBeVisible();
@@ -1485,12 +1412,9 @@ test("Report-only links retain their exact selection and dirty recipe navigation
   await expect(page).toHaveURL(new RegExp(`report=${reportId}`));
 });
 
-for (const failure of [
-  "missing",
-  "wrong-parent",
-  "invalid",
-  "run-only",
-] as const) {
+// The parse of an invalid or run-only link is owned by
+// isolated/openview/url-state.spec.ts; `invalid` keeps the rendered alert.
+for (const failure of ["missing", "wrong-parent", "invalid"] as const) {
   test(`a ${failure} Report target cannot select a default Report or wrong output`, async ({
     page,
   }) => {
@@ -1505,13 +1429,11 @@ for (const failure of [
     const query =
       failure === "invalid"
         ? "report=invalid"
-        : failure === "run-only"
-          ? `run=${newRunId}`
-          : `report=${reportId}&run=${newRunId}`;
+        : `report=${reportId}&run=${newRunId}`;
     await page.goto(`/openview?section=reports&${query}`);
     await expect(
       page.getByText(
-        failure === "invalid" || failure === "run-only"
+        failure === "invalid"
           ? "This Report link is invalid."
           : "Selected output could not be loaded. Try again.",
       ),
@@ -1531,24 +1453,17 @@ test("a late old Report target cannot replace a newer URL selection", async ({
   page,
 }) => {
   await installReportsApi(page, false, report, { readOnlySource: true });
-  let release = () => {};
-  let signal = () => {};
-  const started = new Promise<void>((resolve) => {
-    signal = resolve;
-  });
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const target = gate();
   await page.route(`**/api/reports/${reportId}`, async (route) => {
-    signal();
-    await held;
+    target.signalStarted();
+    await target.wait;
     await route.fulfill({ json: report });
   });
   await page.goto(`/openview?section=reports&report=${reportId}`);
-  await started;
+  await target.started;
   await page.getByRole("button", { name: "Invoice review" }).click();
   await expect(page).toHaveURL(new RegExp(`report=${readOnlyReportId}`));
-  release();
+  target.release();
   await expect(page.getByRole("button", { name: "Edit report" })).toHaveCount(
     0,
   );
@@ -1645,7 +1560,10 @@ test("a notice keeps dirty Report edits on canceled navigation and closes only a
       read_at: null,
     };
     await route.fulfill({
-      json: pageOf([notice], Number(url.searchParams.get("limit")), 0, 1),
+      json: pageOf([notice], {
+        limit: Number(url.searchParams.get("limit")),
+        total: 1,
+      }),
     });
   });
   await page.route(`**/api/reports/${reportId}/runs/${runId}`, (route) =>
@@ -1767,14 +1685,7 @@ for (const operation of ["template", "create"] as const) {
       route.fulfill({ json: { id: account, role: "admin", access: [] } }),
     );
     let hold = false;
-    let release = () => {};
-    let started = () => {};
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const begun = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const held = gate();
     const heldPath =
       operation === "template" ? `/api/reports/${reportId}` : "/api/reports";
     const heldMethod = operation === "template" ? "GET" : "POST";
@@ -1789,18 +1700,17 @@ for (const operation of ["template", "create"] as const) {
         request.method() === heldMethod
       ) {
         hold = false;
-        started();
-        await released;
+        held.signalStarted();
+        await held.wait;
         return route.fallback();
       }
       if (requestedAccount === accountB && request.method() === "GET") {
         if (url.pathname === "/api/reports")
           return route.fulfill({
-            json: pageOf(
-              [],
-              Number(url.searchParams.get("limit") ?? 25),
-              Number(url.searchParams.get("offset") ?? 0),
-            ),
+            json: pageOf([], {
+              limit: Number(url.searchParams.get("limit") ?? 25),
+              offset: Number(url.searchParams.get("offset") ?? 0),
+            }),
           });
         if (
           url.pathname === `/api/reports/${reportId}` ||
@@ -1828,7 +1738,7 @@ for (const operation of ["template", "create"] as const) {
         .getByRole("button", { name: "Create Report", exact: true })
         .click();
     }
-    await begun;
+    await held.started;
     try {
       account = accountB;
       await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
@@ -1849,7 +1759,7 @@ for (const operation of ["template", "create"] as const) {
           new URL(response.url()).pathname === heldPath &&
           response.request().method() === heldMethod,
       );
-      release();
+      held.release();
       await (await completed).finished();
       await page.evaluate(
         () =>
@@ -1877,7 +1787,7 @@ for (const operation of ["template", "create"] as const) {
         page.getByRole("textbox", { name: "Report name" }),
       ).toHaveCount(0);
     } finally {
-      release();
+      held.release();
     }
   });
 }
@@ -1888,19 +1798,12 @@ for (const operation of ["new", "template"] as const) {
   }) => {
     const api = await installReportsApi(page);
     let holdSession = false;
-    let releaseSession = () => {};
-    let sessionStarted = () => {};
-    const released = new Promise<void>((resolve) => {
-      releaseSession = resolve;
-    });
-    const begun = new Promise<void>((resolve) => {
-      sessionStarted = resolve;
-    });
+    const session = gate();
     await page.route("**/api/auth/session", async (route) => {
       if (holdSession) {
         holdSession = false;
-        sessionStarted();
-        await released;
+        session.signalStarted();
+        await session.wait;
       }
       return route.fulfill({
         json: { authenticated: true, user_id: userId, setup_required: false },
@@ -1937,13 +1840,13 @@ for (const operation of ["new", "template"] as const) {
     await expect(page).toHaveURL("/openview?section=reports");
     holdSession = true;
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
-    await begun;
+    await session.started;
     try {
       await expect(
         page.getByRole("dialog", { name: "Session verification" }),
       ).toBeVisible();
     } finally {
-      releaseSession();
+      session.release();
     }
     await expect(
       page.getByRole("dialog", { name: "Session verification" }),
@@ -1989,24 +1892,17 @@ test("Reports correction: a held template cannot restore Reports after same-acco
     .getByRole("link", { name: "Reports", exact: true })
     .click();
   await expect(page).toHaveURL("/openview?section=reports");
-  let release = () => {};
-  let started = () => {};
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const begun = new Promise<void>((resolve) => {
-    started = resolve;
-  });
+  const held = gate();
   await page.route(`**/api/reports/${reportId}`, async (route) => {
-    started();
-    await released;
+    held.signalStarted();
+    await held.wait;
     return route.fallback();
   });
   await page.getByLabel("Start from saved Report").selectOption(reportId);
   await page
     .getByRole("button", { name: "Start from saved Report", exact: true })
     .click();
-  await begun;
+  await held.started;
   try {
     await page.goBack();
     await expect(page).toHaveURL("/platform");
@@ -2019,7 +1915,7 @@ test("Reports correction: a held template cannot restore Reports after same-acco
       (response) =>
         new URL(response.url()).pathname === `/api/reports/${reportId}`,
     );
-    release();
+    held.release();
     await (await completed).finished();
     await page.evaluate(
       () =>
@@ -2030,7 +1926,7 @@ test("Reports correction: a held template cannot restore Reports after same-acco
     await expect(page).toHaveURL("/platform");
     await expect(search).toBeVisible();
   } finally {
-    release();
+    held.release();
   }
 });
 
@@ -2109,7 +2005,9 @@ async function installArchivedReportPurge(
       : route.fallback(),
   );
   await page.route("**/api/reports?**", (route) =>
-    removed ? route.fulfill({ json: pageOf([]) }) : route.fallback(),
+    removed
+      ? route.fulfill({ json: pageOf([], { limit: 25 }) })
+      : route.fallback(),
   );
   return {
     get purges() {
@@ -2119,7 +2017,7 @@ async function installArchivedReportPurge(
 }
 
 for (const failure of [false, true]) {
-  test(`S04 archived Report purge ${failure ? "keeps its target and offers a fresh review for an unavailable challenge" : "confirms exact name and clears only its deleted selection"}`, async ({
+  test(`archived Report purge ${failure ? "keeps its target and offers a fresh review for an unavailable challenge" : "confirms exact name and clears only its deleted selection"}`, async ({
     page,
   }) => {
     const api = await installArchivedReportPurge(page, "admin", failure);
@@ -2175,7 +2073,7 @@ for (const failure of [false, true]) {
   });
 }
 
-test("S04 member may restore an archived Report but cannot permanently delete it", async ({
+test("member may restore an archived Report but cannot permanently delete it", async ({
   page,
 }) => {
   const api = await installArchivedReportPurge(page, "member");
@@ -2193,15 +2091,18 @@ test("S04 member may restore an archived Report but cannot permanently delete it
   expect(api.purges).toBe(0);
 });
 
-test.describe("S14 Report last-run summary", () => {
+test.describe("Report last-run summary", () => {
   test.use({ timezoneId: "America/Los_Angeles" });
-  for (const state of ["none", "failed", "running"] as const) {
-    test(`S14 ${state} last run is server-authored, regional and preserves schedule policy`, async ({
+  for (const { state, theme } of [
+    { state: "none", theme: null },
+    { state: "failed", theme: "light" },
+    { state: "failed", theme: "dark" },
+    { state: "running", theme: null },
+  ] as const) {
+    test(`${state} last run is server-authored, regional and preserves schedule policy${theme === "dark" ? " (dark)" : ""}`, async ({
       page,
     }) => {
-      if (process.env.OPENVIEW_CAPTURE_DIR) {
-        const theme =
-          process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
+      if (theme) {
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.emulateMedia({
           colorScheme: theme,
@@ -2267,32 +2168,31 @@ test.describe("S14 Report last-run summary", () => {
       }
       expect(api.counts().scheduleWrites).toBe(0);
       if (state === "failed") {
-        const theme =
-          process.env.S14_CAPTURE_THEME === "dark" ? "dark" : "light";
-        await captureOpenViewReview(page, `s14-report-last-run-${theme}`, {
-          beforeScreenshot: async (capture) => {
-            // Exclude Next's development overlay from opt-in product captures.
-            await capture.addStyleTag({
-              content: "nextjs-portal { display: none !important; }",
-            });
-            await expect(capture.locator("html")).toHaveClass(
-              theme === "dark" ? /dark/ : /^(?!.*dark)/,
-            );
-            await capture.evaluate(async () => {
-              await document.fonts.ready;
-              await new Promise<void>((resolve) =>
-                requestAnimationFrame(() =>
-                  requestAnimationFrame(() => resolve()),
-                ),
-              );
-            });
-            expect(
-              await capture.evaluate(
-                () => document.documentElement.scrollWidth <= window.innerWidth,
+        const originalViewport = page.viewportSize();
+        const originalScrollY = await page.evaluate(() => window.scrollY);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
+          await hideDevOverlay(page);
+          await page.evaluate(async () => {
+            await document.fonts.ready;
+            await new Promise<void>((resolve) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
               ),
-            ).toBe(true);
-          },
-        });
+            );
+          });
+          expect(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= window.innerWidth,
+            ),
+          ).toBe(true);
+        }
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
       }
     });
   }

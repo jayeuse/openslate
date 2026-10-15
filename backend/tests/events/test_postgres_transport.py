@@ -176,7 +176,9 @@ def test_private_notification_overflow_never_emits_a_global_resync(monkeypatch) 
     ]
 
 
-def test_listener_reconnects_and_fans_out_notification() -> None:
+def test_listener_reconnects_and_fans_out_notification(monkeypatch) -> None:
+    monkeypatch.setattr("app.systems.platform.events.hub._CONNECT_RETRY_SECONDS", 0.01)
+
     async def exercise() -> None:
         from app.systems.platform.events.hub import EventHub
 
@@ -185,6 +187,8 @@ def test_listener_reconnects_and_fans_out_notification() -> None:
         subscription = await hub.subscribe(user)
         stop_wait = threading.Event()
         attempts = 0
+        connects: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        statements: list[str] = []
 
         class Connection:
             delivered = False
@@ -195,8 +199,8 @@ def test_listener_reconnects_and_fans_out_notification() -> None:
             def __exit__(self, *_args: object) -> None:
                 return None
 
-            def execute(self, _statement: str) -> None:
-                return None
+            def execute(self, statement: str) -> None:
+                statements.append(statement)
 
             def close(self) -> None:
                 stop_wait.set()
@@ -210,11 +214,13 @@ def test_listener_reconnects_and_fans_out_notification() -> None:
                 else:
                     stop_wait.wait(0.5)
 
-        def connect(*_args: object, **_kwargs: object) -> Connection:
+        def connect(*args: object, **kwargs: object) -> Connection:
             nonlocal attempts
             attempts += 1
-            if attempts == 1:
-                raise psycopg.OperationalError("first attempt fails")
+            connects.append((args, kwargs))
+            # Two failures in a row: the second reconnect still follows the backoff.
+            if attempts <= 2:
+                raise psycopg.OperationalError("connection attempt fails")
             return Connection()
 
         listener = PostgresInvalidationListener(
@@ -231,6 +237,12 @@ def test_listener_reconnects_and_fans_out_notification() -> None:
                 "records", module_id=READABLE_MODULE
             )
             assert attempts >= 2
+            # The live connection: autocommit (LISTEN needs it) and the bounded timeouts.
+            assert connects[-1] == (
+                ("postgresql://user:secret@db/openslate",),
+                {"autocommit": True, "connect_timeout": 3, "options": "-c statement_timeout=15000"},
+            )
+            assert statements == ["LISTEN openslate_invalidation"]
         finally:
             stop_wait.set()
             listener.stop()
@@ -280,6 +292,8 @@ def test_listener_reconnect_resyncs_subscribers_and_keeps_a_live_thread_referenc
         )
         listener.start()
         try:
+            # A daemon thread never keeps the process alive after a failed shutdown.
+            assert listener._thread is not None and listener._thread.daemon
             assert await asyncio.wait_for(subscription.queue.get(), timeout=2) is None
             assert await asyncio.wait_for(subscription.queue.get(), timeout=2) is None
             assert attempts >= 2
@@ -304,10 +318,46 @@ def test_stop_retains_a_thread_reference_when_bounded_shutdown_times_out(monkeyp
     listener._thread = thread
     thread.start()
     monkeypatch.setattr("app.systems.platform.events.hub._SHUTDOWN_JOIN_SECONDS", 0)
+    stopped: list[bool] = []
+    stopper = threading.Thread(target=lambda: stopped.append(listener.stop()))
 
-    assert not listener.stop()
+    stopper.start()
+    # A hang guard: stop() that ignores its shutdown bound fails here instead of hanging.
+    stopper.join(timeout=5)
+    try:
+        assert not stopper.is_alive(), "stop() waited for the stuck listener thread"
+    finally:
+        release.set()
+    assert stopped == [False]
     assert listener._thread is thread
 
-    release.set()
     thread.join(timeout=1)
+    assert listener.stop()
+
+
+def test_stop_returns_cleanly_while_the_database_refuses_connections(monkeypatch) -> None:
+    from app.systems.platform.events.hub import EventHub
+
+    monkeypatch.setattr("app.systems.platform.events.hub._CONNECT_RETRY_SECONDS", 0.01)
+    second_attempt = threading.Event()
+    attempts = 0
+
+    def connect(*_args: object, **_kwargs: object) -> object:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            second_attempt.set()
+        raise psycopg.OperationalError("database unavailable")
+
+    listener = PostgresInvalidationListener(
+        EventHub(),
+        "postgresql://user:secret@db/openslate",
+        connect=connect,
+        connect_timeout_seconds=3,
+        statement_timeout_ms=15_000,
+    )
+    listener.start()
+    # The first failed attempt has finished its retry pause before the second one starts.
+    assert second_attempt.wait(5), "the listener did not retry the refused connection"
+
     assert listener.stop()

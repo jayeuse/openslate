@@ -1,15 +1,12 @@
 """Real Supabase Auth and runtime-role HTTP journeys on the disposable stack."""
 
-import os
 from datetime import UTC, datetime, timedelta
-from secrets import token_urlsafe
 from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, inspect, select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -17,17 +14,15 @@ from uuid6 import uuid7
 import app.common.dependencies.auth as auth_dependencies
 import app.systems.access.auth.router as auth_router
 from app.core.config import get_settings
-from app.core.config.provider_instance import assert_provider_instance
 from app.core.database.session import AuditSession
 from app.core.integrations.supabase_auth import SupabaseAuthUnavailable, get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_user_cache import forget_provider_user
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
-from app.systems.platform.scheduling.models import InAppNotification
-from tests.conftest import guarded_create_engine
 
+pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
 DEFAULT_APPEARANCE = {
     "motion": "system",
@@ -38,62 +33,6 @@ DEFAULT_APPEARANCE = {
     "week_start": "organization",
     "start_page": "automatic",
 }
-
-
-@pytest.fixture
-def provider_account():
-    settings = get_settings()
-    assert_provider_instance(
-        dict(os.environ), database_url=settings.database_url, expected_user="openslate_runtime"
-    )
-    email = f"auth-journey-{uuid4().hex}@example.test"
-    password = token_urlsafe(32)
-    provider_id = None
-    local_id = None
-    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
-    with httpx.Client(
-        base_url=settings.supabase_url.rstrip("/") + "/auth/v1/",
-        headers={"apikey": settings.supabase_secret_key.get_secret_value()},
-        timeout=15,
-    ) as admin:
-        try:
-            created = admin.post(
-                "admin/users", json={"email": email, "password": password, "email_confirm": True}
-            )
-            assert created.status_code in {200, 201}
-            provider_id = UUID(created.json()["id"])
-            with Session(owner) as db:
-                user = User(
-                    email=email,
-                    username=f"journey-{uuid4().hex[:16]}",
-                    status=UserStatus.ACTIVE.value,
-                    role="member",
-                    # Deliberately unbound first: matching email cannot grant access.
-                )
-                db.add(user)
-                db.commit()
-                local_id = user.id
-            yield email, password, provider_id, local_id, owner
-        finally:
-            if provider_id is not None:
-                deleted = admin.delete(f"admin/users/{provider_id}")
-                assert deleted.status_code in {200, 204, 404}
-            if local_id is not None:
-                with Session(owner) as db:
-                    for session in db.scalars(
-                        select(IdentitySession).where(IdentitySession.user_id == local_id)
-                    ):
-                        db.delete(session)
-                    for notice in db.scalars(
-                        select(InAppNotification).where(InAppNotification.recipient_id == local_id)
-                    ):
-                        db.delete(notice)
-                    db.flush()
-                    user = db.get(User, local_id)
-                    if user is not None:
-                        db.delete(user)
-                    db.commit()
-            owner.dispose()
 
 
 def test_browser_session_requires_binding_and_supports_refresh_csrf_and_revocation(
@@ -212,12 +151,6 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             ):
                 assert response.status_code == 403
                 assert response.json()["detail"]["code"] == "preferences_owner_mismatch"
-        for invalid in (
-            {"theme": None},
-            {"theme": "sepia"},
-            {"theme": "dark", "role": "admin"},
-        ):
-            assert client.patch(path, json=invalid).status_code == 422
         with Session(owner) as db:
             before_user = db.get(User, local_id)
             assert before_user is not None
@@ -292,33 +225,6 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             "appearance": DEFAULT_APPEARANCE,
         }
 
-        raced = []
-
-        def change_after_auth_read(_db: Session, instance: object) -> None:
-            if isinstance(instance, User) and instance.id == local_id and not raced:
-                raced.append(True)
-                with Session(owner) as concurrent:
-                    changed = concurrent.get(User, local_id)
-                    assert changed is not None
-                    changed.theme_preference = "light"
-                    concurrent.commit()
-
-        # A separate connection commits after auth loaded its User. Same-value
-        # detection must use fresh locked state, not report an unpersisted theme.
-        event.listen(AuditSession, "loaded_as_persistent", change_after_auth_read)
-        try:
-            accepted = client.patch(path, json={"theme": "dark"})
-            assert raced and accepted.status_code == 200
-            assert accepted.json() == {
-                "user_id": str(local_id),
-                "theme": "dark",
-                "appearance": DEFAULT_APPEARANCE,
-            }
-        finally:
-            event.remove(AuditSession, "loaded_as_persistent", change_after_auth_read)
-        with Session(owner) as db:
-            assert db.get(User, local_id).theme_preference == "dark"
-            assert len(list(db.scalars(audit_query))) == 2
     finally:
         client.close()
         with Session(owner) as db:

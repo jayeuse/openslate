@@ -13,9 +13,13 @@ import pytest
 
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from operations.sample.population.people import _GROUP_ACCESS, _people
-from operations.sample.scenario import build_dataset
 from operations.sample.verification.core import SampleVerificationError
 from operations.sample.verification.run import read_run_manifest, verify_sample_data
+from tests.operations.sample.sample_datasets import (
+    mutation_aware_cache,
+    private_copy,
+    sample_dataset,
+)
 
 
 def _manifest(directory: Path, **changes: object) -> None:
@@ -118,7 +122,20 @@ def _id(label: str) -> str:
 
 
 def _configuration_fixture() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    dataset = build_dataset("small", 42, date(2026, 9, 29))
+    """Return a private copy of the foundation readback, with guest expiry set from now."""
+
+    payloads, manifest, context = private_copy(_configuration_base())
+    for row in payloads["/api/users"]:
+        if row["role"] == "guest":
+            row["expires_at"] = (datetime.now(UTC) + timedelta(days=90)).isoformat()
+    return payloads, manifest, context
+
+
+@mutation_aware_cache
+def _configuration_base() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Build the readback once per process; ``_configuration_fixture`` copies it."""
+
+    dataset = sample_dataset("small", 42, date(2026, 9, 29))
     authored_document: dict[str, Any] = dataset.document
     document = SandboxDocument.model_validate(authored_document).model_dump(
         mode="json", by_alias=True
@@ -168,11 +185,8 @@ def _configuration_fixture() -> tuple[dict[str, Any], dict[str, Any], dict[str, 
                 "display_name": person.name,
                 "job_title": person.title,
                 "sponsor_user_id": sponsor if person.role == "guest" else None,
-                "expires_at": (
-                    (datetime.now(UTC) + timedelta(days=90)).isoformat()
-                    if person.role == "guest"
-                    else None
-                ),
+                # _configuration_fixture sets each guest's expiry when a test takes a copy.
+                "expires_at": None,
                 "is_deleted": False,
             }
         )

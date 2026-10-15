@@ -1,4 +1,5 @@
 import type { Page } from "./test";
+import { pageOf } from "../../helpers/pagination";
 
 export async function mockManageSecurity(page: Page) {
   const state = {
@@ -172,16 +173,7 @@ export async function mockManageSecurity(page: Page) {
     const offset = Number(query.get("offset") ?? "0");
     const items = filtered.slice(offset, offset + limit);
     await route.fulfill({
-      json: {
-        items,
-        pagination: {
-          limit,
-          offset,
-          count: items.length,
-          total: filtered.length,
-          has_more: offset + items.length < filtered.length,
-        },
-      },
+      json: pageOf(items, { limit, offset, total: filtered.length }),
     });
   });
   await page.route("**/api/users/*/sessions/*", async (route) => {

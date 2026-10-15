@@ -5,13 +5,16 @@ import {
   type Page,
   type Route,
 } from "./helpers/test";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
 import { profilePreferences } from "./helpers/profile-api";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import { readFile } from "node:fs/promises";
+import { hideDevOverlay } from "./helpers/test-styles";
+import { pageOf, wirePagination } from "../helpers/pagination";
+import { gate } from "./helpers/gate";
+import { wireField, wireRecord, wireView } from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -161,13 +164,11 @@ async function installRecordFilesApi(
               ),
             ];
       const items = available.slice(offset, offset + limit);
-      const response = pageResponse(
-        items,
+      const response = pageOf(items, {
         limit,
         offset,
-        available.length,
-        offset + items.length < available.length,
-      );
+        total: available.length,
+      });
       if (listBroken === "foreign")
         response.items = [
           recordAttachment(
@@ -258,15 +259,12 @@ async function installRecordFilesApi(
     return route.fulfill({ json: file });
   });
   const hold = () => {
-    let started: () => void = () => undefined;
-    let release: () => void = () => undefined;
-    const began = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const wait = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    return { began, release, barrier: { started, wait } };
+    const held = gate();
+    return {
+      began: held.started,
+      release: held.release,
+      barrier: { started: held.signalStarted, wait: held.wait },
+    };
   };
   return {
     views,
@@ -402,6 +400,11 @@ for (const terminal of ["purged", "deleting", "archived"] as const) {
       files.getByRole("button", { name: "Check status" }),
     ).toBeVisible();
     await expect(files.getByLabel("Upload file")).toBeDisabled();
+    // The upload reads the file back once itself; change the server state only
+    // after that readback has settled and Check status can be clicked.
+    await expect(
+      files.getByRole("button", { name: "Check status" }),
+    ).toBeEnabled();
     const pending = api.files.find((file) => file.id === pendingAttachmentId)!;
     if (terminal === "archived") pending.is_deleted = true;
     else pending.state = terminal;
@@ -912,11 +915,10 @@ type SavedView = {
 type SavedViewLayout = SavedView["presentation"]["layout"];
 
 function baseView(): SavedView {
-  return {
+  return wireView<SavedView["definition"], SavedView["presentation"]>({
     id: viewId,
     module_id: moduleId,
     name: "Equipment register",
-    is_default: false,
     definition: {
       version: 1,
       logic: "and",
@@ -945,31 +947,9 @@ function baseView(): SavedView {
       date_range: "month",
       scale: null,
     },
-    revision: 1,
-    is_deleted: false,
-    can_edit: true,
     created_at: "2026-09-23T00:00:00Z",
     updated_at: "2026-09-23T00:00:00Z",
-  };
-}
-
-function pageResponse<T>(
-  items: T[],
-  limit = 100,
-  offset = 0,
-  total = items.length,
-  hasMore = false,
-) {
-  return {
-    items,
-    pagination: {
-      limit,
-      offset,
-      count: items.length,
-      total,
-      has_more: hasMore,
-    },
-  };
+  });
 }
 
 function record(id: string, name: string, status: string) {
@@ -979,7 +959,7 @@ function record(id: string, name: string, status: string) {
       : status === "Inspection due"
         ? inspectionDueChoiceId
         : status;
-  return {
+  return wireRecord({
     id,
     module_id: moduleId,
     data: {
@@ -997,10 +977,8 @@ function record(id: string, name: string, status: string) {
     display_values: { [statusFieldId]: status },
     created_at: "2026-09-23T00:00:00Z",
     updated_at: "2026-09-23T00:00:00Z",
-    deleted_at: null,
-    is_deleted: false,
     performed_by: userId,
-  };
+  });
 }
 
 async function installViewsApi(
@@ -1213,16 +1191,6 @@ async function installViewsApi(
       },
     };
   });
-  await page.route("**/api/auth/session", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
   await page.route("**/api/workspace", (route) =>
     route.fulfill(
       workspaceFailure
@@ -1247,13 +1215,7 @@ async function installViewsApi(
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       },
     }),
   );
@@ -1265,14 +1227,17 @@ async function installViewsApi(
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: moduleId,
-              name: "Equipment",
-              department_id: departmentId,
-              title_field_id: null,
-            },
-          ]),
+          pageOf(
+            [
+              {
+                id: moduleId,
+                name: "Equipment",
+                department_id: departmentId,
+                title_field_id: null,
+              },
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
@@ -1280,121 +1245,102 @@ async function installViewsApi(
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: nameFieldId,
-              module_id: moduleId,
-              name: "Equipment name",
-              type: "text",
-              required: true,
-              position: 0,
-              config: {},
-            },
-            {
-              id: statusFieldId,
-              module_id: moduleId,
-              name: "Status",
-              type: "select",
-              required: false,
-              position: 1,
-              config: {
-                options: [
-                  { id: inServiceChoiceId, label: "In service" },
-                  { id: inspectionDueChoiceId, label: "Inspection due" },
-                ],
-              },
-            },
-            {
-              id: serialFieldId,
-              module_id: moduleId,
-              name: options.serialFieldName ?? "Serial number",
-              type: "text",
-              required: false,
-              position: 2,
-              config: {},
-            },
-            {
-              id: unselectedQueryFieldId,
-              module_id: moduleId,
-              name: "Unselected query field",
-              type: "text",
-              required: false,
-              position: 3,
-              config: {},
-            },
-            {
-              id: timelineStartFieldId,
-              module_id: moduleId,
-              name: "Start date",
-              type: "date",
-              required: false,
-              position: 4,
-              config: {},
-            },
-            {
-              id: timelineEndFieldId,
-              module_id: moduleId,
-              name: "End date",
-              type: "date",
-              required: false,
-              position: 5,
-              config: {},
-            },
-            {
-              id: calendarDateFieldId,
-              module_id: moduleId,
-              name: "Scheduled at",
-              type: "datetime",
-              required: false,
-              position: 6,
-              config: {},
-            },
-            {
-              id: timelineDeadlineFieldId,
-              module_id: moduleId,
-              name: "Deadline",
-              type: "date",
-              required: false,
-              position: 7,
-              config: {},
-            },
-            {
-              id: timelineProgressFieldId,
-              module_id: moduleId,
-              name: "Progress",
-              type: "decimal",
-              required: false,
-              position: 8,
-              config: {},
-            },
-            {
-              id: timelineTimestampDeadlineFieldId,
-              module_id: moduleId,
-              name: "Timestamp deadline",
-              type: "datetime",
-              required: false,
-              position: 9,
-              config: {},
-            },
-            {
-              id: numberFieldId,
-              module_id: moduleId,
-              name: "Measurement",
-              type: "number",
-              required: false,
-              position: 10,
-              config: {},
-            },
-            {
-              id: integerFieldId,
-              module_id: moduleId,
-              name: "Item count",
-              type: "int",
-              required: false,
-              position: 11,
-              config: {},
-            },
-          ]),
+          pageOf(
+            [
+              wireField({
+                id: nameFieldId,
+                module_id: moduleId,
+                name: "Equipment name",
+                type: "text",
+                required: true,
+                position: 0,
+              }),
+              wireField({
+                id: statusFieldId,
+                module_id: moduleId,
+                name: "Status",
+                type: "select",
+                position: 1,
+                config: {
+                  options: [
+                    { id: inServiceChoiceId, label: "In service" },
+                    { id: inspectionDueChoiceId, label: "Inspection due" },
+                  ],
+                },
+              }),
+              wireField({
+                id: serialFieldId,
+                module_id: moduleId,
+                name: options.serialFieldName ?? "Serial number",
+                type: "text",
+                position: 2,
+              }),
+              wireField({
+                id: unselectedQueryFieldId,
+                module_id: moduleId,
+                name: "Unselected query field",
+                type: "text",
+                position: 3,
+              }),
+              wireField({
+                id: timelineStartFieldId,
+                module_id: moduleId,
+                name: "Start date",
+                type: "date",
+                position: 4,
+              }),
+              wireField({
+                id: timelineEndFieldId,
+                module_id: moduleId,
+                name: "End date",
+                type: "date",
+                position: 5,
+              }),
+              wireField({
+                id: calendarDateFieldId,
+                module_id: moduleId,
+                name: "Scheduled at",
+                type: "datetime",
+                position: 6,
+              }),
+              wireField({
+                id: timelineDeadlineFieldId,
+                module_id: moduleId,
+                name: "Deadline",
+                type: "date",
+                position: 7,
+              }),
+              wireField({
+                id: timelineProgressFieldId,
+                module_id: moduleId,
+                name: "Progress",
+                type: "decimal",
+                position: 8,
+              }),
+              wireField({
+                id: timelineTimestampDeadlineFieldId,
+                module_id: moduleId,
+                name: "Timestamp deadline",
+                type: "datetime",
+                position: 9,
+              }),
+              wireField({
+                id: numberFieldId,
+                module_id: moduleId,
+                name: "Measurement",
+                type: "number",
+                position: 10,
+              }),
+              wireField({
+                id: integerFieldId,
+                module_id: moduleId,
+                name: "Item count",
+                type: "int",
+                position: 11,
+              }),
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
@@ -1452,15 +1398,7 @@ async function installViewsApi(
         );
         return route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify(
-            pageResponse(
-              items,
-              limit,
-              offset,
-              total,
-              offset + items.length < total,
-            ),
-          ),
+          body: JSON.stringify(pageOf(items, { limit, offset, total })),
         });
       }
       const includeDeleted = url.searchParams.get("deleted") === "include";
@@ -1478,7 +1416,7 @@ async function installViewsApi(
         .map(withDefault);
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(pageResponse(views, limit, offset, views.length)),
+        body: JSON.stringify(pageOf(views, { limit, offset })),
       });
     }
     if (url.pathname === `/api/views/${viewId}` && request.method() === "GET") {
@@ -1671,13 +1609,7 @@ async function installViewsApi(
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify(
-        pageResponse(
-          rows,
-          limit,
-          offset,
-          allRows.length,
-          offset + rows.length < allRows.length,
-        ),
+        pageOf(rows, { limit, offset, total: allRows.length }),
       ),
     });
   });
@@ -1809,13 +1741,7 @@ async function installViewsApi(
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        ...pageResponse(
-          items,
-          limit,
-          offset,
-          allRows.length,
-          offset + items.length < allRows.length,
-        ),
+        ...pageOf(items, { limit, offset, total: allRows.length }),
         timezone: includesDatetime ? "Asia/Manila" : null,
       }),
     });
@@ -1836,16 +1762,12 @@ async function installViewsApi(
       nextMutationFailure = mutation;
     },
     pauseNextPatch: () => {
-      let signalStarted: () => void = () => undefined;
-      let releasePatch: () => void = () => undefined;
-      const started = new Promise<void>((resolve) => {
-        signalStarted = resolve;
-      });
-      const wait = new Promise<void>((resolve) => {
-        releasePatch = resolve;
-      });
-      nextPatchBarrier = { wait, signalStarted };
-      return { started, release: releasePatch };
+      const patch = gate();
+      nextPatchBarrier = {
+        wait: patch.wait,
+        signalStarted: patch.signalStarted,
+      };
+      return { started: patch.started, release: patch.release };
     },
     saved: () => saved,
     changeSavedViewElsewhere: (search: string) => {
@@ -1872,16 +1794,12 @@ async function installViewsApi(
       deniedRecordId = id;
     },
     pauseNextRecordLookup: () => {
-      let signalStarted: () => void = () => undefined;
-      let release: () => void = () => undefined;
-      const started = new Promise<void>((resolve) => {
-        signalStarted = resolve;
-      });
-      const wait = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      nextRecordLookupBarrier = { wait, signalStarted };
-      return { started, release };
+      const lookup = gate();
+      nextRecordLookupBarrier = {
+        wait: lookup.wait,
+        signalStarted: lookup.signalStarted,
+      };
+      return { started: lookup.started, release: lookup.release };
     },
     groupedQueryRequests,
     failNextGroupedQuery: () => {
@@ -1950,75 +1868,6 @@ async function addFilterForField(page: Page, fieldId: string) {
     .getByRole("combobox", { name: "Field", exact: true })
     .selectOption(fieldId);
 }
-
-async function enterFilterAndWaitForQuery(
-  page: Page,
-  fieldId: string,
-  value: string,
-) {
-  const filtersRegion = await openFilters(page);
-  const requestPromise = page.waitForRequest((request) => {
-    const url = new URL(request.url());
-    if (url.pathname !== "/api/records/query" || request.method() !== "POST")
-      return false;
-    const body = request.postDataJSON() as { definition: QueryDefinition };
-    return body.definition.filters.some(
-      (filter) =>
-        filter.field_id === fieldId &&
-        (filter.value === value || filter.value === Number(value)),
-    );
-  });
-  await filtersRegion.getByLabel("Value").fill(value);
-  return requestPromise;
-}
-
-test("decimal View filters retain ordinary and high-precision strings", async ({
-  page,
-}) => {
-  await installViewsApi(page);
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await addFilterForField(page, timelineProgressFieldId);
-
-  for (const value of ["1.25", "9007199254740993"]) {
-    const request = await enterFilterAndWaitForQuery(
-      page,
-      timelineProgressFieldId,
-      value,
-    );
-    const body = request.postDataJSON() as { definition: QueryDefinition };
-    const filter = body.definition.filters.find(
-      (item) => item.field_id === timelineProgressFieldId,
-    );
-
-    expect(filter).toEqual({
-      field_id: timelineProgressFieldId,
-      expected_type: "decimal",
-      operator: "eq",
-      value,
-    });
-  }
-});
-
-test("number View filters continue sending numeric values", async ({
-  page,
-}) => {
-  await installViewsApi(page);
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  await addFilterForField(page, numberFieldId);
-
-  const request = await enterFilterAndWaitForQuery(page, numberFieldId, "12.5");
-  const body = request.postDataJSON() as { definition: QueryDefinition };
-  const filter = body.definition.filters.find(
-    (item) => item.field_id === numberFieldId,
-  );
-
-  expect(filter).toEqual({
-    field_id: numberFieldId,
-    expected_type: "number",
-    operator: "eq",
-    value: 12.5,
-  });
-});
 
 test("membership View filters select choices by label and submit stable IDs", async ({
   page,
@@ -2310,7 +2159,6 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
     viewId,
   );
   await expect(page.getByText("Centrifugal pump 04")).toBeVisible();
-  await captureOpenViewReview(page, "views-manager");
   await expect(
     page.getByText("Field service · 12 active fields"),
   ).toBeVisible();
@@ -2379,8 +2227,12 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   await expect(
     conflictDialog.getByText(/local search “compressor”/),
   ).toBeVisible();
+  // A conflict hides the ordinary save; only the conflict choices remain.
   await expect(
-    conflictDialog.getByRole("button", { name: "Update view" }),
+    conflictDialog.getByRole("button", { name: "Save view", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    conflictDialog.getByRole("button", { name: "Rename view", exact: true }),
   ).toHaveCount(0);
   expect(api.saved().definition.search).toBe("external edit");
 
@@ -2507,22 +2359,41 @@ test("server-backed Views preserve edits through save, conflict, archive, restor
   ).toBe(true);
 });
 
-test("clearing an implicit default asks before discarding its local draft", async ({
+test("selecting Unsaved view or clearing an implicit default asks before discarding its local draft", async ({
   page,
 }) => {
   const api = await installViewsApi(page, { initialDefault: true });
 
   await page.goto(`/openview?section=views&module=${moduleId}`);
-  await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
-    viewId,
-  );
+  const savedView = page.getByRole("combobox", { name: "Saved view" });
+  await expect(savedView).toHaveValue(viewId);
   const search = page.getByRole("searchbox", { name: "Search Equipment" });
-  await search.fill("unpublished default draft");
-  await openViewAction(page, "Clear default view");
-
   const discardDialog = page.getByRole("alertdialog", {
     name: "Discard unsaved view changes?",
   });
+
+  // Selecting Unsaved view overrides the module default only after discard.
+  await search.fill("keep until confirmed");
+  await savedView.selectOption("");
+  await expect(discardDialog).toBeVisible();
+  await discardDialog.getByRole("button", { name: "Keep editing" }).click();
+  await expect(savedView).toHaveValue(viewId);
+  await expect(search).toHaveValue("keep until confirmed");
+
+  await savedView.selectOption("");
+  await discardDialog
+    .getByRole("button", { name: "Discard and continue" })
+    .click();
+
+  await expect(savedView).toHaveValue("");
+  await expect(search).toHaveValue("");
+  await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
+  await page.reload();
+  await expect(savedView).toHaveValue(viewId);
+
+  // Clearing the default asks too, and a rejected clear keeps the draft.
+  await search.fill("unpublished default draft");
+  await openViewAction(page, "Clear default view");
   await expect(discardDialog).toBeVisible();
   expect(api.defaultView()).toBe(viewId);
   await discardDialog.getByRole("button", { name: "Keep editing" }).click();
@@ -2550,38 +2421,6 @@ test("clearing an implicit default asks before discarding its local draft", asyn
   expect(api.defaultView()).toBe(null);
   await expect(search).toHaveValue("");
   await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
-});
-
-test("selecting Unsaved view overrides the module default after discard confirmation", async ({
-  page,
-}) => {
-  await installViewsApi(page, { initialDefault: true });
-
-  await page.goto(`/openview?section=views&module=${moduleId}`);
-  const savedView = page.getByRole("combobox", { name: "Saved view" });
-  await expect(savedView).toHaveValue(viewId);
-  const search = page.getByRole("searchbox", { name: "Search Equipment" });
-  await search.fill("keep until confirmed");
-  await savedView.selectOption("");
-
-  const discardDialog = page.getByRole("alertdialog", {
-    name: "Discard unsaved view changes?",
-  });
-  await expect(discardDialog).toBeVisible();
-  await discardDialog.getByRole("button", { name: "Keep editing" }).click();
-  await expect(savedView).toHaveValue(viewId);
-  await expect(search).toHaveValue("keep until confirmed");
-
-  await savedView.selectOption("");
-  await discardDialog
-    .getByRole("button", { name: "Discard and continue" })
-    .click();
-
-  await expect(savedView).toHaveValue("");
-  await expect(search).toHaveValue("");
-  await expect(page).toHaveURL(`/openview?section=views&module=${moduleId}`);
-  await page.reload();
-  await expect(savedView).toHaveValue(viewId);
 });
 
 test("duplicating a saved view saves the current draft as a selected copy", async ({
@@ -2753,7 +2592,6 @@ test("a reader keeps temporary View filters in the address without save controls
   await expect(
     page.getByText(/These changes live in the page address/),
   ).toBeVisible();
-  await captureOpenViewReview(page, "views-reader-filter");
   await page.reload();
   await expect(search).toHaveValue("valve");
   await expect(page.getByText("Temporary changes")).toBeVisible();
@@ -4451,7 +4289,7 @@ test.describe("OpenView workspace regional dates", () => {
     api.workspace.timezone = "America/Los_Angeles";
     await page.route("**/api/audit-logs?**", (route) =>
       route.fulfill({
-        json: pageResponse(
+        json: pageOf(
           [
             {
               id: "00000000-0000-4000-8000-000000000199",
@@ -4463,7 +4301,7 @@ test.describe("OpenView workspace regional dates", () => {
               actor_label: "Regional test actor",
             },
           ],
-          50,
+          { limit: 50 },
         ),
       }),
     );
@@ -4553,7 +4391,7 @@ test.describe("OpenView workspace regional dates", () => {
     });
   });
 
-  test("S21 Calendar personal dates and week start change presentation only, retaining workspace grouping and requests", async ({
+  test("Calendar personal dates and week start change presentation only, retaining workspace grouping and requests", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -4720,7 +4558,7 @@ test.describe("OpenView workspace regional dates", () => {
     ).toContainText("2026-09-01");
   });
 
-  test("S21 Timeline personal formatting preserves date-only days and the workspace window", async ({
+  test("Timeline personal formatting preserves date-only days and the workspace window", async ({
     page,
   }) => {
     const api = await installViewsApi(page, {
@@ -5098,12 +4936,11 @@ test("stale conflict can reload the authoritative saved version without losing i
   api.makeNextPatchStale();
   await page.getByRole("button", { name: "Save changes" }).click();
 
+  // The changed-fields text is owned by "server-backed Views preserve edits
+  // through save, conflict, archive, restore, and module default changes".
   const conflictDialog = page.getByRole("dialog", {
     name: "Update saved view",
   });
-  await expect(
-    conflictDialog.getByText(/Query, filters, or sort/),
-  ).toBeVisible();
   await expect(
     conflictDialog.getByText(/local search “my local edit”/),
   ).toBeVisible();
@@ -5118,7 +4955,7 @@ test("stale conflict can reload the authoritative saved version without losing i
   expect(api.saved().definition.search).toBe("external edit");
 });
 
-test("S08 a saved view beyond the first page loads through its UUID deep link", async ({
+test("a saved view beyond the first page loads through its UUID deep link", async ({
   page,
 }) => {
   const api = await installViewsApi(page, { deepViewBeyondBound: true });
@@ -5153,9 +4990,7 @@ test("S08 a saved view beyond the first page loads through its UUID deep link", 
   ).toBeVisible();
   expect(api.saved().is_deleted).toBe(true);
 
-  await expect(page).toHaveURL((url) => !url.searchParams.has("view"), {
-    timeout: 15_000,
-  });
+  await expect(page).toHaveURL((url) => !url.searchParams.has("view"));
   await page.getByRole("button", { name: "Archived views" }).click();
   const archivedDialog = page.getByRole("dialog", { name: "Archived views" });
   await expect(
@@ -5175,7 +5010,6 @@ test("S08 a saved view beyond the first page loads through its UUID deep link", 
   expect(api.saved().is_deleted).toBe(false);
   await expect(page).toHaveURL(
     (url) => url.searchParams.get("view") === viewId,
-    { timeout: 15_000 },
   );
   await archivedDialog.getByRole("button", { name: "Close" }).click();
   await expect(page.getByLabel("Saved view")).toHaveValue(viewId);
@@ -5263,29 +5097,13 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
 }) => {
   let savedViewRequests = 0;
   let dashboardListRequests = 0;
-  await page.route("**/api/auth/session", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
   await page.route("**/api/views**", async (route) => {
     if (new URL(route.request().url()).pathname === "/api/views/data-sources") {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
           items: [],
-          pagination: {
-            limit: 100,
-            offset: 0,
-            count: 0,
-            total: 0,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 100, count: 0, total: 0 }),
         }),
       });
     }
@@ -5296,12 +5114,6 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
       body: "{}",
     });
   });
-  await page.route("**/api/auth/me", async (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ id: userId, role: "admin", access: [] }),
-    }),
-  );
   // A new Dashboard needs a department to belong to.
   await page.route("**/api/departments**", async (route) =>
     route.fulfill({
@@ -5318,13 +5130,7 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
             performed_by: null,
           },
         ],
-        pagination: {
-          limit: 100,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 100, count: 1, total: 1 }),
       }),
     }),
   );
@@ -5336,13 +5142,7 @@ test("Dashboard section loads the live Dashboard API without fetching saved View
         contentType: "application/json",
         body: JSON.stringify({
           items: [],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 0,
-            total: 0,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 25, count: 0, total: 0 }),
         }),
       });
     }
@@ -5401,44 +5201,43 @@ test("Views show authorized labels while filters keep stable choice and eligible
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: nameFieldId,
-              module_id: moduleId,
-              name: "Equipment name",
-              type: "text",
-              required: true,
-              position: 0,
-              config: {},
-            },
-            {
-              id: statusFieldId,
-              module_id: moduleId,
-              name: "Status",
-              type: "select",
-              required: false,
-              position: 1,
-              config: {
-                options: [{ id: choiceId, label }],
-              },
-            },
-            {
-              id: userFieldId,
-              module_id: moduleId,
-              name: "Assignee",
-              type: "user",
-              required: false,
-              position: 2,
-              config: {},
-            },
-          ]),
+          pageOf(
+            [
+              wireField({
+                id: nameFieldId,
+                module_id: moduleId,
+                name: "Equipment name",
+                type: "text",
+                required: true,
+                position: 0,
+              }),
+              wireField({
+                id: statusFieldId,
+                module_id: moduleId,
+                name: "Status",
+                type: "select",
+                position: 1,
+                config: {
+                  options: [{ id: choiceId, label }],
+                },
+              }),
+              wireField({
+                id: userFieldId,
+                module_id: moduleId,
+                name: "Assignee",
+                type: "user",
+                position: 2,
+              }),
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
     if (request.method() === "GET" && pathname === "/api/views")
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(pageResponse([view])),
+        body: JSON.stringify(pageOf([view], { limit: 100 })),
       });
     if (request.method() === "GET" && pathname === "/api/views/" + viewId)
       return route.fulfill({
@@ -5467,7 +5266,7 @@ test("Views show authorized labels while filters keep stable choice and eligible
         headers: { "cache-control": "private, no-store" },
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse(
+          pageOf(
             eligibleUserAvailable
               ? [
                   {
@@ -5477,6 +5276,7 @@ test("Views show authorized labels while filters keep stable choice and eligible
                   },
                 ]
               : [],
+            { limit: 100 },
           ),
         ),
       });
@@ -5533,7 +5333,9 @@ test("Views show authorized labels while filters keep stable choice and eligible
       .slice(offset, offset + limit);
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(pageResponse(items, limit, offset, rows.length)),
+      body: JSON.stringify(
+        pageOf(items, { limit, offset, total: rows.length, hasMore: false }),
+      ),
     });
   });
 
@@ -5651,7 +5453,6 @@ test("Views show authorized labels while filters keep stable choice and eligible
       name: "Selected person is not in the current results",
     }),
   ).toBeAttached();
-  await captureOpenViewReview(page, "views-select-person-labels");
 });
 
 async function installRecordCommands(page: Page) {
@@ -6164,7 +5965,11 @@ test("a Comms example record link shows a notice and returns to live Views", asy
   await expect(views).toHaveAttribute("href", "/openview?section=views");
   await views.click();
 
-  await expect(page).toHaveURL(/\/openview\?section=views$/);
+  // Live Views then selects its module; assert the settled URL, not the moment
+  // before that selection is written.
+  await expect(page).toHaveURL(
+    new RegExp(`/openview\\?section=views&module=${moduleId}$`),
+  );
   await expect(page.getByRole("combobox", { name: "Saved view" })).toHaveValue(
     viewId,
   );
@@ -6173,26 +5978,43 @@ test("a Comms example record link shows a notice and returns to live Views", asy
   ).toHaveCount(0);
 });
 
-test("OpenView request failures use safe destructive feedback without server detail", async ({
-  page,
-}) => {
-  await installViewsApi(page);
-  await page.route("**/api/views/data-sources?*", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { detail: "Private database routing detail" },
-    }),
-  );
-  await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
-  const failure = page
-    .getByRole("alert")
-    .filter({ hasText: "temporarily unavailable" });
-  await expect(failure).toBeVisible();
-  await expect(failure).toHaveAttribute("data-variant", "destructive");
-  await expect(page.getByText("Private database routing detail")).toHaveCount(
-    0,
-  );
-});
+for (const current of [
+  {
+    section: "Views",
+    url: `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    detail: "Private database routing detail",
+  },
+  {
+    section: "Charts",
+    url: "/openview?section=charts",
+    detail: "Private chart data-source detail",
+    // The failure stays visible with the Chart filters open.
+    openFilters: true,
+  },
+]) {
+  test(`${current.section} request failures use safe destructive feedback without server detail and keep Retry visible`, async ({
+    page,
+  }) => {
+    await installViewsApi(page);
+    await page.route("**/api/views/data-sources?*", (route) =>
+      route.fulfill({ status: 503, json: { detail: current.detail } }),
+    );
+    await page.goto(current.url);
+    if ("openFilters" in current)
+      await page
+        .getByRole("button", { name: "Filters (0)", exact: true })
+        .click();
+    const failure = page
+      .getByRole("alert")
+      .filter({ hasText: "temporarily unavailable" });
+    await expect(failure).toBeVisible();
+    await expect(failure).toHaveAttribute("data-variant", "destructive");
+    await expect(
+      failure.getByRole("button", { name: "Retry catalog", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(current.detail)).toHaveCount(0);
+  });
+}
 
 for (const layout of ["table", "kanban"] as const) {
   for (const mode of ["light", "dark"] as const) {
@@ -6403,7 +6225,7 @@ async function s16DownloadedBytes(page: Page, action: () => Promise<void>) {
   };
 }
 
-test.describe("S16 export journeys", () => {
+test.describe("export journeys", () => {
   test.beforeEach(async ({ context }) => {
     await context.tracing.start({ screenshots: true, snapshots: true });
   });
@@ -6412,7 +6234,7 @@ test.describe("S16 export journeys", () => {
   });
 
   for (const role of ["member", "guest"] as const) {
-    test(`S16 export: ${role} exports current query and chosen pinned columns without saving`, async ({
+    test(`${role} exports current query and chosen pinned columns without saving`, async ({
       page,
     }) => {
       const api = await installS16Export(page, role);
@@ -6508,7 +6330,7 @@ test.describe("S16 export journeys", () => {
     });
   }
 
-  test("S16 export: Excel choices stay local across format changes and preserve workbook bytes", async ({
+  test("Excel choices stay local across format changes and preserve workbook bytes", async ({
     page,
   }) => {
     const api = await installS16Export(page);
@@ -6579,7 +6401,7 @@ test.describe("S16 export journeys", () => {
     });
   });
 
-  test("S16 export: empty columns require an explicit Record ID and never restore removed fields", async ({
+  test("empty columns require an explicit Record ID and never restore removed fields", async ({
     page,
   }) => {
     const api = await installS16Export(page);
@@ -6610,79 +6432,34 @@ test.describe("S16 export journeys", () => {
     });
   });
 
-  for (const invalid of [
-    { name: "wrong status", reply: { status: 201 } },
-    { name: "wrong MIME", reply: { contentType: "text/html" } },
-    {
-      name: "missing attachment",
-      reply: {
-        headers: { ...s16AttachmentHeaders, "Content-Disposition": "inline" },
-      },
-    },
-    {
-      name: "unsafe filename",
-      reply: {
-        headers: {
-          ...s16AttachmentHeaders,
-          "Content-Disposition": 'attachment; filename="../private.csv"',
-        },
-      },
-    },
-    {
-      name: "wrong extension",
-      reply: {
-        headers: {
-          ...s16AttachmentHeaders,
-          "Content-Disposition": 'attachment; filename="records.xlsx"',
-        },
-      },
-    },
-    {
-      name: "cacheable response",
-      reply: {
-        headers: { ...s16AttachmentHeaders, "Cache-Control": "public" },
-      },
-    },
-    {
-      name: "sniffable response",
-      reply: {
-        headers: { ...s16AttachmentHeaders, "X-Content-Type-Options": "sniff" },
-      },
-    },
-    {
-      name: "oversized bytes",
-      reply: { body: Buffer.alloc(8 * 1024 * 1024 + 1, 65) },
-    },
-  ] satisfies { name: string; reply: S16Reply }[]) {
-    test(`S16 export: ${invalid.name} is never an attachment and Retry keeps options`, async ({
-      page,
-    }) => {
-      const api = await installS16Export(page);
-      api.reply(invalid.reply);
-      await page.goto(
-        `/openview?section=views&module=${moduleId}&view=${viewId}`,
-      );
-      const dialog = await openS16Export(page);
-      await dialog
-        .getByRole("checkbox", { name: "Serial number", exact: true })
-        .uncheck();
-      await dialog
-        .getByRole("button", { name: "Download", exact: true })
-        .click();
-      await expect(dialog.getByRole("alert")).toContainText(
-        "could not be downloaded",
-      );
-      expect(api.downloads).toEqual([]);
-      await expect(
-        dialog.getByRole("checkbox", { name: "Serial number", exact: true }),
-      ).not.toBeChecked();
-      api.reply({});
-      await s16DownloadedBytes(page, () =>
-        dialog.getByRole("button", { name: "Download", exact: true }).click(),
-      );
-      expect(api.requests).toHaveLength(2);
-    });
-  }
+  // Every other invalid reply is owned by
+  // isolated/openview/records-export-api.spec.ts.
+  test("a wrong MIME reply is never an attachment and Retry keeps options", async ({
+    page,
+  }) => {
+    const api = await installS16Export(page);
+    api.reply({ contentType: "text/html" });
+    await page.goto(
+      `/openview?section=views&module=${moduleId}&view=${viewId}`,
+    );
+    const dialog = await openS16Export(page);
+    await dialog
+      .getByRole("checkbox", { name: "Serial number", exact: true })
+      .uncheck();
+    await dialog.getByRole("button", { name: "Download", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "could not be downloaded",
+    );
+    expect(api.downloads).toEqual([]);
+    await expect(
+      dialog.getByRole("checkbox", { name: "Serial number", exact: true }),
+    ).not.toBeChecked();
+    api.reply({});
+    await s16DownloadedBytes(page, () =>
+      dialog.getByRole("button", { name: "Download", exact: true }).click(),
+    );
+    expect(api.requests).toHaveLength(2);
+  });
   for (const failure of [
     { status: 404, code: "not_found", expected: "no longer available" },
     {
@@ -6697,7 +6474,7 @@ test.describe("S16 export journeys", () => {
       expected: "Choose at least one column",
     },
   ]) {
-    test(`S16 export: safe ${failure.code} failure retains query and allows recovery`, async ({
+    test(`safe ${failure.code} failure retains query and allows recovery`, async ({
       page,
     }) => {
       const api = await installS16Export(page);
@@ -6727,7 +6504,7 @@ test.describe("S16 export journeys", () => {
     });
   }
 
-  test("S16 export: a denied export hides all retained read data and never exposes private details", async ({
+  test("a denied export hides all retained read data and never exposes private details", async ({
     page,
   }) => {
     const api = await installS16Export(page);
@@ -6771,7 +6548,7 @@ test.describe("S16 export journeys", () => {
   });
 
   for (const end of ["cancel", "account", "refusal", "navigation"] as const) {
-    test(`S16 export: one submit and late ${end} completion cannot download or announce success`, async ({
+    test(`one submit and late ${end} completion cannot download or announce success`, async ({
       page,
     }) => {
       const api = await installS16Export(page);
@@ -6819,7 +6596,7 @@ test.describe("S16 export journeys", () => {
   }
 
   for (const theme of ["light", "dark"] as const) {
-    test(`S16 export: ${theme} keyboard, mobile and pending/error controls remain usable`, async ({
+    test(`${theme} keyboard, mobile and pending/error controls remain usable`, async ({
       page,
     }) => {
       const longLabel =
@@ -6842,9 +6619,7 @@ test.describe("S16 export journeys", () => {
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", { name: "Export records" });
       await expect(dialog).toBeVisible();
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
+      await hideDevOverlay(page);
       await expect(
         dialog.getByText("Exports up to 10,000 rows. Your export is recorded."),
       ).toBeVisible();
@@ -6871,36 +6646,41 @@ test.describe("S16 export journeys", () => {
           page.viewportSize()!.height,
         );
       };
-      await captureOpenViewReview(page, `s16-excel-${theme}`, {
-        beforeScreenshot: async () => {
+      const checkLayout = async (showLongLabel: boolean) => {
+        const originalViewport = page.viewportSize();
+        const originalScrollY = await page.evaluate(() => window.scrollY);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
           await bounds();
-          await dialog.evaluate((node) => {
-            node.scrollTop = 0;
-          });
-          await expect(
-            dialog.getByRole("checkbox", { name: longLabel, exact: true }),
-          ).toBeVisible();
-        },
-      });
-      await captureOpenViewReview(page, `s16-excel-options-${theme}`, {
-        beforeScreenshot: bounds,
-      });
+          if (showLongLabel) {
+            await dialog.evaluate((node) => {
+              node.scrollTop = 0;
+            });
+            await expect(
+              dialog.getByRole("checkbox", { name: longLabel, exact: true }),
+            ).toBeVisible();
+          }
+        }
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+      };
+      await checkLayout(true);
       api.reply({ status: 503, json: { detail: "PRIVATE_EXPORT_SENTINEL" } });
       await dialog
         .getByRole("button", { name: "Download", exact: true })
         .click();
       await expect(dialog.getByRole("alert")).toBeVisible();
-      await captureOpenViewReview(page, `s16-error-${theme}`, {
-        beforeScreenshot: bounds,
-      });
+      await checkLayout(false);
       const held = api.hold();
       await dialog
         .getByRole("button", { name: "Download", exact: true })
         .click();
       await held.began;
-      await captureOpenViewReview(page, `s16-pending-${theme}`, {
-        beforeScreenshot: bounds,
-      });
+      await checkLayout(false);
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
       held.release();
       await held.done;
@@ -6909,9 +6689,7 @@ test.describe("S16 export journeys", () => {
     });
   }
 
-  test("S16 export: CSV after Excel omits every Excel-only option", async ({
-    page,
-  }) => {
+  test("CSV after Excel omits every Excel-only option", async ({ page }) => {
     const api = await installS16Export(page);
     await page.goto(
       `/openview?section=views&module=${moduleId}&view=${viewId}`,
@@ -6938,7 +6716,7 @@ test.describe("S16 export journeys", () => {
       expect(request).not.toHaveProperty(key);
   });
 
-  test("S16 export: an incomplete filter disables export without a request", async ({
+  test("an incomplete filter disables export without a request", async ({
     page,
   }) => {
     const api = await installS16Export(page);

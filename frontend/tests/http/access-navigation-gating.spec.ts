@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, test, type Page, isEventStream } from "./helpers/test";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const departmentId = "00000000-0000-4000-8000-0000000000d1";
@@ -10,6 +10,7 @@ type Identity = {
 
 async function signIn(page: Page, identity: Identity) {
   await page.route("**/api/**", async (route) => {
+    if (isEventStream(route)) return route.fallback();
     const { pathname } = new URL(route.request().url());
     if (pathname === "/api/auth/session")
       return route.fulfill({

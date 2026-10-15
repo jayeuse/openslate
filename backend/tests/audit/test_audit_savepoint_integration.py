@@ -29,10 +29,14 @@ def test_savepoint_release_waits_for_outer_commit_and_rollback_keeps_prior_succe
     assert published == []
     assert db.info[REALTIME_INVALIDATION_KEY]
     before = list(db.info[REALTIME_INVALIDATION_KEY])
-    with pytest.raises(ValueError, match="reject owned item"), db.begin_nested():
+
+    def add_then_reject() -> None:
         db.add(Department(department_name=f"Rejected {uuid7()}"))
         db.flush()
         raise ValueError("reject owned item")
+
+    with pytest.raises(ValueError, match="reject owned item"), db.begin_nested():
+        add_then_reject()
     assert published == []
     assert db.info[REALTIME_INVALIDATION_KEY] == before
     with db.begin_nested():

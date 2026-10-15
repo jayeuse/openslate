@@ -1,23 +1,15 @@
-"""Generated Harbor and School requests satisfy the current application contracts."""
+"""Larger Harbor and School profiles keep their relationship plans within cardinality.
 
-from datetime import date
+Small payloads pass the server-rule preflight in test_sample_multi_seed.py, whose seed range
+includes seed 42 for every pack.
+"""
 
 import pytest
 
 from operations.sample.packs.registry import get_pack, pack_keys
-from operations.sample.scenario import build_dataset
-from tests.operations.sample.packs.sample_pack_preflight import admit_dataset
 from tests.operations.sample.packs.sample_pack_relationship_preflight import (
     admit_relationship_profile,
 )
-
-ANCHOR = date(2026, 9, 30)
-
-
-@pytest.mark.parametrize("pack_key", pack_keys())
-def test_seed_42_small_payloads_pass_server_rule_preflight(pack_key: str) -> None:
-    dataset = build_dataset("small", seed=42, anchor_date=ANCHOR, organization=get_pack(pack_key))
-    admit_dataset(dataset)
 
 
 @pytest.mark.parametrize("profile", ("standard", "large"))

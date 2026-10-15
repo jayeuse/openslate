@@ -66,7 +66,7 @@ export type PersonCard = {
   data: z.output<typeof publicCardSchema> | z.output<typeof memberCardSchema>;
 };
 
-/** S20 deliberately omits an id: bind this response to its requested target and viewer. */
+/** The card response carries no id: bind it to its requested target and viewer. */
 export async function getPersonCard(
   viewer: PersonCardViewer,
   targetId: string,

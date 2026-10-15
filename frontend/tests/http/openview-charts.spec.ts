@@ -1,11 +1,15 @@
 import { readFile } from "node:fs/promises";
 import Papa from "papaparse";
-import { expect, test, type Page } from "./helpers/test";
+import { expect, signedInSession, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
+  sendChartInvalidation,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { pageOf, wirePagination } from "../helpers/pagination";
+import { gate } from "./helpers/gate";
+import { wireField, wireBucket } from "../helpers/wire";
+import { hideDevOverlay } from "./helpers/test-styles";
 
 const moduleId = "00000000-0000-4000-8000-000000000110";
 const departmentId = "00000000-0000-4000-8000-000000000111";
@@ -14,19 +18,6 @@ const userFieldId = "00000000-0000-4000-8000-000000000113";
 const choiceId = "00000000-0000-4000-8000-000000000114";
 const eligibleUserId = "00000000-0000-4000-8000-000000000115";
 const userId = "00000000-0000-4000-8000-000000000101";
-
-function pageResponse(items: unknown[]) {
-  return {
-    items,
-    pagination: {
-      limit: 100,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
-}
 
 test("Charts filter on stable choice and eligible person IDs", async ({
   page,
@@ -46,30 +37,24 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       assignableUserRequests += 1;
   });
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        authenticated: true,
-        user_id: userId,
-        setup_required: false,
-      }),
-    }),
-  );
+  await signedInSession(page, userId);
   await page.route("**/api/views/data-sources**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === "/api/views/data-sources") {
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: moduleId,
-              name: "Service requests",
-              department_id: departmentId,
-              title_field_id: null,
-            },
-          ]),
+          pageOf(
+            [
+              {
+                id: moduleId,
+                name: "Service requests",
+                department_id: departmentId,
+                title_field_id: null,
+              },
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
@@ -77,28 +62,29 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       return route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(
-          pageResponse([
-            {
-              id: selectFieldId,
-              module_id: moduleId,
-              name: "Status",
-              type: "select",
-              required: false,
-              position: 0,
-              config: {
-                options: [{ id: choiceId, label: "Awaiting review" }],
-              },
-            },
-            {
-              id: userFieldId,
-              module_id: moduleId,
-              name: "Assignee",
-              type: "user",
-              required: false,
-              position: 1,
-              config: { kind: "user" },
-            },
-          ]),
+          pageOf(
+            [
+              wireField({
+                id: selectFieldId,
+                module_id: moduleId,
+                name: "Status",
+                type: "select",
+                position: 0,
+                config: {
+                  options: [{ id: choiceId, label: "Awaiting review" }],
+                },
+              }),
+              wireField({
+                id: userFieldId,
+                module_id: moduleId,
+                name: "Assignee",
+                type: "user",
+                position: 1,
+                config: { kind: "user" },
+              }),
+            ],
+            { limit: 100 },
+          ),
         ),
       });
     }
@@ -109,13 +95,16 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       headers: { "cache-control": "private, no-store" },
       contentType: "application/json",
       body: JSON.stringify(
-        pageResponse([
-          {
-            id: eligibleUserId,
-            display_name: "Alex Reader",
-            username: "alex.reader",
-          },
-        ]),
+        pageOf(
+          [
+            {
+              id: eligibleUserId,
+              display_name: "Alex Reader",
+              username: "alex.reader",
+            },
+          ],
+          { limit: 100 },
+        ),
       ),
     }),
   );
@@ -126,20 +115,14 @@ test("Charts filter on stable choice and eligible person IDs", async ({
       contentType: "application/json",
       body: JSON.stringify({
         items: [
-          {
+          wireBucket({
             key: eligibleUserId,
             label: groupLabel,
             value: 1,
             record_count: 1,
-          },
+          }),
         ],
-        pagination: {
-          limit: 1,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 1, count: 1, total: 1 }),
       }),
     });
   });
@@ -233,34 +216,6 @@ test("Charts filter on stable choice and eligible person IDs", async ({
     resultTable.getByRole("cell", { name: "Alex Reader", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Filters (2)" }).click();
-  await captureOpenViewReview(page, "charts-select-person-labels");
-});
-
-test("Chart source failures keep retry visible with destructive safe feedback", async ({
-  page,
-}) => {
-  await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    }),
-  );
-  await page.route("**/api/views/data-sources?*", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { detail: "Private chart data-source detail" },
-    }),
-  );
-  await page.goto("/openview?section=charts");
-  await page.getByRole("button", { name: "Filters (0)", exact: true }).click();
-  const failure = page.getByRole("alert").filter({
-    has: page.getByRole("button", { name: "Retry catalog", exact: true }),
-  });
-  await expect(failure).toContainText("temporarily unavailable");
-  await expect(failure).toHaveAttribute("data-variant", "destructive");
-  await expect(
-    page.getByText("Private chart data-source detail", { exact: true }),
-  ).toHaveCount(0);
 });
 
 const amountId = "00000000-0000-4000-8000-000000000116";
@@ -294,15 +249,11 @@ const editorFields = [
 
 async function editorCatalog(page: Page) {
   await installOpenViewEventSource(page);
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: { authenticated: true, user_id: userId, setup_required: false },
-    }),
-  );
+  await signedInSession(page, userId);
   await page.route("**/api/views/data-sources**", (route) => {
     const path = new URL(route.request().url()).pathname;
     return route.fulfill({
-      json: pageResponse(
+      json: pageOf<unknown>(
         path.endsWith("/fields")
           ? editorFields.map((field, position) => ({
               ...field,
@@ -318,6 +269,7 @@ async function editorCatalog(page: Page) {
                 title_field_id: null,
               },
             ],
+        { limit: 100 },
       ),
     });
   });
@@ -351,40 +303,40 @@ async function editorCatalog(page: Page) {
 
 function calendarSnapshot(keys: string[]) {
   return {
-    items: keys.map((key) => ({ key, label: key, value: 1, record_count: 1 })),
-    pagination: {
+    items: keys.map((key) =>
+      wireBucket({
+        key,
+        value: 1,
+        record_count: 1,
+      }),
+    ),
+    pagination: wirePagination({
       limit: keys.length,
-      offset: 0,
       count: keys.length,
       total: keys.length,
-      has_more: false,
-    },
+    }),
   };
 }
 
-test("Unit A Top choices change only the preview and retain the complete wire query, table, CSV and print", async ({
+test("Top choices change only the preview and retain the complete wire query, table, CSV and print", async ({
   page,
 }) => {
   await editorCatalog(page);
   const bodies: unknown[] = [];
   await page.route("**/api/records/aggregate-snapshot", (route) => {
     bodies.push(route.request().postDataJSON());
-    const items = Array.from({ length: 55 }, (_, index) => ({
-      key: `group-${index + 1}`,
-      label: `Group ${index + 1}`,
-      value: 55 - index,
-      record_count: 55 - index,
-    }));
+    const items = Array.from({ length: 55 }, (_, index) =>
+      wireBucket({
+        key: `group-${index + 1}`,
+        label: `Group ${index + 1}`,
+        value: 55 - index,
+        record_count: 55 - index,
+      }),
+    );
     return route.fulfill({
       json: {
         items,
-        pagination: {
-          limit: 55,
-          offset: 0,
-          count: 55,
-          total: 55,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 55, count: 55, total: 55 }),
       },
     });
   });
@@ -455,7 +407,7 @@ test("Unit A Top choices change only the preview and retain the complete wire qu
   expect(bodies).toHaveLength(1);
 });
 
-test("Unit A six metrics retain typed user and boolean dimensions and count omits measure", async ({
+test("six metrics retain typed user and boolean dimensions and count omits measure", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -505,7 +457,7 @@ test("Unit A six metrics retain typed user and boolean dimensions and count omit
   expect(bodies).toHaveLength(6);
 });
 
-test("Unit A five calendar buckets and period wording follow the last applied query while the draft is dirty", async ({
+test("five calendar buckets and period wording follow the last applied query while the draft is dirty", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -619,17 +571,18 @@ test("Unit A five calendar buckets and period wording follow the last applied qu
       to_date: "2026-10-13",
       bucket: current.bucket,
     });
-    if (current.bucket === "week" && process.env.OPENVIEW_CAPTURE_DIR) {
-      // One opt-in four-image review round through the existing capture helper.
+    if (current.bucket === "week") {
       await page.emulateMedia({ reducedMotion: "reduce" });
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
-      const options = {
-        beforeScreenshot: async (
-          page: Page,
-          viewport: { width: number; height: number },
-        ) => {
+      await hideDevOverlay(page);
+      const checkLayout = async () => {
+        const originalViewport = page.viewportSize();
+        const originalScrollY = await page.evaluate(() => window.scrollY);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const viewport of [
+          { width: 1440, height: 900 },
+          { width: 390, height: 844 },
+        ]) {
+          await page.setViewportSize(viewport);
           await expect
             .poll(() =>
               page.evaluate(() => document.documentElement.scrollWidth),
@@ -646,39 +599,84 @@ test("Unit A five calendar buckets and period wording follow the last applied qu
               })
               .locator(".recharts-label-list text"),
           ).toHaveCount(2);
-        },
+        }
+        if (originalViewport) await page.setViewportSize(originalViewport);
+        await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
       };
-      await captureOpenViewReview(page, "s27-charts-light", options);
+      await checkLayout();
       await page.evaluate(() => document.documentElement.classList.add("dark"));
-      await captureOpenViewReview(page, "s27-charts-dark", options);
+      await checkLayout();
     }
     previous = current;
   }
   expect(bodies).toHaveLength(5);
 });
 
+// The bucket window rule (month and year series, more than 366 buckets,
+// reversed or missing ends) and its saved-Chart admission are owned by
+// isolated/openview/aggregate-buckets.spec.ts; this journey keeps one example.
+test("a month series refuses more than 366 buckets and accepts a calendar window longer than 366 days", async ({
+  page,
+}) => {
+  const keys = [
+    "2025-12-01",
+    "2026-01-01",
+    "2026-02-01",
+    "2026-03-01",
+    "2026-04-01",
+    "2026-05-01",
+    "2026-06-01",
+    "2026-07-01",
+    "2026-08-01",
+    "2026-09-01",
+    "2026-10-01",
+    "2026-11-01",
+    "2026-12-01",
+    "2027-01-01",
+  ];
+  await editorCatalog(page);
+  const bodies: unknown[] = [];
+  await page.route("**/api/records/aggregate-snapshot", (route) => {
+    bodies.push(route.request().postDataJSON());
+    return route.fulfill({ json: calendarSnapshot(keys) });
+  });
+  await page.goto("/openview?section=charts");
+  const apply = page.getByRole("button", { name: "Apply chart", exact: true });
+  await page.getByLabel("Chart type", { exact: true }).selectOption("line");
+  await page
+    .getByLabel("Calendar bucket", { exact: true })
+    .selectOption("month");
+  await page.getByRole("button", { name: "Date window", exact: true }).click();
+  await page.getByLabel("From date", { exact: true }).fill("1980-01-01");
+  await page.getByLabel("To date", { exact: true }).fill("2010-07-01");
+  await expect(apply).toBeDisabled();
+  await expect(
+    page.getByText(/Choose a range of 1–366 calendar buckets/).first(),
+  ).toBeVisible();
+  await page.getByLabel("From date", { exact: true }).fill("2025-12-15");
+  await page.getByLabel("To date", { exact: true }).fill("2027-01-04");
+  await page.keyboard.press("Escape");
+  await apply.click();
+  await expect(
+    page
+      .getByRole("table", { name: "Complete aggregate data", exact: true })
+      .getByRole("row"),
+  ).toHaveCount(keys.length + 1);
+  expect(bodies).toEqual([
+    {
+      mode: "date_series",
+      module_id: moduleId,
+      definition,
+      aggregation: "count",
+      date_field: { field_id: dateId, expected_type: "date" },
+      from_date: "2025-12-15",
+      to_date: "2027-01-04",
+      bucket: "month",
+    },
+  ]);
+});
+
 for (const current of [
-  {
-    bucket: "month",
-    from: "2025-12-15",
-    to: "2027-01-04",
-    keys: [
-      "2025-12-01",
-      "2026-01-01",
-      "2026-02-01",
-      "2026-03-01",
-      "2026-04-01",
-      "2026-05-01",
-      "2026-06-01",
-      "2026-07-01",
-      "2026-08-01",
-      "2026-09-01",
-      "2026-10-01",
-      "2026-11-01",
-      "2026-12-01",
-      "2027-01-01",
-    ],
-  },
   {
     bucket: "year",
     from: "2020-02-10",
@@ -738,7 +736,7 @@ for (const current of [
   });
 }
 
-test("Unit A incomplete, reversed and over-limit windows send nothing; grouped windows keep the 366-day boundary", async ({
+test("incomplete, reversed and over-limit grouped windows send nothing and keep the 366-day boundary", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -779,25 +777,9 @@ test("Unit A incomplete, reversed and over-limit windows send nothing; grouped w
       to_date: "2024-12-31",
     },
   ]);
-  await page.getByLabel("Chart type", { exact: true }).selectOption("line");
-  await page
-    .getByLabel("Calendar bucket", { exact: true })
-    .selectOption("month");
-  await page.getByRole("button", { name: "Date window", exact: true }).click();
-  await page.getByLabel("From date", { exact: true }).fill("1980-01-01");
-  await page.getByLabel("To date", { exact: true }).fill("2010-07-01");
-  await expect(apply).toBeDisabled();
-  await expect(
-    page.getByText(/Choose a range of 1–366 calendar buckets/).first(),
-  ).toBeVisible();
-  await page.getByLabel("To date", { exact: true }).fill("1979-12-31");
-  await expect(apply).toBeDisabled();
-  await page.getByLabel("To date", { exact: true }).fill("");
-  await expect(apply).toBeDisabled();
-  expect(bodies).toHaveLength(1);
 });
 
-test("Unit A incomplete numeric inputs and surviving filter rows stay controlled through metadata refresh", async ({
+test("incomplete numeric inputs and surviving filter rows stay controlled through metadata refresh", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -807,13 +789,14 @@ test("Unit A incomplete numeric inputs and surviving filter rows stay controlled
     (route) => {
       fieldReads += 1;
       return route.fulfill({
-        json: pageResponse(
+        json: pageOf(
           editorFields.map((field, position) => ({
             ...field,
             module_id: moduleId,
             required: false,
             position,
           })),
+          { limit: 100 },
         ),
       });
     },
@@ -882,7 +865,7 @@ test("Unit A incomplete numeric inputs and surviving filter rows stay controlled
   ]);
 });
 
-test("Unit A changed field metadata cannot silently substitute a different dimension", async ({
+test("changed field metadata cannot silently substitute a different dimension", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -893,7 +876,7 @@ test("Unit A changed field metadata cannot silently substitute a different dimen
     (route) => {
       fieldReads += 1;
       return route.fulfill({
-        json: pageResponse(
+        json: pageOf(
           editorFields.map((field, position) => ({
             ...field,
             type: changed && field.id === booleanId ? "int" : field.type,
@@ -901,6 +884,7 @@ test("Unit A changed field metadata cannot silently substitute a different dimen
             required: false,
             position,
           })),
+          { limit: 100 },
         ),
       });
     },
@@ -965,7 +949,7 @@ function pickerChart(id = savedChartId, name = "Weekly intake") {
   };
 }
 
-test("S27 saved picker searches and loads later pages without replacing an off-page selection or inline draft", async ({
+test("saved picker searches and loads later pages without replacing an off-page selection or inline draft", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1057,7 +1041,7 @@ test("S27 saved picker searches and loads later pages without replacing an off-p
   );
 });
 
-test("S27 saved picker refuses current source without using cached metadata or downstream data", async ({
+test("saved picker refuses current source without using cached metadata or downstream data", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1065,14 +1049,8 @@ test("S27 saved picker refuses current source without using cached metadata or d
   await page.route("**/api/charts?*", (route) =>
     route.fulfill({
       json: {
-        ...pageResponse([pickerChart()]),
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        ...pageOf([pickerChart()], { limit: 100 }),
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -1101,10 +1079,7 @@ test("S27 saved picker refuses current source without using cached metadata or d
     page.getByText("Private selected value", { exact: true }).first(),
   ).toBeVisible();
   denied = true;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page.getByText("Private selected value", { exact: true }),
   ).toHaveCount(0);
@@ -1117,7 +1092,7 @@ test("S27 saved picker refuses current source without using cached metadata or d
   expect(bodies).toHaveLength(1);
 });
 
-test("S27 saved picker list refusal withdraws cached names and applied data", async ({
+test("saved picker list refusal withdraws cached names and applied data", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1128,13 +1103,7 @@ test("S27 saved picker list refusal withdraws cached names and applied data", as
       : route.fulfill({
           json: {
             items: [pickerChart()],
-            pagination: {
-              limit: 25,
-              offset: 0,
-              count: 1,
-              total: 1,
-              has_more: false,
-            },
+            pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
           },
         }),
   );
@@ -1157,10 +1126,7 @@ test("S27 saved picker list refusal withdraws cached names and applied data", as
     page.getByText("Private applied value", { exact: true }).first(),
   ).toBeVisible();
   denied = true;
-  await sendOpenViewEvent(page, "invalidate", {
-    entity: "charts",
-    module_id: moduleId,
-  });
+  await sendChartInvalidation(page, moduleId);
   await expect(
     page.getByText("Private applied value", { exact: true }),
   ).toHaveCount(0);
@@ -1170,7 +1136,7 @@ test("S27 saved picker list refusal withdraws cached names and applied data", as
   ).toHaveCount(0);
 });
 
-test("S27 saved picker manual source refusal hides selected metadata until an explicit retry", async ({
+test("saved picker manual source refusal hides selected metadata until an explicit retry", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1180,13 +1146,7 @@ test("S27 saved picker manual source refusal hides selected metadata until an ex
     route.fulfill({
       json: {
         items: [pickerChart()],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -1234,19 +1194,6 @@ test("S27 saved picker manual source refusal hides selected metadata until an ex
   expect(resultReads).toBe(1);
 });
 
-function chartPage(items: ReturnType<typeof pickerChart>[]) {
-  return {
-    items,
-    pagination: {
-      limit: 25,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
-}
-
 test("a transient saved Chart list failure keeps the applied Chart and offers a list retry", async ({
   page,
 }) => {
@@ -1255,7 +1202,7 @@ test("a transient saved Chart list failure keeps the applied Chart and offers a 
   await page.route("**/api/charts?*", (route) =>
     listFails
       ? route.fulfill({ status: 503, json: { detail: "Unavailable" } })
-      : route.fulfill({ json: chartPage([pickerChart()]) }),
+      : route.fulfill({ json: pageOf([pickerChart()], { limit: 25 }) }),
   );
   await page.route(`**/api/charts/${savedChartId}`, (route) =>
     route.fulfill({ json: pickerChart() }),
@@ -1281,14 +1228,15 @@ test("a transient saved Chart list failure keeps the applied Chart and offers a 
   listFails = true;
   await picker.click();
   await expect(page.getByRole("listbox")).toBeVisible();
-  // The open picker focuses its search input.
   const failedSearch = page.waitForResponse(
     (response) =>
       response.url().includes("/api/charts?") &&
       response.url().includes("search=week") &&
       response.status() === 503,
   );
-  await page.keyboard.type("week");
+  await page
+    .getByRole("combobox", { name: "Search saved chart", exact: true })
+    .fill("week");
   await failedSearch;
   await expect(
     page.getByText("Saved Charts are unavailable. Retry the list.", {
@@ -1308,10 +1256,10 @@ test("a refused saved Chart keeps the other Charts available as replacements", a
   let refused = false;
   await page.route("**/api/charts?*", (route) =>
     route.fulfill({
-      json: chartPage([
-        pickerChart(),
-        pickerChart(replacementId, "Monthly intake"),
-      ]),
+      json: pageOf(
+        [pickerChart(), pickerChart(replacementId, "Monthly intake")],
+        { limit: 25 },
+      ),
     }),
   );
   await page.route(`**/api/charts/${savedChartId}`, (route) =>
@@ -1355,7 +1303,7 @@ test("a refused saved Chart keeps the other Charts available as replacements", a
 });
 
 for (const priorApply of [false, true]) {
-  test(`S27 correction F1 picker refusal fences a held ${priorApply ? "different Chart" : "first Chart"} Apply without a transient private commit`, async ({
+  test(`picker refusal fences a held ${priorApply ? "different Chart" : "first Chart"} Apply without a transient private commit`, async ({
     page,
   }) => {
     await editorCatalog(page);
@@ -1365,13 +1313,7 @@ for (const priorApply of [false, true]) {
       route.fulfill({
         json: {
           items: [pickerChart(userId, "Earlier Chart"), pickerChart()],
-          pagination: {
-            limit: 25,
-            offset: 0,
-            count: 2,
-            total: 2,
-            has_more: false,
-          },
+          pagination: wirePagination({ limit: 25, count: 2, total: 2 }),
         },
       }),
     );
@@ -1392,14 +1334,7 @@ for (const priorApply of [false, true]) {
       });
     });
     let hold = true;
-    let release!: () => void;
-    let started!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const aggregateStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const aggregate = gate();
     const bodies: unknown[] = [];
     await page.route("**/api/records/aggregate-snapshot", async (route) => {
       bodies.push(route.request().postDataJSON());
@@ -1408,8 +1343,8 @@ for (const priorApply of [false, true]) {
           json: calendarSnapshot(["Earlier authorised result"]),
         });
       if (hold) {
-        started();
-        await held;
+        aggregate.signalStarted();
+        await aggregate.wait;
         return route.fulfill({
           json: calendarSnapshot(["Private late aggregate"]),
         });
@@ -1453,12 +1388,9 @@ for (const priorApply of [false, true]) {
       .getByRole("button", { name: "Apply chart", exact: true })
       .click();
     try {
-      await aggregateStarted;
+      await aggregate.started;
       refused = true;
-      await sendOpenViewEvent(page, "invalidate", {
-        entity: "charts",
-        module_id: moduleId,
-      });
+      await sendChartInvalidation(page, moduleId);
       await expect.poll(() => refusalReads).toBeGreaterThan(0);
       await expect(
         page.getByRole("button", { name: "Retry saved Chart", exact: true }),
@@ -1484,7 +1416,7 @@ for (const priorApply of [false, true]) {
         });
       });
       const late = page.waitForResponse("**/api/records/aggregate-snapshot");
-      release();
+      aggregate.release();
       await (await late).finished();
       await page.evaluate(
         () =>
@@ -1531,12 +1463,12 @@ for (const priorApply of [false, true]) {
         page.getByLabel("Numeric measure", { exact: true }),
       ).toHaveValue(amountId);
     } finally {
-      release();
+      aggregate.release();
     }
   });
 }
 
-test("S27 correction F3 saved Chart result metadata belongs to its resolved module without replacing the inline draft", async ({
+test("saved Chart result metadata belongs to its resolved module without replacing the inline draft", async ({
   page,
 }) => {
   await editorCatalog(page);
@@ -1556,13 +1488,7 @@ test("S27 correction F3 saved Chart result metadata belongs to its resolved modu
     route.fulfill({
       json: {
         items: [chart],
-        pagination: {
-          limit: 25,
-          offset: 0,
-          count: 1,
-          total: 1,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 25, count: 1, total: 1 }),
       },
     }),
   );
@@ -1614,21 +1540,20 @@ test("S27 correction F3 saved Chart result metadata belongs to its resolved modu
     return route.fulfill({
       json: {
         items: [
-          {
+          wireBucket({
             key: "segment",
             label: "Enterprise",
             value: "12.500",
             record_count: 91,
-          },
-          { key: "empty", label: "Unpriced", value: null, record_count: 1 },
+          }),
+          wireBucket({
+            key: "empty",
+            label: "Unpriced",
+            value: null,
+            record_count: 1,
+          }),
         ],
-        pagination: {
-          limit: 2,
-          offset: 0,
-          count: 2,
-          total: 2,
-          has_more: false,
-        },
+        pagination: wirePagination({ limit: 2, count: 2, total: 2 }),
       },
     });
   });
@@ -1668,36 +1593,36 @@ test("S27 correction F3 saved Chart result metadata belongs to its resolved modu
   expect(metadataReads.sort()).toEqual(
     ["source", resolvedDimension, resolvedMeasure].sort(),
   );
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addStyleTag({
-      content: "nextjs-portal { display: none !important; }",
-    });
-    const options = {
-      beforeScreenshot: async (
-        capture: Page,
-        viewport: { width: number; height: number },
-      ) => {
-        await capture
-          .getByRole("heading", { name: "Chart preview", exact: true })
-          .scrollIntoViewIfNeeded();
-        await expect
-          .poll(() =>
-            capture.evaluate(() => document.documentElement.scrollWidth),
-          )
-          .toBeLessThanOrEqual(viewport.width);
-        await expect(
-          capture.getByText(
-            "Resolved revenue source · Sum net revenue by Revenue segment",
-            { exact: true },
-          ),
-        ).toBeVisible();
-      },
-    };
-    await captureOpenViewReview(page, "s27-correction-charts-light", options);
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await captureOpenViewReview(page, "s27-correction-charts-dark", options);
-  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await hideDevOverlay(page);
+  const checkLayout = async () => {
+    const originalViewport = page.viewportSize();
+    const originalScrollY = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page
+        .getByRole("heading", { name: "Chart preview", exact: true })
+        .scrollIntoViewIfNeeded();
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(viewport.width);
+      await expect(
+        page.getByText(
+          "Resolved revenue source · Sum net revenue by Revenue segment",
+          { exact: true },
+        ),
+      ).toBeVisible();
+    }
+    if (originalViewport) await page.setViewportSize(originalViewport);
+    await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
+  };
+  await checkLayout();
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await checkLayout();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page

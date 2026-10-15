@@ -8,6 +8,7 @@ import pytest
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
 from operations.sample.scenario import build_dataset, build_document, module_counts
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
 def _module(dataset, key: str) -> dict[str, object]:
@@ -167,7 +168,7 @@ def test_dataset_is_seeded_complete_and_repeatable_for_an_explicit_anchor() -> N
 
 
 def test_named_financial_and_purchase_flows_reconcile_through_links_and_references() -> None:
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 29))
+    dataset = sample_dataset("small", 42, date(2026, 9, 29))
     records = _records_by_id(dataset)
 
     invoice = records["invoices:000001"]
@@ -241,7 +242,7 @@ def test_named_financial_and_purchase_flows_reconcile_through_links_and_referenc
 
 
 def test_generated_edges_respect_each_declared_cardinality() -> None:
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 29))
+    dataset = sample_dataset("small", 42, date(2026, 9, 29))
     document = SandboxDocument.model_validate(dataset.document)
     relationships = {item.id: item for item in document.design.relationships}
     child_end = {
@@ -270,7 +271,7 @@ def test_generated_edges_respect_each_declared_cardinality() -> None:
 
 
 def test_temporary_test_vectors_cover_each_trigger_without_storing_scenarios() -> None:
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 29))
+    dataset = sample_dataset("small", 42, date(2026, 9, 29))
     payload = SandboxDocument.model_validate(dataset.document)
     triggers_by_id = {trigger.id: trigger for trigger in payload.triggers}
     assert payload.scenarios == []

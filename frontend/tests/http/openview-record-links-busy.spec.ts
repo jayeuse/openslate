@@ -6,12 +6,15 @@ import {
   type Locator,
   type Page,
   type Route,
+  isEventStream,
 } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
-import { captureOpenViewReview } from "./helpers/openview-review-capture";
+import { pageOf } from "../helpers/pagination";
+import { emptyWireQuery } from "../helpers/query-definitions";
+import { wireField, wireRecord, wireView } from "../helpers/wire";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const departmentId = "00000000-0000-4000-8000-000000000011";
@@ -68,33 +71,17 @@ type HarnessOptions = {
   temporaryFieldOffPage?: boolean;
 };
 
-function pageResponse<T>(items: T[]) {
-  return {
-    items,
-    pagination: {
-      limit: 100,
-      offset: 0,
-      count: items.length,
-      total: items.length,
-      has_more: false,
-    },
-  };
-}
-
 function record(id: string, moduleId: string, name: string) {
   const fieldId =
     moduleId === sourceModuleId ? sourceNameFieldId : targetNameFieldId;
-  return {
+  return wireRecord({
     id,
     module_id: moduleId,
     data: { [fieldId]: name },
-    display_values: {},
     created_at: "2026-09-30T08:00:00Z",
     updated_at: "2026-09-30T08:00:00Z",
-    deleted_at: null,
-    is_deleted: false,
     performed_by: userId,
-  };
+  });
 }
 
 const sourceRecord = record(
@@ -114,21 +101,14 @@ const handoverRecord = record(
 );
 
 function savedView() {
-  return {
+  return wireView({
     id: viewId,
     module_id: sourceModuleId,
     name: "Service requests",
     is_default: true,
-    definition: {
-      version: 1,
-      logic: "and",
+    definition: emptyWireQuery({
       columns: [{ field_id: sourceNameFieldId, expected_type: "text" }],
-      filters: [],
-      sort: [],
-      deleted: "exclude",
-      search: null,
-      search_fields: [],
-    },
+    }),
     presentation: {
       version: 1,
       layout: "table",
@@ -144,12 +124,9 @@ function savedView() {
       date_range: "month",
       scale: null,
     },
-    revision: 1,
-    is_deleted: false,
-    can_edit: true,
     created_at: "2026-09-30T08:00:00Z",
     updated_at: "2026-09-30T08:00:00Z",
-  };
+  });
 }
 
 function relationship(): Relationship {
@@ -257,6 +234,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
   const deleteModes = options.deleteModes ?? ["success"];
 
   await page.route("**/api/**", async (route: Route) => {
+    if (isEventStream(route)) return route.fallback();
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();
@@ -270,7 +248,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       });
     if (url.pathname === "/api/departments")
       return route.fulfill({
-        json: pageResponse(
+        json: pageOf(
           [
             [departmentId, "Field service"],
             ...(!options.otherDepartmentOffPage
@@ -285,6 +263,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
             is_deleted: false,
             performed_by: userId,
           })),
+          { limit: 100 },
         ),
       });
     if (url.pathname === `/api/departments/${otherDepartmentId}`)
@@ -354,30 +333,33 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
     }
     if (url.pathname === "/api/views/data-sources")
       return route.fulfill({
-        json: pageResponse([
-          ...(!options.homeSourceOffPage
-            ? [
-                {
-                  id: sourceModuleId,
-                  name: "Service requests",
-                  department_id: departmentId,
-                  title_field_id: sourceNameFieldId,
-                },
-              ]
-            : []),
-          ...(options.targetUnreadable || options.targetSourceOffPage
-            ? []
-            : [
-                {
-                  id: targetModuleId,
-                  name: "Service visits",
-                  department_id: options.targetInOtherDepartment
-                    ? otherDepartmentId
-                    : departmentId,
-                  title_field_id: targetNameFieldId,
-                },
-              ]),
-        ]),
+        json: pageOf(
+          [
+            ...(!options.homeSourceOffPage
+              ? [
+                  {
+                    id: sourceModuleId,
+                    name: "Service requests",
+                    department_id: departmentId,
+                    title_field_id: sourceNameFieldId,
+                  },
+                ]
+              : []),
+            ...(options.targetUnreadable || options.targetSourceOffPage
+              ? []
+              : [
+                  {
+                    id: targetModuleId,
+                    name: "Service visits",
+                    department_id: options.targetInOtherDepartment
+                      ? otherDepartmentId
+                      : departmentId,
+                    title_field_id: targetNameFieldId,
+                  },
+                ]),
+          ],
+          { limit: 100 },
+        ),
       });
     if (
       url.pathname.startsWith("/api/views/data-sources/") &&
@@ -390,56 +372,48 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
         const limit = Number(url.searchParams.get("limit") ?? 100);
         const catalog = Array.from(
           { length: options.temporaryFieldOffPage ? 102 : 101 },
-          (_, index) => ({
-            id:
-              index === 0
-                ? sourceNameFieldId
-                : index === 100
-                  ? incomingFieldId
-                  : index === 101
-                    ? temporaryFieldId
-                    : `40000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-            module_id: sourceModuleId,
-            name:
-              index === 0
-                ? "Request title"
-                : index === 100
-                  ? "Off-page detail"
-                  : index === 101
-                    ? "Temporary-only detail"
-                    : `Extra field ${index}`,
-            type: "text",
-            required: false,
-            position: index,
-            config: {},
-          }),
+          (_, index) =>
+            wireField({
+              id:
+                index === 0
+                  ? sourceNameFieldId
+                  : index === 100
+                    ? incomingFieldId
+                    : index === 101
+                      ? temporaryFieldId
+                      : `40000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+              module_id: sourceModuleId,
+              name:
+                index === 0
+                  ? "Request title"
+                  : index === 100
+                    ? "Off-page detail"
+                    : index === 101
+                      ? "Temporary-only detail"
+                      : `Extra field ${index}`,
+              type: "text",
+              position: index,
+            }),
         );
         const items = catalog.slice(offset, offset + limit);
         return route.fulfill({
-          json: {
-            items,
-            pagination: {
-              limit,
-              offset,
-              count: items.length,
-              total: catalog.length,
-              has_more: offset + items.length < catalog.length,
-            },
-          },
+          json: pageOf(items, { limit, offset, total: catalog.length }),
         });
       }
       return route.fulfill({
-        json: pageResponse([
-          {
-            id: isSource ? sourceNameFieldId : targetNameFieldId,
-            module_id: moduleId,
-            name: isSource ? "Request title" : "Visit title",
-            type: "text",
-            required: true,
-            position: 0,
-            config: {},
-          },
-        ]),
+        json: pageOf(
+          [
+            wireField({
+              id: isSource ? sourceNameFieldId : targetNameFieldId,
+              module_id: moduleId,
+              name: isSource ? "Request title" : "Visit title",
+              type: "text",
+              required: true,
+              position: 0,
+            }),
+          ],
+          { limit: 100 },
+        ),
       });
     }
     const selectedView = savedView();
@@ -451,39 +425,42 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       selectedView.presentation.column_field_ids.push(incomingFieldId);
     }
     if (url.pathname === "/api/views" && method === "GET")
-      return route.fulfill({ json: pageResponse([selectedView]) });
+      return route.fulfill({ json: pageOf([selectedView], { limit: 100 }) });
     if (url.pathname === `/api/views/${viewId}` && method === "GET")
       return route.fulfill({ json: selectedView });
     if (url.pathname === "/api/fields")
       return route.fulfill({
-        json: pageResponse([
-          {
-            id: relationshipFieldId,
-            module_id: sourceModuleId,
-            name: "Follow-up visit",
-            type: "relationship",
-            is_deleted: false,
-            position: 1,
-            relationship_target_module_id: targetModuleId,
-            relationship_multiple_targets: true,
-            relationship_multiple_sources: !options.singleSource,
-          },
-          ...(options.handoverLink
-            ? [
-                {
-                  id: handoverFieldId,
-                  module_id: sourceModuleId,
-                  name: "Handover visit",
-                  type: "relationship",
-                  is_deleted: false,
-                  position: 2,
-                  relationship_target_module_id: targetModuleId,
-                  relationship_multiple_targets: true,
-                  relationship_multiple_sources: true,
-                },
-              ]
-            : []),
-        ]),
+        json: pageOf(
+          [
+            {
+              id: relationshipFieldId,
+              module_id: sourceModuleId,
+              name: "Follow-up visit",
+              type: "relationship",
+              is_deleted: false,
+              position: 1,
+              relationship_target_module_id: targetModuleId,
+              relationship_multiple_targets: true,
+              relationship_multiple_sources: !options.singleSource,
+            },
+            ...(options.handoverLink
+              ? [
+                  {
+                    id: handoverFieldId,
+                    module_id: sourceModuleId,
+                    name: "Handover visit",
+                    type: "relationship",
+                    is_deleted: false,
+                    position: 2,
+                    relationship_target_module_id: targetModuleId,
+                    relationship_multiple_targets: true,
+                    relationship_multiple_sources: true,
+                  },
+                ]
+              : []),
+          ],
+          { limit: 100 },
+        ),
       });
     if (url.pathname === "/api/relationships" && method === "GET") {
       state.relationshipReads += 1;
@@ -518,16 +495,7 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       const limit = Number(url.searchParams.get("limit") ?? 100);
       const items = links.slice(offset, offset + limit);
       return route.fulfill({
-        json: {
-          items,
-          pagination: {
-            limit,
-            offset,
-            count: items.length,
-            total: links.length,
-            has_more: offset + items.length < links.length,
-          },
-        },
+        json: pageOf(items, { limit, offset, total: links.length }),
       });
     }
     if (url.pathname === "/api/relationships" && method === "POST") {
@@ -599,24 +567,18 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
             ),
         );
         return route.fulfill({
-          json: {
-            items,
-            pagination: {
-              limit,
-              offset,
-              count: items.length,
-              total: options.targetCount,
-              has_more: offset + items.length < options.targetCount,
-            },
-          },
+          json: pageOf(items, { limit, offset, total: options.targetCount }),
         });
       }
       return route.fulfill({
-        json: pageResponse([
-          body.module_id === targetModuleId
-            ? targetRecord
-            : currentSourceRecord,
-        ]),
+        json: pageOf(
+          [
+            body.module_id === targetModuleId
+              ? targetRecord
+              : currentSourceRecord,
+          ],
+          { limit: 100 },
+        ),
       });
     }
     if (url.pathname === `/api/records/${targetRecordId}` && method === "GET")
@@ -979,9 +941,7 @@ test("a link field into a data source the person cannot read offers no Add link"
   expect(api.state.createCount).toBe(0);
 });
 
-test("S08 incident links load later pages only on request", async ({
-  page,
-}) => {
+test("incident links load later pages only on request", async ({ page }) => {
   const api = await installLinksApi(page, { incomingCount: 101 });
   await openLinksPanel(page);
   const incoming = page
@@ -1000,7 +960,7 @@ test("S08 incident links load later pages only on request", async ({
   ).toHaveCount(0);
 });
 
-test("S08 a busy write beyond the visible incident page is checked by exact relationship filters", async ({
+test("a busy write beyond the visible incident page is checked by exact relationship filters", async ({
   page,
 }) => {
   const api = await installLinksApi(page, {
@@ -1035,7 +995,7 @@ test("S08 a busy write beyond the visible incident page is checked by exact rela
   ).toBe(true);
 });
 
-test("S08 a single-source picker checks current candidates without crawling field links", async ({
+test("a single-source picker checks current candidates without crawling field links", async ({
   page,
 }) => {
   const api = await installLinksApi(page, {
@@ -1060,7 +1020,7 @@ test("S08 a single-source picker checks current candidates without crawling fiel
   expect(api.state.createCount).toBe(0);
 });
 
-test("S08 link target search exposes an explicit continuation", async ({
+test("link target search exposes an explicit continuation", async ({
   page,
 }) => {
   const api = await installLinksApi(page, { targetCount: 51 });
@@ -1079,7 +1039,7 @@ test("S08 link target search exposes an explicit continuation", async ({
   expect(api.state.targetRequests).toEqual([0, 50]);
 });
 
-test("S08 a linked source and department beyond the first pages retain their labels", async ({
+test("a linked source and department beyond the first pages retain their labels", async ({
   page,
 }) => {
   await installLinksApi(page, {
@@ -1099,7 +1059,7 @@ test("S08 a linked source and department beyond the first pages retain their lab
   ).toContainText("Service visits · Dispatch");
 });
 
-test("S08 a selected data source beyond the catalog page resolves after reload", async ({
+test("a selected data source beyond the catalog page resolves after reload", async ({
   page,
 }) => {
   await installLinksApi(page, { homeSourceOffPage: true });
@@ -1116,7 +1076,7 @@ test("S08 a selected data source beyond the catalog page resolves after reload",
   ).toBeVisible();
 });
 
-test("S08 an off-page source refusal recovers through Retry catalog", async ({
+test("an off-page source refusal recovers through Retry catalog", async ({
   page,
 }) => {
   const api = await installLinksApi(page, { homeSourceOffPage: true });
@@ -1169,7 +1129,7 @@ test("S08 an off-page source refusal recovers through Retry catalog", async ({
   expect(api.state.recordWrites).toEqual([]);
 });
 
-test("S08 record editing waits for complete fields and preserves an off-page value", async ({
+test("record editing waits for complete fields and preserves an off-page value", async ({
   page,
 }) => {
   const api = await installLinksApi(page, { pagedFields: true });
@@ -1179,30 +1139,6 @@ test("S08 record editing waits for complete fields and preserves an off-page val
   await expect(
     inspector.getByRole("button", { name: "Edit record", exact: true }),
   ).toBeDisabled();
-  if (process.env.OPENVIEW_CAPTURE_DIR) {
-    for (const mode of ["light", "dark"] as const) {
-      await page.evaluate((theme) => {
-        document.documentElement.classList.toggle("dark", theme === "dark");
-      }, mode);
-      await captureOpenViewReview(page, `s08-record-field-guard-${mode}`, {
-        beforeScreenshot: async () => {
-          await inspector
-            .getByRole("button", {
-              name: "Load more fields for editing",
-              exact: true,
-            })
-            .scrollIntoViewIfNeeded();
-          await expect
-            .poll(() =>
-              page.evaluate(
-                () => document.documentElement.scrollWidth <= window.innerWidth,
-              ),
-            )
-            .toBe(true);
-        },
-      });
-    }
-  }
   await inspector
     .getByRole("button", { name: "Load more fields for editing", exact: true })
     .click();
@@ -1227,7 +1163,7 @@ test("S08 record editing waits for complete fields and preserves an off-page val
   );
 });
 
-test("S08 correction record editing preserves page-two values after metadata refresh", async ({
+test("record editing preserves page-two values after metadata refresh", async ({
   page,
 }) => {
   const api = await installLinksApi(page, { pagedFields: true });
@@ -1282,7 +1218,7 @@ test("S08 correction record editing preserves page-two values after metadata ref
   });
 });
 
-test("S08 correction temporary off-page fields wait for detail hydration and survive reload", async ({
+test("temporary off-page fields wait for detail hydration and survive reload", async ({
   page,
 }) => {
   const api = await installLinksApi(page, {
@@ -1386,7 +1322,7 @@ test("S08 correction temporary off-page fields wait for detail hydration and sur
   expect(api.state.recordWrites).toEqual([]);
 });
 
-test("S08 selected saved-view columns retain an off-page field label", async ({
+test("selected saved-view columns retain an off-page field label", async ({
   page,
 }) => {
   await installLinksApi(page, { pagedFields: true, offPageSavedField: true });

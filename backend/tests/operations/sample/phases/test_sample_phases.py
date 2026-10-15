@@ -20,6 +20,7 @@ from operations.sample.phases.plan import (
     plan_phases,
 )
 from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
 @pytest.mark.parametrize("pack_key", ("harbor", "school"))
@@ -35,9 +36,7 @@ def test_registry_packs_supply_required_lifecycle_phase_data(pack_key: str) -> N
 def test_seeded_phase_plan_is_complete_json_safe_and_does_not_change_sample_data(
     pack_key: str,
 ) -> None:
-    dataset = build_dataset(
-        "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack(pack_key)
-    )
+    dataset = sample_dataset(pack=pack_key)
     before = (
         copy.deepcopy(dataset.document),
         dataset.records,
@@ -94,9 +93,7 @@ def test_seeded_phase_plan_is_complete_json_safe_and_does_not_change_sample_data
 
 @pytest.mark.parametrize("pack_key", ("harbor", "school"))
 def test_phase_projection_and_version_documents_match_planned_end_state(pack_key: str) -> None:
-    dataset = build_dataset(
-        "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack(pack_key)
-    )
+    dataset = sample_dataset(pack=pack_key)
     actions = plan_phases(dataset)
 
     projection = phase_expected_projection(actions)
@@ -176,9 +173,7 @@ def test_phase_projection_and_version_documents_match_planned_end_state(pack_key
 
 @pytest.mark.parametrize("pack_key", ("harbor", "school"))
 def test_planned_group_move_does_not_expand_existing_access(pack_key: str) -> None:
-    dataset = build_dataset(
-        "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack(pack_key)
-    )
+    dataset = sample_dataset(pack=pack_key)
     pack = dataset.organization
     move = next(action for action in plan_phases(dataset) if action.kind == "remove_group_member")
     member = next(person for person in pack.actors.people if person.key == move.target_key)
@@ -285,9 +280,7 @@ def test_later_phase_actors_have_sessions_after_admin_revocations(pack_key: str,
 
 
 def test_phase_version_documents_follow_recorded_design_values_after_pack_drift() -> None:
-    dataset = build_dataset(
-        "small", seed=42, anchor_date=date(2026, 9, 30), organization=get_pack("harbor")
-    )
+    dataset = sample_dataset()
     actions = plan_phases(dataset)
     edit = next(action for action in actions if action.kind == "sandbox_edit_publish")
     assert dataset.organization.phases is not None

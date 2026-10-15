@@ -26,6 +26,7 @@ from app.systems.sandbox.record_triggers.models import (
 )
 from app.systems.sandbox.record_triggers.runner import execute_claim
 from app.systems.sandbox.records.models import Record
+from app.systems.sandbox.records.mutation_validation import RecordValidationError
 from app.systems.sandbox.records.router import create_record, update_record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from tests.rbac.support import add_user, make_group_access
@@ -169,8 +170,11 @@ def test_delayed_person_assignment_rechecks_reader_and_rolls_back_prior_action(
     db.commit()
 
     claim = _field_change_claim(db)
-    with pytest.raises(ValueError):
+    with pytest.raises(RecordValidationError, match="Record data is invalid") as invalid:
         execute_claim(db, claim)
+    assert [(issue.field_id, issue.message) for issue in invalid.value.issues] == [
+        (person_field.id, "User must be an active reader of this module")
+    ]
     db.rollback()
     assert mark_claim_failed(db, claim) is False
     db.commit()

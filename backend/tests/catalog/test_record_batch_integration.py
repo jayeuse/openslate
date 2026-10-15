@@ -299,18 +299,13 @@ def test_batch_outer_commit_failure_returns_failure_and_no_updated_rows(batch_wo
     assert _updates(world.db, row["id"]) == _events(world.db, row["id"]) == []
 
 
-@pytest.mark.parametrize("invalid_input", ["too_many", "extra_field", "invalid_revision"])
-def test_batch_request_validation_rejects_before_writing(batch_world, invalid_input):
+def test_batch_request_validation_rejects_before_writing(batch_world):
+    """One HTTP case; test_record_import_rules.py owns every batch envelope rule."""
+
     world = batch_world
     row = create(world, "Keep")
     change = item(row, world.fields["title"].id, "Refused")
-    changes = [change]
-    if invalid_input == "too_many":
-        changes *= 101
-    elif invalid_input == "extra_field":
-        change["data"] = {str(world.fields["title"].id): "Refused"}
-    else:
-        change["revision"] = 1
+    changes = [change] * 101
     response = submit(world, changes)
     assert response.status_code == 422, response.text
     assert world.db.get(Record, UUID(row["id"])).data == row["data"]

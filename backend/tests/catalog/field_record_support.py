@@ -1,6 +1,7 @@
 from unittest.mock import Mock
 from uuid import UUID
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from app.core.database import get_db, model_registry  # noqa: F401
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.fields.router import router as fields_router
 from app.systems.sandbox.modules.models import Module
+from app.systems.sandbox.records import mutation_validation
 from app.systems.sandbox.records.router import router as records_router
 from tests.catalog.auth_support import override_catalog_authorization
 
@@ -55,3 +57,22 @@ def _make_validation_client(*, db: Session | None = None) -> TestClient:
     override_catalog_authorization(app)
     app.dependency_overrides[get_db] = lambda: database
     return TestClient(app)
+
+
+READER_ID = "0192f0c4-6b1e-7c3a-9d2e-4f5a6b7c8d9e"
+OUTSIDER_ID = "0192f0c4-6b1e-7c3a-9d2e-4f5a6b7c8d9f"
+
+
+@pytest.fixture
+def module_readers(monkeypatch: pytest.MonkeyPatch) -> tuple[Session, UUID]:
+    """The reader query is stack-owned; this answers it for one session and module."""
+
+    db = Mock(spec=Session)
+    module_id = uuid7()
+    readers = {(db, module_id): frozenset({UUID(READER_ID)})}
+    monkeypatch.setattr(
+        mutation_validation,
+        "module_reader_ids",
+        lambda session, module: readers.get((session, module), frozenset()),
+    )
+    return db, module_id

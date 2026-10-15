@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { expect, recheckSession, test, type Page } from "./helpers/test";
 import { ids, mockAccessApi } from "./helpers/access-api";
 import { deferredMfaResponse } from "./helpers/mfa";
 
@@ -383,7 +383,7 @@ test("partial revocation is truthful and performs session read-back without repl
   expect(api.sent("POST", `/api/users/${ids.ben}/recovery`)).toHaveLength(1);
 });
 
-test("a command returning401 requests session verification without refresh or replay", async ({
+test("a command returning 401 requests session verification without refresh or replay", async ({
   page,
 }) => {
   const api = await setup(page);
@@ -438,9 +438,7 @@ test("old pending completion behind same-account verification cannot change curr
       json: { authenticated: true, user_id: ids.rosa, setup_required: false },
     });
   });
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  await recheckSession(page);
   await verification.begun;
   held.release();
   const curtain = page.getByRole("dialog", {
@@ -560,9 +558,7 @@ test("account replacement clears old pending ownership and cannot display its re
       },
     }),
   );
-  await page.evaluate(() =>
-    window.dispatchEvent(new Event("openslate:session-recheck")),
-  );
+  await recheckSession(page);
   await expect(
     sheet.getByRole("tab", { name: "Details", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -583,8 +579,13 @@ test("known self revocation signs out after a partial email outcome", async ({
   page,
 }) => {
   const api = await setup(page);
-  api.on("POST", `/api/users/${ids.rosa}/recovery`, (route) =>
-    route.fulfill({
+  api.on("POST", `/api/users/${ids.rosa}/recovery`, (route) => {
+    // A committed local revocation ended this session, so the server reports
+    // it signed out; /login would otherwise return a live session to work.
+    api.on("GET", "/api/auth/session", (session) =>
+      session.fulfill({ json: { authenticated: false } }),
+    );
+    return route.fulfill({
       status: 503,
       json: {
         detail: {
@@ -596,8 +597,8 @@ test("known self revocation signs out after a partial email outcome", async ({
           message: "Private diagnostic",
         },
       },
-    }),
-  );
+    });
+  });
   await open(page, ids.rosa, "Rosa Reyes");
   await confirmRecovery(page, true);
   await expect(page).toHaveURL(/\/login$/);
@@ -644,14 +645,9 @@ test("large-text phone panel keeps security actions and confirmation reachable",
 });
 
 // Recovery feedback follows the submitted command, including confirmed facts
-// from an overall partial result. Generic attachments contain only rendered copy.
+// from an overall partial result: one sent and one failed outcome. Every
+// partial combination is a row of isolated/access/person-security-outcome.spec.ts.
 for (const state of [
-  {
-    name: "recovery committed accepted",
-    revoke: true,
-    email: "accepted",
-    local: "committed",
-  },
   {
     name: "recovery committed not_attempted",
     revoke: true,
@@ -664,14 +660,8 @@ for (const state of [
     email: "accepted",
     local: "not_requested",
   },
-  {
-    name: "recovery unconfirmed revocation not_attempted",
-    revoke: true,
-    email: "not_attempted",
-    local: "unconfirmed",
-  },
 ] as const) {
-  test(`partial feedback: ${state.name}`, async ({ page }, testInfo) => {
+  test(`partial feedback: ${state.name}`, async ({ page }) => {
     const api = await setup(page);
     const path = `/api/users/${ids.ben}/recovery`;
     api.on("POST", path, (route) =>
@@ -712,10 +702,6 @@ for (const state of [
     });
     expect(api.sent("POST", `/api/users/${ids.ben}/mfa/reset`)).toHaveLength(0);
     const observed = (await outcome.innerText()).replace(/\s+/g, " ").trim();
-    await testInfo.attach("recovery-partial-outcome", {
-      body: Buffer.from(observed),
-      contentType: "text/plain",
-    });
     expect.soft(observed).not.toMatch(/authenticator|two-step/i);
     if (sent) expect(observed).toMatch(/Recovery email sent to \S+@\S+\./);
     else if (state.local === "committed")
@@ -724,11 +710,6 @@ for (const state of [
       );
     if (state.local === "committed")
       expect(observed).toMatch(/^Signed out everywhere\./);
-    else if (state.local === "not_requested")
-      expect(observed).not.toMatch(/signed out/i);
-    else {
-      expect(observed).toMatch(/may be only partly saved/i);
-      expect(observed).not.toMatch(/signed out everywhere/i);
-    }
+    else expect(observed).not.toMatch(/signed out/i);
   });
 }

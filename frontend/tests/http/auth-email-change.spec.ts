@@ -17,8 +17,7 @@ import {
   observeEmailSecretExposure,
 } from "./helpers/email-change";
 
-// Prepared browser specifications, not an executed red/green claim.
-// Cryptography, provider consumption and transaction guarantees are native tests.
+// Cryptography, provider consumption and transaction guarantees are backend tests.
 test.use({ trace: "off", screenshot: "off", video: "off" });
 test.beforeEach(async ({ page }) => {
   await observeEmailSecretExposure(page);
@@ -45,7 +44,7 @@ const partial = (page: Page) =>
   page.getByRole("status").filter({ hasText: /other.*email|both.*address/i });
 const landingAlert = (page: Page) => page.getByRole("main").getByRole("alert");
 
-test("S24 email request refuses a wrong password without refresh, replay or changed identity", async ({
+test("email request refuses a wrong password without refresh, replay or changed identity", async ({
   page,
 }) => {
   await installProfileApi(page);
@@ -64,13 +63,14 @@ test("S24 email request refuses a wrong password without refresh, replay or chan
     changedEmail,
   );
   expect(api.requests).toHaveLength(1);
+  expect(api.requests.map(({ method }) => method)).toEqual(["POST"]);
   expect(api.refreshes).toBe(0);
   await expect(
     page.getByText("person@example.test", { exact: true }).first(),
   ).toBeVisible();
 });
 
-test("S24 unknown email request outcome stays truthful and never automatically resends", async ({
+test("unknown email request outcome stays truthful and never automatically resends", async ({
   page,
 }) => {
   await installProfileApi(page);
@@ -98,7 +98,7 @@ test("S24 unknown email request outcome stays truthful and never automatically r
   await expectNoEmailSecrets(page);
 });
 
-test("S24 an old account's delayed request cannot publish success into another Profile", async ({
+test("an old account's delayed request cannot publish success into another Profile", async ({
   page,
 }) => {
   const profile = await installProfileApi(page);
@@ -135,7 +135,7 @@ test("S24 an old account's delayed request cannot publish success into another P
   }
 });
 
-test("S24 same-account reverification discards a delayed request without leaving the form stuck", async ({
+test("same-account reverification discards a delayed request without leaving the form stuck", async ({
   page,
 }) => {
   const profile = await installProfileApi(page);
@@ -174,7 +174,7 @@ test("S24 same-account reverification discards a delayed request without leaving
 });
 
 for (const first of ["current", "new"] as const) {
-  test(`S24 ${first}-address first acknowledgment has no identity/cookie claim; the other link enters protected admission`, async ({
+  test(`${first}-address first acknowledgment has no identity/cookie claim; the other link enters protected admission`, async ({
     page,
     context,
   }) => {
@@ -231,7 +231,7 @@ for (const first of ["current", "new"] as const) {
 }
 
 for (const credential of ["access", "refresh"] as const) {
-  test(`S24 ${credential} cookie cannot silently replace accounts; confirmation resumes only after explicit logout`, async ({
+  test(`${credential} cookie cannot silently replace accounts; confirmation resumes only after explicit logout`, async ({
     page,
     context,
     baseURL,
@@ -286,7 +286,7 @@ for (const credential of ["access", "refresh"] as const) {
   });
 }
 
-test("S24 final confirmation enters the incumbent MFA continuation before private Profile", async ({
+test("final confirmation enters the incumbent MFA continuation before private Profile", async ({
   page,
 }) => {
   const profile = await installProfileApi(page, { session: false, mfa: false });
@@ -334,7 +334,7 @@ test("S24 final confirmation enters the incumbent MFA continuation before privat
   }
 });
 
-test("S24 provider-confirmed local conflict is application-incomplete, not rollback or authentication", async ({
+test("provider-confirmed local conflict is application-incomplete, not rollback or authentication", async ({
   page,
   context,
 }) => {
@@ -379,7 +379,7 @@ for (const [outcome, status] of [
   ["unauthorized", 401],
   ["unavailable", 503],
 ] as const) {
-  test(`S24 ${outcome} confirmation is not refreshed or automatically replayed and never renders private proof`, async ({
+  test(`${outcome} confirmation is not refreshed or automatically replayed and never renders private proof`, async ({
     page,
   }) => {
     const api = await installEmailChangeApi(page, { signedOut: true });
@@ -398,7 +398,7 @@ for (const [outcome, status] of [
   });
 }
 
-test("S24 replay of an acknowledged first link cannot count as the other address", async ({
+test("replay of an acknowledged first link cannot count as the other address", async ({
   page,
 }) => {
   const api = await installEmailChangeApi(page, { signedOut: true });
@@ -417,38 +417,38 @@ test("S24 replay of an acknowledged first link cannot count as the other address
   await expectNoEmailSecrets(page);
 });
 
-for (const [kind, suffix] of [
-  ["missing", ""],
-  ["wrong-purpose", `#token_hash=${currentEmailProof}&type=recovery`],
-  [
-    "duplicate",
-    `#token_hash=${currentEmailProof}&token_hash=${newEmailProof}&type=email_change`,
-  ],
-  ["malformed", "#token_hash=not-a-provider-hash&type=email_change"],
-] as const) {
-  test(`S24 ${kind} email link is scrubbed and cannot issue a confirmation request`, async ({
-    page,
-  }) => {
-    const api = await installEmailChangeApi(page, { signedOut: true });
-    await page.goto(`${emailChangeLanding}${suffix}`);
-    await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
-    await expect(landingAlert(page)).toBeVisible();
-    await expect(confirm(page)).toBeDisabled();
-    expect(api.completions).toEqual([]);
-    expect(api.refreshes).toBe(0);
-    await expectNoEmailSecrets(page);
-  });
-}
-
-test("S24 a scrubbed link survives in memory only, not a page reload", async ({
+// Missing, wrong-purpose and duplicate links are rows of the action-link table
+// in tests/isolated/auth/action-token.spec.ts; this journey keeps one.
+test("malformed email link is scrubbed and cannot issue a confirmation request", async ({
   page,
 }) => {
   const api = await installEmailChangeApi(page, { signedOut: true });
+  await page.goto(
+    `${emailChangeLanding}#token_hash=not-a-provider-hash&type=email_change`,
+  );
+  await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
+  await expect(landingAlert(page)).toBeVisible();
+  await expect(confirm(page)).toBeDisabled();
+  expect(api.completions).toEqual([]);
+  expect(api.refreshes).toBe(0);
+  await expectNoEmailSecrets(page);
+});
+
+test("a scrubbed link survives in memory only, not a page reload", async ({
+  page,
+}) => {
+  const api = await installEmailChangeApi(page, { signedOut: true });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(
     `${emailChangeLanding}#token_hash=${currentEmailProof}&type=email_change`,
   );
   await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
   await expect(confirm(page)).toBeEnabled();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
   expect(api.completions).toEqual([]);
   await expectNoEmailSecrets(page);
   await page.reload();
@@ -458,38 +458,29 @@ test("S24 a scrubbed link survives in memory only, not a page reload", async ({
   await expectNoEmailSecrets(page);
 });
 
-for (const [kind, body] of [
-  [
-    "non-Boolean",
-    {
-      authenticated: "false",
-      confirmation_required: false,
-      setup_required: false,
-    },
-  ],
-  [
-    "contradictory",
-    { authenticated: true, confirmation_required: true, setup_required: false },
-  ],
-] as const) {
-  test(`S24 a ${kind} partial/full response cannot publish confirmation success`, async ({
-    page,
-  }) => {
-    const api = await installEmailChangeApi(page, { signedOut: true });
-    api.completeBody = body;
-    await page.goto(
-      `${emailChangeLanding}#token_hash=${newEmailProof}&type=email_change`,
-    );
-    await confirm(page).click();
-    await expect(landingAlert(page)).toBeVisible();
-    await expect(partial(page)).toHaveCount(0);
-    await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
-    expect(api.completions).toHaveLength(1);
-    await expectNoEmailSecrets(page);
-  });
-}
+// The other refused confirmation bodies are rows of
+// tests/isolated/auth/email-confirmation.spec.ts; this journey keeps one.
+test("a contradictory partial/full response cannot publish confirmation success", async ({
+  page,
+}) => {
+  const api = await installEmailChangeApi(page, { signedOut: true });
+  api.completeBody = {
+    authenticated: true,
+    confirmation_required: true,
+    setup_required: false,
+  };
+  await page.goto(
+    `${emailChangeLanding}#token_hash=${newEmailProof}&type=email_change`,
+  );
+  await confirm(page).click();
+  await expect(landingAlert(page)).toBeVisible();
+  await expect(partial(page)).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`${emailChangeLanding}$`));
+  expect(api.completions).toHaveLength(1);
+  await expectNoEmailSecrets(page);
+});
 
-test("S24 a source replaced during confirmation discards the delayed result and waits for the new explicit action", async ({
+test("a source replaced during confirmation discards the delayed result and waits for the new explicit action", async ({
   page,
 }) => {
   const api = await installEmailChangeApi(page, { signedOut: true });
@@ -520,46 +511,28 @@ test("S24 a source replaced during confirmation discards the delayed result and 
   }
 });
 
-test("S24 email surfaces eight-image acceptance round", async ({
-  page,
-}, testInfo) => {
-  test.skip(
-    process.env.CAPTURE_S24_EMAIL !== "1",
-    "Opt-in rendered email acceptance record",
-  );
-  const profile = await installProfileApi(page);
-  const api = await installEmailChangeApi(page, { signedOut: true });
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 390, height: 844 },
-  ]) {
-    for (const theme of ["light", "dark"] as const) {
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`email surfaces at ${viewport.width} px in ${theme} keep enabled actions without submission`, async ({
+      page,
+    }) => {
+      const profile = await installProfileApi(page);
+      const api = await installEmailChangeApi(page, { signedOut: true });
       profile.theme = theme;
       await page.setViewportSize(viewport);
       await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
       api.authenticated = true;
       const dialog = await openEmailRequest(page);
-      await expect(page.locator("html")).toHaveClass(
-        theme === "dark" ? /dark/ : /^(?!.*\bdark\b).*$/,
-      );
       await expect(
         dialog.getByRole("button", {
           name: "Send confirmation emails",
           exact: true,
         }),
       ).toBeEnabled();
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
-      const profileImage = `s24-email-form-${viewport.width}-${theme}.png`;
-      await page.screenshot({
-        path: testInfo.outputPath(profileImage),
-        mask: [dialog.getByLabel("Current password", { exact: true })],
-      });
-      await testInfo.attach(profileImage, {
-        path: testInfo.outputPath(profileImage),
-        contentType: "image/png",
-      });
+
       api.authenticated = false;
       await page.goto(
         `${emailChangeLanding}#token_hash=${currentEmailProof}&type=email_change`,
@@ -572,25 +545,13 @@ test("S24 email surfaces eight-image acceptance round", async ({
         (dark) => document.documentElement.classList.toggle("dark", dark),
         theme === "dark",
       );
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
-      const landingImage = `s24-email-confirmation-${viewport.width}-${theme}.png`;
-      await page.screenshot({
-        path: testInfo.outputPath(landingImage),
-        fullPage: true,
-      });
-      await testInfo.attach(landingImage, {
-        path: testInfo.outputPath(landingImage),
-        contentType: "image/png",
-      });
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
       ).toBe(true);
-    }
+      expect(api.requests).toEqual([]);
+      expect(api.completions).toEqual([]);
+    });
   }
-  expect(api.requests).toEqual([]);
-  expect(api.completions).toEqual([]);
-});
+}

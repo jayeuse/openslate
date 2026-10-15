@@ -59,7 +59,10 @@ def _numeric_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, 
         raise ValueError(
             "Numeric fields only support minimum, maximum, step, and defaultValue configuration"
         )
-    for key in set(config).intersection(allowed):
+    # A fixed order keeps the message the same in every process when several keys fail.
+    for key in ("minimum", "maximum", "step", "defaultValue"):
+        if key not in config:
+            continue
         if key == "defaultValue" and config[key] is None:
             continue
         if not _finite_numeric(config[key]):
@@ -82,8 +85,6 @@ def _numeric_config(field_type: FieldType, config: dict[str, Any]) -> dict[str, 
         raise ValueError("Numeric field step must be a positive finite number")
     if "defaultValue" in normalized and normalized["defaultValue"] is not None:
         default = normalized["defaultValue"]
-        if not _finite_numeric(default):
-            raise ValueError("Numeric field defaultValue must be a finite number")
         if normalized.get("minimum") is not None and default < normalized["minimum"]:
             raise ValueError("Numeric field defaultValue is below its minimum")
         if normalized.get("maximum") is not None and default > normalized["maximum"]:
@@ -118,11 +119,8 @@ def _decimal_config(config: dict[str, Any]) -> dict[str, Any]:
             normalized[key] = _canonical_decimal(config[key], key)
 
     if normalized.get("minimum") is not None and normalized.get("maximum") is not None:
-        try:
-            if Decimal(normalized["minimum"]) > Decimal(normalized["maximum"]):
-                raise ValueError("Decimal field minimum cannot exceed maximum")
-        except InvalidOperation as error:
-            raise ValueError("Decimal field bounds must be valid decimal strings") from error
+        if Decimal(normalized["minimum"]) > Decimal(normalized["maximum"]):
+            raise ValueError("Decimal field minimum cannot exceed maximum")
     return normalized
 
 
@@ -321,10 +319,7 @@ def _validate_number(value: Any, field: Field) -> int | float:
 
 def _validate_decimal(value: Any, field: Field) -> str:
     canonical = _canonical_decimal(value, "value")
-    try:
-        parsed = Decimal(canonical)
-    except InvalidOperation as error:
-        raise ValueError(f"Field {field.id} must be a decimal string") from error
+    parsed = Decimal(canonical)
 
     minimum = field.config.get("minimum")
     maximum = field.config.get("maximum")

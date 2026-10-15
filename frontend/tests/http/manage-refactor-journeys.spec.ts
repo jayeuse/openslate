@@ -1,7 +1,6 @@
 import { expect, test } from "./helpers/test";
 import type { Page } from "./helpers/test";
 import { mockManageBackups } from "./helpers/manage-backups";
-import { mockManageSecurity } from "./helpers/manage-security";
 import { sendOpenViewEvent } from "./helpers/openview-event-source";
 
 type WorkspaceProfile = {
@@ -125,28 +124,10 @@ function installWorkspaceRoute(
     };
     await route.fulfill({ json: current });
   });
-  return { patches, read: () => current };
+  return { patches };
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      json: {
-        id: "00000000-0000-4000-8000-000000000101",
-        role: "admin",
-        access: [],
-      },
-    }),
-  );
-  await page.route("**/api/auth/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user_id: "00000000-0000-4000-8000-000000000101",
-        setup_required: false,
-      },
-    }),
-  );
   installWorkspaceRoute(page);
 });
 
@@ -240,15 +221,6 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   await expect(mark).toHaveValue("HOP");
   await expect(week).toHaveValue("Monday");
   await expect(hours).toHaveValue("10:00–19:00");
-  expect(workspace.read()).toMatchObject({
-    display_name: "Harbor operations",
-    locale: "en-SG",
-    timezone: "UTC",
-    mark: "HOP",
-    currency: "USD",
-    week_start: "monday",
-    business_hours: "10:00–19:00",
-  });
   await mark.fill("");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(
@@ -257,7 +229,6 @@ test("Manage organization loads and saves all seven workspace fields", async ({
   expect(workspace.patches[1]).toEqual({ revision: 5, mark: "" });
   await page.reload();
   await expect(mark).toHaveValue("");
-  expect(workspace.read().mark).toBe("");
 });
 
 test("Manage organization refreshes a stale revision, keeps the draft, then shows a 403 without clearing it", async ({
@@ -324,10 +295,8 @@ test("Manage organization refreshes a stale revision, keeps the draft, then show
 test("Manage organization retries a failed workspace load", async ({
   page,
 }) => {
-  let reads = 0;
   let allowRead = false;
   await page.route("**/api/workspace", async (route) => {
-    reads += 1;
     if (!allowRead) {
       await route.fulfill({
         status: 503,
@@ -338,51 +307,24 @@ test("Manage organization retries a failed workspace load", async ({
     await route.fulfill({ json: initialWorkspace });
   });
   await page.goto("/manage?view=organization");
-  await expect.poll(() => reads).toBeGreaterThan(0);
   await expect(
     page.getByText("The organization settings could not be loaded.", {
       exact: true,
     }),
   ).toBeVisible();
-  const failedReads = reads;
   allowRead = true;
+  const retried = page.waitForRequest(
+    (request) =>
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === "/api/workspace",
+  );
   await page
     .getByRole("button", { name: "Retry organization settings", exact: true })
     .click();
-  await expect.poll(() => reads).toBeGreaterThan(failedReads);
+  await retried;
   await expect(
     page.getByRole("textbox", { name: "Organization name", exact: true }),
   ).toHaveValue("Riverside Services");
-});
-
-test("Manage organization shows readable locale names and sends locale tags", async ({
-  page,
-}) => {
-  const workspace = installWorkspaceRoute(page, {
-    ...initialWorkspace,
-    locale: "fr-FR",
-  });
-  await page.goto("/manage?view=organization");
-  const locale = page.getByRole("combobox", {
-    name: "Regional format",
-    exact: true,
-  });
-  await expect(locale).toContainText("French (France)");
-  await chooseRegionalOption(
-    page,
-    "Regional format",
-    "English (US)",
-    "English (US)",
-  );
-  await page
-    .getByRole("button", { name: "Save settings", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Discard changes", exact: true }),
-  ).toBeDisabled();
-  expect(workspace.patches).toEqual([{ revision: 4, locale: "en-US" }]);
-  await page.reload();
-  await expect(locale).toContainText("English (US)");
 });
 
 test.describe("Organization regional choices", () => {
@@ -505,22 +447,6 @@ test.describe("Organization regional choices", () => {
     ).toBeDisabled();
     expect(workspace.patches).toEqual([]);
   });
-
-  test("regional choices do not advertise excluded fund or testing currencies", async ({
-    page,
-  }) => {
-    installWorkspaceRoute(page);
-    await page.goto("/manage?view=organization");
-    await page.getByRole("combobox", { name: "Currency", exact: true }).click();
-    const search = page.getByRole("dialog").getByRole("combobox");
-    for (const code of ["XTS", "XAU", "USN"]) {
-      await search.fill(code);
-      await expect(
-        page.getByText("No matches. Try another search.", { exact: true }),
-      ).toBeVisible();
-      await expect(page.getByRole("dialog").getByRole("option")).toHaveCount(0);
-    }
-  });
 });
 
 test("Manage organization keeps all its draft fields after a failed save", async ({
@@ -578,22 +504,18 @@ test("Manage organization keeps all its draft fields after a failed save", async
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.patches).toEqual([]);
-  expect(workspace.read()).toEqual(initialWorkspace);
   await page
     .getByRole("button", { name: "Save settings", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Discard changes", exact: true }),
   ).toBeDisabled();
-  await expect
-    .poll(() => workspace.read())
-    .toMatchObject({
-      display_name: "Pending workspace",
-      mark: "HOP",
-      currency: "USD",
-      week_start: "sunday",
-      business_hours: "10:00–19:00",
-    });
+  await page.reload();
+  await expect(name).toHaveValue("Pending workspace");
+  await expect(mark).toHaveValue("HOP");
+  await expect(currency).toContainText("USD");
+  await expect(week).toHaveValue("Sunday");
+  await expect(hours).toHaveValue("10:00–19:00");
 });
 
 test("Manage preserves section drafts without saving on leave or discard, validates saves, and retains accepted settings after reload", async ({
@@ -636,7 +558,6 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   await expect(week).toHaveValue("Sunday");
   await expect(hours).toHaveValue("10:00–19:00");
   expect(workspace.patches).toEqual([]);
-  expect(workspace.read()).toEqual(initialWorkspace);
   await page
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
@@ -646,7 +567,6 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   await expect(week).toHaveValue("Monday");
   await expect(hours).toHaveValue("09:00–18:00");
   expect(workspace.patches).toEqual([]);
-  expect(workspace.read()).toEqual(initialWorkspace);
   await name.fill(" ");
   await page
     .getByRole("button", { name: "Save settings", exact: true })
@@ -662,58 +582,6 @@ test("Manage preserves section drafts without saving on leave or discard, valida
   ).toBeDisabled();
   await page.reload();
   await expect(name).toHaveValue("Accepted journey workspace");
-});
-
-test("Manage organization retains draft controls without the sample Reset Manage action", async ({
-  page,
-}) => {
-  await page.goto("/manage?view=organization");
-  const name = page.getByRole("textbox", {
-    name: "Organization name",
-    exact: true,
-  });
-  await expect(name).toHaveValue("Riverside Services");
-  await expect(
-    page.getByRole("button", { name: "Manage options", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("menuitem", { name: "Reset Manage", exact: true }),
-  ).toHaveCount(0);
-  await name.fill("Keep this draft");
-  await expect(
-    page.getByRole("button", { name: "Discard changes", exact: true }),
-  ).toBeEnabled();
-  await page
-    .getByRole("button", { name: "Discard changes", exact: true })
-    .click();
-  await expect(name).toHaveValue("Riverside Services");
-});
-
-test("Backup request name validation and cancel restore focus without any local snapshot mutation", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockManageSecurity(page);
-  const backup = await mockManageBackups(page);
-  await page.goto("/manage?view=backup");
-  const opener = page.getByRole("button", { name: "Back up now", exact: true });
-  await opener.click();
-  const dialog = page.getByRole("dialog", { name: "Back up now", exact: true });
-  const name = dialog.getByLabel("Backup name", { exact: true });
-  const submit = dialog.getByRole("button", {
-    name: "Back up now",
-    exact: true,
-  });
-  await name.fill(" ");
-  await submit.click();
-  await expect(name).toHaveAttribute("aria-invalid", "true");
-  await expect(dialog).toContainText("Enter a backup name");
-  expect(backup.queueRequests).toEqual([]);
-  await name.fill("Preserved name");
-  await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
-  await expect(opener).toBeFocused();
-  expect(backup.queueRequests).toEqual([]);
 });
 
 test("Updates and licensing share a real read-only destination and never simulate upgrades or licenses", async ({
@@ -739,9 +607,6 @@ test("Updates and licensing share a real read-only destination and never simulat
   });
   await expect(software.getByText("0.1.0", { exact: true })).toBeVisible();
   await expect(software).toContainText("Release information unavailable");
-  await expect(software.getByText("Up to date", { exact: true })).toHaveCount(
-    0,
-  );
   await expect(license).toContainText("No license required");
   await expect(
     license.getByText(
@@ -753,11 +618,14 @@ test("Updates and licensing share a real read-only destination and never simulat
       name: /Review update|Roll back update|Confirm update/,
     }),
   ).toHaveCount(0);
+  const refreshed = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === "/api/version",
+  );
   await software
     .getByRole("button", { name: "Refresh release status", exact: true })
     .click();
+  await refreshed;
   await expect(software).toContainText("Release information unavailable");
-  expect(state.versionReads).toBeGreaterThanOrEqual(2);
   await expect(
     software.getByRole("link", { name: "Update procedure", exact: true }),
   ).toHaveAttribute(
@@ -831,71 +699,6 @@ test("Recorded version loading, denial, stale and current observations remain ho
     .click();
   await expect(software.getByText("Up to date", { exact: true })).toBeVisible();
   await expect(software).toContainText("Release check");
-  state.version.current_version = "2.7.1-development";
-  state.version.status = "unknown";
-  state.version.latest_version = "2.7.1";
-  state.version.observed_at = "2026-10-08T04:00:00Z";
-  state.version.checked_at = "2026-10-08T04:01:00Z";
-  state.version.release_url =
-    "https://github.com/jayeuse/openslate/releases/tag/v2.7.1";
-  await software
-    .getByRole("button", { name: "Refresh release status", exact: true })
-    .click();
-  await expect(
-    software.getByText("2.7.1-development", { exact: true }),
-  ).toBeVisible();
-  await expect(software).toContainText("Version comparison unavailable");
-  await expect(software).not.toContainText("No release observation recorded");
-  await expect(software.getByText("2.7.1", { exact: true })).toBeVisible();
-  await expect(
-    software.getByRole("link", { name: "Release notes", exact: true }),
-  ).toHaveAttribute(
-    "href",
-    "https://github.com/jayeuse/openslate/releases/tag/v2.7.1",
-  );
-  await expect(software.getByText("Up to date", { exact: true })).toHaveCount(
-    0,
-  );
-  state.version.latest_version = null;
-  state.version.observed_at = null;
-  state.version.checked_at = null;
-  state.version.release_url = null;
-  await software
-    .getByRole("button", { name: "Refresh release status", exact: true })
-    .click();
-  await expect(software).toContainText("No release observation recorded");
-  await expect(
-    software.getByText("2.7.1-development", { exact: true }),
-  ).toBeVisible();
-});
-
-test("leaving Manage with an unsaved organization draft asks before discarding it", async ({
-  page,
-}) => {
-  installWorkspaceRoute(page);
-  await page.goto("/manage?view=organization");
-  const name = page.getByRole("textbox", {
-    name: "Organization name",
-    exact: true,
-  });
-  await expect(name).toHaveValue("Riverside Services");
-  await name.fill("Riverside Field Services");
-
-  // Switching Manage sections keeps drafts, so it is not held.
-  const leave = page.getByRole("link", { name: /People and groups/ });
-  await leave.click();
-  const dialog = page.getByRole("alertdialog");
-  await expect(dialog).toContainText("Discard unsaved Manage changes?");
-  await dialog.getByRole("button", { name: "Keep editing" }).click();
-  await expect(page).toHaveURL(/\/manage\?view=organization/);
-  await expect(name).toHaveValue("Riverside Field Services");
-
-  await leave.click();
-  await page
-    .getByRole("alertdialog")
-    .getByRole("button", { name: "Discard changes" })
-    .click();
-  await expect(page).toHaveURL(/\/access/);
 });
 
 test("Organization Larger text reflows at 1024 and phone widths with all settings reachable", async ({

@@ -9,6 +9,10 @@ import {
   serializeOpenViewQueryDefinition,
   type OpenViewQueryDefinition,
 } from "../../../src/components/systems/openview/adapters/views-api";
+import { wirePagination } from "../../helpers/pagination";
+import { emptyQuery } from "../../helpers/query-definitions";
+import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
+import { wireRecord } from "../../helpers/wire";
 
 const moduleId = "00000000-0000-4000-8000-000000000101";
 const dateFieldId = "00000000-0000-4000-8000-000000000102";
@@ -18,35 +22,9 @@ const recordId = "00000000-0000-4000-8000-000000000105";
 const unrelatedFieldId = "00000000-0000-4000-8000-000000000106";
 const deadlineFieldId = "00000000-0000-4000-8000-000000000107";
 
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(
-  responder: (input: RequestInfo | URL, init?: RequestInit) => Response,
-) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder(input, init));
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
-
-const calendarDefinition: OpenViewQueryDefinition = {
-  version: 1,
-  logic: "and",
+const calendarDefinition: OpenViewQueryDefinition = emptyQuery({
   columns: [{ fieldId: dateFieldId, expectedType: "date" }],
-  filters: [],
-  sort: [],
-  deleted: "exclude",
-  search: null,
-  searchFields: [],
-};
+});
 
 const timelineDefinition: OpenViewQueryDefinition = {
   ...calendarDefinition,
@@ -80,25 +58,15 @@ const timelineRequest: OpenViewWindowQueryRequest = {
 function calendarResponse() {
   return {
     items: [
-      {
+      wireRecord({
         id: recordId,
         module_id: moduleId,
         data: { [dateFieldId]: "2024-02-29" },
-        display_values: {},
         created_at: "2026-09-23T00:00:00Z",
         updated_at: "2026-09-23T00:00:00Z",
-        deleted_at: null,
-        is_deleted: false,
-        performed_by: null,
-      },
+      }),
     ],
-    pagination: {
-      limit: 10,
-      offset: 7,
-      count: 1,
-      total: 8,
-      has_more: false,
-    },
+    pagination: wirePagination({ limit: 10, offset: 7, count: 1, total: 8 }),
     timezone: null,
   };
 }
@@ -159,13 +127,12 @@ test("serializes Timeline refs and preserves offset DATETIME strings and timezon
         },
       },
     ],
-    pagination: {
+    pagination: wirePagination({
       limit: 25,
-      offset: 0,
       count: 1,
       total: 2,
       has_more: true,
-    },
+    }),
     timezone: "America/New_York",
   };
   const mock = installFetch(() => Response.json(response));

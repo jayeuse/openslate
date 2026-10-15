@@ -37,6 +37,7 @@ from tests.record_queries.export_http_support import (
 from tests.record_queries.export_http_support import (
     fake_provider_account as fake_provider_account,
 )
+from tests.repository import REPOSITORY_ROOT
 
 pytestmark = pytest.mark.integration
 NS = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -385,7 +386,7 @@ def test_export_view_metadata_is_scoped_and_current(export_world: ExportWorld, s
 
 @pytest.mark.parametrize("theme", ["slate", "whiteboard", "triplicate", "stockroom"])
 def test_xlsx_theme_header_matches_the_light_css(export_world: ExportWorld, theme: str) -> None:
-    css_root = Path(__file__).resolve().parents[3] / "frontend/src/app"
+    css_root = REPOSITORY_ROOT / "frontend/src/app"
     css = css_root / ("globals.css" if theme == "slate" else f"themes/{theme}.css")
     action = re.search(r"--action:\s*(#[a-fA-F0-9]{6})", css.read_text())
     assert action is not None
@@ -416,20 +417,11 @@ def test_xlsx_theme_header_matches_the_light_css(export_world: ExportWorld, them
             db.commit()
 
 
-@pytest.mark.parametrize(
-    "options",
-    [
-        {"format": "pdf"},
-        {"title": "x" * 121},
-        {"include_record_id": "yes"},
-        {"accent": "red"},
-        {"totals": 1},
-        {"export_all": True},
-    ],
-)
-def test_export_rejects_invalid_options(
-    export_world: ExportWorld, options: dict[str, object]
-) -> None:
-    response = export_world.client.post("/api/records/export", json=export_world.payload(**options))
+def test_export_rejects_invalid_options(export_world: ExportWorld) -> None:
+    """One HTTP case; test_rules.py owns every option rule of the export request."""
+
+    response = export_world.client.post(
+        "/api/records/export", json=export_world.payload(format="pdf")
+    )
     assert response.status_code == 422
     assert export_world.events() == []

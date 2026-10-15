@@ -51,28 +51,30 @@ def test_postgres_constraints_reject_self_and_active_duplicates(
 ) -> None:
     field, _, _, sources, targets = _seed_graph(integration_db, owned_ids)
 
+    savepoint = integration_db.begin_nested()
+    integration_db.add(
+        RelationshipEdge(
+            field_id=field.id,
+            source_record_id=sources[0].id,
+            target_record_id=sources[0].id,
+        )
+    )
     with pytest.raises(IntegrityError):
-        with integration_db.begin_nested():
-            integration_db.add(
-                RelationshipEdge(
-                    field_id=field.id,
-                    source_record_id=sources[0].id,
-                    target_record_id=sources[0].id,
-                )
-            )
-            integration_db.flush()
+        integration_db.flush()
+    savepoint.rollback()
 
     _add_edge(integration_db, owned_ids, field, sources[0], targets[0])
+    savepoint = integration_db.begin_nested()
+    integration_db.add(
+        RelationshipEdge(
+            field_id=field.id,
+            source_record_id=sources[0].id,
+            target_record_id=targets[0].id,
+        )
+    )
     with pytest.raises(IntegrityError):
-        with integration_db.begin_nested():
-            integration_db.add(
-                RelationshipEdge(
-                    field_id=field.id,
-                    source_record_id=sources[0].id,
-                    target_record_id=targets[0].id,
-                )
-            )
-            integration_db.flush()
+        integration_db.flush()
+    savepoint.rollback()
 
 
 def test_postgres_partial_unique_allows_relink_after_soft_delete(

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date
 from itertools import groupby
 
 from operations.sample.catalog import _MODULES
 from operations.sample.population.people import _GROUP_ACCESS, _people
-from operations.sample.scenario import build_dataset
+from tests.operations.sample.sample_datasets import sample_dataset
 
 _LEVELS = {"read": 1, "write": 2, "manage": 3}
 
@@ -30,7 +29,7 @@ def _level(person_key: str, department: str, module: str) -> int:
 
 
 def test_every_planned_creator_can_write_the_module() -> None:
-    dataset = build_dataset("standard", seed=42, anchor_date=date(2026, 9, 30))
+    dataset = sample_dataset("standard")
     active = {person.key for person in _people() if person.status == "active"}
     for record in dataset.records:
         assert record.creator_key in active
@@ -41,7 +40,7 @@ def test_every_planned_creator_can_write_the_module() -> None:
 
 
 def test_creators_work_in_short_sessions_and_rotate() -> None:
-    dataset = build_dataset("standard", seed=42, anchor_date=date(2026, 9, 30))
+    dataset = sample_dataset("standard")
     for module in _MODULES:
         creators = [
             record.creator_key for record in dataset.records if record.module_key == module.key
@@ -54,7 +53,7 @@ def test_creators_work_in_short_sessions_and_rotate() -> None:
 
 
 def test_everyone_on_a_team_creates_records_and_leads_create_fewer() -> None:
-    dataset = build_dataset("standard", seed=42, anchor_date=date(2026, 9, 30))
+    dataset = sample_dataset("standard")
     creators = Counter(record.creator_key for record in dataset.records)
     internal_active = {
         person.key for person in _people() if person.role == "member" and person.status == "active"
@@ -67,7 +66,7 @@ def test_everyone_on_a_team_creates_records_and_leads_create_fewer() -> None:
 
 
 def test_assignees_are_team_members_and_owner_values_name_them() -> None:
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30))
+    dataset = sample_dataset()
     owner_fields = {
         field["id"]
         for module in dataset.document["design"]["modules"]
@@ -94,7 +93,7 @@ def test_internal_audit_group_gives_two_sales_members_read_only_finance_access()
 def test_audit_rows_must_name_the_planned_person() -> None:
     from operations.sample.verification.core import expected_edge_actor, expected_record_actor
 
-    dataset = build_dataset("small", seed=42, anchor_date=date(2026, 9, 30))
+    dataset = sample_dataset()
     record = dataset.records[0]
     ids = {key: f"user-{key}" for key in {item.creator_key for item in dataset.records}}
     assert expected_record_actor(record, ids) == f"user-{record.creator_key}"

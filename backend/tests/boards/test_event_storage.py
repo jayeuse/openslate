@@ -112,10 +112,11 @@ def test_event_series_enforces_temporal_and_recurrence_modes(integration_owner_d
         {"revision": 0},
     )
     for override in invalid_overrides:
+        savepoint = db.begin_nested()
+        db.add(BoardEvent(**(base | override)))
         with pytest.raises(IntegrityError):
-            with db.begin_nested():
-                db.add(BoardEvent(**(base | override)))
-                db.flush()
+            db.flush()
+        savepoint.rollback()
 
     db.add(BoardEvent(**base))
     db.flush()
@@ -125,14 +126,16 @@ def test_event_series_enforces_temporal_and_recurrence_modes(integration_owner_d
     all_day.is_deleted = True
     db.flush()
     assert db.get(BoardEvent, all_day.id) is all_day
+    savepoint = db.begin_nested()
+    db.delete(board)
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.delete(board)
-            db.flush()
+        db.flush()
+    savepoint.rollback()
+    savepoint = db.begin_nested()
+    db.delete(author)
     with pytest.raises(IntegrityError):
-        with db.begin_nested():
-            db.delete(author)
-            db.flush()
+        db.flush()
+    savepoint.rollback()
 
 
 @pytest.mark.integration

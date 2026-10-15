@@ -1,5 +1,4 @@
 export type ConflictChoice = "current" | "draft";
-export type EditorIntent = "create" | "edit";
 
 export type FieldConflict = {
   id: string;
@@ -7,16 +6,6 @@ export type FieldConflict = {
   current: string;
   draft: string;
 };
-
-export function sameList(
-  left: readonly string[],
-  right: readonly string[],
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((item, index) => item === right[index])
-  );
-}
 
 export function hasThreeWayConflict<T>(
   current: T,
@@ -29,26 +18,6 @@ export function hasThreeWayConflict<T>(
     !equals(draft, baseline) &&
     !equals(draft, current)
   );
-}
-
-export function changedPatch<T extends object, K extends keyof T>(
-  baseline: T,
-  draft: T,
-  fields: readonly K[],
-  equals: (left: T[K], right: T[K]) => boolean = Object.is,
-): Partial<Pick<T, K>> {
-  const patch: Partial<Pick<T, K>> = {};
-  for (const field of fields) {
-    if (!equals(baseline[field], draft[field])) patch[field] = draft[field];
-  }
-  return patch;
-}
-
-export function applyPatch<T extends object, P extends Partial<T>>(
-  current: T,
-  patch: P,
-): T & P {
-  return { ...current, ...patch };
 }
 
 export function resolveThreeWayValue<T>(

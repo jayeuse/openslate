@@ -5,149 +5,25 @@ disable and enable, delete and restore, and group edits under an ETag. Each
 test goes through the real routes and the real administrator checks.
 """
 
-from collections.abc import Iterator
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-import app.systems.access.users.account_operations as account_operations
-from app.common.dependencies.auth import CurrentIdentity, get_current_identity, get_current_user
-from app.core.database import get_db
-from app.systems.access.identity.models import IdentitySession
-from app.systems.access.policy.configuration_router import router as access_policy_router
-from app.systems.access.policy.models import AccessLevel, Group, GroupAccess
-from app.systems.access.users.account_operations import router as account_operations_router
+from app.systems.access.policy.models import AccessLevel, Group
 from app.systems.access.users.models import User, UserRole, UserStatus
-from app.systems.access.users.sessions_router import auth_router as collection_sessions_router
-from app.systems.access.users.sessions_router import router as admin_sessions_router
-from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog, SecurityEventOutcome
-from app.systems.sandbox.departments.models import Department
-from app.systems.sandbox.modules.models import Module
-from tests.rbac.support import add_department, add_module, add_user, make_group_access
+from tests.access.user_admin_support import UserAdminWorld, add_session
+from tests.access.user_admin_support import world as world
 
 pytestmark = pytest.mark.integration
 
 
-@dataclass
-class _World:
-    db: Session
-    admin: User
-    member: User
-    colleague: User
-    inventory: Department
-    finance: Department
-    finance_module: Module
-    group: Group
-    actor: list[User]
-    events: list[tuple[str, SecurityEventOutcome, UUID]]
-    # (event_type, operation_id, actor_id) for each captured outcome, in order.
-    operations: list[tuple[str, UUID, UUID]]
-    _client: TestClient
-    sessions: dict[UUID, IdentitySession] = field(default_factory=dict)
-
-    def client(self, user: User) -> TestClient:
-        self.actor[:] = [user]
-        set_audit_actor(self.db, user.id)
-        return self._client
-
-    def access_rows(self, group: Group) -> set[tuple[str, str | None, str]]:
-        rows = self.db.scalars(select(GroupAccess).where(GroupAccess.group_id == group.id)).all()
-        return {
-            (
-                str(row.department_id),
-                None if row.module_id is None else str(row.module_id),
-                str(row.level),
-            )
-            for row in rows
-        }
-
-
-def _add_session(db: Session, user: User) -> IdentitySession:
-    session = IdentitySession(
-        user_id=user.id,
-        refresh_token_digest=uuid7().hex * 2,
-        csrf_token_digest=uuid7().hex * 2,
-        expires_at=datetime.now(UTC) + timedelta(days=7),
-    )
-    db.add(session)
-    db.flush()
-    return session
-
-
 def _etag(group: Group) -> str:
     return f'"{group.id}:{group.revision}"'
-
-
-@pytest.fixture
-def world(integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch) -> Iterator[_World]:
-    db = integration_owner_db
-    # Security events commit through a second connection that cannot see these
-    # uncommitted users; capture the outcomes instead.
-    events: list[tuple[str, SecurityEventOutcome, UUID]] = []
-    operations: list[tuple[str, UUID, UUID]] = []
-
-    def capture_outcome(
-        event_type: str,
-        outcome: SecurityEventOutcome,
-        operation_id: UUID,
-        actor_id: UUID,
-        target_id: UUID,
-        reason: str | None = None,
-    ) -> None:
-        events.append((event_type, outcome, target_id))
-        operations.append((event_type, operation_id, actor_id))
-
-    monkeypatch.setattr(account_operations, "_record_outcome", capture_outcome)
-
-    inventory = add_department(db)
-    finance = add_department(db)
-    finance_module = add_module(db, finance)
-    admin = add_user(db, "user-admin-http-admin", role=UserRole.ADMIN)
-    member = add_user(db, "user-admin-http-member")
-    colleague = add_user(db, "user-admin-http-colleague")
-    grant = make_group_access(db, [colleague], inventory, level=AccessLevel.READ)
-    group = db.get(Group, grant.group_id)
-    assert group is not None
-    sessions = {user.id: _add_session(db, user) for user in (admin, member)}
-    # Release the setup savepoint so a refused request rolls back only its own work.
-    db.commit()
-
-    actor: list[User] = []
-    app = FastAPI()
-    app.include_router(account_operations_router, prefix="/api")
-    app.include_router(admin_sessions_router, prefix="/api")
-    app.include_router(collection_sessions_router, prefix="/api")
-    app.include_router(access_policy_router, prefix="/api")
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
-    app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
-        actor[0], uuid7(), False, False
-    )
-    with TestClient(app) as client:
-        yield _World(
-            db=db,
-            admin=admin,
-            member=member,
-            colleague=colleague,
-            inventory=inventory,
-            finance=finance,
-            finance_module=finance_module,
-            group=group,
-            actor=actor,
-            events=events,
-            operations=operations,
-            _client=client,
-            sessions=sessions,
-        )
 
 
 def _user_role_audit(db: Session, user: User) -> list[AuditLog]:
@@ -163,20 +39,20 @@ def _user_role_audit(db: Session, user: User) -> list[AuditLog]:
     return [row for row in rows if row.after is not None and "role" in row.after]
 
 
-def _one_operation_by(world: _World, actor: User) -> None:
+def _one_operation_by(world: UserAdminWorld, actor: User) -> None:
     """Every captured outcome belongs to one operation performed by `actor`."""
     assert world.operations, "no security event was recorded"
     assert len({operation_id for _, operation_id, _ in world.operations}) == 1
     assert {actor_id for _, _, actor_id in world.operations} == {actor.id}
 
 
-def _clear_events(world: _World) -> None:
+def _clear_events(world: UserAdminWorld) -> None:
     world.events.clear()
     world.operations.clear()
 
 
 def test_administrator_promotes_and_demotes_a_member_with_an_audit_record(
-    world: _World,
+    world: UserAdminWorld,
 ) -> None:
     client = world.client(world.admin)
 
@@ -197,7 +73,7 @@ def test_administrator_promotes_and_demotes_a_member_with_an_audit_record(
 
 
 def test_disabling_a_member_revokes_their_sessions_and_enabling_restores_the_account(
-    world: _World,
+    world: UserAdminWorld,
 ) -> None:
     client = world.client(world.admin)
     member_session = world.sessions[world.member.id]
@@ -234,7 +110,7 @@ def test_disabling_a_member_revokes_their_sessions_and_enabling_restores_the_acc
     _one_operation_by(world, world.admin)
 
 
-def test_administrator_deletes_and_restores_a_member_once(world: _World) -> None:
+def test_administrator_deletes_and_restores_a_member_once(world: UserAdminWorld) -> None:
     client = world.client(world.admin)
     member_session = world.sessions[world.member.id]
 
@@ -280,10 +156,10 @@ def test_administrator_deletes_and_restores_a_member_once(world: _World) -> None
     assert restored_again.json() == {"detail": "User is not deleted"}
 
 
-def test_member_is_refused_every_user_administration_route(world: _World) -> None:
+def test_member_is_refused_every_user_administration_route(world: UserAdminWorld) -> None:
     client = world.client(world.member)
     target = world.colleague
-    target_session = _add_session(world.db, target)
+    target_session = add_session(world.db, target)
     world.db.commit()
 
     responses = {
@@ -313,7 +189,7 @@ def test_member_is_refused_every_user_administration_route(world: _World) -> Non
     assert world.events == []
 
 
-def test_administrator_gets_not_found_for_an_unknown_user(world: _World) -> None:
+def test_administrator_gets_not_found_for_an_unknown_user(world: UserAdminWorld) -> None:
     client = world.client(world.admin)
     unknown = uuid7()
 
@@ -332,7 +208,72 @@ def test_administrator_gets_not_found_for_an_unknown_user(world: _World) -> None
     }
 
 
-def test_group_rename_requires_the_current_version(world: _World) -> None:
+def _make_world_admin_the_only_usable_one(world: UserAdminWorld) -> None:
+    """Disable, inside this test's transaction, administrators that other tests committed."""
+    others = world.db.scalars(
+        select(User).where(
+            User.role == UserRole.ADMIN.value,
+            User.status == UserStatus.ACTIVE.value,
+            User.id != world.admin.id,
+        )
+    ).all()
+    for other in others:
+        other.status = UserStatus.DISABLED.value
+    world.db.flush()
+
+
+def _add_admin(world: UserAdminWorld, name: str, **state: Any) -> User:
+    admin = User(
+        email=f"{name}-{uuid7().hex}@example.com",
+        username=f"{name}-{uuid7().hex[-12:]}",
+        role=UserRole.ADMIN.value,
+        status=UserStatus.ACTIVE.value,
+        **state,
+    )
+    world.db.add(admin)
+    world.db.flush()
+    return admin
+
+
+def test_unusable_administrators_do_not_keep_the_last_usable_one(world: UserAdminWorld) -> None:
+    _make_world_admin_the_only_usable_one(world)
+    past = datetime.now(UTC) - timedelta(days=1)
+    # Deleted, never-accepted and expired administrators can no longer act.
+    _add_admin(world, "deleted-admin", is_deleted=True, deleted_at=past)
+    _add_admin(world, "unaccepted-admin", invitation_sent_at=past)
+    _add_admin(world, "expired-admin", expires_at=past)
+    world.db.commit()
+    client = world.client(world.admin)
+
+    demoted = client.patch(f"/api/users/{world.admin.id}", json={"role": "member"})
+
+    assert demoted.status_code == 409
+    assert demoted.json() == {"detail": "Cannot remove the last active admin"}
+    world.db.refresh(world.admin)
+    assert world.admin.role == UserRole.ADMIN.value
+
+
+def test_a_temporary_administrator_does_not_keep_the_last_durable_one(
+    world: UserAdminWorld,
+) -> None:
+    _make_world_admin_the_only_usable_one(world)
+    temporary = _add_admin(
+        world, "temporary-admin", expires_at=datetime.now(UTC) + timedelta(days=30)
+    )
+    world.db.commit()
+    client = world.client(world.admin)
+
+    durable_demoted = client.patch(f"/api/users/{world.admin.id}", json={"role": "member"})
+    temporary_demoted = client.patch(f"/api/users/{temporary.id}", json={"role": "member"})
+
+    assert durable_demoted.status_code == 409
+    assert durable_demoted.json() == {"detail": "Cannot remove the last durable admin"}
+    # The durable administrator remains, so the temporary one may step down.
+    assert temporary_demoted.status_code == 200, temporary_demoted.text
+    assert temporary_demoted.json()["role"] == "member"
+
+
+def test_group_rename_requires_the_current_version(world: UserAdminWorld) -> None:
     group = world.group
     revision = group.revision
     client = world.client(world.admin)
@@ -369,7 +310,9 @@ def test_group_rename_requires_the_current_version(world: _World) -> None:
     )
 
 
-def test_administrator_replaces_group_access_and_the_revision_advances(world: _World) -> None:
+def test_administrator_replaces_group_access_and_the_revision_advances(
+    world: UserAdminWorld,
+) -> None:
     group = world.group
     revision = group.revision
     desired = {
@@ -400,7 +343,7 @@ def test_administrator_replaces_group_access_and_the_revision_advances(world: _W
     assert (group.revision, group.performed_by) == (revision + 1, world.admin.id)
 
 
-def test_non_administrator_cannot_replace_group_access(world: _World) -> None:
+def test_non_administrator_cannot_replace_group_access(world: UserAdminWorld) -> None:
     group = world.group
     revision = group.revision
     before = world.access_rows(group)

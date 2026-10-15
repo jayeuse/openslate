@@ -18,7 +18,6 @@ from app.core.base_model import utc_now
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
@@ -30,30 +29,13 @@ from tests.boards.support import client as board_client
 from tests.boards.support import grant, project_board
 from tests.charts.chart_route_support import ChartWorld
 from tests.conftest import _assert_alembic_head, guarded_create_engine
+from tests.live_session_support import with_live_session
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
+from tests.route_app_support import route_app
 
 
 def client(db: Session, actor: User, *routers: APIRouter) -> TestClient:
-    now = utc_now()
-    session = IdentitySession(
-        user_id=actor.id,
-        refresh_token_digest=uuid7().hex + uuid7().hex,
-        csrf_token_digest=uuid7().hex + uuid7().hex,
-        created_at=now,
-        refreshed_at=now,
-        expires_at=now + timedelta(hours=1),
-    )
-    db.add(session)
-    db.commit()
-    session_id = session.id
-    result = board_client(db, actor, *routers)
-
-    def identity() -> CurrentIdentity:
-        set_audit_actor(db, actor.id)
-        return CurrentIdentity(actor, session_id, False, False)
-
-    result.app.dependency_overrides[get_current_identity] = identity
-    return result
+    return with_live_session(board_client(db, actor, *routers), db, actor)
 
 
 def managed_board(world: ChartWorld, *actor_names: str) -> Board:
@@ -114,7 +96,7 @@ class ReferenceRaceWorld:
                 dashboard.id,
             )
             db.commit()
-        self.app = create_app()
+        self.app = route_app()
 
         def database(request: Request):
             with AuditSession(self.runtime) as db:

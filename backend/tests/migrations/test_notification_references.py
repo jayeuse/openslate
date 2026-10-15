@@ -300,9 +300,9 @@ def test_accepted_reference_tuples_and_non_work_repeatability(
         ids[work_name] if work_name else None,
     )
     if work_name:
+        payload["id"] = str(uuid7())
         with pytest.raises(IntegrityError) as duplicate:
             with db.begin_nested():
-                payload["id"] = str(uuid7())
                 connection.execute(
                     text(
                         "INSERT INTO in_app_notifications SELECT * FROM jsonb_populate_record("

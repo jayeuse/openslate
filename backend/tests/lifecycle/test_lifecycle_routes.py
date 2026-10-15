@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import Response
+from pydantic import ValidationError
 from uuid6 import uuid7
 
 from app.systems.sandbox.lifecycle.router import (
@@ -131,5 +132,7 @@ def test_lifecycle_confirmation_requests_bound_all_secret_and_confirmation_field
                 request_model.model_validate(oversized).confirmation_name == oversized[field_name]
             )
             continue
-        with pytest.raises(ValueError):
+        with pytest.raises(
+            ValidationError, match=f"\n{field_name}\n  String should have at most \\d+ characters"
+        ):
             request_model(**oversized)

@@ -1,7 +1,7 @@
 """Signed MFA enforcement and the real-provider TOTP session journey."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from typing import Annotated
 from unittest.mock import Mock
 from uuid import uuid4
@@ -23,45 +23,43 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity import provider_sessions
 from app.systems.access.identity.contracts import InvalidCredentials
-from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
+from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.auth.test_supabase_auth_core import _client_for_key, _signed_access
+from tests.auth.provider_jwt_support import client_for_key, signed_access
 
 
 def test_verified_provider_access_uses_exact_instance_session_and_assurance() -> None:
     from app.core.integrations.supabase_auth import InvalidProviderToken
 
     key = ec.generate_private_key(ec.SECP256R1())
-    client = _client_for_key(key)
+    client = client_for_key(key)
     user_id, session_id = uuid4(), uuid4()
-    valid = _signed_access(key, user_id=str(user_id), session_id=str(session_id))
+    valid = signed_access(key, user_id=str(user_id), session_id=str(session_id))
     identity = client.verify_access_token(valid)
     assert identity.user_id == user_id
     assert identity.session_id == session_id
     assert identity.issued_at <= datetime.now(UTC)
     for invalid in (
-        _signed_access(
+        signed_access(
             key,
             user_id=str(user_id),
             session_id=str(session_id),
             issuer="https://other.example.test/auth/v1",
         ),
-        _signed_access(key, user_id=str(user_id), session_id=str(session_id), audience="anon"),
-        _signed_access(key, user_id=str(user_id), session_id=str(session_id), extra={"sub": "bad"}),
-        _signed_access(
+        signed_access(key, user_id=str(user_id), session_id=str(session_id), audience="anon"),
+        signed_access(key, user_id=str(user_id), session_id=str(session_id), extra={"sub": "bad"}),
+        signed_access(
             key, user_id=str(user_id), session_id=str(session_id), extra={"session_id": "bad"}
         ),
-        _signed_access(
+        signed_access(
             key,
             user_id=str(user_id),
             session_id=str(session_id),
             expires_at=datetime.now(UTC) - timedelta(minutes=1),
         ),
-        _signed_access(key, user_id=str(user_id), session_id=str(session_id), extra={"aal": None}),
-        _signed_access(
-            key, user_id=str(user_id), session_id=str(session_id), extra={"aal": "aal9"}
-        ),
+        signed_access(key, user_id=str(user_id), session_id=str(session_id), extra={"aal": None}),
+        signed_access(key, user_id=str(user_id), session_id=str(session_id), extra={"aal": "aal9"}),
     ):
         with pytest.raises(InvalidProviderToken):
             client.verify_access_token(invalid)
@@ -73,15 +71,74 @@ def test_verified_provider_access_uses_exact_instance_session_and_assurance() ->
     foreign_key = ec.generate_private_key(ec.SECP256R1())
     with pytest.raises(InvalidProviderToken):
         client.verify_access_token(
-            _signed_access(
+            signed_access(
                 foreign_key, user_id=str(user_id), session_id=str(session_id), extra={"aal": "aal2"}
             )
         )
     assert identity.assurance_level == "aal1"
-    upgraded = _signed_access(
+    upgraded = signed_access(
         key, user_id=str(user_id), session_id=str(session_id), extra={"aal": "aal2"}
     )
     assert client.verify_access_token(upgraded).assurance_level == "aal2"
+
+
+def _protected_app(
+    monkeypatch: pytest.MonkeyPatch,
+    profile: WorkspaceProfile,
+    *,
+    role: str,
+    name: str,
+    factors: list[dict[str, str]] | None = None,
+) -> tuple[FastAPI, Callable[..., str]]:
+    """A route behind the real ``get_current_identity`` and a signer for its provider tokens.
+
+    The provider serves a generated key's JWKS and the user's ``factors``; the database
+    returns one active local user and its provider session; ``profile`` is the policy.
+    """
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    local_id, provider_id, provider_session = uuid4(), uuid4(), uuid4()
+    provider = client_for_key(key, user_id=provider_id, factors=factors)
+    user = User(
+        id=local_id,
+        supabase_user_id=provider_id,
+        email=f"{name}@example.test",
+        username=name,
+        role=role,
+        status="active",
+    )
+    session = IdentitySession(
+        id=uuid4(),
+        user_id=local_id,
+        provider_user_id=provider_id,
+        provider_session_id=provider_session,
+        created_at=datetime.now(UTC),
+        refreshed_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db = Mock(spec=Session)
+    db.scalar.side_effect = lambda query: (
+        session if query.column_descriptions[0]["entity"] is IdentitySession else user
+    )
+    db.execute.return_value.scalar_one.return_value = True
+    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
+    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile, raising=False)
+    monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: provider)
+    app = FastAPI()
+    app.dependency_overrides[get_db] = lambda: db
+
+    @app.get("/protected")
+    def protected(
+        identity: Annotated[dependency.CurrentIdentity, Depends(dependency.get_current_identity)],
+    ):
+        return {"user_id": str(identity.user.id)}
+
+    def signed_token(**claims: object) -> str:
+        return signed_access(
+            key, user_id=str(provider_id), session_id=str(provider_session), extra=claims or None
+        )
+
+    return app, signed_token
 
 
 @pytest.mark.parametrize(
@@ -102,32 +159,7 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
     monkeypatch, policy, role, factor_status, assurance, expected
 ) -> None:
 
-    key = ec.generate_private_key(ec.SECP256R1())
-    local_id, provider_id, provider_session = uuid4(), uuid4(), uuid4()
     factor = {"id": str(uuid4()), "factor_type": "totp", "status": factor_status}
-    provider = _client_for_key(key, user_id=provider_id, factors=[factor] if factor_status else [])
-    user = User(
-        id=local_id,
-        supabase_user_id=provider_id,
-        email="mfa@example.test",
-        username="mfa",
-        role=role,
-        status="active",
-    )
-    session = IdentitySession(
-        id=uuid4(),
-        user_id=local_id,
-        provider_user_id=provider_id,
-        provider_session_id=provider_session,
-        created_at=datetime.now(UTC),
-        refreshed_at=datetime.now(UTC),
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
-    db = Mock(spec=Session)
-    db.scalar.side_effect = lambda query: (
-        session if query.column_descriptions[0]["entity"] is IdentitySession else user
-    )
-    db.execute.return_value.scalar_one.return_value = True
     profile = WorkspaceProfile(
         mfa_require_admin=policy != "optional",
         mfa_require_member=policy == "everyone",
@@ -137,21 +169,10 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
         session_absolute_lifetime_minutes=None,
         ip_allow_list=[],
     )
-    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile, raising=False)
-    monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: provider)
-    app = FastAPI()
-    app.dependency_overrides[get_db] = lambda: db
-
-    @app.get("/protected")
-    def protected(
-        identity: Annotated[dependency.CurrentIdentity, Depends(dependency.get_current_identity)],
-    ):
-        return {"user_id": str(identity.user.id)}
-
-    token = _signed_access(
-        key, user_id=str(provider_id), session_id=str(provider_session), extra={"aal": assurance}
+    app, signed_token = _protected_app(
+        monkeypatch, profile, role=role, name="mfa", factors=[factor] if factor_status else []
     )
+    token = signed_token(aal=assurance)
     with TestClient(app) as browser:
         response = browser.get(
             "/protected?allow_aal1=true", headers={"Authorization": f"Bearer {token}"}
@@ -161,6 +182,7 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
         assert response.json()["detail"]["code"] == "mfa_required"
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "source,expected", [("10.1.2.3", 200), ("203.0.113.8", 403), ("unknown", 403)]
 )
@@ -168,49 +190,13 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
     monkeypatch, source, expected
 ):
 
-    key = ec.generate_private_key(ec.SECP256R1())
-    local_id, provider_id, provider_session = uuid4(), uuid4(), uuid4()
-    provider = _client_for_key(key, user_id=provider_id)
-    user = User(
-        id=local_id,
-        supabase_user_id=provider_id,
-        email="ip@example.test",
-        username="ip",
-        role="member",
-        status="active",
-    )
-    session = IdentitySession(
-        id=uuid4(),
-        user_id=local_id,
-        provider_user_id=provider_id,
-        provider_session_id=provider_session,
-        created_at=datetime.now(UTC),
-        refreshed_at=datetime.now(UTC),
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
-    db = Mock(spec=Session)
-    db.scalar.side_effect = lambda query: (
-        session if query.column_descriptions[0]["entity"] is IdentitySession else user
-    )
-    db.execute.return_value.scalar_one.return_value = True
     profile = WorkspaceProfile(
         session_timeout_minutes=60,
         session_absolute_lifetime_minutes=None,
         ip_allow_list=["10.0.0.0/8"],
     )
-    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile, raising=False)
-    monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: provider)
-    app = FastAPI()
-    app.dependency_overrides[get_db] = lambda: db
-
-    @app.get("/protected")
-    def protected(
-        identity: Annotated[dependency.CurrentIdentity, Depends(dependency.get_current_identity)],
-    ):
-        return {"user_id": str(identity.user.id)}
-
-    token = _signed_access(key, user_id=str(provider_id), session_id=str(provider_session))
+    app, signed_token = _protected_app(monkeypatch, profile, role="member", name="ip")
+    token = signed_token()
     with TestClient(app, client=(source, 50000)) as browser:
         response = browser.get(
             "/protected",
@@ -221,6 +207,7 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
         assert response.json()["detail"]["code"] == "ip_not_allowed"
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "path,payload",
     [
@@ -269,87 +256,6 @@ def test_auth_actions_reject_disallowed_transport_address_before_provider_work(
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "ip_not_allowed"
     assert provider.mock_calls == []
-
-
-@pytest.fixture
-def mfa_context(monkeypatch):
-    from cryptography.fernet import Fernet
-    from pydantic import SecretStr
-
-    from app.core.integrations.supabase_auth import (
-        ProviderTokens,
-    )
-    from app.systems.access.identity import mfa as service
-
-    key = Fernet.generate_key()
-    cipher = Fernet(key)
-    provider_id, provider_session, factor_id = uuid4(), uuid4(), uuid4()
-    user = User(
-        id=uuid4(),
-        supabase_user_id=provider_id,
-        email="mfa@example.test",
-        username="mfa",
-        status="active",
-        role="member",
-    )
-    session = IdentitySession(
-        id=uuid4(),
-        user_id=user.id,
-        provider_user_id=provider_id,
-        provider_session_id=provider_session,
-        provider_access_token_encrypted=cipher.encrypt(b"old-access").decode(),
-        provider_refresh_token_encrypted=cipher.encrypt(b"old-refresh").decode(),
-        refresh_token_digest="stable-handle",
-        csrf_token_digest="stable-csrf",
-        created_at=datetime.now(UTC),
-        refreshed_at=datetime.now(UTC),
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
-    db = Mock(spec=Session)
-    db.scalar.side_effect = lambda query: (
-        None if query.column_descriptions[0]["entity"] is IdentityMfaObservation else user
-    )
-    db.get.return_value = session
-    db.scalars.return_value = [session]
-    auth, mfa_client = Mock(), Mock()
-    auth.get_user.return_value = ProviderUser(
-        provider_id, None, user.email, factors=(ProviderFactor(factor_id, "totp", "unverified"),)
-    )
-
-    def rotate(*_args):
-        auth.get_user.return_value = ProviderUser(
-            provider_id, None, user.email, factors=(ProviderFactor(factor_id, "totp", "verified"),)
-        )
-        return ProviderTokens("new-access", "new-refresh", provider_id, 600)
-
-    mfa_client.challenge_and_verify.side_effect = rotate
-    context = SimpleNamespace(
-        service=service,
-        db=db,
-        user=user,
-        session=session,
-        auth=auth,
-        mfa=mfa_client,
-        cipher=cipher,
-        factor_id=factor_id,
-        assurance="aal1",
-    )
-    auth.verify_access_token.side_effect = lambda token: ProviderAccessIdentity(
-        provider_id,
-        provider_session,
-        datetime.now(UTC),
-        datetime.now(UTC) + timedelta(minutes=10),
-        "aal2" if token == "new-access" else context.assurance,
-    )
-    monkeypatch.setattr(
-        service,
-        "get_settings",
-        lambda: SimpleNamespace(supabase_session_encryption_key=SecretStr(key.decode())),
-        raising=False,
-    )
-    monkeypatch.setattr(service, "SupabaseMfaClient", lambda _auth: mfa_client, raising=False)
-    monkeypatch.setattr(service, "append_security_event", lambda *_args: None, raising=False)
-    return context
 
 
 def test_mfa_verification_commits_both_rotated_credentials_before_return(mfa_context):

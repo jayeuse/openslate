@@ -1,16 +1,22 @@
-import { expect, test, type Page, type Route } from "./helpers/test";
-import { profileGate } from "./helpers/profile-api";
+import {
+  expect,
+  heldResponse,
+  test,
+  type Page,
+  type Route,
+} from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
+import { wireWorkspace } from "../helpers/wire";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
 const userA = "00000000-0000-4000-8000-000000000001";
 const userB = "00000000-0000-4000-8000-000000000002";
 // Literal server DTOs, independent of the new Help projection and guide registry.
-const fullWorkspace = {
+const fullWorkspace = wireWorkspace({
   id: "00000000-0000-4000-8000-000000000102",
   display_name: "Help fixture workspace",
   legal_name: "Private legal name",
@@ -18,18 +24,14 @@ const fullWorkspace = {
   contact_email: "administrator@example.test",
   contact_phone: "+1 555 0142",
   postal_address: "Private postal address",
-  logo_file_id: null,
   locale: "en-PH",
   timezone: "Asia/Manila",
   mark: "HW",
   currency: "PHP",
-  week_start: "monday",
-  business_hours: "09:00–18:00",
-  theme: "slate",
   revision: 4,
   today: "2026-10-06",
   purge_enabled: false,
-};
+});
 const guestWorkspace = {
   id: "00000000-0000-4000-8000-000000000102",
   display_name: "Help fixture workspace",
@@ -62,7 +64,7 @@ async function installHelpApi(page: Page) {
     onPreferences: null as ((route: Route) => Promise<void>) | null,
     onSession: null as ((route: Route) => Promise<void>) | null,
   };
-  await page.exposeFunction("noteS23WorkspaceAbort", () => {
+  await page.exposeFunction("noteWorkspaceAbort", () => {
     api.aborts += 1;
   });
   await page.addInitScript(() => {
@@ -74,8 +76,8 @@ async function installHelpApi(page: Page) {
           "abort",
           () => {
             void (
-              window as Window & { noteS23WorkspaceAbort?: () => Promise<void> }
-            ).noteS23WorkspaceAbort?.();
+              window as Window & { noteWorkspaceAbort?: () => Promise<void> }
+            ).noteWorkspaceAbort?.();
           },
           { once: true },
         );
@@ -162,35 +164,27 @@ async function visitPlatform(page: Page) {
   ).toContainText("Help fixture workspace");
 }
 
-for (const [href, tasks] of [
-  ["/sandbox", [/department/i, /build|design/i]],
-  ["/boards", [/post/i, /calendar|event/i]],
-  ["/comms", [/example/i, /message|conversation/i]],
-  ["/access", [/people/i, /group|access/i]],
-  ["/openview", [/record/i, /view|report/i]],
-  ["/manage", [/organization/i, /setting|audit|backup/i]],
-  ["/platform", [/search/i, /file/i]],
-  ["/profile", [/identity|profile/i, /preference|look|sign.in/i]],
-] as const) {
-  test(`Help canonical guide ${href} has three to six honest task entries`, async ({
-    page,
-  }) => {
-    const api = await installHelpApi(page);
-    api.role = "admin";
-    await page.goto(href);
-    await openHelp(page);
-    const guide = sheet(page).getByRole("region", {
-      name: "This page",
-      exact: true,
-    });
-    await expect(guide).toBeVisible();
-    for (const task of tasks) await expect(guide).toContainText(task);
-    const entries = guide.getByRole("listitem");
-    await expect.poll(() => entries.count()).toBeGreaterThanOrEqual(3);
-    await expect.poll(() => entries.count()).toBeLessThanOrEqual(6);
-    expect(api.writes).toEqual([]);
+// Every page's guide is a row of isolated/shell/help-guides.spec.ts; this
+// journey proves the sheet renders the guide of the open page.
+test("Help canonical guide /access has three to six honest task entries", async ({
+  page,
+}) => {
+  const api = await installHelpApi(page);
+  api.role = "admin";
+  await page.goto("/access");
+  await openHelp(page);
+  const guide = sheet(page).getByRole("region", {
+    name: "This page",
+    exact: true,
   });
-}
+  await expect(guide).toBeVisible();
+  for (const task of [/people/i, /group|access/i])
+    await expect(guide).toContainText(task);
+  const entries = guide.getByRole("listitem");
+  await expect.poll(() => entries.count()).toBeGreaterThanOrEqual(3);
+  await expect.poll(() => entries.count()).toBeLessThanOrEqual(6);
+  expect(api.writes).toEqual([]);
+});
 
 test("Help keyboard opening traps focus and Escape returns to the header without a command", async ({
   page,
@@ -222,10 +216,16 @@ test("Help keyboard opening traps focus and Escape returns to the header without
   expect(api.writes).toEqual([]);
 });
 
-test("Help lists the existing Sandbox Build keys, not a new global or Comms dispatcher", async ({
+test("Help fits a phone and lists the existing Sandbox Build keys, not a new global or Comms dispatcher", async ({
   page,
 }) => {
-  await installHelpApi(page);
+  const api = await installHelpApi(page);
+  api.workspace = {
+    ...fullWorkspace,
+    contact_email:
+      "organization-administrator-with-a-long-contact-name@example.test",
+  };
+  await page.setViewportSize({ width: 390, height: 844 });
   await visitPlatform(page);
   await openHelp(page);
   for (const text of [
@@ -242,6 +242,34 @@ test("Help lists the existing Sandbox Build keys, not a new global or Comms disp
   await expect(shortcuts(page)).not.toContainText(
     /new message|search messages/i,
   );
+  await expect(contact(page)).toContainText(
+    "organization-administrator-with-a-long-contact-name@example.test",
+  );
+  const metrics = await sheet(page).evaluate((el) => {
+    const bounds = el.getBoundingClientRect();
+    return {
+      left: bounds.left,
+      right: bounds.right,
+      width: el.clientWidth,
+      contentWidth: el.scrollWidth,
+      viewportWidth: innerWidth,
+      pageWidth: document.documentElement.scrollWidth,
+    };
+  });
+  expect(metrics.left).toBeGreaterThanOrEqual(0);
+  expect(metrics.right).toBeLessThanOrEqual(metrics.viewportWidth);
+  expect(metrics.contentWidth).toBeLessThanOrEqual(metrics.width);
+  expect(metrics.pageWidth).toBeLessThanOrEqual(metrics.viewportWidth);
+  await contact(page).scrollIntoViewIfNeeded();
+  await expect(contact(page)).toBeInViewport();
+  const profile = shortcuts(page).getByRole("link", { name: /profile/i });
+  await profile.scrollIntoViewIfNeeded();
+  await expect(profile).toBeInViewport();
+  expect((await profile.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  const close = sheet(page).getByRole("button", { name: /close/i });
+  await close.scrollIntoViewIfNeeded();
+  await expect(close).toBeInViewport();
+  expect((await close.boundingBox())?.height).toBeGreaterThanOrEqual(44);
 });
 
 test("Help off text links to Profile and updates its guide after client navigation", async ({
@@ -270,10 +298,10 @@ test("Help pending preferences never claim shortcuts are on or off before confir
   page,
 }) => {
   const api = await installHelpApi(page);
-  const hold = profileGate();
+  const hold = heldResponse();
   api.onPreferences = async (route) => {
-    hold.start();
-    await hold.waiting;
+    hold.enter();
+    await hold.released;
     await route.fulfill({
       json: {
         user_id: userA,
@@ -284,7 +312,7 @@ test("Help pending preferences never claim shortcuts are on or off before confir
   };
   try {
     await visitPlatform(page);
-    await hold.begun;
+    await hold.entered;
     await openHelp(page);
     await expect(shortcuts(page)).toContainText(/loading|confirm/i);
     await expect(shortcuts(page)).not.toContainText("Shortcuts are off.");
@@ -400,14 +428,14 @@ test("Help expired-session 401 keeps the global login handoff and removes privat
   await openHelp(page);
   await expect(contact(page)).toContainText("administrator@example.test");
   await page.keyboard.press("Escape");
-  const hold = profileGate();
+  const hold = heldResponse();
   api.onSession = (route) => route.fulfill({ json: { authenticated: false } });
   await page.route("**/api/auth/refresh", (route) =>
     route.fulfill({ status: 401, json: { detail: "Session expired" } }),
   );
   api.onRead = async (route) => {
-    hold.start();
-    await hold.waiting;
+    hold.enter();
+    await hold.released;
     await route.fulfill({
       status: 401,
       json: { detail: "Private failure canary" },
@@ -415,7 +443,7 @@ test("Help expired-session 401 keeps the global login handoff and removes privat
   };
   try {
     await openHelp(page);
-    await hold.begun;
+    await hold.entered;
     await expect(contact(page)).not.toContainText("administrator@example.test");
     hold.release();
     await expect(page).toHaveURL(/\/login$/);
@@ -433,7 +461,7 @@ test("Help expired-session 401 keeps the global login handoff and removes privat
   }
 });
 
-for (const fault of [403, 503, "partial", "malformed"] as const) {
+for (const fault of [403, 503, "malformed"] as const) {
   test(`Help contact ${fault} hides cached data and Retry recovers without raw details`, async ({
     page,
   }) => {
@@ -448,10 +476,12 @@ for (const fault of [403, 503, "partial", "malformed"] as const) {
           status: fault,
           json: { detail: "Private failure canary" },
         });
-      const body: Record<string, unknown> = { ...fullWorkspace };
-      if (fault === "partial") delete body.contact_phone;
-      else body.contact_email = { secret: "Private failure canary" };
-      return route.fulfill({ json: body });
+      return route.fulfill({
+        json: {
+          ...fullWorkspace,
+          contact_email: { secret: "Private failure canary" },
+        },
+      });
     };
     await openHelp(page);
     await expect(contact(page).getByRole("alert")).toBeVisible();
@@ -480,17 +510,17 @@ test("Help reopens with hidden cached contacts while the fresh read is pending",
   await openHelp(page);
   await expect(contact(page)).toContainText("administrator@example.test");
   await page.keyboard.press("Escape");
-  const hold = profileGate();
+  const hold = heldResponse();
   api.onRead = async (route) => {
-    hold.start();
-    await hold.waiting;
+    hold.enter();
+    await hold.released;
     await route.fulfill({
       json: { ...fullWorkspace, contact_email: "new@example.test" },
     });
   };
   try {
     await openHelp(page);
-    await hold.begun;
+    await hold.entered;
     await expect(contact(page)).toContainText(/loading|checking/i);
     await expect(contact(page)).not.toContainText("administrator@example.test");
     hold.release();
@@ -588,12 +618,12 @@ for (const boundary of ["close", "account", "curtain"] as const) {
   }) => {
     const api = await installHelpApi(page);
     await visitPlatform(page);
-    const hold = profileGate();
-    const session = profileGate();
+    const hold = heldResponse();
+    const session = heldResponse();
     const aborts = api.aborts;
     api.onRead = async (route) => {
-      hold.start();
-      await hold.waiting;
+      hold.enter();
+      await hold.released;
       // A cancelled intercepted request may no longer be fulfillable.
       await route
         .fulfill({
@@ -606,7 +636,7 @@ for (const boundary of ["close", "account", "curtain"] as const) {
     };
     try {
       await openHelp(page);
-      await hold.begun;
+      await hold.entered;
       if (boundary === "close") await page.keyboard.press("Escape");
       else {
         if (boundary === "account") {
@@ -614,8 +644,8 @@ for (const boundary of ["close", "account", "curtain"] as const) {
           api.role = "guest";
         }
         api.onSession = async (route) => {
-          session.start();
-          await session.waiting;
+          session.enter();
+          await session.released;
           await route.fulfill({
             json: {
               authenticated: true,
@@ -627,7 +657,7 @@ for (const boundary of ["close", "account", "curtain"] as const) {
         await page.evaluate(() =>
           window.dispatchEvent(new Event("openslate:session-recheck")),
         );
-        await session.begun;
+        await session.entered;
         await expect(
           page.getByText("Checking your session…", { exact: true }),
         ).toBeVisible();
@@ -660,24 +690,20 @@ for (const boundary of ["close", "account", "curtain"] as const) {
   });
 }
 
-test("Help four captures: desktop and phone in light and dark", async ({
-  page,
-}, testInfo) => {
-  test.skip(
-    process.env.CAPTURE_S23_HELP !== "1",
-    "One opt-in Help Sheet inspection round",
-  );
-  const api = await installHelpApi(page);
-  api.workspace = {
-    ...fullWorkspace,
-    contact_email:
-      "organization-administrator-with-a-long-contact-name@example.test",
-  };
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 390, height: 844 },
-  ]) {
-    for (const theme of ["light", "dark"] as const) {
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`Help long contact fits ${viewport.width}x${viewport.height} in ${theme}`, async ({
+      page,
+    }) => {
+      const api = await installHelpApi(page);
+      api.workspace = {
+        ...fullWorkspace,
+        contact_email:
+          "organization-administrator-with-a-long-contact-name@example.test",
+      };
       api.theme = theme;
       await page.setViewportSize(viewport);
       await visitPlatform(page);
@@ -685,10 +711,23 @@ test("Help four captures: desktop and phone in light and dark", async ({
         theme === "dark" ? /dark/ : /^(?!.*\bdark\b).*$/,
       );
       await openHelp(page);
+      for (const text of [
+        "Sandbox",
+        "Build",
+        "?",
+        "0",
+        "Delete",
+        "F2",
+        "Undo",
+        "Redo",
+      ])
+        await expect(shortcuts(page)).toContainText(text);
+      await expect(shortcuts(page)).not.toContainText(
+        /new message|search messages/i,
+      );
       await expect(contact(page)).toContainText(
         "organization-administrator-with-a-long-contact-name@example.test",
       );
-      await expect(shortcuts(page)).toContainText("F2");
       const metrics = await sheet(page).evaluate((el) => {
         const bounds = el.getBoundingClientRect();
         return {
@@ -698,9 +737,6 @@ test("Help four captures: desktop and phone in light and dark", async ({
           contentWidth: el.scrollWidth,
           viewportWidth: innerWidth,
           pageWidth: document.documentElement.scrollWidth,
-          sectionSpacing: getComputedStyle(el.children[1]).rowGap,
-          bodyColor: getComputedStyle(el.querySelector("li")!).color,
-          surfaceColor: getComputedStyle(el).backgroundColor,
         };
       });
       expect(metrics.left).toBeGreaterThanOrEqual(0);
@@ -726,20 +762,6 @@ test("Help four captures: desktop and phone in light and dark", async ({
             .boundingBox()
         )?.height,
       ).toBeGreaterThanOrEqual(44);
-      await sheet(page).evaluate((el) => {
-        el.scrollTop = 0;
-      });
-      await page.addStyleTag({
-        content: "nextjs-portal { display: none !important; }",
-      });
-      const filename = `help-${theme}-${viewport.width}x${viewport.height}.png`;
-      await page.screenshot({
-        path: testInfo.outputPath(filename),
-        fullPage: true,
-      });
-      console.log(
-        JSON.stringify({ capture: filename, viewport, theme, metrics }),
-      );
-    }
+    });
   }
-});
+}

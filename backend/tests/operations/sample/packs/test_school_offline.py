@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from datetime import date
-from functools import cache
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
@@ -33,19 +32,19 @@ from operations.seed_sample_data import build_plan_summary
 from tests.operations.sample.packs.test_school_access import _LEVEL_RANK, _module_level
 from tests.operations.sample.packs.test_school_consistency import pupil_codes
 from tests.operations.sample.packs.test_school_content import _content_text
+from tests.operations.sample.sample_datasets import sample_dataset
 from tests.operations.sample.test_sample_text import MARKERS, RESERVED_DOMAIN
 
 ANCHOR = date(2026, 9, 30)
 
 
-@cache
 def _school(profile="small"):
-    return build_dataset(profile, seed=42, anchor_date=ANCHOR, organization=get_pack("school"))
+    return sample_dataset(profile, 42, ANCHOR, "school")
 
 
 @pytest.mark.parametrize("key", pack_keys())
 def test_registered_pack_has_no_design_or_publication_blocker(key):
-    dataset = build_dataset("small", seed=42, anchor_date=ANCHOR, organization=get_pack(key))
+    dataset = sample_dataset("small", 42, ANCHOR, key)
     document = SandboxDocument.model_validate(dataset.document)
     assert validate_document(document) == []
     assert structure_name_blockers(document) == []

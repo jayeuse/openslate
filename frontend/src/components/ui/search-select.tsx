@@ -75,6 +75,7 @@ export function SearchSelect({
   const generatedId = useId();
   const controlId = id ?? generatedId;
   const validationId = `${controlId}-error`;
+  const searchLabelId = `${controlId}-search-label`;
   const optionByValue = new Map(
     options.map((option) => [option.value, option]),
   );
@@ -123,8 +124,13 @@ export function SearchSelect({
           <span className="truncate">{selected?.label ?? placeholder}</span>
         </ComboboxTrigger>
         <ComboboxContent positionerClassName="z-[60]">
+          {/* The field label would otherwise name the search box too, so the
+              trigger and the search box would read the same. */}
+          <span id={searchLabelId} className="sr-only">
+            {`Search ${label.toLowerCase()}`}
+          </span>
           <ComboboxInput
-            aria-label={`Search ${label.toLowerCase()}`}
+            aria-labelledby={searchLabelId}
             placeholder={searchPlaceholder}
             className="min-h-11"
           />

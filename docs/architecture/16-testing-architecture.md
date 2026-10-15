@@ -13,8 +13,8 @@ retains a compatibility import surface; the disposable provider implementation i
 `backend/tests/supabase_runtime.py`. Database guarantees are not replaced by SQLite or
 by a developer's persistent Supabase project.
 
-Focused pytest cases support repair; the owning backend gate runs the complete
-disposable backend suite. Separate runner modes include `--backend-coverage-only`,
+Focused pytest cases support repair; the owning backend gate combines the complete
+stack-free unit and disposable integration coverage. Separate runner modes include `--backend-coverage-only`,
 `--acceptance-only`, and `--browser-only`. From `backend/`, `uv run
 python -m tests.fullstack_runner --acceptance-only` exercises the isolated provider,
 FastAPI, Caddy gateway, and browser flow under `ENVIRONMENT=test`; that is
@@ -34,17 +34,22 @@ are configured to extract the executable from the pinned test Caddy image and ad
 it to `PATH`; configuration does not establish hosted CI execution or native
 deployment acceptance.
 
-CI splits the backend suite into five parallel jobs. Each job runs `--backend-coverage-shard
-N/5` on its own disposable stack. A shard checks that its tests pass and that the source
-did not change, but it does not apply the coverage thresholds. The `coverage-gate` job
-combines the five coverage data files, sums the test counts, and then applies the same
-90% gates to the complete report. A missing shard, a skipped test, or a shard from a
-different source tree fails the gate. `pytest-split` balances the shards with
+CI runs the stack-free tests (`not integration`) in a separate unit job with four
+workers. Five integration-only jobs each run `--backend-coverage-shard N/5` on their
+own disposable stack. Neither the unit lane nor an individual shard applies the
+coverage thresholds. The `coverage-gate` job combines the unit lane and all five
+shards, sums their test counts, and applies the 90% overall and changed-line gates
+to the complete report. A missing or duplicate lane/shard, a skipped test, or
+evidence from a different source tree fails the gate. The commands and combine
+guards live in [`backend_coverage.py`](../../backend/tests/backend_coverage.py).
+`pytest-split` balances the integration shards with
 `backend/tests/.test_durations`. Each CI run uploads fresh durations in the
 `backend-coverage` artifact; commit that file again when a shard takes much longer than
 the others. Locally, a shard uses the last combined run's durations
 (`backend/test-results/coverage/test-durations.json`) when they are newer than the
-committed file, so new tests stop falling back to the average. Local `prepush.py` runs `python -m tests.parallel_coverage`: three shards on
+committed file, so new tests stop falling back to the average. Local `prepush.py`
+runs [`tests.parallel_coverage`](../../backend/tests/parallel_coverage.py): first
+the stack-free unit lane with six workers, then three integration-only shards on
 their own disposable stacks at the same time, then the same combine step and gates. Each
 shard writes to its own folder under `backend/test-results/coverage-shards/`. Each test
 stack gets its own `/24` in `10.199.0.0/16`, outside Docker's default address pools, under
@@ -60,18 +65,21 @@ the pools first. Alembic heads are read once per process.
 Backend-only stacks (coverage, its shards, and batches) point Auth's email templates at
 their own host port, `29000` plus the stack's network block, which is unique per live
 stack and below the ephemeral and Kubernetes NodePort ranges. Full-stack and smoke runs
-keep port `8008`, where the runner's API serves the templates. On a machine with less memory,
-run `prepush.py --coverage-stacks 1` (one stack, the single `--backend-coverage-only` run)
-or `--coverage-stacks 2`; the coverage gates do not change.
+keep port `8008`, where the runner's API serves the templates. The local default
+is three integration stacks; do not reduce stack or worker counts without a
+measured resource failure. The runner's lower-concurrency controls retain the
+same coverage gates.
 
 The committed Auth/Storage reset acceptance has its own mandatory
 `--reset-acceptance-only` invocation in both gates. Local `prepush.py` runs it after
-ordinary backend coverage; CI runs it as a parallel job. Locally, the frontend and
-backend lanes run at the same time, and the server image builds after the frontend build
-in the frontend lane. The other lanes wait until the backend coverage stacks have
-booted, so stack startup does not share the host with heavy work. When more than one
-lane runs, each lane logs to `backend/test-results/prepush/<lane>.log`; `--serial` runs
-the lanes one after another on the terminal. Ctrl-C, SIGTERM, or SIGHUP stops every
+ordinary backend coverage; CI runs it as a separate job. This is provider-reset
+acceptance, not the full-stack/browser `--acceptance-only` mode. Local pre-push
+must use `python3 scripts/prepush.py --base <base-ref> --serial`: frontend and
+backend resource lanes run one after another, while each lane keeps its own
+parallelism. Never start another heavy suite or build beside an active lane.
+When selected, the server image builds after the frontend tests in the frontend
+lane. Run the gate only right before a push, not after each edit or handoff.
+Ctrl-C, SIGTERM, or SIGHUP stops every
 running lane so its runner tears down its stacks; `tests.parallel_coverage` passes the
 stop to each shard once and waits for its teardown (bounded, then killed). A lane that
 breaks, or a planned step that never ran, fails the gate.
@@ -92,20 +100,43 @@ outside the supported test boundary.
 
 ## Frontend and integrated checks
 
-The frontend CI workflow ([`frontend.yml`](../../.github/workflows/frontend.yml)) runs
-`npm run check`, `npm run build`, and `npm test` as parallel jobs. The isolated project
-runs as one test job. The `http` project runs as twelve Playwright shards
-(`--project=http --shard=N/12`) with one worker each, because two browsers beside the dev
-server on a 2-vCPU runner stall page rendering. Each shard starts its own dev server and
-uploads its failure context and traces when it fails. The `verify` job
-keeps one required check for all of them. Browser tests and targeted API route-
-contract tests have their configured ownership and setup. FastAPI HTTP coverage remains
-the proof for static-site delivery, API/static path separation, cache policy, and
-response security headers; a static export is not browser-interaction evidence. The
-unified server-image build verifies packaging, not deployment or production operation.
-The canonical change-selected local gate is `python3 scripts/prepush.py --base <base-
-ref>` from the repository root. CI verifies and builds; it does not publish or deploy a
-customer installation.
+The frontend uses Playwright Test for both `isolated` rules/adapters/state tests
+and `http` browser journeys with a mocked `/api`. The isolated project starts no
+shared HTTP server; its development-ingress spec exercises an owned Next fixture.
+Default HTTP journeys use `frontend/out/` through the test-only ASGI entry over
+production `StaticSite`
+([`static_export_server.py`](../../backend/tests/static_export_server.py)), not
+the FastAPI application or a live Supabase stack. This entry serves production
+static routing, cache policy and CSP, but deliberately answers unmocked `/api`
+requests with 500; it is not application API or full middleware acceptance.
+[`playwright.config.ts`](../../frontend/playwright.config.ts) refuses missing or
+stale exports, so build with `npm run build` before HTTP tests. For local debugging,
+`PLAYWRIGHT_HTTP_SERVER=dev` opts the same HTTP project into `next dev`; it is not
+a separate project or the daily development workflow. Daily `npm run dev` remains
+the Next origin proxying `/api` to the local FastAPI process.
+
+The frontend CI workflow ([`frontend.yml`](../../.github/workflows/frontend.yml))
+runs `npm run check`, `npm run build`, and the isolated job independently. Six
+duration-balanced, whole-file HTTP shards wait for and download that one static
+export. [`playwright_shards.py`](../../scripts/playwright_shards.py) uses current
+native collection for membership and committed duration weights for assignment;
+the shards run `--project=http --workers=2 --test-list=<selected-file>` with the
+lockfile-pinned Chromium browser. The isolated CI job uses the configured default
+of one worker; local Playwright uses up to three workers. UTC, `en-US` and zero
+retries are pinned in the config. Failure contexts/traces and native JSON reports
+have their own artifact paths; the `verify` job preserves one required check.
+[`package.json`](../../frontend/package.json) declares `check` (formatting, lint,
+types, contrast), `build`, `test`, and `verify` (`check` → `build` → `test`), plus
+the existing section/affected/full selectors for scoped work. Full verification
+belongs to the pre-push gate, not routine edits.
+
+FastAPI HTTP coverage remains the proof for application static-site delivery,
+API/static path separation and response security headers. Mocked HTTP browser
+journeys do not establish live API authorization or provider behavior. The unified
+server-image build verifies packaging, not deployment or production operation.
+The canonical change-selected local gate is `python3 scripts/prepush.py --base
+<base-ref> --serial` from the repository root. CI configuration declares checks;
+it is not evidence of current-tip local/CI parity, hosted execution or deployment.
 
 The backend runner may build the static frontend for integrated journeys. Browser
 workflows use dedicated runner-created identities and isolated services. Preserve
@@ -118,7 +149,7 @@ architecture docs do not record task-run counts or results.
 The release smoke suite runs one main path per screen against seeded Harbor data. It
 belongs to the release gate, not to every push. Run it before a release:
 
-1. From the repository root, run `python3 scripts/prepush.py --base <base-ref> --release`.
+1. From the repository root, run `python3 scripts/prepush.py --base <base-ref> --serial --release`.
    The `--release` flag adds the `release-smoke` step after the backend stacks.
 2. To run only the smoke suite, run `uv run python -m tests.smoke_runner` from `backend/`.
 

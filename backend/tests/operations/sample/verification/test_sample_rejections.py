@@ -2,26 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import date
-from functools import cache
 from pathlib import Path
 
 import pytest
 
 from operations.sample.blueprint import SampleDataset
 from operations.sample.episodes import plan_sessions
-from operations.sample.scenario import build_dataset
 from operations.sample.verification.rejections import (
     ACTIVITY_CASES,
     CLOSING_CASES,
     invalid_record_data,
     outcome_matches,
 )
+from tests.operations.sample.sample_datasets import sample_dataset
 
 
-@cache
 def _dataset(profile: str) -> SampleDataset:
-    return build_dataset(profile, seed=42, anchor_date=date(2026, 9, 30))  # type: ignore[arg-type]
+    return sample_dataset(profile)
 
 
 def test_every_activity_case_is_planned_once_after_the_records_it_needs() -> None:

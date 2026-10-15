@@ -13,7 +13,7 @@ from app.systems.platform.scheduling.service import (
     fail_report_work,
     queue_report_occurrence,
 )
-from tests.platform_scheduling.test_report_work import _run, _subject
+from tests.platform_scheduling.support import report_run, report_work_subject
 
 pytestmark = pytest.mark.integration
 
@@ -34,7 +34,7 @@ def _notices(db, work: ScheduledWork) -> list[InAppNotification]:
 
 def test_retried_occurrence_success_replaces_the_failure_notice(integration_owner_db):
     db = integration_owner_db
-    owner, report, _grant, _module, _department = _subject(db)
+    owner, report, _grant, _module, _department = report_work_subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     now = _exhaust(db, work, now)
@@ -42,7 +42,7 @@ def test_retried_occurrence_success_replaces_the_failure_notice(integration_owne
     failed.read_at = now
     _retry_work(db, work.kind, work.id, owner.id, None)
     [claim] = claim_due_work(db, now=work.next_attempt_at + timedelta(seconds=1))
-    run = _run(db, report, work)
+    run = report_run(db, report, work)
     assert complete_report_work(db, claim, run.id, now=now)
     [notice] = _notices(db, work)
     assert notice.id == failed.id and notice.recipient_id == owner.id
@@ -58,7 +58,7 @@ def test_retried_occurrence_that_fails_again_keeps_one_unread_failure_notice(
     integration_owner_db,
 ):
     db = integration_owner_db
-    owner, report, _grant, _module, _department = _subject(db)
+    owner, report, _grant, _module, _department = report_work_subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     now = _exhaust(db, work, now)

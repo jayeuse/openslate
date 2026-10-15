@@ -5,17 +5,16 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
-from app.systems.openview.reports.eligibility import capture_run_eligible_users
-from app.systems.openview.reports.models import Report, ReportRun
+from app.systems.openview.reports.models import Report
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
 from app.systems.platform.scheduling.service import (
     claim_due_work,
@@ -27,56 +26,15 @@ from app.systems.platform.scheduling.service import (
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
-from tests.rbac.support import make_group_access
+from tests.grant_support import assert_runtime_only_grants
+from tests.platform_scheduling.support import report_run, report_work_subject
 
 pytestmark = pytest.mark.integration
 
 
-def _subject(db: AuditSession) -> tuple[User, Report, GroupAccess, Module, Department]:
-    role = "member"
-    owner = User(
-        email=f"report-schedule-{uuid7().hex}@example.test",
-        username=f"report_schedule_{uuid7().hex[:16]}",
-        status=UserStatus.ACTIVE.value,
-        role=role,
-    )
-    department = Department(department_name=f"Report schedule {uuid7().hex}")
-    db.add_all((owner, department))
-    db.flush()
-    module = Module(
-        department_id=department.id,
-        module_name=f"Report schedule {uuid7().hex}",
-    )
-    db.add(module)
-    db.flush()
-    # The owner reads the report module through one group.
-    grant = make_group_access(db, [owner], department, module, level=AccessLevel.READ)
-    report = Report(module_id=module.id, name="Scheduled", recipe={})
-    db.add(report)
-    db.flush()
-    return owner, report, grant, module, department
-
-
-def _run(db: AuditSession, report: Report, work: ScheduledWork) -> ReportRun:
-    run = ReportRun(
-        report_id=report.id,
-        module_id=report.module_id,
-        idempotency_key=work.id,
-        recipe_revision=report.revision,
-        recipe={},
-        headings=[],
-        row_count=0,
-        csv_bytes=b"",
-    )
-    db.add(run)
-    db.flush()
-    capture_run_eligible_users(db, report, run.id)
-    return run
-
-
 def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integration_owner_db):
     db = integration_owner_db
-    owner, report, _grant, _module, _department = _subject(db)
+    owner, report, _grant, _module, _department = report_work_subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     duplicate = queue_report_occurrence(db, report.id, scheduled_for=now)
@@ -95,7 +53,7 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     assert len(second) == 1 and second[0].id == work.id
     assert second[0].lease_token != first[0].lease_token
     assert work.last_attempt_started_at == later
-    run = _run(db, report, work)
+    run = report_run(db, report, work)
     assert not complete_report_work(db, first[0], run.id, now=later)
     assert complete_report_work(db, second[0], run.id, now=later)
     assert work.finished_at == later
@@ -126,20 +84,24 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
         "recipient_id": str(owner.id),
         "read_at": None,
     }
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.add(
-            InAppNotification(
-                work_id=work.id,
-                recipient_id=owner.id,
-                kind="report-run",
-                subject_type="report_run",
-                subject_id=run.id,
-            )
+    savepoint = db.begin_nested()
+    db.add(
+        InAppNotification(
+            work_id=work.id,
+            recipient_id=owner.id,
+            kind="report-run",
+            subject_type="report_run",
+            subject_id=run.id,
         )
+    )
+    with pytest.raises(IntegrityError):
         db.flush()
-    with pytest.raises(IntegrityError), db.begin_nested():
-        db.delete(work)
+    savepoint.rollback()
+    savepoint = db.begin_nested()
+    db.delete(work)
+    with pytest.raises(IntegrityError):
         db.flush()
+    savepoint.rollback()
     other_role = "member"
     other = User(
         email=f"report-other-{uuid7().hex}@example.test",
@@ -161,7 +123,7 @@ def test_completion_needs_no_reader_and_a_lost_read_hides_the_notification(
     """The workspace completes the run; the current module read decides who sees it."""
 
     db = integration_owner_db
-    owner, report, grant, _module, _department = _subject(db)
+    owner, report, grant, _module, _department = report_work_subject(db)
     other = User(
         email=f"report-other-{uuid7().hex}@example.test",
         username=f"report_other_{uuid7().hex[:16]}",
@@ -173,7 +135,7 @@ def test_completion_needs_no_reader_and_a_lost_read_hides_the_notification(
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     claim = claim_due_work(db, now=now)[0]
-    run = _run(db, report, work)
+    run = report_run(db, report, work)
 
     grant.is_deleted = True
     grant.deleted_at = now
@@ -190,7 +152,7 @@ def test_completion_needs_no_reader_and_a_lost_read_hides_the_notification(
 
 def test_report_occurrence_queues_while_nobody_can_read_the_module(integration_owner_db):
     db = integration_owner_db
-    _owner, report, grant, _module, _department = _subject(db)
+    _owner, report, grant, _module, _department = report_work_subject(db)
     grant.is_deleted = True
     grant.deleted_at = datetime(2026, 1, 1, tzinfo=UTC)
     db.flush()
@@ -202,25 +164,25 @@ def test_report_occurrence_queues_while_nobody_can_read_the_module(integration_o
 
 def test_report_occurrence_refuses_an_archived_report_or_a_closed_module(integration_owner_db):
     db = integration_owner_db
-    _owner, report, _grant, module, _department = _subject(db)
+    _owner, report, _grant, module, _department = report_work_subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     module.is_deleted = True
     module.deleted_at = now
     db.flush()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Report is unavailable for scheduling"):
         queue_report_occurrence(db, report.id, scheduled_for=now)
     module.is_deleted = False
     module.deleted_at = None
     report.is_deleted = True
     report.deleted_at = now
     db.flush()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Report is unavailable for scheduling"):
         queue_report_occurrence(db, report.id, scheduled_for=now)
 
 
 def test_failed_work_retries_with_backoff_then_stops_after_five_attempts(integration_owner_db):
     db = integration_owner_db
-    owner, report, _grant, _module, _department = _subject(db)
+    owner, report, _grant, _module, _department = report_work_subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     for attempt in range(1, 6):
@@ -266,7 +228,7 @@ def test_expired_final_report_lease_notifies_once_or_rolls_back_with_state(
     integration_owner_db, rollback
 ):
     db = integration_owner_db
-    owner, report, grant, _module, _department = _subject(db)
+    owner, report, grant, _module, _department = report_work_subject(db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     work.state = WorkState.RUNNING
@@ -310,7 +272,7 @@ def test_concurrent_claim_skips_locked_due_row_and_claims_next():
     try:
         with AuditSession(engine) as setup:
             setup.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
-            owner, report, grant, module, department = _subject(setup)
+            owner, report, grant, module, department = report_work_subject(setup)
             ids.update(
                 owner=owner.id,
                 report=report.id,
@@ -363,21 +325,5 @@ def test_concurrent_claim_skips_locked_due_row_and_claims_next():
 
 def test_scheduling_tables_grant_runtime_access_and_block_provider_roles(integration_owner_db):
     connection = integration_owner_db.connection()
-    statement = text("SELECT has_table_privilege(:role, :table_name, :privilege)")
     for table_name in ("public.scheduled_work", "public.in_app_notifications"):
-        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-            assert (
-                connection.scalar(
-                    statement,
-                    {"role": "openslate_runtime", "table_name": table_name, "privilege": privilege},
-                )
-                is True
-            )
-            for role in ("anon", "authenticated", "service_role"):
-                assert (
-                    connection.scalar(
-                        statement,
-                        {"role": role, "table_name": table_name, "privilege": privilege},
-                    )
-                    is False
-                )
+        assert_runtime_only_grants(connection, table_name)

@@ -11,18 +11,14 @@ from app.systems.sandbox.designs.schemas import TriggerDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
-from app.systems.sandbox.publications.executor import (
-    PublicationError,
-    apply_publication,
-    request_fingerprint,
-)
+from app.systems.sandbox.publications.executor import PublicationError
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.record_triggers.models import RecordTrigger
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.sandbox_designs.fixtures import sample_option_id
-from tests.sandbox_publications.support import actor, publishable_document
+from tests.sandbox_publications.support import actor, publish_saved, publishable_document
 
 pytestmark = pytest.mark.integration
 
@@ -45,23 +41,13 @@ def test_preview_is_read_only_and_publish_creates_only_bound_structure(
     assert not preview.blockers
     assert _live_structure_counts(integration_owner_db) == before_preview
 
-    token_digest = sha256(b"preview").hexdigest()
-    response = apply_publication(
+    response = publish_saved(
         integration_owner_db,
-        actor_id=publisher.id,
-        expected_revision=saved.revision,
-        impact_digest=preview.impact_digest,
-        expected_live_state_digest=preview.live_state_digest,
-        preview_token_digest=token_digest,
+        publisher.id,
+        saved,
+        preview,
+        token_digest=sha256(b"preview").hexdigest(),
         idempotency_key="publication-integration-1",
-        fingerprint=request_fingerprint(
-            expected_revision=saved.revision,
-            document_hash=saved.content_hash,
-            impact_digest=preview.impact_digest,
-            preview_token_digest=token_digest,
-            note=None,
-        ),
-        note=None,
     )
 
     assert response.version.kind == "published"
@@ -127,22 +113,13 @@ def test_relationship_scoped_trigger_blocks_publish_without_live_writes(
     token_digest = sha256(b"relationship-reference-preview").hexdigest()
 
     with pytest.raises(PublicationError, match="Fix the listed publication blockers"):
-        apply_publication(
+        publish_saved(
             integration_owner_db,
-            actor_id=publisher.id,
-            expected_revision=saved.revision,
-            impact_digest=preview.impact_digest,
-            expected_live_state_digest=preview.live_state_digest,
-            preview_token_digest=token_digest,
+            publisher.id,
+            saved,
+            preview,
+            token_digest=token_digest,
             idempotency_key="relationship-reference",
-            fingerprint=request_fingerprint(
-                expected_revision=saved.revision,
-                document_hash=saved.content_hash,
-                impact_digest=preview.impact_digest,
-                preview_token_digest=token_digest,
-                note=None,
-            ),
-            note=None,
         )
 
     assert _live_structure_counts(integration_owner_db) == before
@@ -155,9 +132,7 @@ def _live_structure_counts(db: Session) -> dict[str, int]:
         "fields": int(db.scalar(select(func.count()).select_from(Field)) or 0),
         "bindings": int(db.scalar(select(func.count()).select_from(SandboxBinding)) or 0),
         "publications": int(db.scalar(select(func.count()).select_from(SandboxPublication)) or 0),
-        "trigger_definitions": int(
-            db.scalar(select(func.count()).select_from(RecordTrigger)) or 0
-        ),
+        "trigger_definitions": int(db.scalar(select(func.count()).select_from(RecordTrigger)) or 0),
         "records": int(db.scalar(select(func.count()).select_from(Record)) or 0),
         "relationships": int(db.scalar(select(func.count()).select_from(RelationshipEdge)) or 0),
     }

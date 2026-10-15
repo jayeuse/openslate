@@ -4,6 +4,10 @@ import {
   projectSandboxDocument,
 } from "../../../src/components/systems/sandbox/domain/document-bridge";
 import type { SandboxDocumentV4 } from "../../../src/components/systems/sandbox/domain/document";
+import {
+  documentSelectField,
+  documentTextField,
+} from "../../helpers/sandbox-fixtures";
 
 const openOptionId = "00000000-0000-4000-8000-000000000041";
 const closedOptionId = "00000000-0000-4000-8000-000000000042";
@@ -22,29 +26,16 @@ function fixture(): SandboxDocumentV4 {
           closed: false,
           titleFieldId: "title",
           fields: [
-            {
-              id: "title",
-              name: "Title",
-              type: "Text",
-              required: true,
-              closed: false,
-              config: { kind: "text", defaultValue: "" },
-            },
-            {
+            documentTextField({ id: "title", name: "Title", required: true }),
+            documentSelectField({
               id: "status",
               name: "Status",
-              type: "Select",
-              required: false,
-              closed: false,
-              config: {
-                kind: "select",
-                defaultValue: openOptionId,
-                options: [
-                  { id: openOptionId, label: "Open" },
-                  { id: closedOptionId, label: "Closed" },
-                ],
-              },
-            },
+              defaultValue: openOptionId,
+              options: [
+                { id: openOptionId, label: "Open" },
+                { id: closedOptionId, label: "Closed" },
+              ],
+            }),
           ],
         },
         {
@@ -53,16 +44,7 @@ function fixture(): SandboxDocumentV4 {
           name: "Equipment",
           closed: false,
           titleFieldId: null,
-          fields: [
-            {
-              id: "asset-tag",
-              name: "Asset tag",
-              type: "Text",
-              required: false,
-              closed: false,
-              config: { kind: "text", defaultValue: "" },
-            },
-          ],
+          fields: [documentTextField({ id: "asset-tag", name: "Asset tag" })],
         },
       ],
       relationships: [

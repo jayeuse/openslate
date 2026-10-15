@@ -96,13 +96,6 @@ import { initialActivityFilters } from "./audit-data";
 import { useWorkspaceInteractionSuspended } from "../../shared/runtime/workspace-identity";
 import type { ActivityFilters, ActivityOrder } from "./audit-data";
 
-export {
-  buildActivityCsv,
-  initialActivityFilters,
-  queryManageActivity,
-} from "./audit-data";
-export type { ActivityFilters } from "./audit-data";
-
 const PAGE_SIZE_OPTIONS = TABLE_PAGE_SIZE_OPTIONS;
 const ACTIVITY_SORT_OPTIONS: readonly {
   value: ActivityOrder;

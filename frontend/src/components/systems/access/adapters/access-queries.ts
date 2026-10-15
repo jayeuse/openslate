@@ -20,18 +20,13 @@ import {
   getAccessInvitationSettings,
   getAccessUserAccess,
   getAccessUserSummary,
-  listAccessDepartments,
   listAccessGroups,
-  listAccessMemberCandidates,
-  listAccessModules,
   listAccessUserSessions,
   listAccessUsers,
   type AccessDeletedFilter,
   type AccessInvitationSettings,
   type AccessGroupListOptions,
   type AccessDepartmentListOptions,
-  type AccessModuleListOptions,
-  type AccessMemberCandidateListOptions,
   type AccessSessionListOptions,
   type AccessUserListOptions,
 } from "../state/api";
@@ -53,7 +48,6 @@ import {
 // OpenView and the navigation; Access does not define a second identity key.
 
 export const accessKeys = {
-  all: ["access"] as const,
   security: () => ["access", "security"] as const,
   securityEvents: () => ["access", "security-events"] as const,
   securityEventList: (request: AccessSecurityEventsRequest) =>
@@ -87,17 +81,10 @@ export const accessKeys = {
     request: AccessGroupListOptions = {},
   ) => ["access", "groups", "list", deleted, request] as const,
   memberCandidates: () => ["access", "member-candidates"] as const,
-  memberCandidatePage: (request: AccessMemberCandidateListOptions) =>
-    ["access", "member-candidates", request] as const,
-  catalog: ["access", "catalog"] as const,
   departments: (
     deleted: AccessDeletedFilter,
     request: AccessDepartmentListOptions = {},
   ) => ["access", "catalog", "departments", deleted, request] as const,
-  modules: (
-    deleted: AccessDeletedFilter,
-    request: AccessModuleListOptions = {},
-  ) => ["access", "catalog", "modules", deleted, request] as const,
   invitationSettings: () => ["access", "invitation-settings"] as const,
 };
 
@@ -171,50 +158,6 @@ export const groupListOptions = (
         limit: 25,
         offset: 0,
         sort_by: "name",
-        ...request,
-        deleted,
-        signal,
-      }),
-  });
-
-/** A bounded search or selected-ID lookup within the manager boundary. */
-export const memberCandidateListOptions = (
-  request: AccessMemberCandidateListOptions = {},
-) =>
-  queryOptions({
-    queryKey: accessKeys.memberCandidatePage(request),
-    queryFn: ({ signal }) =>
-      listAccessMemberCandidates({ limit: 25, offset: 0, ...request, signal }),
-  });
-
-export const departmentListOptions = (
-  deleted: AccessDeletedFilter,
-  request: AccessDepartmentListOptions = {},
-) =>
-  queryOptions({
-    queryKey: accessKeys.departments(deleted, request),
-    queryFn: ({ signal }) =>
-      listAccessDepartments({
-        limit: 25,
-        offset: 0,
-        sort_by: "department_name",
-        ...request,
-        deleted,
-        signal,
-      }),
-  });
-
-export const moduleListOptions = (
-  deleted: AccessDeletedFilter,
-  request: AccessModuleListOptions = {},
-) =>
-  queryOptions({
-    queryKey: accessKeys.modules(deleted, request),
-    queryFn: ({ signal }) =>
-      listAccessModules({
-        limit: 25,
-        offset: 0,
-        sort_by: "module_name",
         ...request,
         deleted,
         signal,

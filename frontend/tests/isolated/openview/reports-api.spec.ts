@@ -17,6 +17,8 @@ import {
   updateOpenViewReport,
   type OpenViewReport,
 } from "../../../src/components/systems/openview/adapters/reports-api";
+import { wirePagination } from "../../helpers/pagination";
+import { installSyncFetch as installFetch } from "../helpers/fake-fetch";
 
 const moduleId = "00000000-0000-4000-8000-000000000101";
 const textFieldId = "00000000-0000-4000-8000-000000000102";
@@ -27,25 +29,6 @@ const runId = "00000000-0000-4000-8000-000000000107";
 const idempotencyKey = "00000000-0000-4000-8000-000000000108";
 const otherReportId = "00000000-0000-4000-8000-000000000109";
 const timestamp = "2026-09-23T00:00:00Z";
-
-type CapturedRequest = { input: RequestInfo | URL; init?: RequestInit };
-
-function installFetch(
-  responder: (input: RequestInfo | URL, init?: RequestInit) => Response,
-) {
-  const original = globalThis.fetch;
-  const requests: CapturedRequest[] = [];
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ input, init });
-    return Promise.resolve(responder(input, init));
-  }) as typeof fetch;
-  return {
-    requests,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -121,13 +104,7 @@ function reportResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const pagination = {
-  limit: 25,
-  offset: 0,
-  count: 1,
-  total: 1,
-  has_more: false,
-};
+const pagination = wirePagination({ limit: 25, count: 1, total: 1 });
 
 function expectedReport(): OpenViewReport {
   return {

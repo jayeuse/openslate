@@ -104,11 +104,15 @@ def test_a_stopped_runner_still_runs_its_cleanup() -> None:
     cleaned = []
     try:
         runner_console.stop_on_signals()
-        with pytest.raises(KeyboardInterrupt):
+
+        def terminate_with_cleanup() -> None:
             try:
                 os.kill(os.getpid(), signal.SIGTERM)
             finally:
                 cleaned.append(True)
+
+        with pytest.raises(KeyboardInterrupt):
+            terminate_with_cleanup()
         assert signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
     finally:
         for number, handler in saved.items():

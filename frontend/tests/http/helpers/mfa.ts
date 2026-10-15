@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import type { Page } from "./test";
+import { quietEventSource, type Page } from "./test";
+import { addTestStylesheet } from "./test-styles";
 
 export const mfaUserA = "00000000-0000-4000-8000-000000000001";
 export const mfaUserB = "00000000-0000-4000-8000-000000000002";
@@ -89,12 +90,7 @@ export async function mockMfa(
       factors: value.factors.map((factor) => ({ ...factor })),
     };
   };
-  await page.addInitScript(() => {
-    class FakeEventSource extends EventTarget {
-      close() {}
-    }
-    Object.defineProperty(window, "EventSource", { value: FakeEventSource });
-  });
+  await quietEventSource(page);
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
       json: {
@@ -316,9 +312,11 @@ export async function mockMfa(
 
 export async function concealMfaTestCredentials(page: Page) {
   if (page.isClosed()) return;
-  await page.addStyleTag({
-    content: "[data-mfa-credential] { display: none !important; }",
-  });
+  await addTestStylesheet(
+    page,
+    "conceal-mfa-credentials",
+    "[data-mfa-credential] { display: none !important; }",
+  );
   await page.evaluate(() => {
     for (const region of document.querySelectorAll("[data-mfa-credential]"))
       region.replaceChildren();

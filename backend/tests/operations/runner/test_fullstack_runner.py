@@ -11,24 +11,6 @@ from tests import fullstack_runner as runner
 from tests.postgres_runtime import DisposablePostgres
 
 
-def test_standalone_fullstack_runner_loads_complete_model_registry() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from sqlalchemy.orm import configure_mappers; "
-            "import tests.fullstack_runner; "
-            "from app.core.integrations.supabase_auth import SupabaseAuthClient; "
-            "from app.systems.access.users.models import User, UserStatus; "
-            "configure_mappers()",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-
-
 class _RunnerPostgres:
     network = "test-network"
     mail_url = "http://127.0.0.1:58998"
@@ -82,7 +64,7 @@ def _stub_fullstack_prerequisites(
     monkeypatch.setattr(
         runner,
         "run_streamed",
-        lambda command, cwd, env, log, capture=False: run(command, cwd=cwd, env=env),
+        lambda command, cwd, env, log, capture=False, shown=None: run(command, cwd=cwd, env=env),
     )
 
 
@@ -384,6 +366,17 @@ def test_backend_coverage_does_not_require_an_unbuilt_static_export(
     assert provider_key_matches
     assert "WEB_ASSETS_ROOT" not in observed
     assert ["npm", "run", "build", "--", "--webpack"] not in commands
+    report = json.loads((tmp_path / "backend/test-results/coverage/summary.json").read_text())
+    assert set(report.get("stage_seconds", {})) == {
+        "prepare",
+        "PostgreSQL startup",
+        "database role bootstrap",
+        "migrations",
+        "private Storage initialization",
+        "backend regression and coverage gate",
+    }
+    assert all(seconds >= 0 for seconds in report["stage_seconds"].values())
+    assert report["browser_tests"] == []
 
 
 def test_fullstack_stops_before_fastapi_when_static_build_fails(
@@ -391,10 +384,20 @@ def test_fullstack_stops_before_fastapi_when_static_build_fails(
 ) -> None:
     commands: list[list[str]] = []
     start_fastapi = MagicMock()
+    clock = [100.0]
+    cleaned = []
+    monkeypatch.setattr(runner.time, "monotonic", lambda: clock[0])
+
+    def cleanup(_postgres: _RunnerPostgres) -> None:
+        cleaned.append(True)
+        clock[0] += 30
+
+    monkeypatch.setattr(_RunnerPostgres, "stop", cleanup)
 
     def run(command: list[str], **_kwargs: object) -> MagicMock:
         commands.append(command)
         if command == ["npm", "run", "build", "--", "--webpack"]:
+            clock[0] += 4.25
             raise subprocess.CalledProcessError(1, command)
         return MagicMock()
 
@@ -404,6 +407,21 @@ def test_fullstack_stops_before_fastapi_when_static_build_fails(
     assert runner.main([]) == 1
     assert ["npm", "run", "build", "--", "--webpack"] in commands
     start_fastapi.assert_not_called()
+    report = json.loads((tmp_path / "frontend/test-results/fullstack-summary.json").read_text())
+    assert report["result"] == "failed"
+    assert report["stage"] == "static frontend build"
+    assert report.get("stage_seconds") == {
+        "prepare": 0,
+        "PostgreSQL startup": 0,
+        "database role bootstrap": 0,
+        "migrations": 0,
+        "private Storage initialization": 0,
+        "backend regression and coverage gate": 0,
+        "dedicated identities": 0,
+        "static frontend build": 4.25,
+    }
+    assert report["browser_completed"] is False
+    assert cleaned == [True]
 
 
 def test_fullstack_assigns_static_assets_after_a_successful_build(
@@ -411,10 +429,13 @@ def test_fullstack_assigns_static_assets_after_a_successful_build(
 ) -> None:
     events: list[str] = []
     launched_environment: dict[str, str] = {}
+    clock = [100.0]
+    monkeypatch.setattr(runner.time, "monotonic", lambda: clock[0])
 
     def run(command: list[str], **_kwargs: object) -> MagicMock:
         if command == ["npm", "run", "build", "--", "--webpack"]:
             events.append("build")
+            clock[0] += 2.5
         return MagicMock()
 
     _stub_fullstack_prerequisites(monkeypatch, tmp_path, run)
@@ -423,6 +444,7 @@ def test_fullstack_assigns_static_assets_after_a_successful_build(
     def start_fastapi(*_args: object, **kwargs: object) -> None:
         events.append("fastapi")
         launched_environment.update(kwargs["env"])
+        clock[0] += 0.75
         raise RuntimeError("stop after FastAPI configuration")
 
     monkeypatch.setattr(runner.subprocess, "Popen", start_fastapi)
@@ -430,6 +452,12 @@ def test_fullstack_assigns_static_assets_after_a_successful_build(
     assert runner.main([]) == 1
     assert events == ["build", "fastapi"]
     assert launched_environment["WEB_ASSETS_ROOT"] == str(runner.FRONTEND / "out")
+    report = json.loads((tmp_path / "frontend/test-results/fullstack-summary.json").read_text())
+    assert report["stage"] == "FastAPI startup"
+    assert report.get("stage_seconds", {}).get("static frontend build") == 2.5
+    assert report.get("stage_seconds", {}).get("FastAPI startup") == 0.75
+    assert sum(report["stage_seconds"].values()) == 3.25
+    assert "bounded admission and recovery" not in report["stage_seconds"]
 
 
 def test_fullstack_summary_preserves_result_and_observations_contract(tmp_path: Path) -> None:
@@ -454,6 +482,10 @@ def test_fullstack_summary_preserves_result_and_observations_contract(tmp_path: 
         backend_only=False,
         acceptance_only=True,
         stage="browser acceptance",
+        stage_seconds={"static frontend build": 2.5, "browser acceptance": 3.0},
+        browser_lines=[
+            "  ✘  1 [chromium] › fullstack/auth-session.spec.ts:9:5 › login journey (3.0s)"
+        ],
         browser_completed=False,
         admission={"recovered": True},
         checker_exit=1,
@@ -466,7 +498,15 @@ def test_fullstack_summary_preserves_result_and_observations_contract(tmp_path: 
         "scope": "acceptance-only",
         "backend_tests_rerun": False,
         "stage": "browser acceptance",
-        "browser_tests": [{"test": "login journey", "status": "failed"}],
+        "stage_seconds": {"static frontend build": 2.5, "browser acceptance": 3.0},
+        "browser_tests": [
+            {
+                "status": "failed",
+                "location": "fullstack/auth-session.spec.ts:9:5",
+                "title": "login journey",
+                "duration": "3.0s",
+            }
+        ],
         "browser_completed": False,
         "backend_failures": ["tests/auth/test_login.py::test_rejects_unknown_user"],
         "backend_counts": {"tests": "2", "failures": "1", "errors": "0", "skipped": "0"},
@@ -489,6 +529,8 @@ def test_completed_browser_command_does_not_invent_a_named_test_result(tmp_path:
         backend_only=False,
         acceptance_only=True,
         stage="browser acceptance",
+        stage_seconds={"browser acceptance": 2.0},
+        browser_lines=[],
         browser_completed=True,
         admission={},
         checker_exit=None,
