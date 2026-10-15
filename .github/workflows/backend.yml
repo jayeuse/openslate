@@ -290,6 +290,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=openslate-server
 
   verify:
+    name: backend-verify
     needs:
       - changes
       - quality
