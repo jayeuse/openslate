@@ -67,6 +67,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     module = add_module(db, department)
     target_module = add_module(db, department)
     label = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Label",
         type=FieldType.TEXT,
@@ -75,6 +76,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
         config={},
     )
     target_label = Field(
+        org_id=target_module.org_id,
         module_id=target_module.id,
         name="Label",
         type=FieldType.TEXT,
@@ -83,6 +85,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
         config={},
     )
     link = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Related",
         type=FieldType.RELATIONSHIP,
@@ -95,8 +98,9 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     )
     db.add_all([label, target_label, link])
     db.flush()
-    record = Record(module_id=module.id, data={str(label.id): "source"})
-    target = Record(module_id=target_module.id, data={str(target_label.id): "target"})
+    record = Record(org_id=module.org_id, module_id=module.id, data={str(label.id): "source"})
+    target = Record(org_id=target_module.org_id,
+                    module_id=target_module.id, data={str(target_label.id): "target"})
     db.add_all([record, target])
     admin = add_user(db, "lifecycle-admin", role=UserRole.ADMIN)
     writer = add_user(db, "lifecycle-writer")
@@ -262,6 +266,7 @@ def test_unlink_works_when_the_target_is_deleted_but_not_the_source(world: _Worl
 def test_assign_replaces_a_link_and_clears_it(world: _World) -> None:
     # Assignment needs a single-target field.
     single = Field(
+        org_id=world.module.org_id,
         module_id=world.module.id,
         name="Owner",
         type=FieldType.RELATIONSHIP,
@@ -272,7 +277,7 @@ def test_assign_replaces_a_link_and_clears_it(world: _World) -> None:
         relationship_multiple_targets=False,
         relationship_multiple_sources=True,
     )
-    other = Record(module_id=world.target_module.id, data={})
+    other = Record(org_id=world.target_module.org_id, module_id=world.target_module.id, data={})
     world.db.add_all([single, other])
     world.db.flush()
     path = f"/api/relationships/fields/{single.id}/sources/{world.record.id}"
@@ -326,7 +331,8 @@ def test_delete_and_restore_each_write_one_audit_row_for_the_actor(world: _World
 
 
 def test_record_query_deleted_options(world: _World) -> None:
-    kept = Record(module_id=world.module.id, data={str(world.label.id): "kept"})
+    kept = Record(org_id=world.module.org_id,
+                  module_id=world.module.id, data={str(world.label.id): "kept"})
     world.db.add(kept)
     world.db.flush()
     assert _delete(world, world.writer, world.record).status_code == 204

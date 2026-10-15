@@ -65,6 +65,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     department = add_department(db)
     module = add_module(db, department)
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Label",
         type=FieldType.TEXT,
@@ -74,7 +75,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     )
     db.add(field)
     db.flush()
-    record = Record(module_id=module.id, data={str(field.id): "visible"})
+    record = Record(org_id=module.org_id, module_id=module.id, data={str(field.id): "visible"})
     db.add(record)
     admin = add_user(db, "paths-admin", role=UserRole.ADMIN)
     reader = add_user(db, "paths-reader")
@@ -274,7 +275,7 @@ def test_group_access_replacement_checks_the_etag_and_the_department_rule(
 
 
 def test_workspace_invitation_settings_are_administrator_only(world: _World) -> None:
-    profile = world.db.scalar(select(WorkspaceProfile))
+    profile = world.db.get(WorkspaceProfile, world.module.org_id)
     assert profile is not None
     payload = {
         "revision": profile.revision,

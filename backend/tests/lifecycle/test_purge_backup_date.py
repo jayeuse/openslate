@@ -22,9 +22,16 @@ from app.systems.sandbox.lifecycle.router import router as lifecycle
 from app.systems.sandbox.records.models import Record
 from tests.boards.support import client, project_board
 from tests.boards.test_permanent_delete import _actor
+from tests.rbac.support import organization
 from tests.reports.test_report_routes import _module, _recipe
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def sandbox_draft(integration_owner_db):
+    create_document(integration_owner_db, organization(integration_owner_db))
 
 
 def backup(
@@ -76,13 +83,15 @@ def test_every_preview_reports_latest_success_fenced_to_installation(
     actor = _actor(db, admin=True)
     module, field = _module(db)
     department = db.get(Department, module.department_id)
-    record = Record(module_id=module.id, data={}, is_deleted=True, deleted_at=datetime.now(UTC))
+    record = Record(org_id=module.org_id,
+                    module_id=module.id, data={}, is_deleted=True, deleted_at=datetime.now(UTC))
     db.add(record)
     for target in (department, module, field):
         target.is_deleted, target.deleted_at = True, datetime.now(UTC)
     board, file_board = project_board(db), project_board(db)
     board.status = "archived"
     event = BoardEvent(
+        org_id=file_board.org_id,
         board_id=file_board.id,
         author_id=actor.id,
         title="Historical event",
@@ -93,6 +102,7 @@ def test_every_preview_reports_latest_success_fenced_to_installation(
         timezone_name="UTC",
     )
     report = Report(
+        org_id=module.org_id,
         module_id=module.id,
         name="Historical report",
         recipe=_recipe(field),
@@ -100,6 +110,7 @@ def test_every_preview_reports_latest_success_fenced_to_installation(
         deleted_at=datetime.now(UTC),
     )
     private_file = File(
+        org_id=module.org_id,
         purpose="workspace_logo",
         creator_id=actor.id,
         filename="old-logo.png",
@@ -110,6 +121,7 @@ def test_every_preview_reports_latest_success_fenced_to_installation(
         deleted_at=datetime.now(UTC),
     )
     board_file = File(
+        org_id=file_board.org_id,
         purpose="board_attachment",
         board_id=file_board.id,
         creator_id=actor.id,
