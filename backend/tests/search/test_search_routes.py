@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel, GroupMember
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
@@ -33,6 +34,7 @@ def _post(
     published: bool = True,
 ) -> BoardPost:
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="Private working text",
@@ -46,6 +48,7 @@ def _post(
         now = datetime.now(UTC)
         db.add(
             BoardPostRevision(
+                org_id=item.org_id,
                 post_id=item.id,
                 publication_number=1,
                 publication_key=uuid7(),
@@ -63,6 +66,7 @@ def _post(
 
 def _event(db: Session, board: Board, author: User, title: str, **changes: object) -> BoardEvent:
     item = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title=title,
@@ -233,7 +237,7 @@ def test_people_are_active_established_readers_of_readable_live_modules_only(
     inactive = add_user(db, status="disabled")
     inactive.display_name = "Indigo person"
     unaccepted = add_user(db)
-    unaccepted.invitation_sent_at = datetime.now(UTC)
+    sole_active_membership(db, unaccepted.id).invitation_sent_at = datetime.now(UTC)
     unaccepted.display_name = "Indigo person"
     expired = add_user(db, role=UserRole.GUEST, expires_at=datetime.now(UTC) - timedelta(days=1))
     expired.display_name = "Indigo person"

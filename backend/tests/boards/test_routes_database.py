@@ -42,6 +42,7 @@ def test_list_filters_to_visible_boards_before_count_and_pagination(
 ) -> None:
     db = integration_owner_db
     actor = member(db)
+    company_board(db)
     department = add_department(db, f"Visible {uuid7().hex[:6]}")
     make_group_access(db, [actor], department, level=AccessLevel.READ)
     tag = uuid7().hex[:6]
