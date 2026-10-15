@@ -39,6 +39,7 @@ def scheduled_report(report_run_fixture):
     with AuditSession(subject.owner_engine) as db:
         db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
         schedule = ReportSchedule(
+            org_id=db.get(Report, subject.report_id).org_id,
             report_id=subject.report_id,
             enabled=True,
             cadence="daily",
@@ -322,6 +323,7 @@ def test_existing_run_key_collision_does_not_notify_unrelated_output(scheduled_r
             assert work is not None
             db.add(
                 ReportRun(
+                    org_id=work.org_id,
                     report_id=report_id,
                     module_id=subject.module_id,
                     idempotency_key=work.id,

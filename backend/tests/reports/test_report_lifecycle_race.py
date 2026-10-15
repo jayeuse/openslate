@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
 
 pytestmark = pytest.mark.integration
@@ -22,7 +22,7 @@ def test_run_started_before_permanent_report_delete_cannot_save_after_it(
 ) -> None:
     fixture = report_run_fixture
     with AuditSession(fixture.owner_engine) as writer:
-        writer.get(User, fixture.owner_id).role = "admin"
+        sole_active_membership(writer, fixture.owner_id).role = "admin"
         writer.commit()
     monkeypatch.setattr(
         "app.systems.openview.reports.purge_router.get_settings",

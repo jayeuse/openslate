@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
@@ -99,6 +100,7 @@ def test_unavailable_current_sources_are_generic_conflicts_without_writes(chart_
         body["query"]["dimension"]["expected_type"] = "number"
     elif defect == "foreign-field":
         foreign = Field(
+            org_id=world.other_module.org_id,
             module_id=world.other_module.id,
             name="Foreign field",
             type=FieldType.TEXT,
@@ -193,7 +195,9 @@ def test_stale_cached_admin_identity_cannot_write_after_role_demotion(chart_worl
     world = chart_world
     actor = world.users["admin"]
     identifier = actor.id
-    actor.role = "member"
+    # Keep the source readable so demotion exercises the unchanged write-denial contract.
+    make_group_access(world.db, [actor], world.module.department, world.module, level="read")
+    sole_active_membership(world.db, identifier).role = "member"
     world.db.commit()
     stale, _membership = make_user("cached-chart-admin", role="admin")
     stale.id = identifier
