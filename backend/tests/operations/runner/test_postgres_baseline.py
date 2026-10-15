@@ -52,6 +52,10 @@ def test_baseline_has_one_head_and_provider_identity_file_catalog(integration_ow
         "groups",
         "group_members",
         "group_access",
+        "organizations",
+        "memberships",
+        "platform_settings",
+        "platform_operators",
     } <= tables
     assert "alembic_version" in tables
     assert (
@@ -70,10 +74,7 @@ def test_baseline_has_one_head_and_provider_identity_file_catalog(integration_ow
         }
         & tables
     )
-    assert _catalog(
-        integration_owner_db,
-        "SELECT display_name, timezone, locale FROM public.workspace_profiles",
-    ).one() == ("OpenSlate", "UTC", "en-US")
+    assert "workspace_profiles" not in tables
 
 
 @pytest.mark.integration

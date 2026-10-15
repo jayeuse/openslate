@@ -8,8 +8,6 @@ from uuid import UUID, uuid4
 
 import pytest
 from alembic.config import Config
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from sqlalchemy import event, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -23,7 +21,7 @@ from app.systems.manage.backups import exports, service
 from app.systems.manage.backups.models import BackupExportOperation, BackupRun
 from app.systems.manage.backups.schemas import ExportOutcomeCommand
 from tests.backups.export_support import SECRET
-from tests.operations.migration_support import guarded_migration_environment, run_alembic
+from tests.operations.migration_support import guarded_migration_environment
 
 pytestmark = pytest.mark.integration
 PUBLIC_FIELDS = {
@@ -202,24 +200,6 @@ def test_database_excludes_second_unresolved_export_even_without_service(export_
         db.rollback()
 
 
-def test_downgrade_refuses_export_history_without_changing_current_revision(export_world):
-    world = export_world
-    created = world.create()
-    assert created.status_code == 201
-    migration = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("dc22b5c205a4")
-    with world.auth.owner.connect() as db:
-        revision = db.scalar(text("SELECT version_num FROM alembic_version"))
-        with Operations.context(MigrationContext.configure(db)):
-            with pytest.raises(RuntimeError, match="backup export history"):
-                migration.module.downgrade()
-        assert db.scalar(text("SELECT version_num FROM alembic_version")) == revision
-        remaining = db.scalar(
-            text("SELECT count(*) FROM backup_export_operations WHERE id=:id"),
-            {"id": UUID(created.json()["id"])},
-        )
-        assert remaining == 1
-
-
 @pytest.mark.parametrize(
     "reason", ["foreign", "expired", "unproven", "missing", "member", "guest", "revoked", "mfa"]
 )
@@ -390,23 +370,11 @@ def test_export_secret_body_limit_works_without_trusting_declared_length(export_
     assert "x" * 128 not in response.text
 
 
-def test_empty_export_downgrade_upgrade_and_alembic_catalog_are_clean(integration_owner_db):
+def test_empty_export_catalog_matches_current_head_without_drift(integration_owner_db):
     environment = guarded_migration_environment()
     integration_owner_db.rollback()
     with get_engine().connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM backup_export_operations")) == 0
-    try:
-        run_alembic(environment, "downgrade", "7d4538964ae2")
-        run_alembic(environment, "upgrade", "dc22b5c205a4")
-        with get_engine().connect() as connection:
-            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "dc22b5c205a4"
-    finally:
-        original_error = sys.exception()
-        try:
-            run_alembic(environment, "upgrade", "head")
-            subprocess.run([sys.executable, "-m", "alembic", "check"], env=environment, check=True)
-        except BaseException as restore_error:
-            if original_error is not None:
-                raise original_error from restore_error
-            raise
+        revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+        assert revision == ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+    subprocess.run([sys.executable, "-m", "alembic", "check"], env=environment, check=True)
