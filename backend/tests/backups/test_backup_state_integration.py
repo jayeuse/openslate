@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.main import create_app
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.platform_scheduling.support import assert_notice_hidden, notification_client
@@ -479,6 +480,6 @@ def test_reconciled_backup_failure_notifies_authoritative_audience_atomically(
     assert item["subject_id"] == str(run.id) and item["kind"] == "backup-failed"
     assert item["scheduled_for"] is None and "work_id" not in item
     assert client.get("/api/notifications/unread-count").json() == {"unread_count": 1}
-    recipient.role = UserRole.MEMBER.value
+    sole_active_membership(db, recipient.id).role = UserRole.MEMBER.value
     db.commit()
     assert_notice_hidden(client, notices[0].id)

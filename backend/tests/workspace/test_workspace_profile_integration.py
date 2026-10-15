@@ -35,13 +35,14 @@ def profile_client(fake_provider_account):
     with Session(owner) as db:
         user = db.get(User, actor_id)
         assert user is not None
+        membership = sole_active_membership(db, actor_id)
         original_user = {
-            key: getattr(user, key)
+            key: getattr(user if key == "supabase_user_id" else membership, key)
             for key in ("role", "supabase_user_id", "sponsor_user_id", "expires_at")
         }
         user.supabase_user_id = provider_id
-        user.role = "admin"
-        profile = db.scalar(select(WorkspaceProfile))
+        membership.role = "admin"
+        profile = db.get(WorkspaceProfile, membership.org_id)
         assert profile is not None
         original_profile = {key: getattr(profile, key) for key in (*PROFILE_VALUES, "revision")}
         for key, value in PROFILE_VALUES.items():
@@ -63,9 +64,10 @@ def profile_client(fake_provider_account):
         with Session(owner) as db:
             user = db.get(User, actor_id)
             assert user is not None
-            sponsor_id = user.sponsor_user_id
+            membership = sole_active_membership(db, actor_id)
+            sponsor_id = membership.sponsor_user_id
             for key, value in original_user.items():
-                setattr(user, key, value)
+                setattr(user if key == "supabase_user_id" else membership, key, value)
             db.flush()
             if sponsor_id is not None and sponsor_id != original_user["sponsor_user_id"]:
                 sponsor = db.get(User, sponsor_id)
@@ -73,7 +75,7 @@ def profile_client(fake_provider_account):
                 db.delete(sole_active_membership(db, sponsor_id))
                 db.flush()
                 db.delete(sponsor)
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.get(WorkspaceProfile, membership.org_id)
             assert profile is not None
             for key, value in original_profile.items():
                 setattr(profile, key, value)
@@ -84,7 +86,8 @@ def _role(owner, actor_id, role):
     with Session(owner) as db:
         user = db.get(User, actor_id)
         assert user is not None
-        if role == "guest" and user.sponsor_user_id is None:
+        membership = sole_active_membership(db, actor_id)
+        if role == "guest" and membership.sponsor_user_id is None:
             sponsor, _membership = create_member(db, db.get(WorkspaceProfile,
                 sole_active_membership(db, actor_id).org_id),
                 email=f"profile-sponsor-{uuid4().hex}@example.test",
@@ -94,9 +97,9 @@ def _role(owner, actor_id, role):
             )
             db.add(sponsor)
             db.flush()
-            user.sponsor_user_id = sponsor.id
-            user.expires_at = datetime.now(UTC) + timedelta(days=1)
-        user.role = role
+            membership.sponsor_user_id = sponsor.id
+            membership.expires_at = datetime.now(UTC) + timedelta(days=1)
+        membership.role = role
         db.commit()
 
 

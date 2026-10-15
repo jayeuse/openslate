@@ -17,7 +17,7 @@ from app.systems.access.identity.provider_signout_worker import ProviderSignoutW
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings
 
 pytestmark = pytest.mark.integration
 FIELDS = ("session_retention_days", "security_event_retention_days")
@@ -29,7 +29,7 @@ def event_retention_world(integration_owner_db):
     ids = []
     with Session(owner) as db:
         before = set(db.scalars(select(SecurityEvent.id)))
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = db.scalar(select(PlatformSettings))
         original = {field: getattr(profile, field) for field in FIELDS if hasattr(profile, field)}
 
     def add(times):
@@ -70,7 +70,7 @@ def event_retention_world(integration_owner_db):
 
     def policy(**values):
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.scalar(select(PlatformSettings))
             for field, value in values.items():
                 setattr(profile, field, value)
             db.commit()
@@ -97,7 +97,7 @@ def event_retention_world(integration_owner_db):
                 )
             ):
                 db.delete(row)
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.scalar(select(PlatformSettings))
             for field, value in original.items():
                 setattr(profile, field, value)
             db.commit()
@@ -293,7 +293,7 @@ def test_policy_and_cleanup_serialize_with_committed_outcomes(event_retention_wo
             transaction = writer.begin()
             holder_pid = writer.scalar(text("SELECT pg_backend_pid()"))
             writer.execute(
-                text("UPDATE public.workspace_profiles SET security_event_retention_days=1")
+                text("UPDATE public.platform_settings SET security_event_retention_days=1")
             )
             with ThreadPoolExecutor(max_workers=1) as pool:
                 pending = pool.submit(_invoke, world)

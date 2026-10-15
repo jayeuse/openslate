@@ -35,7 +35,7 @@ def _client() -> TestClient:
     )
 
 
-def test_public_appearance_is_anonymous_theme_only_and_no_store():
+def test_public_appearance_is_anonymous_theme_only_and_no_store(fake_provider_account):
     client = _client()
     try:
         assert client.get("/api/workspace").status_code == 401
@@ -61,8 +61,9 @@ def appearance_workspace(fake_provider_account):
         user = db.get(User, local_id)
         assert user is not None
         user.supabase_user_id = provider_id
-        user.role = "admin"
-        profile = db.scalar(select(WorkspaceProfile))
+        membership = sole_active_membership(db, local_id)
+        membership.role = "admin"
+        profile = db.get(WorkspaceProfile, membership.org_id)
         assert profile is not None
         original = {field: getattr(profile, field) for field in _FIELDS}
         profile.theme = "slate"
@@ -141,6 +142,7 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
     with Session(owner) as db:
         user = db.get(User, actor_id)
         assert user is not None
+        membership = sole_active_membership(db, actor_id)
         if role == "guest":
             sponsor, _membership = create_member(db, db.get(WorkspaceProfile,
                 sole_active_membership(db, actor_id).org_id),
@@ -152,9 +154,9 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
             db.add(sponsor)
             db.flush()
             sponsor_id = sponsor.id
-            user.sponsor_user_id = sponsor_id
-            user.expires_at = datetime.now(UTC) + timedelta(days=1)
-        user.role = role
+            membership.sponsor_user_id = sponsor_id
+            membership.expires_at = datetime.now(UTC) + timedelta(days=1)
+        membership.role = role
         db.commit()
     try:
         denied = client.patch(
@@ -169,9 +171,10 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
             with Session(owner) as db:
                 user = db.get(User, actor_id)
                 assert user is not None
-                user.role = "admin"
-                user.sponsor_user_id = None
-                user.expires_at = None
+                membership = sole_active_membership(db, actor_id)
+                membership.role = "admin"
+                membership.sponsor_user_id = None
+                membership.expires_at = None
                 db.flush()
                 sponsor = db.get(User, sponsor_id)
                 assert sponsor is not None
