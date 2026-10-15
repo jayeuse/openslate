@@ -23,8 +23,8 @@ from app.systems.access.users.models import Membership, User, UserRole, UserStat
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY
 from app.systems.manage.audit.models import AuditLog, SecurityEvent, SecurityEventOutcome
 from app.systems.manage.audit.snapshots import REDACTED
-from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.conftest import create_member
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
+from tests.conftest import create_member, create_organization
 
 
 def _admin() -> tuple[User, Membership]:
@@ -325,29 +325,25 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
     engine = integration_owner_db.get_bind().engine
     db = AuditSession(engine)
     db.info.update(integration_owner_db.info)
-    user, membership = _admin()
+    profile = create_organization(db)
+    user, membership = create_member(
+        db, profile, role=UserRole.ADMIN, supabase_user_id=uuid7(),
+    )
     user_id, provider_id, email = user.id, user.supabase_user_id, user.email
-    profile = db.scalar(select(WorkspaceProfile))
+    membership_id = membership.id
     assert profile is not None
     profile_id, revision = profile.id, profile.revision
+    platform = db.scalars(select(PlatformSettings)).one()
+    platform_id = platform.id
     fields = (
-        "mfa_require_admin",
-        "mfa_require_member",
-        "mfa_require_guest",
-        "mfa_grace_days",
         "session_absolute_lifetime_minutes",
         "session_concurrent_limit",
         "login_failed_attempt_threshold",
-        "ip_allow_list",
         "revision",
         "updated_at",
         "performed_by",
     )
-    saved = {field: getattr(profile, field) for field in fields}
-    episodes = {
-        row.id: (row.mfa_required_since, row.updated_at, row.performed_by)
-        for row in db.scalars(select(User))
-    }
+    saved = {field: getattr(platform, field) for field in fields}
     request_id = db.info[AUDIT_CONTEXT_KEY].request_id
 
     def cleanup():
@@ -358,25 +354,31 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
                 select(SecurityEvent).where(SecurityEvent.subject_id == user_id)
             ):
                 restore.delete(row)
+            owned_membership = restore.get(Membership, membership_id)
+            if owned_membership is not None:
+                restore.delete(owned_membership)
+            restore.flush()
             owned = restore.get(User, user_id)
             if owned is not None:
                 restore.delete(owned)
-            current = restore.get(WorkspaceProfile, profile_id)
+            current = restore.get(PlatformSettings, platform_id)
             for field, value in saved.items():
                 setattr(current, field, value)
-            for row in restore.scalars(select(User).where(User.id.in_(episodes))):
-                row.mfa_required_since, row.updated_at, row.performed_by = episodes[row.id]
-            for row in restore.scalars(select(AuditLog).where(AuditLog.request_id == request_id)):
+            for row in restore.scalars(select(AuditLog).where(
+                (AuditLog.org_id == profile_id) | (AuditLog.request_id == request_id)
+            )):
                 restore.delete(row)
+            restore.flush()
+            restore.delete(restore.get(WorkspaceProfile, profile_id))
             restore.commit()
 
     request.addfinalizer(cleanup)
     profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = True
-    user.mfa_required_since = datetime.now(UTC) - timedelta(days=1)
-    profile.session_absolute_lifetime_minutes = 240
-    profile.session_concurrent_limit = 2
+    membership.mfa_required_since = datetime.now(UTC) - timedelta(days=1)
+    platform.session_absolute_lifetime_minutes = 240
+    platform.session_concurrent_limit = 2
     profile.mfa_grace_days = 3
-    profile.login_failed_attempt_threshold = 4
+    platform.login_failed_attempt_threshold = 4
     profile.ip_allow_list = ["10.0.0.0/8"]
 
     def make_session():
@@ -476,9 +478,11 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
         and profile.ip_allow_list == []
     )
     assert profile.revision == revision + 1
-    assert db.get(User, user_id).mfa_required_since is None
-    assert (profile.session_absolute_lifetime_minutes, profile.session_concurrent_limit) == (240, 2)
-    assert profile.mfa_grace_days == 3 and profile.login_failed_attempt_threshold == 4
+    assert db.get(Membership, membership_id).mfa_required_since is None
+    assert (platform.session_absolute_lifetime_minutes, platform.session_concurrent_limit) == (
+        240, 2,
+    )
+    assert profile.mfa_grace_days == 3 and platform.login_failed_attempt_threshold == 4
     assert session.revoked_at is not None
     assert bool(factor_ids) is (failure is True)
     observation = db.get(IdentityMfaObservation, user_id)

@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.caddy_runtime import DisposableCaddy
 from tests.fullstack_environment import api_environment
@@ -66,10 +66,12 @@ def test_workspace_security_resolves_caddy_peer_and_refuses_forged_lockout(
     }
     with Session(owner) as db:
         user = db.get(User, local_id)
-        profile = db.scalar(select(WorkspaceProfile))
+        membership = db.scalars(select(Membership).where(Membership.user_id == local_id)).one()
+        profile_id = membership.org_id
+        profile = db.get(WorkspaceProfile, profile_id)
         assert user is not None and profile is not None
         user.supabase_user_id = provider_id
-        user.role = "admin"
+        membership.role = "admin"
         original = {
             field: getattr(profile, field)
             for field in (
@@ -207,7 +209,7 @@ def test_workspace_security_resolves_caddy_peer_and_refuses_forged_lockout(
                 )
     finally:
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.get(WorkspaceProfile, profile_id)
             assert profile is not None
             for field, value in original.items():
                 setattr(profile, field, value)
