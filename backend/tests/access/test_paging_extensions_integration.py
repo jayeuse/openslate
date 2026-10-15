@@ -7,6 +7,7 @@ from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.router import router as users_router
 from app.systems.sandbox.modules.models import Module
 from tests.access.group_delegation_support import world as world
@@ -26,14 +27,16 @@ def group_page(paging_world):
     world = paging_world
     marker = f"paging-{uuid7().hex}"
     groups = {
-        name: Group(name=f"{marker} {name}")
+        name: Group(org_id=world.inventory.org_id, name=f"{marker} {name}")
         for name in ("empty", "member", "access", "both", "removed")
     }
     world.db.add_all(groups.values())
     world.db.flush()
     for name, members in (("member", [world.plain]), ("both", [world.plain, world.guest])):
         for user in members:
-            world.db.add(GroupMember(group_id=groups[name].id, user_id=user.id))
+            world.db.add(GroupMember(
+                org_id=groups[name].org_id, group_id=groups[name].id, user_id=user.id,
+            ))
     module = world.db.scalar(select(Module).where(Module.department_id == world.inventory.id))
     for name, module_id, deleted in (
         ("access", None, False),
@@ -43,6 +46,7 @@ def group_page(paging_world):
     ):
         world.db.add(
             GroupAccess(
+                org_id=world.inventory.org_id,
                 group_id=groups[name].id,
                 department_id=world.inventory.id,
                 module_id=module_id,
@@ -107,11 +111,12 @@ def test_group_search_matches_access_names_once_and_keeps_manager_visibility(gro
     world.finance.department_name = department_name.replace("_%", "XY")
     decoy_module = add_module(world.db, world.finance)
     decoy_module.module_name = module_name.replace("_%", "XY")
-    decoy = Group(name=f"Decoy {uuid7().hex}")
+    decoy = Group(org_id=world.finance.org_id, name=f"Decoy {uuid7().hex}")
     world.db.add(decoy)
     world.db.flush()
     world.db.add(
         GroupAccess(
+            org_id=world.finance.org_id,
             group_id=decoy.id,
             department_id=world.finance.id,
             module_id=decoy_module.id,
@@ -185,7 +190,8 @@ def test_admin_ids_resolve_requested_deleted_people_and_preserve_list_state(pagi
 
 def test_candidate_ids_keep_the_manager_boundary_and_report_recorded_expiry(paging_world):
     world = paging_world
-    world.guest.expires_at = datetime.now(UTC) - timedelta(days=1)
+    guest = sole_active_membership(world.db, world.guest.id)
+    guest.expires_at = datetime.now(UTC) - timedelta(days=1)
     world.plain.is_deleted = True
     world.plain.deleted_at = datetime.now(UTC)
     world.db.commit()
@@ -197,7 +203,7 @@ def test_candidate_ids_keep_the_manager_boundary_and_report_recorded_expiry(pagi
     body = response.json()
     assert body["pagination"]["total"] == 1
     assert [row["id"] for row in body["items"]] == [str(world.guest.id)]
-    assert datetime.fromisoformat(body["items"][0]["access_ends_at"]) == world.guest.expires_at
+    assert datetime.fromisoformat(body["items"][0]["access_ends_at"]) == guest.expires_at
     world.manager.status = "disabled"
     world.db.commit()
     denied = world.client(world.manager).get(
@@ -219,14 +225,20 @@ def test_ids_validation_rejects_unbounded_or_invalid_lookup(paging_world, path):
 def test_group_member_lookup_pages_all_memberships_including_no_access_groups(paging_world):
     world = paging_world
     marker = f"membership-{uuid7().hex}"
-    matching = [Group(name=f"{marker} {index:02d}") for index in range(27)]
-    decoy = Group(name=f"{marker} decoy")
+    matching = [
+        Group(org_id=world.inventory.org_id, name=f"{marker} {index:02d}") for index in range(27)
+    ]
+    decoy = Group(org_id=world.inventory.org_id, name=f"{marker} decoy")
     world.db.add_all([*matching, decoy])
     world.db.flush()
     for group in matching:
-        world.db.add(GroupMember(group_id=group.id, user_id=world.plain.id))
+        world.db.add(GroupMember(
+            org_id=group.org_id, group_id=group.id, user_id=world.plain.id,
+        ))
     for group in (matching[-1], decoy):
-        world.db.add(GroupMember(group_id=group.id, user_id=world.guest.id))
+        world.db.add(GroupMember(
+            org_id=group.org_id, group_id=group.id, user_id=world.guest.id,
+        ))
     world.db.commit()
     client = world.client(world.admin)
     params = {

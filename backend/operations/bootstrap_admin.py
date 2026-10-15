@@ -74,7 +74,9 @@ def _invitation(email: str, username: str) -> InvitationCreate:
 
 def _validate_schema(db: AuditSession) -> None:
     """Touch the account and membership schema before provisioning."""
-    db.scalar(select(User.id, Membership.role).join(Membership).limit(1))
+    db.scalar(select(User.id, Membership.role).join(
+        Membership, Membership.user_id == User.id,
+    ).limit(1))
 
 
 def _matching_profile(db: AuditSession, invitation: InvitationCreate) -> User | None:
