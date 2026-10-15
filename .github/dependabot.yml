@@ -1,4 +1,7 @@
 # Monthly grouped updates keep the number of full CI runs low.
+# Groups take only minor and patch versions; a major version opens its own PR,
+# so one breaking upgrade (for example TypeScript 7) cannot block the group.
+# Risky upgrades are split out, never ignored: ignore rules also suppress security updates.
 # Security updates still open as soon as an advisory is published.
 # compose.yaml is not listed: its Supabase image pins change only with a tested stack upgrade.
 version: 2
@@ -15,6 +18,7 @@ updates:
       npm:
         applies-to: version-updates
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: uv
     directory: /backend
@@ -28,6 +32,10 @@ updates:
       uv:
         applies-to: version-updates
         patterns: ["*"]
+        # SQLAlchemy minor versions are breaking release series (2.1 removes the
+        # mypy plugin), so SQLAlchemy opens its own PR.
+        exclude-patterns: ["sqlalchemy"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: github-actions
     directory: /
