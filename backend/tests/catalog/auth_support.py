@@ -47,4 +47,4 @@ def override_catalog_authorization(application: FastAPI, db: Session | None = No
             else original(query) if callable(original) else result
         )
     for dependency in catalog_actor_dependencies():
-        application.dependency_overrides[dependency] = lambda actor=actor: actor
+        application.dependency_overrides[dependency] = lambda: actor

@@ -28,7 +28,7 @@ pytest_plugins = ("tests.catalog.dynamic_field_support",)
 def catalog_client(integration_db: AuditSession) -> Iterator[TestClient]:
     app = FastAPI()
     app.include_router(records_router, prefix="/api")
-    override_catalog_authorization(app)
+    override_catalog_authorization(app, integration_db)
     app.dependency_overrides[get_db] = lambda: integration_db
     _set_request(integration_db, uuid7(), "/api/catalog-contract")
     with TestClient(app) as client:
