@@ -58,11 +58,12 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    board = Board(scope="project", name="Operations", status="active")
-    other = Board(scope="project", name="Other", status="active")
+    board = Board(org_id=organization(db).id, scope="project", name="Operations", status="active")
+    other = Board(org_id=board.org_id, scope="project", name="Other", status="active")
     db.add_all((board, other))
     db.flush()
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id, author_id=actor.id, title="Author only", all_day=True,
         start_date=date(2026, 9, 24), end_date=date(2026, 9, 24),
         timezone_name="Asia/Manila",
@@ -71,6 +72,7 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
     db.flush()
     content = b"private board bytes"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=actor.id, filename="notice.pdf", expected_size=len(content),
         actual_size=len(content), digest=sha256(content).hexdigest(),
@@ -134,17 +136,20 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
         id=uuid4(), email=f"outsider-{uuid4().hex}@example.test",
         username=f"outsider_{uuid4().hex[:12]}", status="active", role="member",
     )
-    board = Board(scope="project", name="Private notice", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Private notice", status="active")
     db.add_all((reader, outsider, board))
     db.flush()
     board_group(db, board, [reader], "read")
     notice = BoardPost(
+        org_id=board.org_id,
         board_id=board.id, author_id=actor.id, title="Draft for author",
         body="Previous publication", status="published",
         displayed_publication_number=1,
     )
     content = b"published attachment"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=actor.id, filename="published.pdf", expected_size=len(content),
         actual_size=len(content), digest=sha256(content).hexdigest(),
@@ -154,6 +159,7 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
     db.add_all((notice, file))
     db.flush()
     revision = BoardPostRevision(
+        org_id=notice.org_id,
         post_id=notice.id, publication_number=1, publication_key=uuid4(),
         content_fingerprint=publication_content_fingerprint(
             author_id=actor.id, title="Published for reader", body="Previous publication",
@@ -164,10 +170,12 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
     db.add(revision)
     db.flush()
     db.add(BoardAttachment(
+        org_id=board.org_id,
         board_id=board.id, file_id=file.id, post_id=notice.id, is_linked=False
     ))
     db.flush()
-    db.add(BoardPostRevisionAttachment(revision_id=revision.id, file_id=file.id))
+    db.add(BoardPostRevisionAttachment(org_id=revision.org_id,
+                                       revision_id=revision.id, file_id=file.id))
     db.commit()
     store = Store(db)
     store.objects[file.object_key] = content
@@ -203,11 +211,13 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
         status="active",
         role=reader_role,
     )
-    board = Board(scope="project", name="Archived Board", status=BoardStatus.ACTIVE)
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Archived Board", status=BoardStatus.ACTIVE)
     db.add_all((viewer, board))
     db.flush()
     board_group(db, board, [viewer], "read")
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Retained event",
@@ -218,6 +228,7 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
     )
     content = b"retained event attachment"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -232,7 +243,8 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
     )
     db.add_all((event, file))
     db.flush()
-    db.add(BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
+    db.add(BoardAttachment(org_id=board.org_id,
+                           board_id=board.id, file_id=file.id, event_id=event.id))
     db.commit()
     store = Store(db)
     store.objects[file.object_key] = content
@@ -272,10 +284,12 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    board = Board(scope="project", name="Archived audience Board", status=BoardStatus.ACTIVE)
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Archived audience Board", status=BoardStatus.ACTIVE)
     db.add(board)
     db.flush()
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Author only",
@@ -285,6 +299,7 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
         timezone_name="Asia/Manila",
     )
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -299,7 +314,8 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
     )
     db.add_all((event, file))
     db.flush()
-    db.add(BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
+    db.add(BoardAttachment(org_id=board.org_id,
+                           board_id=board.id, file_id=file.id, event_id=event.id))
     db.commit()
     board.status = BoardStatus.ARCHIVED
     db.commit()
@@ -332,11 +348,13 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
 def test_a_detached_file_cannot_move_to_other_content(guarded_db, actor):
     """One lifetime owner per file: sample runs upload a second file for the event."""
     db = guarded_db
-    board = Board(scope="project", name="Single owner", status=BoardStatus.ACTIVE)
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Single owner", status=BoardStatus.ACTIVE)
     db.add(board)
     db.flush()
     first, second = (
         BoardEvent(
+            org_id=board.org_id,
             board_id=board.id, author_id=actor.id, title=title, all_day=True,
             start_date=date(2026, 9, 24), end_date=date(2026, 9, 24),
             timezone_name="Asia/Manila",
@@ -345,6 +363,7 @@ def test_a_detached_file_cannot_move_to_other_content(guarded_db, actor):
     )
     content = b"single owner bytes"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=actor.id, filename="owner.pdf", expected_size=len(content),
         actual_size=len(content), digest=sha256(content).hexdigest(),

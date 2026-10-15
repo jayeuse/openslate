@@ -22,7 +22,7 @@ from app.systems.platform.files.storage import get_storage
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from tests.rbac.support import add_user, make_group_access
+from tests.rbac.support import add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 
@@ -54,9 +54,10 @@ def _actor_with_record(
     db, *, level: AccessLevel | None = None, role: str = UserRole.MEMBER
 ) -> tuple[User, GroupAccess | None, Record]:
     actor = add_user(db, "attachment-policy", role=role)
-    department = Department(department_name=f"Attachment policy {uuid4()}")
-    module = Module(department=department, module_name="Files")
-    record = Record(module=module, data={})
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Attachment policy {uuid4()}")
+    module = Module(org_id=department.org_id, department=department, module_name="Files")
+    record = Record(org_id=module.org_id, module=module, data={})
     db.add_all([department, module, record])
     db.flush()
     grant = (
@@ -70,6 +71,7 @@ def _actor_with_record(
 
 def _ready_file(db, actor: User, record: Record, content: bytes) -> File:
     file = File(
+        org_id=record.org_id,
         purpose="record_attachment",
         record_id=record.id,
         creator_id=actor.id,
@@ -223,9 +225,10 @@ def test_attachment_download_reauthorizes_after_storage_latency(guarded_db, monk
 
 def test_administrator_attaches_to_any_record_without_a_group(guarded_db, actor):
     db = guarded_db
-    department = Department(department_name=f"Administrator attachment {uuid4()}")
-    module = Module(department=department, module_name="Files")
-    record = Record(module=module, data={})
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Administrator attachment {uuid4()}")
+    module = Module(org_id=department.org_id, department=department, module_name="Files")
+    record = Record(org_id=module.org_id, module=module, data={})
     db.add_all([department, module, record])
     db.commit()
 

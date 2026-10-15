@@ -10,16 +10,19 @@ from app.systems.boards.attachment_models import BoardAttachment
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.platform.files.models import File
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
 
 def test_board_content_owner_cannot_change_after_first_attachment(guarded_db, actor):
     db = guarded_db
-    board = Board(scope="project", name="Single content owner", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Single content owner", status="active")
     db.add(board)
     db.flush()
     first = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="First",
@@ -29,6 +32,7 @@ def test_board_content_owner_cannot_change_after_first_attachment(guarded_db, ac
         timezone_name="UTC",
     )
     second = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Second",
@@ -38,6 +42,7 @@ def test_board_content_owner_cannot_change_after_first_attachment(guarded_db, ac
         timezone_name="UTC",
     )
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -49,7 +54,8 @@ def test_board_content_owner_cannot_change_after_first_attachment(guarded_db, ac
     )
     db.add_all((first, second, file))
     db.flush()
-    owner = BoardAttachment(board_id=board.id, file_id=file.id, event_id=first.id)
+    owner = BoardAttachment(org_id=board.org_id,
+                            board_id=board.id, file_id=file.id, event_id=first.id)
     db.add(owner)
     db.flush()
 
@@ -64,11 +70,14 @@ def test_board_content_owner_cannot_change_after_first_attachment(guarded_db, ac
 
 def test_board_content_link_rejects_file_and_event_from_different_boards(guarded_db, actor):
     db = guarded_db
-    file_board = Board(scope="project", name="File Board", status="active")
-    event_board = Board(scope="project", name="Event Board", status="active")
+    file_board = Board(org_id=organization(db).id,
+                       scope="project", name="File Board", status="active")
+    event_board = Board(org_id=file_board.org_id,
+                        scope="project", name="Event Board", status="active")
     db.add_all((file_board, event_board))
     db.flush()
     event = BoardEvent(
+        org_id=event_board.org_id,
         board_id=event_board.id,
         author_id=actor.id,
         title="Other Board",
@@ -78,6 +87,7 @@ def test_board_content_link_rejects_file_and_event_from_different_boards(guarded
         timezone_name="UTC",
     )
     file = File(
+        org_id=file_board.org_id,
         purpose="board_attachment",
         board_id=file_board.id,
         record_id=None,
@@ -91,7 +101,8 @@ def test_board_content_link_rejects_file_and_event_from_different_boards(guarded
     db.flush()
     savepoint = db.begin_nested()
     db.add(
-        BoardAttachment(board_id=file_board.id, file_id=file.id, event_id=event.id)
+        BoardAttachment(org_id=file_board.org_id,
+                        board_id=file_board.id, file_id=file.id, event_id=event.id)
     )
     with pytest.raises(IntegrityError):
         db.flush()

@@ -28,8 +28,9 @@ from tests.rbac.support import organization
 pytestmark = pytest.mark.integration
 
 
-def _file(actor, *, purpose: str, board_id=None, record_id=None) -> File:
+def _file(actor, *, org_id, purpose: str, board_id=None, record_id=None) -> File:
     item = File(
+        org_id=org_id,
         purpose=purpose,
         record_id=record_id,
         creator_id=actor.id,
@@ -44,22 +45,23 @@ def _file(actor, *, purpose: str, board_id=None, record_id=None) -> File:
 
 def test_board_file_requires_exactly_one_board_parent_and_restricts_board_delete(guarded_db, actor):
     db = guarded_db
-    board = Board(scope="project", name="Attached files", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Attached files", status="active")
     db.add(board)
     db.flush()
 
-    valid = _file(actor, purpose="board_attachment", board_id=board.id)
+    valid = _file(actor, org_id=board.org_id, purpose="board_attachment", board_id=board.id)
     db.add(valid)
     db.flush()
     assert valid.board_id == board.id
 
     savepoint = db.begin_nested()
-    db.add(_file(actor, purpose="board_attachment"))
+    db.add(_file(actor, org_id=board.org_id, purpose="board_attachment"))
     with pytest.raises(IntegrityError):
         db.flush()
     savepoint.rollback()
     savepoint = db.begin_nested()
-    db.add(_file(actor, purpose="library_document", board_id=board.id))
+    db.add(_file(actor, org_id=board.org_id, purpose="library_document", board_id=board.id))
     with pytest.raises(IntegrityError):
         db.flush()
     savepoint.rollback()
@@ -73,11 +75,12 @@ def test_board_file_requires_exactly_one_board_parent_and_restricts_board_delete
 
 def test_board_file_cannot_move_to_another_board(guarded_db, actor):
     db = guarded_db
-    original = Board(scope="project", name="Original", status="active")
-    other = Board(scope="project", name="Other", status="active")
+    original = Board(org_id=organization(db).id,
+                     scope="project", name="Original", status="active")
+    other = Board(org_id=original.org_id, scope="project", name="Other", status="active")
     db.add_all((original, other))
     db.flush()
-    item = _file(actor, purpose="board_attachment", board_id=original.id)
+    item = _file(actor, org_id=original.org_id, purpose="board_attachment", board_id=original.id)
     db.add(item)
     db.flush()
 
@@ -98,8 +101,9 @@ def test_board_file_requires_context_for_reserve_upload_and_download(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    board = Board(scope="project", name="Private files", status="active")
-    other = Board(scope="project", name="Different Board", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Private files", status="active")
+    other = Board(org_id=board.org_id, scope="project", name="Different Board", status="active")
     db.add_all((board, other))
     db.commit()
     output = BytesIO()
@@ -135,8 +139,10 @@ def test_board_file_requires_context_for_reserve_upload_and_download(
 
 def test_board_file_uncertain_upload_reconciles_only_in_owning_board(guarded_db, actor):
     db = guarded_db
-    board = Board(scope="project", name="Recovery board", status="active")
-    other = Board(scope="project", name="Other recovery board", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Recovery board", status="active")
+    other = Board(org_id=board.org_id,
+                  scope="project", name="Other recovery board", status="active")
     db.add_all((board, other))
     db.commit()
     output = BytesIO()
@@ -163,7 +169,8 @@ def test_board_file_uncertain_upload_reconciles_only_in_owning_board(guarded_db,
 
 def test_global_records_writer_without_board_grant_cannot_reserve_or_upload(guarded_db, actor):
     db = guarded_db
-    board = Board(scope="project", name="Owner only", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Owner only", status="active")
     role = "member"
     db.add(board)
     db.flush()
@@ -192,10 +199,12 @@ def test_board_file_purge_waits_for_content_unlink_then_removes_bytes(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    board = Board(scope="project", name="File purge", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="File purge", status="active")
     db.add(board)
     db.flush()
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Attached event",
@@ -207,6 +216,7 @@ def test_board_file_purge_waits_for_content_unlink_then_removes_bytes(
     db.add(event)
     db.flush()
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -220,7 +230,8 @@ def test_board_file_purge_waits_for_content_unlink_then_removes_bytes(
     )
     db.add(file)
     db.flush()
-    link = BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id)
+    link = BoardAttachment(org_id=board.org_id,
+                           board_id=board.id, file_id=file.id, event_id=event.id)
     db.add(link)
     db.commit()
 
