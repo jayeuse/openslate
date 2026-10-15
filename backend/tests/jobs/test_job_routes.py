@@ -58,6 +58,7 @@ def test_jobs_failed_priority_literal_search_and_global_date_filters(integration
     jobs = failed_jobs(db)
     report_work = jobs["report-run"]
     pending = ScheduledWork(
+        org_id=report_work.org_id,
         report_id=report_work.report_id,
         scheduled_for=NOW + timedelta(days=1),
         next_attempt_at=NOW + timedelta(days=1),
