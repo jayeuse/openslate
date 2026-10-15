@@ -250,6 +250,7 @@ jobs:
           if-no-files-found: error
 
   verify:
+    name: frontend-verify
     needs: [changes, check, build, isolated, test]
     if: ${{ always() }}
     runs-on: ubuntu-latest
