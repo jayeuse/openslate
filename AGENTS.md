@@ -56,6 +56,20 @@ Wrong: "While backend coverage ran, repeated three Playwright tests to check fla
 - Mutations use `AuditSession` and individual ORM changes, never bulk/raw ORM mutations. Audit covers application ORM mutations only.
 - Authenticated SSE carries opaque PostgreSQL `LISTEN`/`NOTIFY` invalidations without row snapshots. `/api/health` reports that the API process answers. `/api/ready` reports bounded database, Auth, Storage, and SMTP-configuration components, all required. SMTP readiness is configuration presence. A disposable production Compose rehearsal exercised bounded Auth and Storage failure/recovery; native host, Windows, and release acceptance remain separate. New installations enable permanent delete with `LIFECYCLE_PURGE_ENABLED=true`; the setting remains required, and existing installations retain their configured value.
 
+## Security reporting and review rules
+
+`SECURITY.md` is the security policy. Its section [Reference for automated tools](SECURITY.md#reference-for-automated-tools) holds rules SEC-R1 to SEC-R8, the known non-findings (NF-*), and the controls that reviews protect. Read that section before you report, review, or test anything security-related. The rules below restate the blocking ones; `SECURITY.md` wins if they differ.
+
+- SEC-R1: Never put details of an unfixed vulnerability in a public issue, PR title/body/comment, commit message, branch name, code comment, or discussion.
+- SEC-R2: Submit a vulnerability report only when the user tells you to, and only through GitHub private vulnerability reporting.
+- SEC-R3: Never read, print, copy, or send secret values (`.env`, `.env*.local`, provider and application env files, backup repositories and their passwords, export passphrases, `docker compose config` output without `--quiet`). Variable names are fine.
+- SEC-R5: Check the Out of scope table and the NF-* list before you report. A finding that needs `ENVIRONMENT=development` with a loopback bind host is not a vulnerability.
+- SEC-R6: In code review, mark as P1 any change that weakens a control in the "Controls that reviews protect" table, unless the change states why.
+- SEC-R8: Never send traffic to an installation other than a local stack that the user runs.
+
+Correct: "Possible authorization bypass in `<path>:<line>` at `<commit SHA>`; drafted private advisory text for the user to submit."
+Wrong: "Opened issue #<n>: '<route> skips the access check, here is the exploit.'"
+
 ## Verification and completion
 
 - Review the final diff for correctness and scope; preserve unrelated work and remove task-created scratch code. Report actual results and blockers; deferred, skipped, or unavailable checks are unverified, never passed.

@@ -23,6 +23,9 @@ pending. See the
 [implementation plan](infra/supabase/PLAN.md) and
 [restore procedure](infra/supabase/RESTORE.md).
 
+To report a vulnerability, follow [SECURITY.md](SECURITY.md). Do not open a
+public issue.
+
 ## Stack and boundaries
 
 - **Database:** Supabase's pinned PostgreSQL distribution. FastAPI accesses
@@ -134,9 +137,9 @@ Tier 2 enables permanent delete in `.env.example` for new installations.
 installation's value; changing the example does not enable it in an existing
 private `.env`.
 
-Releases before 2026-10-05 had antivirus file scanning. If your `.env` and
-local stack come from such a release, do these steps once after you update the
-checkout:
+Installations from commits before 2026-10-05 had antivirus file scanning. If
+your `.env` and local stack come from such a commit, do these steps once after
+you update the checkout:
 
 1. Stop FastAPI.
 2. Remove these seven lines from your private `.env`. Do not change other

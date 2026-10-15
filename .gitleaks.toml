@@ -1,4 +1,4 @@
-# Gitleaks configuration for the pre-commit hook and the CI secret-scan job.
+# Gitleaks configuration for the CI secret-scan job (and an optional local pre-commit hook).
 # Extends the default ruleset; the allowlist matches exact placeholder values only,
 # never whole files, so a real secret added beside a fixture is still reported.
 
