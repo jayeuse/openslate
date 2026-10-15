@@ -30,6 +30,7 @@ from app.systems.platform.scheduling.reminder_execution import (
     execute_due_reminders,
     finalize_reminder_claim,
 )
+from app.systems.sandbox.modules.models import Module
 
 pytest_plugins = ("tests.reports.test_report_run_routes",)
 pytestmark = pytest.mark.integration
@@ -42,17 +43,18 @@ def test_main_app_bearer_reminder_reaches_readers_and_inbox_rechecks_the_board(
     start = datetime.now(UTC).replace(microsecond=0) + timedelta(days=2)
     with AuditSession(subject.owner_engine) as db:
         db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
-        board = Board(scope="project", name=f"Bearer reminder {uuid7().hex[:12]}")
-        writers = Group(name=f"Bearer writers {uuid7().hex}")
-        readers = Group(name=f"Bearer readers {uuid7().hex}")
+        org_id = db.get(Module, subject.module_id).org_id
+        board = Board(org_id=org_id, scope="project", name=f"Bearer reminder {uuid7().hex[:12]}")
+        writers = Group(org_id=org_id, name=f"Bearer writers {uuid7().hex}")
+        readers = Group(org_id=org_id, name=f"Bearer readers {uuid7().hex}")
         db.add_all((board, writers, readers))
         db.flush()
         db.add_all(
             (
-                GroupMember(group_id=writers.id, user_id=subject.owner_id),
-                GroupMember(group_id=readers.id, user_id=subject.outsider_id),
-                BoardGroup(board_id=board.id, group_id=writers.id, level="write"),
-                BoardGroup(board_id=board.id, group_id=readers.id, level="read"),
+                GroupMember(org_id=org_id, group_id=writers.id, user_id=subject.owner_id),
+                GroupMember(org_id=org_id, group_id=readers.id, user_id=subject.outsider_id),
+                BoardGroup(org_id=org_id, board_id=board.id, group_id=writers.id, level="write"),
+                BoardGroup(org_id=org_id, board_id=board.id, group_id=readers.id, level="read"),
             )
         )
         db.commit()
@@ -166,15 +168,18 @@ def test_reminder_crossing_grace_cutoff_while_waiting_for_work_lock_is_not_deliv
         setup.info[AUDIT_CONTEXT_KEY] = AuditContext(
             performed_by=subject.owner_id, request_id=uuid7()
         )
+        org_id = setup.get(Module, subject.module_id).org_id
         group_id = setup.scalar(
             select(GroupMember.group_id).where(GroupMember.user_id == subject.owner_id)
         )
         assert group_id is not None
-        setup.add(Board(id=board_id, scope="project", name=f"Lock cutoff {board_id.hex}"))
+        setup.add(Board(org_id=org_id, id=board_id, scope="project",
+                        name=f"Lock cutoff {board_id.hex}"))
         setup.flush()
-        setup.add(BoardGroup(board_id=board_id, group_id=group_id, level="read"))
+        setup.add(BoardGroup(org_id=org_id, board_id=board_id, group_id=group_id, level="read"))
         setup.add(
             BoardEvent(
+                org_id=org_id,
                 id=event_id,
                 board_id=board_id,
                 author_id=subject.owner_id,
@@ -187,11 +192,13 @@ def test_reminder_crossing_grace_cutoff_while_waiting_for_work_lock_is_not_deliv
         )
         setup.flush()
         setup.add(
-            BoardEventReminder(id=reminder_id, board_id=board_id, event_id=event_id, timing="start")
+            BoardEventReminder(org_id=org_id, id=reminder_id,
+                               board_id=board_id, event_id=event_id, timing="start")
         )
         setup.flush()
         setup.add(
             ScheduledWork(
+                org_id=org_id,
                 id=work_id,
                 kind=WorkKind.EVENT_REMINDER,
                 reminder_id=reminder_id,

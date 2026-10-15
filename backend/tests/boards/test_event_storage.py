@@ -44,14 +44,17 @@ def test_event_series_enforces_temporal_and_recurrence_modes(integration_owner_d
         status="active",
         role=role,
     )
-    department = Department(department_name=f"Event department {uuid7().hex}")
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Event department {uuid7().hex}")
     db.add_all([owner, author, department])
     db.flush()
-    board = Board(scope="department", department_id=department.id, name="Events")
+    board = Board(org_id=department.org_id, scope="department",
+                  department_id=department.id, name="Events")
     db.add(board)
     db.flush()
 
     all_day = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="Private operations day",
@@ -66,6 +69,7 @@ def test_event_series_enforces_temporal_and_recurrence_modes(integration_owner_d
     )
     timed_start = datetime(2026, 9, 14, 1, 0, tzinfo=UTC)
     timed = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="Team call",
@@ -93,6 +97,7 @@ def test_event_series_enforces_temporal_and_recurrence_modes(integration_owner_d
         assert created.after[private_field] == "[REDACTED]"
 
     base = {
+        "org_id": board.org_id,
         "board_id": board.id,
         "author_id": author.id,
         "title": "Invalid event",
