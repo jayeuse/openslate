@@ -17,6 +17,7 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity.models import IdentitySession
 from app.systems.manage.audit import service as audit_service
+from app.systems.manage.audit.models import SecurityEvent
 
 pytest_plugins = ("tests.security_events.event_support",)
 pytestmark = pytest.mark.integration
@@ -124,8 +125,10 @@ def prepare_action(world, monkeypatch, kind, fault):
                 effects
                 and not failed
                 and any(
-                    isinstance(row, IdentitySession) and row.revoked_at is not None
-                    for row in db.dirty
+                    isinstance(row, SecurityEvent)
+                    and row.event_type == f"identity.{kind}"
+                    and row.outcome == "success"
+                    for row in db.new
                 )
             ):
                 failed.append(True)
