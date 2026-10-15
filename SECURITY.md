@@ -78,14 +78,14 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 |---|---|
 | Behavior that needs `ENVIRONMENT=development` with a loopback bind | Development removes some limits on purpose. See `docs/architecture/14-security-architecture.md`. |
 | Attacks from another process or user on the developer's own machine | Development trusts the local host. |
-| Malware inside a valid file of an allowed type | OpenSlate checks file type, not content safety. This is an accepted risk. |
+| Malware detection in uploaded files | Content scanning is not a feature of OpenSlate. |
 | OpenComms sample screens | They are browser-local examples with no server permissions. |
 | Attacks that need an OpenSlate administrator or host access | That person already controls the installation. |
 | Infrastructure that the operator changes or runs: host, Docker, network, TLS certificates | The operator owns these. A flaw in the shipped default configuration is in scope. |
 | Problems in Supabase, PostgreSQL, or another upstream project | Report them to that project. |
 | Scanner output, missing headers, or best-practice advice without a shown effect | Show the effect on OpenSlate. |
 | Unsigned OpenSlate Manager builds from CI | They are development artifacts, not supported installers. |
-| Windows or macOS server operation | Windows acceptance is pending. macOS is not a server target. |
+| Server operation on Windows or macOS | These are not supported server targets yet. |
 | Older commits, forks, and modified code | Only `main` is supported. |
 | Denial of service by volume | Report it only if one small request causes large damage. |
 
@@ -103,10 +103,10 @@ If you are not sure, ask in a private report before you continue.
 ## For operators
 
 - Only the latest `main` gets fixes. Back up before you update. See `infra/supabase/RESTORE.md`.
-- Advisories appear at <https://github.com/jayeuse/openslate/security/advisories>. Dependabot does not alert you about OpenSlate itself.
-- The update check in OpenSlate cannot show a fix until the first tagged release exists.
+- Read the advisories at <https://github.com/jayeuse/openslate/security/advisories> before each update.
+- Watch this repository with Custom → Security alerts to get advisory notices.
 - Set `ENVIRONMENT=production` exactly. Other values do not trust the Caddy proxy subnet.
-- Generate `SECURITY_EVENT_SERVER_KEY` yourself, with at least 32 random bytes (for example `openssl rand -base64 48`). The key generator does not create it.
+- Use at least 32 random bytes for each secret key in `.env`, for example `openssl rand -base64 48`.
 - Keep Supabase Studio bound to loopback. Treat backups, exports, and `docker compose config` output as secrets.
 - One installation serves one organization. Use separate installations for organizations that do not trust each other.
 - You are responsible for the data-protection duties of your organization in your country.
@@ -155,23 +155,23 @@ last-reviewed: 2026-10-15
 ### Rules
 
 **SEC-R1.** A tool MUST NOT put details of an unfixed vulnerability in a public place: issue, pull request title, body, or comment, commit message, branch name, code comment, or discussion.
-- Correct: "Commit message: `fix(files): tighten archive bounds`" with details only in the private advisory.
-- Wrong: "Commit message: `fix zip bomb that bypasses the ratio check in <path>:<line>`" before the advisory is published.
+- Correct: "Commit message: `fix(<area>): tighten <control>`" with details only in the private advisory.
+- Wrong: "Commit message: `fix <attack> that bypasses <control> in <path>:<line>`" before the advisory is published.
 
 **SEC-R2.** A tool MUST submit a vulnerability report only through the `contact` URL, and only when a human user tells it to. A tool MUST NOT submit reports on its own.
 - Correct: "Drafted the advisory text; the user submitted it."
 - Wrong: "Agent opened a private advisory for each scanner hit."
 
 **SEC-R3.** A tool MUST NOT read, print, copy, or send secret values. Secrets include `.env`, `.env*.local`, provider and application env files, backup repositories and their passwords, export passphrases, and `docker compose config` output without `--quiet`. A tool MAY name a variable without its value.
-- Correct: "`SECURITY_EVENT_SERVER_KEY` is required but not generated (settings.py:101)."
+- Correct: "`PUBLICATION_SIGNING_KEY` is set in `.env` (value not shown)."
 - Wrong: "Printed `.env` to confirm the key is set."
 
 **SEC-R4.** Each finding MUST cite `path:line` at a commit SHA and give steps that ran against this code. A finding MUST NOT cite files, functions, or settings that do not exist.
 - Correct: "`<path>:<line>` at `<commit SHA>`: request `<X>` returns 403 for a hidden module; expected 404. Steps: ..."
 - Wrong: "The `verify_admin()` middleware may be bypassable."
 
-**SEC-R5.** Before a tool reports a finding, it MUST check the Out of scope table and the NF list below. A finding that holds only when `ENVIRONMENT=development` and the bind host is loopback MUST NOT be reported as a vulnerability.
-- Correct: "Missing `X-Frame-Options` in the dev server: NF-1, not reported."
+**SEC-R5.** Before a tool reports a finding, it MUST check the Out of scope table and the design decisions in `docs/architecture/`. A finding that holds only when `ENVIRONMENT=development` and the bind host is loopback MUST NOT be reported as a vulnerability.
+- Correct: "Missing `X-Frame-Options` in the dev server: development-only behavior, not reported."
 - Wrong: "High severity: no security headers on localhost:3000."
 
 **SEC-R6.** In code review, a tool MUST flag as blocking (P1 or higher) any change that weakens a control in the Controls table, unless the change states why.
@@ -185,20 +185,6 @@ last-reviewed: 2026-10-15
 **SEC-R8.** A tool MUST NOT test any installation except a local stack that the user runs. A tool MUST NOT send traffic to a client deployment.
 - Correct: "Ran the request against the local development stack."
 - Wrong: "Probed the client's public origin to confirm."
-
-### Known non-findings
-
-| ID | Observation | Why it is not a vulnerability | Source |
-|---|---|---|---|
-| NF-1 | No Host check, security headers, body, concurrency, or anonymous rate limits; non-Secure cookies on HTTP | Only when `ENVIRONMENT=development` and the bind host is loopback | `backend/app/core/config/development.py` |
-| NF-2 | Local processes can reach development services on loopback | Development trusts the local host | `infra/supabase/README.md` |
-| NF-3 | A harmful file inside an allowed type is accepted | No antivirus by decision; type validation only | `docs/architecture/20-architecture-risks.md` |
-| NF-4 | OpenComms actions have no server authorization | Browser-local sample state | `docs/architecture/20-architecture-risks.md` |
-| NF-5 | A Supabase ban or MFA change takes up to 10 s to deny access | Documented provider account cache | `docs/architecture/08-authentication-authorization.md` |
-| NF-6 | Avatars are served `inline`, not as attachments | Images with `nosniff` and `private, no-store` | `backend/app/systems/access/users/avatar_delivery.py` |
-| NF-7 | `RLIMIT_AS` applies only on Linux | The production API runs in a Linux container | `backend/app/systems/platform/files/validation_child.py` |
-| NF-8 | One installation does not isolate organizations from each other | One client per installation by design | `docs/architecture/20-architecture-risks.md` |
-| NF-9 | `CORS_ORIGINS` is rejected | Same-origin design; no CORS on purpose | `backend/app/core/config/settings.py` |
 
 ### Controls that reviews protect
 

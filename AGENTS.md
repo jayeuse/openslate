@@ -58,12 +58,12 @@ Wrong: "While backend coverage ran, repeated three Playwright tests to check fla
 
 ## Security reporting and review rules
 
-`SECURITY.md` is the security policy. Its section [Reference for automated tools](SECURITY.md#reference-for-automated-tools) holds rules SEC-R1 to SEC-R8, the known non-findings (NF-*), and the controls that reviews protect. Read that section before you report, review, or test anything security-related. The rules below restate the blocking ones; `SECURITY.md` wins if they differ.
+`SECURITY.md` is the security policy. Its section [Reference for automated tools](SECURITY.md#reference-for-automated-tools) holds rules SEC-R1 to SEC-R8 and the controls that reviews protect. Read that section before you report, review, or test anything security-related. The rules below restate the blocking ones; `SECURITY.md` wins if they differ.
 
 - SEC-R1: Never put details of an unfixed vulnerability in a public issue, PR title/body/comment, commit message, branch name, code comment, or discussion.
 - SEC-R2: Submit a vulnerability report only when the user tells you to, and only through GitHub private vulnerability reporting.
 - SEC-R3: Never read, print, copy, or send secret values (`.env`, `.env*.local`, provider and application env files, backup repositories and their passwords, export passphrases, `docker compose config` output without `--quiet`). Variable names are fine.
-- SEC-R5: Check the Out of scope table and the NF-* list before you report. A finding that needs `ENVIRONMENT=development` with a loopback bind host is not a vulnerability.
+- SEC-R5: Check the Out of scope table and the design decisions in `docs/architecture/` before you report. A finding that needs `ENVIRONMENT=development` with a loopback bind host is not a vulnerability.
 - SEC-R6: In code review, mark as P1 any change that weakens a control in the "Controls that reviews protect" table, unless the change states why.
 - SEC-R8: Never send traffic to an installation other than a local stack that the user runs.
 
