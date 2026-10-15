@@ -8,9 +8,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 from uuid6 import uuid7
 
-from app.systems.access.users.models import User
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
+from tests.conftest import create_member, create_organization
 
 SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
 TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
@@ -94,18 +94,20 @@ def _assert_published_revision_links_are_immutable(db) -> None:
     role = "member"
     assert role is not None
     user_id = uuid7()
-    user = User(
+    organization = create_organization(db)
+    user, _membership = create_member(db, organization,
         id=user_id,
         email=f"link-baseline-{user_id.hex}@example.test",
         username=f"link_baseline_{user_id.hex[:12]}",
         status="active",
         role=role,
     )
-    board = Board(scope="project", name="Link baseline")
-    db.add_all([user, board])
+    board = Board(org_id=organization.id, scope="project", name="Link baseline")
+    db.add(board)
     db.flush()
 
     post = BoardPost(
+        org_id=organization.id,
         board_id=board.id,
         author_id=user.id,
         title="Published notice",
@@ -116,6 +118,7 @@ def _assert_published_revision_links_are_immutable(db) -> None:
     db.add(post)
     db.flush()
     revision = BoardPostRevision(
+        org_id=organization.id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),

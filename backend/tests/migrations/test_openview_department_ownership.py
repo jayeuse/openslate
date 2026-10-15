@@ -6,9 +6,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine
 from tests.operations.migration_support import guarded_migration_environment
 
 REMOVED_TABLES = ("dashboard_defaults", "saved_view_defaults", "openview_chart_preferences")
@@ -32,18 +33,24 @@ def test_openview_catalog_has_no_personal_content_and_one_default_view_per_modul
 
 
 def _seed_module(engine: Engine, ids: dict[str, UUID]) -> None:
+    with Session(engine) as db:
+        ids["org"] = create_organization(db).id
+        db.commit()
     with engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO public.departments (id, department_name) VALUES (:id, :name)"),
-            {"id": ids["department"], "name": f"OpenView {ids['department'].hex}"},
+            text("INSERT INTO public.departments (id, org_id, department_name) "
+                 "VALUES (:id, :org, :name)"),
+            {"id": ids["department"], "org": ids["org"],
+             "name": f"OpenView {ids['department'].hex}"},
         )
         connection.execute(
             text(
-                "INSERT INTO public.modules (id, department_id, module_name) "
-                "VALUES (:id, :department_id, :name)"
+                "INSERT INTO public.modules (id, org_id, department_id, module_name) "
+                "VALUES (:id, :org, :department_id, :name)"
             ),
             {
                 "id": ids["module"],
+                "org": ids["org"],
                 "department_id": ids["department"],
                 "name": f"OpenView {ids['module'].hex}",
             },
@@ -116,8 +123,9 @@ def _insert_view(
     connection.execute(
         text(
             "INSERT INTO public.saved_views "
-            "(id, module_id, name, is_default, is_deleted, definition) "
-            "VALUES (:id, :module_id, :name, :is_default, :is_deleted, "
+            "(id, org_id, module_id, name, is_default, is_deleted, definition) "
+            "VALUES (:id, (SELECT org_id FROM modules WHERE id=:module_id), "
+            ":module_id, :name, :is_default, :is_deleted, "
             "'{\"version\": 1}'::jsonb)"
         ),
         {
@@ -150,4 +158,7 @@ def _delete_rows(engine: Engine, ids: dict[str, UUID]) -> None:
         connection.execute(text("DELETE FROM public.modules WHERE id = :id"), {"id": ids["module"]})
         connection.execute(
             text("DELETE FROM public.departments WHERE id = :id"), {"id": ids["department"]}
+        )
+        connection.execute(
+            text("DELETE FROM public.organizations WHERE id=:id"), {"id": ids["org"]}
         )

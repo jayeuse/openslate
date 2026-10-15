@@ -7,9 +7,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine
 from tests.operations.migration_support import guarded_migration_environment
 
 
@@ -40,10 +41,15 @@ def test_dashboard_baseline_installs_catalog_constraints_and_runtime_access() ->
 
 
 def _seed_department(engine: Engine, ids: dict[str, UUID]) -> None:
+    with Session(engine) as db:
+        ids["org"] = create_organization(db).id
+        db.commit()
     with engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO public.departments (id, department_name) VALUES (:id, :name)"),
-            {"id": ids["department"], "name": f"Dashboard {ids['department'].hex}"},
+            text("INSERT INTO public.departments (id, org_id, department_name) "
+                 "VALUES (:id, :org, :name)"),
+            {"id": ids["department"], "org": ids["org"],
+             "name": f"Dashboard {ids['department'].hex}"},
         )
 
 
@@ -79,7 +85,7 @@ def _assert_dashboard_schema(connection: Connection) -> None:
     assert constraints["fk_dashboard_widgets_dashboard_id_dashboards"]["confdeltype"] == "r"
     assert constraints["fk_dashboard_widgets_performed_by_users"]["confdeltype"] == "n"
     assert (
-        "FOREIGN KEY (dashboard_id) REFERENCES dashboards(id)"
+        "FOREIGN KEY (org_id, dashboard_id) REFERENCES dashboards(org_id, id)"
         in constraints["fk_dashboard_widgets_dashboard_id_dashboards"]["definition"]
     )
 
@@ -138,7 +144,7 @@ def _assert_dashboard_privileges(connection: Connection) -> None:
 
 def _assert_dashboard_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
     with engine.begin() as connection:
-        _insert_dashboard(connection, ids["dashboard"], ids["department"])
+        _insert_dashboard(connection, ids["dashboard"], ids["department"], org_id=ids["org"])
 
     for name, revision, position, department_id in (
         ("", 1, 0, ids["department"]),
@@ -153,6 +159,7 @@ def _assert_dashboard_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
                         connection,
                         uuid7(),
                         department_id,
+                        org_id=ids["org"],
                         name=name,
                         revision=revision,
                         position=position,
@@ -185,17 +192,19 @@ def _insert_dashboard(
     dashboard_id: UUID,
     department_id: UUID,
     *,
+    org_id: UUID,
     name: str = "Migration Dashboard",
     revision: int = 1,
     position: int = 0,
 ) -> None:
     connection.execute(
         text(
-            "INSERT INTO public.dashboards (id, department_id, name, revision, position) "
-            "VALUES (:id, :department_id, :name, :revision, :position)"
+            "INSERT INTO public.dashboards (id, org_id, department_id, name, revision, position) "
+            "VALUES (:id, :org, :department_id, :name, :revision, :position)"
         ),
         {
             "id": dashboard_id,
+            "org": org_id,
             "department_id": department_id,
             "name": name,
             "revision": revision,
@@ -216,8 +225,9 @@ def _insert_widget(
     connection.execute(
         text(
             "INSERT INTO public.dashboard_widgets "
-            "(id, dashboard_id, position, widget_type, config, is_deleted) "
-            "VALUES (:id, :dashboard_id, :position, :widget_type, "
+            "(id, org_id, dashboard_id, position, widget_type, config, is_deleted) "
+            "VALUES (:id, (SELECT org_id FROM dashboards WHERE id=:dashboard_id), "
+            ":dashboard_id, :position, :widget_type, "
             "CAST(:config AS jsonb), :is_deleted)"
         ),
         {
@@ -233,7 +243,9 @@ def _insert_widget(
 
 def _assert_runtime_write_and_read(runtime_engine: Engine, ids: dict[str, UUID]) -> None:
     with runtime_engine.begin() as connection:
-        _insert_dashboard(connection, ids["runtime_dashboard"], ids["department"])
+        _insert_dashboard(
+            connection, ids["runtime_dashboard"], ids["department"], org_id=ids["org"]
+        )
 
     with runtime_engine.connect() as connection:
         assert (
@@ -268,4 +280,7 @@ def _delete_test_rows(engine: Engine, ids: dict[str, UUID]) -> None:
         )
         connection.execute(
             text("DELETE FROM public.departments WHERE id = :id"), {"id": ids["department"]}
+        )
+        connection.execute(
+            text("DELETE FROM public.organizations WHERE id=:id"), {"id": ids["org"]}
         )

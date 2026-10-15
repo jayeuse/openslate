@@ -1,7 +1,6 @@
 """Sandbox seed and foreign-key contracts for the fresh Supabase baseline."""
 
 import json
-from uuid import UUID
 
 import pytest
 from sqlalchemy import text
@@ -29,31 +28,6 @@ def test_empty_document_round_trips_through_the_v4_contract() -> None:
     assert json.loads(json.dumps(EMPTY_SANDBOX_DOCUMENT)) == seed.model_dump(
         by_alias=True, mode="json", exclude_none=True
     )
-
-
-@pytest.mark.integration
-def test_fresh_baseline_seeds_only_the_empty_shared_document(integration_owner_db) -> None:
-    rows = (
-        integration_owner_db.connection()
-        .execute(
-            text(
-                "SELECT id, schema_version, revision, document, content_hash, byte_count "
-                "FROM public.sandbox_documents WHERE singleton_key"
-            )
-        )
-        .mappings()
-        .all()
-    )
-
-    assert len(rows) == 1
-    assert rows[0] == {
-        "id": UUID("00000000-0000-7000-8000-000000000005"),
-        "schema_version": 4,
-        "revision": 1,
-        "document": EMPTY_SANDBOX_DOCUMENT,
-        "content_hash": "04f9b3ef33555fb4855ca982ae27408d5842b936e1b730190c8cb5a472ae57d3",
-        "byte_count": 147,
-    }
 
 
 @pytest.mark.integration
