@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 from app.systems.access.identity.rate_limits import login_fingerprint
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership
 from tests.backups.export_support import stored_export
 
 pytestmark = pytest.mark.integration
@@ -32,7 +32,9 @@ def test_download_admission_rechecks_after_provider_commit_and_preserves_failure
             if case in {"role-loss", "session-loss"}:
                 with Session(world.auth.owner) as db:
                     if case == "role-loss":
-                        db.get(User, world.auth.actor_id).role = "member"
+                        db.scalars(
+                            select(Membership).where(Membership.user_id == world.auth.actor_id)
+                        ).one().role = "member"
                     else:
                         db.get(
                             IdentitySession, world.auth.session_ids[0]

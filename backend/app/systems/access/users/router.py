@@ -211,10 +211,13 @@ def get_user_access(
     if user.is_deleted:
         raise not_found("User")
     access, entries = explain_access(db, user)
+    membership = db.scalars(select(Membership).where(
+        Membership.user_id == user.id, Membership.org_id == sole_active_membership(db, _.id).org_id
+    )).one()
     return UserAccessResponse.model_validate(
         {
             "user_id": user.id,
-            "role": sole_active_membership(db, user.id).role,
+            "role": membership.role,
             "unrestricted": access.unrestricted,
             "entries": [
                 {
