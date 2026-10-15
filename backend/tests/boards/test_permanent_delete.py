@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import Group
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.event_models import BoardEvent
@@ -67,26 +68,31 @@ def _board_graph(
 ) -> tuple[Board, dict[str, UUID], Record, Department]:
     """An archived Board with one of each child; only project Boards are purged on their own."""
 
-    board_department = Department(department_name=f"Board purge {uuid7().hex}")
-    source_department = Department(department_name=f"Board source {uuid7().hex}")
+    board_department = Department(org_id=organization(db).id,
+                                  department_name=f"Board purge {uuid7().hex}")
+    source_department = Department(org_id=board_department.org_id,
+                                   department_name=f"Board source {uuid7().hex}")
     db.add_all([board_department, source_department])
     db.flush()
-    module = Module(department_id=source_department.id, module_name="Source")
+    module = Module(org_id=source_department.org_id,
+                    department_id=source_department.id, module_name="Source")
     db.add(module)
     db.flush()
-    record = Record(module_id=module.id, data={"name": "keep"})
+    record = Record(org_id=module.org_id, module_id=module.id, data={"name": "keep"})
     board = Board(
+        org_id=board_department.org_id,
         scope=scope,
         department_id=board_department.id if scope == "department" else None,
         name="Archive me",
         status="archived",
     )
-    group = Group(name=f"Purge group {uuid7().hex}")
+    group = Group(org_id=board.org_id, name=f"Purge group {uuid7().hex}")
     db.add_all([record, board, group])
     db.flush()
     children = [
-        BoardGroup(board_id=board.id, group_id=group.id, level="read"),
+        BoardGroup(org_id=board.org_id, board_id=board.id, group_id=group.id, level="read"),
         BoardWidget(
+            org_id=board.org_id,
             board_id=board.id,
             module_id=module.id,
             name="Source records",
@@ -95,6 +101,7 @@ def _board_graph(
             config={},
         ),
         BoardEvent(
+            org_id=board.org_id,
             board_id=board.id,
             author_id=actor.id,
             title="Private event details",
@@ -108,6 +115,7 @@ def _board_graph(
     db.add_all(children)
     db.flush()
     post = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Soft-deleted post title",
@@ -119,6 +127,7 @@ def _board_graph(
     db.add(post)
     db.flush()
     revision = BoardPostRevision(
+        org_id=post.org_id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -150,6 +159,7 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     member = _actor(db, admin=False)
     board, children, _, _ = _board_graph(db, admin)
     archived = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=admin.id,
         title="Archived post title",
@@ -159,6 +169,7 @@ def test_board_purge_preview_requires_admin_toggle_and_closed_board_and_lists_al
     db.add(archived)
     db.flush()
     archived_revision = BoardPostRevision(
+        org_id=archived.org_id,
         post_id=archived.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -229,7 +240,7 @@ def test_confirmed_board_purge_deletes_its_children_but_preserves_sources_and_au
     admin = _actor(db, admin=True, password=password)
     set_audit_actor(db, admin.id)
     board, children, record, department = _board_graph(db, admin)
-    untouched = Board(scope="project", name="Keep this Board")
+    untouched = Board(org_id=board.org_id, scope="project", name="Keep this Board")
     db.add(untouched)
     db.commit()
     _enabled(monkeypatch, True)
@@ -304,6 +315,7 @@ def test_board_purge_rejects_new_published_revision_after_preview(
     path = f"/api/boards/{board.id}/purge"
     token = client.post(f"{path}/preview").json()["token"]
     revision = BoardPostRevision(
+        org_id=board.org_id,
         post_id=children["board_posts"],
         publication_number=2,
         publication_key=uuid7(),
@@ -334,7 +346,7 @@ def test_board_purge_rejects_wrong_confirmation_and_target_bound_token(
     password = token_urlsafe(32)
     admin = _actor(db, admin=True, password=password)
     board, _, _, _ = _board_graph(db, admin)
-    other = Board(scope="project", name="Another", status="archived")
+    other = Board(org_id=board.org_id, scope="project", name="Another", status="archived")
     db.add(other)
     db.commit()
     _enabled(monkeypatch, True)
@@ -409,11 +421,11 @@ def test_board_purge_rechecks_fresh_admin_after_password_step_up(
     path = f"/api/boards/{board.id}/purge"
     token = board_client(db, admin, lifecycle_router.router).post(f"{path}/preview").json()["token"]
     actor_id = admin.id
-    assert admin.role == "admin"
+    assert sole_active_membership(db, admin.id).role == "admin"
     db.expunge(admin)
     fresh_actor = db.get(User, actor_id)
     assert fresh_actor is not None
-    fresh_actor.role = "member"
+    sole_active_membership(db, fresh_actor.id).role = "member"
     db.commit()
 
     denied = board_client(db, admin, lifecycle_router.router).post(

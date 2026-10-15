@@ -35,13 +35,21 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.boards.support import admin, department_board, project_board
 from tests.boards.test_permanent_delete import _actor, _board_graph
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _sandbox_draft(integration_owner_db: Session) -> None:
+    create_document(integration_owner_db, organization(integration_owner_db))
 
 
 def _closed_department(db: Session, name: str) -> Department:
     now = datetime.now(UTC)
     department = Department(
+        org_id=organization(db).id,
         department_name=f"{name} {uuid7().hex[:8]}", is_deleted=True, deleted_at=now
     )
     db.add(department)
@@ -54,7 +62,8 @@ def test_closing_a_department_archives_its_board_and_reopening_restores_it(
 ) -> None:
     db = integration_owner_db
     actor = admin(db)
-    department = Department(department_name=f"Close {uuid7().hex[:8]}")
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Close {uuid7().hex[:8]}")
     db.add(department)
     db.flush()
     board = department_board(db, department)
@@ -109,15 +118,17 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
     assert source_module is not None
     source_department_id = source_module.department_id
     owned_module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=f"Owned {uuid7().hex[:8]}",
     )
     db.add(owned_module)
     db.flush()
-    owned_record = Record(module_id=owned_module.id, data={})
+    owned_record = Record(org_id=owned_module.org_id, module_id=owned_module.id, data={})
     db.add(owned_record)
     db.flush()
     owned_widget = BoardWidget(
+        org_id=board.org_id,
         board_id=board.id,
         module_id=owned_module.id,
         name="Owned records",
@@ -128,6 +139,7 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
 
     now = datetime.now(UTC)
     reminder = BoardEventReminder(
+        org_id=board.org_id,
         board_id=board.id,
         event_id=event.id,
         timing="15m",
@@ -135,6 +147,7 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
         deleted_at=now,
     )
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         creator_id=author.id,
@@ -148,35 +161,43 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
     db.add_all([reminder, file])
     db.flush()
     attachment = BoardAttachment(
+        org_id=board.org_id,
         board_id=board.id,
         file_id=file.id,
         post_id=post.id,
         is_linked=False,
     )
-    revision_attachment = BoardPostRevisionAttachment(revision_id=revision.id, file_id=file.id)
+    revision_attachment = BoardPostRevisionAttachment(
+        org_id=revision.org_id, revision_id=revision.id, file_id=file.id,
+    )
     record_link = BoardRecordLink(
+        org_id=board.org_id,
         board_id=board.id,
         post_id=post.id,
         record_id=source_record.id,
         module_id=source_record.module_id,
     )
     owned_record_link = BoardRecordLink(
+        org_id=board.org_id,
         board_id=board.id,
         post_id=post.id,
         record_id=owned_record.id,
         module_id=owned_module.id,
     )
     revision_link = BoardPostRevisionRecordLink(
+        org_id=revision.org_id,
         revision_id=revision.id,
         record_id=source_record.id,
         module_id=source_record.module_id,
     )
     owned_revision_link = BoardPostRevisionRecordLink(
+        org_id=revision.org_id,
         revision_id=revision.id,
         record_id=owned_record.id,
         module_id=owned_module.id,
     )
     post_work = ScheduledWork(
+        org_id=post.org_id,
         kind=WorkKind.POST_PUBLISH,
         post_id=post.id,
         source_revision=revision.publication_number,
@@ -187,6 +208,7 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
         state=WorkState.SUCCEEDED,
     )
     reminder_work = ScheduledWork(
+        org_id=reminder.org_id,
         kind=WorkKind.EVENT_REMINDER,
         reminder_id=reminder.id,
         occurrence_start_at=now,
@@ -199,6 +221,7 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
     db.add_all([revision_link, owned_revision_link, post_work, reminder_work])
     db.flush()
     post_notice = InAppNotification(
+        org_id=post_work.org_id,
         work_id=post_work.id,
         recipient_id=author.id,
         kind="post-publish",
@@ -206,6 +229,7 @@ def test_department_purge_cascades_its_board_graph_and_retains_source_and_audit(
         subject_id=post.id,
     )
     reminder_notice = InAppNotification(
+        org_id=reminder_work.org_id,
         work_id=reminder_work.id,
         recipient_id=author.id,
         kind="event-reminder",
@@ -338,10 +362,12 @@ def test_department_purge_blocks_an_owned_file_until_its_bytes_are_purged(
     author = admin(db)
     department = _closed_department(db, "Board with unpurged file")
     board = department_board(db, department)
-    post = BoardPost(board_id=board.id, author_id=author.id, title="Attachment", body="Details")
+    post = BoardPost(org_id=board.org_id, board_id=board.id,
+                     author_id=author.id, title="Attachment", body="Details")
     db.add(post)
     db.flush()
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         creator_id=author.id,
@@ -352,7 +378,8 @@ def test_department_purge_blocks_an_owned_file_until_its_bytes_are_purged(
     )
     db.add(file)
     db.flush()
-    attachment = BoardAttachment(board_id=board.id, file_id=file.id, post_id=post.id)
+    attachment = BoardAttachment(org_id=board.org_id,
+                                 board_id=board.id, file_id=file.id, post_id=post.id)
     db.add(attachment)
     db.commit()
 
@@ -404,18 +431,22 @@ def test_parent_purge_waits_for_board_record_links_to_be_removed(
     department = _closed_department(db, "Linked parent")
     department_board(db, department)
     module = Module(
+        org_id=department.org_id,
         department_id=department.id, module_name="Linked", is_deleted=True, deleted_at=now
     )
     db.add(module)
     db.flush()
-    record = Record(module_id=module.id, data={}, is_deleted=True, deleted_at=now)
+    record = Record(org_id=module.org_id, module_id=module.id,
+                    data={}, is_deleted=True, deleted_at=now)
     board = project_board(db)
     db.add(record)
     db.flush()
-    item = BoardPost(board_id=board.id, author_id=author.id, title="Linked", body="Body")
+    item = BoardPost(org_id=board.org_id, board_id=board.id,
+                     author_id=author.id, title="Linked", body="Body")
     db.add(item)
     db.flush()
     link = BoardRecordLink(
+        org_id=board.org_id,
         board_id=board.id, post_id=item.id, record_id=record.id, module_id=module.id
     )
     db.add(link)

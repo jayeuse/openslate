@@ -23,6 +23,7 @@ from app.systems.platform.files.storage import get_storage
 from tests.boards.support import client as board_client
 from tests.boards.test_permanent_delete import _actor, _enabled
 from tests.files.test_integration import Store
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -33,10 +34,12 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
     db = integration_owner_db
     password = token_urlsafe(32)
     admin = _actor(db, admin=True, password=password)
-    board = Board(scope="project", name="Board with file", status="archived")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Board with file", status="archived")
     db.add(board)
     db.flush()
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=admin.id,
         title="Old event",
@@ -47,6 +50,7 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
         archived=True,
     )
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -59,6 +63,7 @@ def test_board_purge_blocks_unpurged_file_then_deletes_purged_file_and_detached_
     db.add_all((event, file))
     db.flush()
     ownership = BoardAttachment(
+        org_id=board.org_id,
         board_id=board.id, file_id=file.id, event_id=event.id, is_linked=False
     )
     db.add(ownership)
@@ -98,10 +103,12 @@ def test_unlinked_board_file_admin_can_preview_and_confirm_purge(
     db = integration_owner_db
     password = token_urlsafe(32)
     admin = _actor(db, admin=True, password=password)
-    board = Board(scope="project", name="Purge one file", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Purge one file", status="active")
     db.add(board)
     db.flush()
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
