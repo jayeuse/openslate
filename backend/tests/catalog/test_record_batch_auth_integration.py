@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.records.models import Record
 from tests.catalog.dynamic_field_support import (
@@ -23,8 +23,11 @@ def test_registered_batch_requires_signed_live_identity_and_current_write_author
     compound,
 ):
     world = policy_world
+    with Session(world.owner) as db:
+        org_id = sole_active_membership(db, world.actor_id).org_id
     module = _seed_committed_module(
         owned_ids,
+        org_id=org_id,
         fields=(("Title", FieldType.TEXT, 0, False, {}), ("Other", FieldType.TEXT, 1, False, {})),
     )
     key = str(module.fields["Title"])
@@ -51,7 +54,7 @@ def test_registered_batch_requires_signed_live_identity_and_current_write_author
             response = world.client.post("/api/records/batch-update", headers=headers, json=payload)
             assert response.status_code == 401, response.text
         with Session(world.owner) as db:
-            db.get(User, world.actor_id).role = "member"
+            sole_active_membership(db, world.actor_id).role = "member"
             db.commit()
         denied = world.client.post(
             "/api/records/batch-update", headers=world.headers(), json=payload
@@ -59,7 +62,7 @@ def test_registered_batch_requires_signed_live_identity_and_current_write_author
         assert denied.status_code == 403, denied.text
         with Session(world.owner) as db:
             assert db.get(Record, record_id).data == {key: "Before", other: "Keep"}
-            db.get(User, world.actor_id).role = "admin"
+            sole_active_membership(db, world.actor_id).role = "admin"
             db.commit()
         saved = world.client.post(
             "/api/records/batch-update", headers=world.headers(), json=payload

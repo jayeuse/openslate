@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
@@ -60,8 +61,11 @@ def test_batch_refreshes_revision_after_the_same_module_record_lock_order(
     import app.systems.sandbox.records.batch_router as batch_router
 
     world = policy_world
+    with Session(world.owner) as db:
+        org_id = sole_active_membership(db, world.actor_id).org_id
     module = _seed_committed_module(
         owned_ids,
+        org_id=org_id,
         fields=(("Title", FieldType.TEXT, 0, False, {}), ("End", FieldType.TEXT, 1, False, {})),
     )
     key = str(module.fields["Title"])

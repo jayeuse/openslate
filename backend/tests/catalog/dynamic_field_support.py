@@ -167,6 +167,7 @@ def _seed_committed_module(
     owned_ids: set[UUID],
     *,
     fields: tuple[FieldSpec, ...] = (),
+    org_id: UUID | None = None,
 ) -> CommittedModule:
     """Commit a visible graph so independent PostgreSQL connections can race it."""
 
@@ -177,18 +178,22 @@ def _seed_committed_module(
             _set_request(db, uuid7(), "/api/test/seed")
             try:
                 token = str(uuid7())
-                org = organization(db)
-                org_id = org.id
+                if org_id is None:
+                    org = organization(db)
+                    owned_ids.add(org.id)
+                else:
+                    org = db.get(WorkspaceProfile, org_id)
+                    assert org is not None
                 document = create_document(db, org)
-                department = Department(org_id=org_id, department_name=f"Dynamic field QA {token}")
+                department = Department(org_id=org.id, department_name=f"Dynamic field QA {token}")
                 module = Module(
-                    org_id=org_id,
+                    org_id=org.id,
                     department=department,
                     module_name=f"Dynamic module QA {token}",
                 )
                 field_rows = [
                     Field(
-                        org_id=org_id,
+                        org_id=org.id,
                         module=module,
                         name=name,
                         type=field_type,
@@ -201,7 +206,7 @@ def _seed_committed_module(
                 db.add_all([department, module, *field_rows])
                 db.flush()
                 owned_ids.update(
-                    {org_id, document.id, department.id, module.id,
+                    {document.id, department.id, module.id,
                      *(field.id for field in field_rows)}
                 )
                 db.commit()
