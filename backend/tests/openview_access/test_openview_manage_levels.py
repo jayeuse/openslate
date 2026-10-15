@@ -284,6 +284,7 @@ def test_view_presentation_may_name_some_of_the_module_fields(
     area = new_area(db)
     db.add(
         Field(
+            org_id=area.module.org_id,
             module_id=area.module.id,
             name="Owner",
             type=FieldType.TEXT,

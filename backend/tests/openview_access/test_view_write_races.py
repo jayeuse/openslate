@@ -20,13 +20,14 @@ from uuid6 import uuid7
 
 import app.systems.openview.views.router as views_router
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.schemas import ViewUpdate
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.access.access_race_support import add_race_user
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine
 
 pytestmark = pytest.mark.integration
 
@@ -39,6 +40,7 @@ class _Seed:
     group: UUID
     grant: UUID
     view: UUID
+    organization: UUID
 
 
 @pytest.fixture
@@ -46,24 +48,29 @@ def seed() -> Iterator[tuple[_Seed, Engine, Engine]]:
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], pool_size=2)
     with Session(owner) as db:
-        department = Department(department_name=f"View race {uuid7().hex}")
+        organization = create_organization(db)
+        department = Department(org_id=organization.id, department_name=f"View race {uuid7().hex}")
         db.add(department)
         db.flush()
-        module = Module(department_id=department.id, module_name=f"View race {uuid7().hex}")
+        module = Module(org_id=department.org_id, department_id=department.id,
+                        module_name=f"View race {uuid7().hex}")
         db.add(module)
         db.flush()
-        manager = add_race_user(db, "view-race", UserRole.MEMBER.value)
-        group = Group(name=f"View race {uuid7().hex}")
+        manager = add_race_user(db, organization, "view-race", UserRole.MEMBER.value)
+        group = Group(org_id=organization.id, name=f"View race {uuid7().hex}")
         db.add(group)
         db.flush()
-        db.add(GroupMember(group_id=group.id, user_id=manager))
+        db.add(GroupMember(org_id=group.org_id, group_id=group.id, user_id=manager))
         grant = GroupAccess(
+            org_id=group.org_id,
             group_id=group.id, department_id=department.id, level=AccessLevel.MANAGE.value
         )
-        view = SavedView(module_id=module.id, name="Original", definition={})
+        view = SavedView(org_id=module.org_id, module_id=module.id, name="Original", definition={})
         db.add_all([grant, view])
         db.flush()
-        data = _Seed(department.id, module.id, manager, group.id, grant.id, view.id)
+        data = _Seed(
+            department.id, module.id, manager, group.id, grant.id, view.id, organization.id
+        )
         db.commit()
     try:
         yield data, runtime, owner
@@ -73,9 +80,11 @@ def seed() -> Iterator[tuple[_Seed, Engine, Engine]]:
             db.execute(delete(GroupMember).where(GroupMember.group_id == data.group))
             db.execute(delete(GroupAccess).where(GroupAccess.group_id == data.group))
             db.execute(delete(Group).where(Group.id == data.group))
+            db.execute(delete(Membership).where(Membership.user_id == data.manager))
             db.execute(delete(User).where(User.id == data.manager))
             db.execute(delete(Module).where(Module.id == data.module))
             db.execute(delete(Department).where(Department.id == data.department))
+            db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == data.organization))
             db.commit()
         runtime.dispose()
         owner.dispose()
