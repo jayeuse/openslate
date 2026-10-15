@@ -1,71 +1,77 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { Toaster } from "@/components/ui/toast";
 import type { Metadata } from "next";
-import {
-  Archivo,
-  Atkinson_Hyperlegible_Next,
-  Big_Shoulders_Stencil,
-  Geist,
-  Geist_Mono,
-  Martian_Mono,
-  Schibsted_Grotesk,
-} from "next/font/google";
+import localFont from "next/font/local";
 import { ThemeProvider } from "@/components/theme-provider";
 import { OrganizationThemeProvider } from "@/components/organization-theme-provider";
 import { X6Stylesheets } from "@/components/sandbox/x6-stylesheets";
 import "./globals.css";
 
-const geistSans = Geist({
+// Fonts are self-hosted from src/app/fonts so a build never downloads them.
+// next/font/local names each @font-face family after its constant, so the
+// constants carry the font names that devtools and theme tests show.
+// Each file holds every subset Google served (Latin, Latin Extended, and
+// Vietnamese or Cyrillic where the family has them); see fonts/README.md.
+const Geist = localFont({
+  src: "./fonts/Geist-Variable.woff2",
+  weight: "100 900",
   variable: "--font-geist-sans",
-  subsets: ["latin"],
   preload: false,
 });
 
-const geistMono = Geist_Mono({
+const GeistMono = localFont({
+  src: "./fonts/GeistMono-Variable.woff2",
+  weight: "100 900",
   variable: "--font-geist-mono",
-  subsets: ["latin"],
   preload: false,
 });
 
 // Slate's display face: headings, page titles, and department names.
 // Preloaded because Slate is the default look and every page has a title,
-// so the title never swaps face after the first paint.
-const schibstedGrotesk = Schibsted_Grotesk({
+// so the title never swaps face after the first paint. The file and range
+// hold only 700 to 800: lighter requests (titles ask for 600) render at 700.
+const SchibstedGrotesk = localFont({
+  src: "./fonts/SchibstedGrotesk-Variable.woff2",
+  weight: "700 800",
   variable: "--font-schibsted",
-  subsets: ["latin"],
-  weight: ["700", "800"],
 });
 
 // Organization themes (src/app/themes). Without preload, a browser fetches a
 // face only when rendered text uses it, so Slate pages load none of these.
-// next/font has no fallback metrics for Atkinson Hyperlegible Next or Big
-// Shoulders Stencil, and the dev server warns on every compile when it looks
-// them up. An explicit fallback list skips that lookup; it matches the stacks
-// the Whiteboard and Stockroom looks already put after these faces.
-const atkinson = Atkinson_Hyperlegible_Next({
+// Atkinson and the stencil face skip the generated metric fallback (as
+// next/font/google had none for them); their explicit fallback lists match
+// the stacks the Whiteboard and Stockroom looks already put after these faces.
+const AtkinsonHyperlegibleNext = localFont({
+  src: "./fonts/AtkinsonHyperlegibleNext-Variable.woff2",
+  weight: "200 800",
   variable: "--font-atkinson",
-  subsets: ["latin"],
   preload: false,
+  adjustFontFallback: false,
   fallback: ["system-ui", "sans-serif"],
 });
 
-const archivo = Archivo({
+const Archivo = localFont({
+  src: "./fonts/Archivo-Variable.woff2",
+  weight: "100 900",
+  // Archivo keeps its width axis (62% to 125%).
+  declarations: [{ prop: "font-stretch", value: "62% 125%" }],
   variable: "--font-archivo",
-  subsets: ["latin"],
-  axes: ["wdth"],
   preload: false,
 });
 
-const bigShouldersStencil = Big_Shoulders_Stencil({
+const BigShouldersStencil = localFont({
+  src: "./fonts/BigShouldersStencil-Variable.woff2",
+  weight: "100 900",
   variable: "--font-stencil",
-  subsets: ["latin"],
   preload: false,
+  adjustFontFallback: false,
   fallback: ["sans-serif"],
 });
 
-const martianMono = Martian_Mono({
+const MartianMono = localFont({
+  src: "./fonts/MartianMono-Variable.woff2",
+  weight: "100 800",
   variable: "--font-martian-mono",
-  subsets: ["latin"],
   preload: false,
 });
 
@@ -88,7 +94,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       // differs from this render. Suppress the warning and keep React
       // from patching those attributes back.
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} ${schibstedGrotesk.variable} ${atkinson.variable} ${archivo.variable} ${martianMono.variable} ${bigShouldersStencil.variable} h-full antialiased`}
+      className={`${Geist.variable} ${GeistMono.variable} ${SchibstedGrotesk.variable} ${AtkinsonHyperlegibleNext.variable} ${Archivo.variable} ${MartianMono.variable} ${BigShouldersStencil.variable} h-full antialiased`}
     >
       <head>
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}
