@@ -17,9 +17,10 @@ from app.systems.access.policy import delegation, service
 from app.systems.access.policy.configuration_router import router as access_router
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
@@ -35,6 +36,7 @@ def audience():
     with Session(owner) as db:
         admin, member = add_user(db, role=UserRole.ADMIN), add_user(db)
         department = add_department(db)
+        org_id = department.org_id
         grants = [make_group_access(db, [member], department) for _ in range(2)]
         group_ids = [g.group_id for g in grants]
         ids = admin.id, member.id, department.id, group_ids
@@ -47,9 +49,11 @@ def audience():
             db.execute(delete(GroupMember).where(GroupMember.group_id.in_(group_ids)))
             db.execute(delete(GroupAccess).where(GroupAccess.group_id.in_(group_ids)))
             db.execute(delete(Group).where(Group.id.in_(group_ids)))
-            db.execute(delete(AuditLog).where(AuditLog.performed_by.in_(ids[:2])))
+            db.execute(delete(AuditLog).where(AuditLog.org_id == org_id))
+            db.execute(delete(Membership).where(Membership.user_id.in_(ids[:2])))
             db.execute(delete(User).where(User.id.in_(ids[:2])))
             db.execute(delete(Department).where(Department.id == ids[2]))
+            db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id))
             db.commit()
         engine.dispose()
         owner.dispose()
@@ -178,6 +182,7 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
         actor_ids = [actor.id for actor in actors]
         member_ids = [u1.id, u3.id]
         department_ids = [department.id for department in departments]
+        org_id = departments[0].org_id
         group_ids = [grant.group_id for grant in grants]
         db.commit()
 
@@ -254,9 +259,11 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
             db.execute(delete(GroupMember).where(GroupMember.group_id.in_(group_ids)))
             db.execute(delete(GroupAccess).where(GroupAccess.group_id.in_(group_ids)))
             db.execute(delete(Group).where(Group.id.in_(group_ids)))
-            db.execute(delete(AuditLog).where(AuditLog.performed_by.in_(actor_ids)))
+            db.execute(delete(AuditLog).where(AuditLog.org_id == org_id))
+            db.execute(delete(Membership).where(Membership.user_id.in_(owned_users)))
             db.execute(delete(User).where(User.id.in_(owned_users)))
             db.execute(delete(Department).where(Department.id.in_(department_ids)))
+            db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id))
             db.commit()
         engine.dispose()
         owner.dispose()
