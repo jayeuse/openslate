@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -15,32 +15,42 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.models import IdentityRateLimitBucket
 from app.systems.access.identity.rate_limits import login_fingerprint, rate_limit_fingerprint
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.lifecycle_integration.lifecycle_integration_support import delete_committed_scope
+from tests.sandbox_designs.fixtures import create_document
 
 pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
 
 
-def _bind_provider_account_as_admin(owner: Engine, provider_id: UUID, local_id: UUID) -> None:
+def _bind_provider_account_as_admin(owner: Engine, provider_id: UUID, local_id: UUID) -> UUID:
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None
-        user.role = UserRole.ADMIN.value
+        membership = db.scalars(select(Membership).where(Membership.user_id == user.id)).one()
+        membership.role = UserRole.ADMIN.value
         user.supabase_user_id = provider_id
+        organization_id = membership.org_id
+        create_document(db, db.get(WorkspaceProfile, organization_id))
         db.commit()
+    return organization_id
 
 
-def _seed_protected_module(owner: Engine, suffix: str) -> tuple[UUID, UUID, UUID]:
+def _seed_protected_module(
+    owner: Engine, organization_id: UUID, suffix: str
+) -> tuple[UUID, UUID, UUID]:
     """Commit the lifecycle target directly; the Sandbox publish owns schema writes."""
 
     with Session(owner) as db:
-        department = Department(department_name=f"Step-up {suffix}")
-        module = Module(department=department, module_name=f"Protected {suffix}")
+        department = Department(org_id=organization_id, department_name=f"Step-up {suffix}")
+        module = Module(org_id=department.org_id, department=department,
+                        module_name=f"Protected {suffix}")
         field = Field(
+            org_id=module.org_id,
             module=module,
             name=f"Label {suffix}",
             type=FieldType.TEXT,
@@ -62,6 +72,7 @@ def _cleanup_stepup_rows(
     department_ids: set[UUID],
     module_ids: set[UUID],
     field_ids: set[UUID],
+    organization_id: UUID,
 ) -> None:
     """Remove only the synthetic actor's challenge, audit, limit, and API rows."""
 
@@ -93,13 +104,17 @@ def _cleanup_stepup_rows(
             module_ids=module_ids,
             department_ids=department_ids,
         )
+        connection.execute(
+            text("DELETE FROM public.sandbox_documents WHERE org_id = :org_id"),
+            {"org_id": organization_id},
+        )
 
 
 def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_account) -> None:
     """A temporary Auth password grant must not become an application session."""
 
     email, password, provider_id, local_id, owner = provider_account
-    _bind_provider_account_as_admin(owner, provider_id, local_id)
+    organization_id = _bind_provider_account_as_admin(owner, provider_id, local_id)
     department_ids: set[UUID] = set()
     module_ids: set[UUID] = set()
     field_ids: set[UUID] = set()
@@ -122,7 +137,7 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
         assert original_sessions[0]["current"] is True
 
         suffix = uuid7().hex[:12]
-        department_id, module_id, field_id = _seed_protected_module(owner, suffix)
+        department_id, module_id, field_id = _seed_protected_module(owner, organization_id, suffix)
         department_ids.add(department_id)
         module_ids.add(module_id)
         field_ids.add(field_id)
@@ -207,4 +222,5 @@ def test_real_provider_stepup_retries_consumes_and_rejects_replay(provider_accou
             department_ids,
             module_ids,
             field_ids,
+            organization_id,
         )
