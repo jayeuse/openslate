@@ -9,11 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database import Base, model_registry  # noqa: F401
-from app.systems.access.users.models import User
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.sandbox.departments.models import Department
+from tests.conftest import create_member
+from tests.rbac.support import organization
 
 SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
 TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
@@ -29,14 +30,14 @@ def test_event_series_enforces_temporal_and_recurrence_modes(integration_owner_d
     role = "member"
     assert role is not None
     owner_id, author_id = uuid7(), uuid7()
-    owner = User(
+    owner, _owner_membership = create_member(db, organization(db),
         id=owner_id,
         email=f"event-owner-{owner_id.hex}@example.test",
         username=f"event_owner_{owner_id.hex[:12]}",
         status="active",
         role=role,
     )
-    author = User(
+    author, _author_membership = create_member(db, organization(db),
         id=author_id,
         email=f"event-author-{author_id.hex}@example.test",
         username=f"event_author_{author_id.hex[:12]}",

@@ -94,10 +94,12 @@ def insert_sessions_and_rate_limits(
     )
     cursor.execute(
         "INSERT INTO public.lifecycle_rate_limit_buckets "
-        "(id, actor_id, attempt_count, window_started_at, window_expires_at) "
-        "VALUES (%s, %s, 1, now(), now() + interval '1 minute'), "
-        "(%s, %s, 1, now(), now() + interval '1 minute')",
-        (uuid4(), admin_id, uuid4(), member_id),
+        "(org_id, id, actor_id, attempt_count, window_started_at, window_expires_at) "
+        "VALUES ((SELECT org_id FROM public.memberships WHERE user_id = %s), "
+        "%s, %s, 1, now(), now() + interval '1 minute'), "
+        "((SELECT org_id FROM public.memberships WHERE user_id = %s), "
+        "%s, %s, 1, now(), now() + interval '1 minute')",
+        (admin_id, uuid4(), admin_id, member_id, uuid4(), member_id),
     )
 
 
@@ -117,15 +119,17 @@ def delete_sessions_and_rate_limits(cursor: Cursor, user_ids: Sequence[UUID]) ->
 
 def insert_department(cursor: Cursor, department_id: UUID, admin_id: UUID) -> None:
     cursor.execute(
-        "INSERT INTO public.departments (id, department_name) VALUES (%s, %s)",
-        (department_id, f"reset-{admin_id}"),
+        "INSERT INTO public.departments (org_id, id, department_name) VALUES "
+        "((SELECT org_id FROM public.memberships WHERE user_id = %s), %s, %s)",
+        (admin_id, department_id, f"reset-{admin_id}"),
     )
 
 
 def insert_logo_file(cursor: Cursor, file_id: UUID, admin_id: UUID) -> None:
     cursor.execute(
         "INSERT INTO public.files "
-        "(id, purpose, creator_id, filename, expected_size, object_key, state) "
-        "VALUES (%s, 'workspace_logo', %s, 'reset.png', 1, %s, 'awaiting_upload')",
-        (file_id, admin_id, uuid4().hex),
+        "(org_id, id, purpose, creator_id, filename, expected_size, object_key, state) "
+        "VALUES ((SELECT org_id FROM public.memberships WHERE user_id = %s), "
+        "%s, 'workspace_logo', %s, 'reset.png', 1, %s, 'awaiting_upload')",
+        (admin_id, file_id, admin_id, uuid4().hex),
     )

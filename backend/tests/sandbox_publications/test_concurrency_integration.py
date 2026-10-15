@@ -24,8 +24,9 @@ from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.checks import _lock_authority
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.modules.models import Module
@@ -38,8 +39,10 @@ from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.schemas import PublicationRequest
 from app.systems.sandbox.publications.tokens import issue_preview_token
+from tests.conftest import create_member
 from tests.postgres_runtime import assert_runner_database_url
 from tests.race_support import WAIT, wait_until_blocked_by
+from tests.rbac.support import organization
 from tests.sandbox_designs.fixtures import sample_document
 from tests.sandbox_publications.support import bound_module, publish_saved
 from tests.sandbox_record_triggers.support import (
@@ -263,7 +266,7 @@ def _commit_module_grant(engine: Engine, actor_id: UUID) -> tuple[UUID, UUID, UU
     with AuditSession(bind=engine) as db:
         _set_audit_context(db, actor_id)
         module = bound_module(db, "sample-requests")
-        member = User(
+        member, _membership = create_member(db, db.get(WorkspaceProfile, module.org_id),
             email=f"access-check-{uuid7()}@example.test",
             username=f"access-check-{uuid7().hex[-12:]}",
             status=UserStatus.ACTIVE.value,
@@ -292,6 +295,7 @@ def _remove_module_grant(engine: Engine, member_id: UUID, group_id: UUID) -> Non
         connection.execute(delete(GroupAccess).where(GroupAccess.group_id == group_id))
         connection.execute(delete(GroupMember).where(GroupMember.group_id == group_id))
         connection.execute(delete(Group).where(Group.id == group_id))
+        connection.execute(delete(Membership).where(Membership.user_id == member_id))
         connection.execute(delete(User).where(User.id == member_id))
 
 
@@ -333,7 +337,7 @@ def _configure_publishable_draft(engine: Engine) -> tuple[UUID, DocumentBaseline
     with AuditSession(bind=engine) as db:
         role = "admin"
         assert role is not None
-        actor = User(
+        actor, _membership = create_member(db, organization(db),
             email="publication-concurrency@example.test",
             username="publication-concurrency",
             status=UserStatus.ACTIVE.value,

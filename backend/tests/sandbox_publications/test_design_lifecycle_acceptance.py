@@ -36,6 +36,8 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.rules import _field_key
 from app.systems.sandbox.records.models import Record
+from tests.conftest import create_member
+from tests.rbac.support import organization
 from tests.sandbox_publications.support import bound_field, bound_module, publish_structure
 
 pytestmark = pytest.mark.integration
@@ -177,7 +179,7 @@ def test_restoring_an_earlier_published_version_then_publishing_matches_it_live(
 
 
 def test_member_is_forbidden_from_publication_preview_and_publish(api: Api) -> None:
-    member = User(
+    member, _membership = create_member(api.db, organization(api.db),
         email="design-lifecycle-member@example.test",
         username="design-lifecycle-member",
         status=UserStatus.ACTIVE.value,

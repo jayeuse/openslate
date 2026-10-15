@@ -19,7 +19,6 @@ from tests.rbac.support import (
     add_module,
     add_user,
     make_group_access,
-    make_user,
 )
 
 pytestmark = pytest.mark.integration
@@ -171,7 +170,8 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
     integration_db.add_all(seeded_logs)
     integration_db.flush()
 
-    with _client(api, make_user(f"audit-search-{token}"), integration_db) as client:
+    with _client(api, add_user(integration_db, f"audit-search-{token}", role="admin"),
+                 integration_db) as client:
         actor_pages = [
             client.get(
                 "/api/audit-logs",
@@ -290,7 +290,8 @@ def test_admin_csv_exports_complete_filtered_history_with_safe_cells(
         "created_before": horizon.isoformat(),
         "search": "literal_%",
     }
-    with _client(api, make_user(f"csv-admin-{token}"), integration_db) as client:
+    with _client(api, add_user(integration_db, f"csv-admin-{token}", role="admin"),
+                 integration_db) as client:
         preview = client.get("/api/audit-logs", params={**filters, "limit": 10})
         assert preview.status_code == 200
         assert preview.json()["pagination"]["total"] == 105
@@ -354,7 +355,8 @@ def test_admin_csv_accepts_10000_and_refuses_overflow_without_partial_data(
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(rows)
     integration_db.flush()
-    with _client(create_app(), make_user("csv-cap-admin"), integration_db) as client:
+    with _client(create_app(), add_user(integration_db, "csv-cap-admin", role="admin"),
+                 integration_db) as client:
         accepted = client.get("/api/audit-logs/export", params={"entity_type": entity_type})
         assert accepted.status_code == 200
         assert accepted.headers["content-type"].startswith("text/csv")
@@ -459,7 +461,8 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
         == "Legacy Target · name unavailable"
     )
     assert all("Private title canary" not in item["target_label"] for item in items)
-    with _client(api, make_user("audit-label-admin"), integration_db) as client:
+    with _client(api, add_user(integration_db, "audit-label-admin", role="admin"),
+                 integration_db) as client:
         for record, expected_label in (
             (public, "Visible record"),
             (secret, "Records · name unavailable"),

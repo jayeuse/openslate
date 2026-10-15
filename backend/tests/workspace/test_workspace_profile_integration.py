@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.main import create_app
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -68,6 +70,8 @@ def profile_client(fake_provider_account):
             if sponsor_id is not None and sponsor_id != original_user["sponsor_user_id"]:
                 sponsor = db.get(User, sponsor_id)
                 assert sponsor is not None
+                db.delete(sole_active_membership(db, sponsor_id))
+                db.flush()
                 db.delete(sponsor)
             profile = db.scalar(select(WorkspaceProfile))
             assert profile is not None
@@ -81,7 +85,8 @@ def _role(owner, actor_id, role):
         user = db.get(User, actor_id)
         assert user is not None
         if role == "guest" and user.sponsor_user_id is None:
-            sponsor = User(
+            sponsor, _membership = create_member(db, db.get(WorkspaceProfile,
+                sole_active_membership(db, actor_id).org_id),
                 email=f"profile-sponsor-{uuid4().hex}@example.test",
                 username=f"profile-sponsor-{uuid4().hex[:12]}",
                 status="active",

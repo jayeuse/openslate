@@ -9,7 +9,7 @@ from uuid6 import uuid7
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog
-from tests.rbac.support import _client, add_department, add_user, make_group_access, make_user
+from tests.rbac.support import _client, add_department, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
 
@@ -27,7 +27,7 @@ def test_option_search_precedes_caps_and_matches_current_or_latest_historical_na
     from app.main import create_app
 
     token = uuid7().hex
-    people = [make_user(f"search_{token}_{index}") for index in range(201)]
+    people = [add_user(integration_db, f"search_{token}_{index}") for index in range(201)]
     people[0].display_name = "Amber 100%_team"
     people[1].display_name = "Amber 100XXteam"
     integration_db.add_all(people)
@@ -56,7 +56,8 @@ def test_option_search_precedes_caps_and_matches_current_or_latest_historical_na
         )
     )
     _seed(integration_db, rows)
-    client = _client(create_app(), make_user(f"search_admin_{token}"), integration_db)
+    client = _client(create_app(), add_user(integration_db, f"search_admin_{token}", role="admin"),
+                     integration_db)
     endpoint = "/api/audit-logs/options"
 
     capped = client.get(endpoint).json()

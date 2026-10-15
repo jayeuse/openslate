@@ -195,7 +195,7 @@ def test_stale_cached_admin_identity_cannot_write_after_role_demotion(chart_worl
     identifier = actor.id
     actor.role = "member"
     world.db.commit()
-    stale = make_user("cached-chart-admin", role="admin")
+    stale, _membership = make_user("cached-chart-admin", role="admin")
     stale.id = identifier
     world.users["admin"] = stale
     with world.client("admin") as client:

@@ -18,10 +18,10 @@ from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentityRateLimitBucket
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.identity.rate_limits import login_fingerprint
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import UserStatus
 from app.systems.platform.files.models import File
 from app.systems.sandbox.departments.models import Department
-from tests.conftest import alembic_heads, guarded_create_engine
+from tests.conftest import alembic_heads, create_member, create_organization, guarded_create_engine
 from tests.operations import migration_support
 from tests.operations.migration_support import guarded_migration_environment, run_alembic
 
@@ -302,18 +302,21 @@ def test_postgres_notifications_arrive_only_after_the_publishing_transaction_com
 def test_runtime_role_can_create_guarded_private_file_metadata() -> None:
     creator_id = None
     department_id = None
+    org_id = None
     owner_engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     try:
         with Session(owner_engine) as owner_db:
             role = "member"
-            creator = User(
+            organization = create_organization(owner_db)
+            org_id = organization.id
+            creator, _membership = create_member(owner_db, organization,
                 email="file-metadata@example.test",
                 username="file-metadata",
                 status=UserStatus.ACTIVE.value,
                 role=role,
             )
             owner_db.add(creator)
-            department = Department(department_name=f"File metadata {uuid7()}")
+            department = Department(org_id=org_id, department_name=f"File metadata {uuid7()}")
             owner_db.add(department)
             owner_db.commit()
             creator_id = creator.id
@@ -327,6 +330,7 @@ def test_runtime_role_can_create_guarded_private_file_metadata() -> None:
     try:
         with Session(runtime_engine) as runtime_db:
             file = File(
+                org_id=org_id,
                 purpose="library_document",
                 department_id=department_id,
                 creator_id=creator_id,
@@ -352,7 +356,14 @@ def test_runtime_role_can_create_guarded_private_file_metadata() -> None:
                     {"department": department_id},
                 )
                 connection.execute(
+                    text("DELETE FROM public.memberships WHERE user_id = :creator"),
+                    {"creator": creator_id},
+                )
+                connection.execute(
                     text("DELETE FROM public.users WHERE id = :creator"), {"creator": creator_id}
+                )
+                connection.execute(
+                    text("DELETE FROM public.organizations WHERE id = :id"), {"id": org_id}
                 )
         finally:
             cleanup_engine.dispose()

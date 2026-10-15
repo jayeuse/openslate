@@ -11,7 +11,6 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
@@ -25,6 +24,8 @@ from app.systems.platform.scheduling.models import (
     WorkState,
 )
 from tests.boards.provider_accounts import create_password_account
+from tests.conftest import create_member
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -39,7 +40,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     actor_id = uuid7()
     email = f"board-work-purge-{actor_id.hex}@example.test"
     provider_user_id = create_password_account(db, email=email, password=password)
-    actor = User(
+    actor, _membership = create_member(db, organization(db),
         id=actor_id,
         email=email,
         supabase_user_id=provider_user_id,

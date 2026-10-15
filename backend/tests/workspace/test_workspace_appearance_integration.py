@@ -11,9 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.main import create_app
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -140,7 +142,8 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
         user = db.get(User, actor_id)
         assert user is not None
         if role == "guest":
-            sponsor = User(
+            sponsor, _membership = create_member(db, db.get(WorkspaceProfile,
+                sole_active_membership(db, actor_id).org_id),
                 email=f"appearance-sponsor-{uuid4().hex}@example.test",
                 username=f"appearance-sponsor-{uuid4().hex[:12]}",
                 status="active",
@@ -172,6 +175,8 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
                 db.flush()
                 sponsor = db.get(User, sponsor_id)
                 assert sponsor is not None
+                db.delete(sole_active_membership(db, sponsor_id))
+                db.flush()
                 db.delete(sponsor)
                 db.commit()
 

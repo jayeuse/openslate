@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import UserStatus
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleClosedAncestorError,
@@ -25,6 +25,7 @@ from app.systems.sandbox.relationships.schemas import (
     RelationshipListRequest,
 )
 from tests.lifecycle_integration.lifecycle_integration_support import LifecycleGraph
+from tests.rbac.support import add_user
 
 pytestmark = [
     pytest.mark.integration,
@@ -66,9 +67,7 @@ def test_department_close_cascades_only_owned_rows_and_commits_once(
 def _external_link_state(db: Session, graph: LifecycleGraph) -> list[tuple[object, str, list[str]]]:
     """List the X -> Y field for an administrator, in hidden and available state."""
 
-    reader = User(
-        email="lifecycle-reader@example.test", role="admin", status=UserStatus.ACTIVE.value
-    )
+    reader = add_user(db, "lifecycle-reader", role="admin", status=UserStatus.ACTIVE)
     field = graph.field_external
     items, _pagination = list_relationships(
         db,

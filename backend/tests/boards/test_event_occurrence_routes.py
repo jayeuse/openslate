@@ -14,13 +14,15 @@ from app.systems.boards.event_router import router
 from app.systems.boards.models import Board
 from tests.boards.support import board_group
 from tests.boards.support import client as board_client
+from tests.conftest import create_member
+from tests.rbac.support import organization
 
 
 def _actor(db: Session) -> User:
     role = "member"
     db.flush()
     user_id = uuid7()
-    actor = User(
+    actor, _membership = create_member(db, organization(db),
         id=user_id,
         email=f"calendar-{user_id.hex}@example.test",
         username=f"calendar_{user_id.hex[:12]}",

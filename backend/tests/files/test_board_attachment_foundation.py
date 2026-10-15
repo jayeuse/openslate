@@ -12,7 +12,6 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
-from app.systems.access.users.models import User
 from app.systems.boards.attachment_models import BoardAttachment
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
@@ -22,7 +21,9 @@ from app.systems.platform.files.lifecycle_router import purge_impact
 from app.systems.platform.files.models import File
 from app.systems.platform.files.purge import purge_confirmed
 from app.systems.platform.files.schemas import BoardFileCreate, FileCreate
+from tests.conftest import create_member
 from tests.files.test_integration import Store
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -167,7 +168,7 @@ def test_global_records_writer_without_board_grant_cannot_reserve_or_upload(guar
     db.add(board)
     db.flush()
     identity = uuid7()
-    outsider = User(
+    outsider, _membership = create_member(db, organization(db),
         id=identity,
         email=f"outsider-{identity.hex}@example.test",
         username=f"outsider_{identity.hex[:16]}",

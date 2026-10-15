@@ -11,13 +11,13 @@ from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.backups.models import BackupRun
 from app.systems.manage.workspace.models import WorkspaceProfile
 from operations import reset_application_data as reset
 from operations.reset import execution
 from operations.reset.backups import read_backup_snapshot, validate_backup_preservation
-from tests.conftest import _guard_integration_database
+from tests.conftest import _guard_integration_database, create_member, create_organization
 from tests.reset_application_data.execution_support import apply_confirmed
 
 pytestmark = pytest.mark.integration
@@ -32,7 +32,8 @@ def export_reset(request, monkeypatch, tmp_path):
     admin_id, member_id, provider_id = uuid4(), uuid4(), uuid4()
     source_id = uuid4()
     with Session(engine) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = create_organization(db)
+        org_id = profile.id
         saved_profile = {
             column.key: getattr(profile, column.key)
             for column in inspect(WorkspaceProfile).column_attrs
@@ -41,21 +42,21 @@ def export_reset(request, monkeypatch, tmp_path):
         instance = db.scalar(select(func.current_setting("cluster_name")))
         db.add_all(
             [
-                User(
+                create_member(db, profile,
                     id=admin_id,
                     email=f"export-reset-{admin_id}@example.test",
                     username=f"er-{admin_id.hex}",
                     role="admin",
                     status="active",
                     supabase_user_id=provider_id,
-                ),
-                User(
+                )[0],
+                create_member(db, profile,
                     id=member_id,
                     email=f"export-reset-{member_id}@example.test",
                     username=f"er-{member_id.hex}",
                     role="member",
                     status="active",
-                ),
+                )[0],
             ]
         )
         db.flush()
@@ -163,11 +164,18 @@ def export_reset(request, monkeypatch, tmp_path):
             source = db.get(BackupRun, source_id)
             if source is not None:
                 db.delete(source)
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.get(WorkspaceProfile, org_id)
             for name, value in saved_profile.items():
                 setattr(profile, name, value)
             for user in db.scalars(select(User).where(User.id.in_([admin_id, member_id]))):
+                for membership in db.scalars(
+                    select(Membership).where(Membership.user_id == user.id)
+                ):
+                    db.delete(membership)
+                db.flush()
                 db.delete(user)
+            db.flush()
+            db.delete(db.get(WorkspaceProfile, org_id))
             db.commit()
         engine.dispose()
 

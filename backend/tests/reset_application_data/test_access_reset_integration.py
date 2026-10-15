@@ -36,46 +36,46 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
     group_id, membership_id, access_id = uuid4(), uuid4(), uuid4()
     backup_ids = tuple(uuid4() for _ in range(6))
     admin_email = f"reset-admin-{admin_id}@example.test"
+    org_id = uuid4()
 
     def cleanup(cursor) -> None:
         cursor.execute("DELETE FROM public.backup_runs WHERE id = ANY(%s)", (list(backup_ids),))
         cursor.execute("DELETE FROM public.backup_policies WHERE id = %s", (backup_ids[0],))
         cursor.execute("DELETE FROM public.update_statuses WHERE id = %s", (backup_ids[1],))
         cursor.execute(
-            "UPDATE public.workspace_profiles SET logo_file_id = NULL WHERE logo_file_id = %s",
+            "UPDATE public.organizations SET logo_file_id = NULL WHERE logo_file_id = %s",
             (file_id,),
         )
         cursor.execute("DELETE FROM public.group_access WHERE id = %s", (access_id,))
         cursor.execute("DELETE FROM public.group_members WHERE id = %s", (membership_id,))
         cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
-        cursor.execute(
-            "UPDATE public.workspace_profiles SET invitation_expiry_days = 7, "
-            "guest_duration_days = 30"
-        )
         delete_sessions_and_rate_limits(cursor, (admin_id, member_id, guest_id))
         cursor.execute("DELETE FROM public.files WHERE id = %s", (file_id,))
         cursor.execute("DELETE FROM public.departments WHERE id = %s", (department_id,))
+        cursor.execute("DELETE FROM public.memberships WHERE org_id = %s", (org_id,))
         cursor.execute(
             "DELETE FROM public.users WHERE id IN (%s, %s, %s)",
             (admin_id, member_id, guest_id),
         )
+        cursor.execute("DELETE FROM public.audit_logs WHERE org_id = %s", (org_id,))
+        cursor.execute("DELETE FROM public.organizations WHERE id = %s", (org_id,))
 
     reset_database.clean_up_after(request, cleanup)
     with connect(reset_database.url) as database:
         with database.cursor() as cursor:
             cursor.execute(
+                "INSERT INTO public.organizations (id, slug, display_name, timezone, locale) "
+                "VALUES (%s, %s, 'Reset organization', 'UTC', 'en-US')",
+                (org_id, f"reset-{org_id}"),
+            )
+            cursor.execute(
                 "INSERT INTO public.users "
-                "(id, email, supabase_user_id, username, status, role, display_name, "
-                "sponsor_user_id, expires_at, job_title, invitation_sent_at, "
-                "invitation_accepted_at, tokens_valid_after) "
-                "VALUES (%s, %s, %s, %s, 'active', 'admin', 'Reset Administrator', "
-                "NULL, NULL, "
-                "'Operations', now() - interval '1 day', now() - interval '1 day', "
-                "now() - interval '1 day'), (%s, %s, %s, %s, 'active', 'member', "
-                "'Reset Member', "
-                "NULL, NULL, 'Member', NULL, NULL, NULL), "
-                "(%s, %s, %s, %s, 'active', 'guest', 'Reset Guest', "
-                "%s, now() + interval '30 days', NULL, NULL, NULL, NULL)",
+                "(id, email, supabase_user_id, username, status, display_name, "
+                "job_title, tokens_valid_after) "
+                "VALUES (%s, %s, %s, %s, 'active', 'Reset Administrator', "
+                "'Operations', now() - interval '1 day'), "
+                "(%s, %s, %s, %s, 'active', 'Reset Member', 'Member', NULL), "
+                "(%s, %s, %s, %s, 'active', 'Reset Guest', NULL, NULL)",
                 (
                     admin_id,
                     admin_email,
@@ -89,8 +89,17 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                     f"reset-guest-{guest_id}@example.test",
                     guest_provider_id,
                     f"reset_guest_{guest_id.hex[:12]}",
-                    member_id,
                 ),
+            )
+            cursor.execute(
+                "INSERT INTO public.memberships "
+                "(org_id, user_id, role, status, sponsor_user_id, expires_at, "
+                "invitation_sent_at, invitation_accepted_at) "
+                "VALUES (%s, %s, 'admin', 'active', NULL, NULL, "
+                "now() - interval '1 day', now() - interval '1 day'), "
+                "(%s, %s, 'member', 'active', NULL, NULL, NULL, NULL), "
+                "(%s, %s, 'guest', 'active', %s, now() + interval '30 days', NULL, NULL)",
+                (org_id, admin_id, org_id, member_id, org_id, guest_id, member_id),
             )
             insert_sessions_and_rate_limits(
                 cursor, admin_id=admin_id, member_id=member_id, session_id=session_id
@@ -103,26 +112,27 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
             )
             insert_department(cursor, department_id, admin_id)
             insert_logo_file(cursor, file_id, admin_id)
-            cursor.execute("UPDATE public.workspace_profiles SET logo_file_id = %s", (file_id,))
+            cursor.execute("UPDATE public.organizations SET logo_file_id = %s WHERE id = %s",
+                           (file_id, org_id))
             cursor.execute(
-                "INSERT INTO public.groups (id, name, description, performed_by) "
-                "VALUES (%s, %s, %s, %s)",
-                (group_id, f"Reset Group {group_id}", "temporary fixture", admin_id),
+                "INSERT INTO public.groups (org_id, id, name, description, performed_by) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (org_id, group_id, f"Reset Group {group_id}", "temporary fixture", admin_id),
             )
             cursor.execute(
-                "INSERT INTO public.group_members (id, group_id, user_id, performed_by) "
-                "VALUES (%s, %s, %s, %s)",
-                (membership_id, group_id, member_id, admin_id),
+                "INSERT INTO public.group_members (org_id, id, group_id, user_id, performed_by) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (org_id, membership_id, group_id, member_id, admin_id),
             )
             cursor.execute(
                 "INSERT INTO public.group_access "
-                "(id, group_id, department_id, level, performed_by) "
-                "VALUES (%s, %s, %s, 'write', %s)",
-                (access_id, group_id, department_id, admin_id),
+                "(org_id, id, group_id, department_id, level, performed_by) "
+                "VALUES (%s, %s, %s, %s, 'write', %s)",
+                (org_id, access_id, group_id, department_id, admin_id),
             )
             cursor.execute(
-                "UPDATE public.workspace_profiles SET invitation_expiry_days = 14, "
-                "guest_duration_days = 45"
+                "UPDATE public.organizations SET invitation_expiry_days = 14, "
+                "guest_duration_days = 45 WHERE id = %s", (org_id,)
             )
             cursor.execute("SELECT current_setting('cluster_name', true)")
             instance = cursor.fetchone()[0]
@@ -294,14 +304,16 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 cursor.execute(f"SELECT count(*) FROM public.{table_name}")
                 assert cursor.fetchone() == (0,)
             cursor.execute(
-                "SELECT invitation_expiry_days, guest_duration_days FROM public.workspace_profiles"
+                "SELECT invitation_expiry_days, guest_duration_days FROM public.organizations "
+                "WHERE id = %s", (org_id,)
             )
             assert cursor.fetchone() == (7, 30)
             cursor.execute(
-                "SELECT role, sponsor_user_id, expires_at, display_name, job_title, "
-                "invitation_sent_at, invitation_accepted_at, tokens_valid_after "
-                "FROM public.users WHERE id = %s",
-                (admin_id,),
+                "SELECT m.role, m.sponsor_user_id, m.expires_at, u.display_name, u.job_title, "
+                "m.invitation_sent_at, m.invitation_accepted_at, u.tokens_valid_after "
+                "FROM public.users AS u JOIN public.memberships AS m ON m.user_id = u.id "
+                "WHERE u.id = %s AND m.org_id = %s",
+                (admin_id, org_id),
             )
             preserved_profile = cursor.fetchone()
             assert preserved_profile[:5] == (
@@ -321,7 +333,7 @@ def test_reset_removes_local_sessions_and_preserves_provider_bound_administrator
                 plan.profile_snapshot.invitation_accepted_at,
                 plan.profile_snapshot.tokens_valid_after,
             )
-            cursor.execute("SELECT logo_file_id FROM public.workspace_profiles")
+            cursor.execute("SELECT logo_file_id FROM public.organizations WHERE id = %s", (org_id,))
             assert cursor.fetchone() == (None,)
             cursor.execute(
                 "SELECT revision, document->>'schemaVersion', performed_by "

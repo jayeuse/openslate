@@ -38,16 +38,17 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
     admin_email = f"reset-admin-{admin_id}@example.test"
     auth.list_account_ids.return_value = (member_provider_id,)
     workspace_settings_before_test = None
+    org_id = uuid4()
 
     def cleanup(cursor) -> None:
         if workspace_settings_before_test is not None:
             cursor.execute(
-                "UPDATE public.workspace_profiles SET currency = %s, week_start = %s, "
-                "business_hours = %s, mark = %s, theme = %s",
-                workspace_settings_before_test,
+                "UPDATE public.organizations SET currency = %s, week_start = %s, "
+                "business_hours = %s, mark = %s, theme = %s WHERE id = %s",
+                (*workspace_settings_before_test, org_id),
             )
         cursor.execute(
-            "UPDATE public.workspace_profiles SET logo_file_id = NULL WHERE logo_file_id = %s",
+            "UPDATE public.organizations SET logo_file_id = NULL WHERE logo_file_id = %s",
             (file_id,),
         )
         for table, column, owned_id in (
@@ -82,20 +83,28 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
         cursor.execute("DELETE FROM public.files WHERE id = %s", (file_id,))
         cursor.execute("DELETE FROM public.groups WHERE id = %s", (group_id,))
         delete_sessions_and_rate_limits(cursor, (admin_id, member_id))
+        cursor.execute("DELETE FROM public.memberships WHERE org_id = %s", (org_id,))
         cursor.execute("DELETE FROM public.users WHERE id IN (%s, %s)", (admin_id, member_id))
+        cursor.execute("DELETE FROM public.audit_logs WHERE org_id = %s", (org_id,))
+        cursor.execute("DELETE FROM public.organizations WHERE id = %s", (org_id,))
 
     reset_database.clean_up_after(request, cleanup)
     with connect(reset_database.url) as database:
         with database.cursor() as cursor:
             cursor.execute(
+                "INSERT INTO public.organizations (id, slug, display_name, timezone, locale) "
+                "VALUES (%s, %s, 'Reset organization', 'UTC', 'en-US')",
+                (org_id, f"reset-{org_id}"),
+            )
+            cursor.execute(
                 "SELECT currency, week_start, business_hours, mark, theme "
-                "FROM public.workspace_profiles"
+                "FROM public.organizations WHERE id = %s", (org_id,)
             )
             workspace_settings_before_test = cursor.fetchone()
             cursor.execute(
-                "INSERT INTO public.users (id, email, supabase_user_id, username, status, role) "
-                "VALUES (%s, %s, %s, %s, 'active', 'admin'), "
-                "(%s, %s, %s, %s, 'active', 'member')",
+                "INSERT INTO public.users (id, email, supabase_user_id, username, status) "
+                "VALUES (%s, %s, %s, %s, 'active'), "
+                "(%s, %s, %s, %s, 'active')",
                 (
                     admin_id,
                     admin_email,
@@ -107,31 +116,39 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
                     f"reset_member_{member_id.hex[:12]}",
                 ),
             )
+            cursor.execute(
+                "INSERT INTO public.memberships (org_id, user_id, role, status) "
+                "VALUES (%s, %s, 'admin', 'active'), (%s, %s, 'member', 'active')",
+                (org_id, admin_id, org_id, member_id),
+            )
             insert_sessions_and_rate_limits(
                 cursor, admin_id=admin_id, member_id=member_id, session_id=session_id
             )
             insert_department(cursor, department_id, admin_id)
             cursor.execute(
-                "INSERT INTO public.groups (id, name, performed_by) VALUES (%s, %s, %s)",
-                (group_id, f"reset-group-{group_id.hex[:12]}", admin_id),
+                "INSERT INTO public.groups (org_id, id, name, performed_by) "
+                "VALUES (%s, %s, %s, %s)",
+                (org_id, group_id, f"reset-group-{group_id.hex[:12]}", admin_id),
             )
             cursor.execute(
-                "INSERT INTO public.group_members (id, group_id, user_id) VALUES (%s, %s, %s)",
-                (uuid4(), group_id, member_id),
+                "INSERT INTO public.group_members (org_id, id, group_id, user_id) "
+                "VALUES (%s, %s, %s, %s)",
+                (org_id, uuid4(), group_id, member_id),
             )
             cursor.execute(
-                "INSERT INTO public.group_access (id, group_id, department_id, level) "
-                "VALUES (%s, %s, %s, 'read')",
-                (uuid4(), group_id, department_id),
+                "INSERT INTO public.group_access (org_id, id, group_id, department_id, level) "
+                "VALUES (%s, %s, %s, %s, 'read')",
+                (org_id, uuid4(), group_id, department_id),
             )
             cursor.execute(
-                "INSERT INTO public.modules (id, department_id, module_name) VALUES (%s, %s, %s)",
-                (module_id, department_id, f"reset-module-{module_id.hex[:12]}"),
+                "INSERT INTO public.modules (org_id, id, department_id, module_name) "
+                "VALUES (%s, %s, %s, %s)",
+                (org_id, module_id, department_id, f"reset-module-{module_id.hex[:12]}"),
             )
             cursor.execute(
-                "INSERT INTO public.fields (id, module_id, name, type, required, position) "
-                "VALUES (%s, %s, 'Title', 'text', true, 0)",
-                (title_field_id, module_id),
+                "INSERT INTO public.fields (org_id, id, module_id, name, type, required, position) "
+                "VALUES (%s, %s, %s, 'Title', 'text', true, 0)",
+                (org_id, title_field_id, module_id),
             )
             cursor.execute(
                 "UPDATE public.modules SET title_field_id = %s WHERE id = %s",
@@ -139,10 +156,10 @@ def test_reset_removes_board_report_dashboard_hierarchy_and_preserves_administra
             )
             insert_logo_file(cursor, file_id, admin_id)
             cursor.execute(
-                "UPDATE public.workspace_profiles SET logo_file_id = %s, currency = 'USD', "
+                "UPDATE public.organizations SET logo_file_id = %s, currency = 'USD', "
                 "week_start = 'sunday', business_hours = '10:00–16:00', mark = 'ACME', "
-                "theme = 'stockroom'",
-                (file_id,),
+                "theme = 'stockroom' WHERE id = %s",
+                (file_id, org_id),
             )
             plan_before_dashboard = reset.build_reset_plan(
                 database, admin_email, storage_object_keys=storage.list_object_keys()

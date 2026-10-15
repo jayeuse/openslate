@@ -25,7 +25,6 @@ from tests.rbac.support import (
     add_module,
     add_user,
     make_group_access,
-    make_user,
 )
 
 UPDATED_RENAMED_CANARY = token_urlsafe(32)
@@ -275,7 +274,8 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
 
     statements, capture_statement = _statement_collector()
 
-    with _client(api, make_user(f"audit-actor-admin-{token}"), integration_db) as client:
+    with _client(api, add_user(integration_db, f"audit-actor-admin-{token}", role="admin"),
+                 integration_db) as client:
         engine = integration_db.get_bind()
         event.listen(engine, "before_cursor_execute", capture_statement)
         try:
@@ -324,7 +324,8 @@ def test_audit_options_are_empty_bounded_recent_and_registered_before_detail(
 
     api = create_app()
     token = uuid7().hex
-    with _client(api, make_user(f"options-admin-{token}"), integration_db) as client:
+    with _client(api, add_user(integration_db, f"options-admin-{token}", role="admin"),
+                 integration_db) as client:
         # Other tests leave committed audit rows behind, so the empty answer is checked
         # in a department that no audit row names.
         empty = client.get("/api/audit-logs/options", params={"department_id": str(uuid7())})
@@ -332,7 +333,7 @@ def test_audit_options_are_empty_bounded_recent_and_registered_before_detail(
         assert empty.json() == {"entity_types": [], "actors": []}
 
         people = [
-            make_user(f"options-person-{token}-{index}", role=UserRole.MEMBER)
+            add_user(integration_db, f"options-person-{token}-{index}", role=UserRole.MEMBER)
             for index in range(201)
         ]
         people[199].display_name = f"Options display {token}"

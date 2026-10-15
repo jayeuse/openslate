@@ -25,9 +25,10 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.core.config.provider_instance import assert_provider_instance
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine
 from tests.postgres_runtime import write_worker_database_manifest
 
 pytestmark = pytest.mark.integration
@@ -100,7 +101,8 @@ def provider_identity(tmp_path: Path) -> Iterator[ProviderIdentity]:
             role = "admin"
             if role is None:
                 raise AssertionError("baseline application admin role is missing")
-            created_user = User(
+            organization = create_organization(db)
+            created_user, _membership = create_member(db, organization,
                 email=email,
                 username=f"provider-sse-{uuid4().hex}",
                 status=UserStatus.ACTIVE.value,
@@ -137,8 +139,16 @@ def provider_identity(tmp_path: Path) -> Iterator[ProviderIdentity]:
                         for session in sessions:
                             db.delete(session)
                         existing_user = db.get(User, local_user_id)
+                        membership = db.scalar(
+                            select(Membership).where(Membership.user_id == local_user_id)
+                        )
+                        organization = db.get(WorkspaceProfile, membership.org_id)
+                        db.delete(membership)
+                        db.flush()
                         if existing_user is not None:
                             db.delete(existing_user)
+                        db.flush()
+                        db.delete(organization)
                         db.commit()
             finally:
                 owner_engine.dispose()

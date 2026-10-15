@@ -12,6 +12,8 @@ from app.systems.boards.post_author_router import router
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from tests.boards.support import client as board_client
 from tests.boards.support import grant, member, writable_board
+from tests.conftest import create_member
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -161,7 +163,7 @@ def test_author_choices_page_every_visible_author_without_a_global_cap(
     db.flush()
     for index in range(501):
         author_id = uuid7()
-        author = User(
+        author, _membership = create_member(db, organization(db),
             id=author_id,
             email=f"authors-bounded-{author_id.hex}@example.test",
             username=f"authors_bounded_{index:03d}",

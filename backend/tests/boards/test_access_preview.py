@@ -14,6 +14,8 @@ from app.systems.boards.access_preview_router import router
 from app.systems.boards.models import Board
 from tests.boards.support import board_group, project_board
 from tests.boards.support import client as board_client
+from tests.conftest import create_member
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -31,7 +33,7 @@ def _user(
     guest = role == "guest"
     sponsor = _user(db) if guest else None
     user_id = uuid7()
-    user = User(
+    user, _membership = create_member(db, organization(db),
         id=user_id,
         email=f"preview-{user_id.hex}@example.test",
         username=username or f"preview_{user_id.hex[:20]}",

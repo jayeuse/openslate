@@ -31,6 +31,8 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.boards.provider_accounts import create_password_account
 from tests.boards.support import client as board_client
+from tests.conftest import create_member
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -47,7 +49,7 @@ def _actor(db: Session, *, admin: bool, password: str | None = None) -> User:
         if password is not None
         else None
     )
-    actor = User(
+    actor, _membership = create_member(db, organization(db),
         id=user_id,
         email=email,
         supabase_user_id=provider_user_id,

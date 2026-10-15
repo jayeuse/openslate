@@ -11,7 +11,6 @@ from sqlalchemy import select
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import User
 from app.systems.boards.attachment_models import (
     BoardAttachment,
     BoardPostRevisionAttachment,
@@ -30,7 +29,9 @@ from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as generic_file_router
 from app.systems.platform.files.storage import get_storage
 from tests.boards.support import board_group
+from tests.conftest import create_member
 from tests.files.test_integration import Store
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -103,7 +104,7 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
     assert len(events) == 1
 
     reader_id = uuid4()
-    reader = User(
+    reader, _reader_membership = create_member(db, organization(db),
         id=reader_id, email=f"excluded-{reader_id.hex}@example.test",
         username=f"excluded_{reader_id.hex[:12]}", status="active", role="member",
     )
@@ -125,11 +126,11 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
 ):
     db = guarded_db
     reader_id = uuid4()
-    reader = User(
+    reader, _reader_membership = create_member(db, organization(db),
         id=reader_id, email=f"eligible-{reader_id.hex}@example.test",
         username=f"eligible_{reader_id.hex[:12]}", status="active", role="member",
     )
-    outsider = User(
+    outsider, _outsider_membership = create_member(db, organization(db),
         id=uuid4(), email=f"outsider-{uuid4().hex}@example.test",
         username=f"outsider_{uuid4().hex[:12]}", status="active", role="member",
     )
@@ -195,7 +196,7 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
 ):
     db = guarded_db
     reader_role = "member"
-    viewer = User(
+    viewer, _membership = create_member(db, organization(db),
         id=uuid4(),
         email=f"archived-viewer-{uuid4().hex}@example.test",
         username=f"archived_viewer_{uuid4().hex[:12]}",
@@ -302,7 +303,7 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
     db.commit()
     board.status = BoardStatus.ARCHIVED
     db.commit()
-    excluded = User(
+    excluded, _membership = create_member(db, organization(db),
         id=uuid4(),
         email=f"archived-excluded-{uuid4().hex}@example.test",
         username=f"archived_excluded_{uuid4().hex[:12]}",

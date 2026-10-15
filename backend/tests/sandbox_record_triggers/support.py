@@ -12,7 +12,7 @@ from sqlalchemy import Engine, and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.boards.models import Board
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
@@ -34,6 +34,8 @@ from app.systems.sandbox.record_triggers.models import (
     RecordTriggerEvent,
     RecordTriggerRun,
 )
+from tests.conftest import create_member
+from tests.rbac.support import organization
 from tests.sandbox_documents import field_payload, sandbox_document_payload, trigger_payload
 from tests.sandbox_publications.support import publish_saved
 
@@ -171,6 +173,7 @@ def cleanup_committed_trigger(
         if event_ids:
             audit_filter = or_(audit_filter, AuditLog.entity_id.in_(event_ids))
         connection.execute(delete(AuditLog).where(audit_filter))
+        connection.execute(delete(Membership).where(Membership.user_id == actor_id))
         connection.execute(delete(User).where(User.id == actor_id))
 
 
@@ -182,7 +185,7 @@ def publish_trigger(
 ) -> tuple[User, Module, dict[str, Field], RecordTrigger]:
     role = "admin"
     assert role is not None
-    actor = User(
+    actor, _membership = create_member(db, organization(db),
         email=f"trigger-{uuid7()}@example.test",
         username=f"trigger-{uuid7()}",
         status=UserStatus.ACTIVE.value,
