@@ -196,10 +196,11 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
         assert client.post(f"{path}/purge/preview").status_code == 409
         assert client.delete(f"{path}?revision=2").json()["detail"]["code"] == "stale_revision"
 
-    record = Record(module_id=module.id, data={})
+    record = Record(org_id=module.org_id, module_id=module.id, data={})
     db.add(record)
     db.flush()
     run = ReportRun(
+        org_id=module.org_id,
         report_id=report_id,
         module_id=module.id,
         idempotency_key=uuid7(),
@@ -211,12 +212,14 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
     )
     db.add(run)
     db.flush()
-    row = ReportRunRow(run_id=run.id, record_id=record.id, position=0, cells=["Ready"])
+    row = ReportRunRow(org_id=run.org_id, run_id=run.id,
+                       record_id=record.id, position=0, cells=["Ready"])
     db.add(row)
-    eligible_user = ReportRunEligibleUser(run_id=run.id, user_id=owner.id)
+    eligible_user = ReportRunEligibleUser(org_id=run.org_id, run_id=run.id, user_id=owner.id)
     db.add(eligible_user)
     scheduled_for = datetime.now(UTC)
     work = ScheduledWork(
+        org_id=module.org_id,
         report_id=report_id,
         scheduled_for=scheduled_for,
         next_attempt_at=scheduled_for,
@@ -226,6 +229,7 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
     db.add(work)
     db.flush()
     notification = InAppNotification(
+        org_id=module.org_id,
         work_id=work.id,
         recipient_id=owner.id,
         kind="report-run",
@@ -234,6 +238,7 @@ def test_report_archive_restore_and_permanent_delete_preserve_then_release_runs(
     )
     db.add(notification)
     schedule = ReportSchedule(
+        org_id=module.org_id,
         report_id=report_id,
         enabled=True,
         cadence="daily",
@@ -349,16 +354,18 @@ def test_report_permanent_delete_rolls_back_flushed_child_deletions_on_conflict(
         lambda *args: owner.id,
     )
     report = Report(
+        org_id=module.org_id,
         module_id=module.id,
         name="Rollback snapshot",
         recipe=_recipe(field),
         is_deleted=True,
         deleted_at=datetime.now(UTC),
     )
-    record = Record(module_id=module.id, data={})
+    record = Record(org_id=module.org_id, module_id=module.id, data={})
     db.add_all([report, record])
     db.flush()
     run = ReportRun(
+        org_id=module.org_id,
         report_id=report.id,
         module_id=module.id,
         idempotency_key=uuid7(),
@@ -370,9 +377,11 @@ def test_report_permanent_delete_rolls_back_flushed_child_deletions_on_conflict(
     )
     db.add(run)
     db.flush()
-    row = ReportRunRow(run_id=run.id, record_id=record.id, position=0, cells=["Ready"])
+    row = ReportRunRow(org_id=run.org_id, run_id=run.id,
+                       record_id=record.id, position=0, cells=["Ready"])
     db.add(row)
     schedule = ReportSchedule(
+        org_id=module.org_id,
         report_id=report.id,
         enabled=True,
         cadence="daily",
@@ -428,10 +437,11 @@ def test_report_run_eligible_users_reject_duplicate_and_orphan_links(
     db = integration_owner_db
     recipient = _actor(db)
     module, field = _module(db)
-    report = Report(module_id=module.id, name="Roster", recipe=_recipe(field))
+    report = Report(org_id=module.org_id, module_id=module.id, name="Roster", recipe=_recipe(field))
     db.add(report)
     db.flush()
     run = ReportRun(
+        org_id=module.org_id,
         report_id=report.id,
         module_id=module.id,
         idempotency_key=uuid7(),
@@ -443,7 +453,7 @@ def test_report_run_eligible_users_reject_duplicate_and_orphan_links(
     )
     db.add(run)
     db.flush()
-    db.add(ReportRunEligibleUser(run_id=run.id, user_id=recipient.id))
+    db.add(ReportRunEligibleUser(org_id=run.org_id, run_id=run.id, user_id=recipient.id))
     db.flush()
 
     for run_id, user_id in (
@@ -452,7 +462,7 @@ def test_report_run_eligible_users_reject_duplicate_and_orphan_links(
         (run.id, uuid7()),
     ):
         savepoint = db.begin_nested()
-        db.add(ReportRunEligibleUser(run_id=run_id, user_id=user_id))
+        db.add(ReportRunEligibleUser(org_id=run.org_id, run_id=run_id, user_id=user_id))
         with pytest.raises(IntegrityError):
             db.flush()
         savepoint.rollback()

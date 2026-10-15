@@ -33,7 +33,7 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_router import router as record_query_router
 from tests.conftest import _guard_integration_database, guarded_create_engine
 from tests.fake_provider_support import install_fake_provider, real_session_pool
-from tests.rbac.support import add_user, make_group_access
+from tests.rbac.support import add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 
@@ -352,10 +352,11 @@ def report_route_client(db: Session, user: User) -> TestClient:
 
 
 def report_route_module(db: Session, *, active: bool = True) -> tuple[Module, Field]:
-    department = Department(department_name=f"Report source {uuid7()}")
+    department = Department(org_id=organization(db).id, department_name=f"Report source {uuid7()}")
     db.add(department)
     db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=f"Report source {uuid7()}",
         is_deleted=not active,
@@ -364,6 +365,7 @@ def report_route_module(db: Session, *, active: bool = True) -> tuple[Module, Fi
     db.add(module)
     db.flush()
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Category",
         type=FieldType.TEXT,

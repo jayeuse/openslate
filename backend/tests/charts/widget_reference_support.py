@@ -65,6 +65,7 @@ class ReferenceRaceWorld:
             other_department = add_department(db)
             module = add_module(db, department)
             field = Field(
+                org_id=module.org_id,
                 module_id=module.id, name="Label", type=FieldType.TEXT, position=0, config={}
             )
             db.add(field)
@@ -72,8 +73,10 @@ class ReferenceRaceWorld:
             member = add_user(db, role="member")
             access = make_group_access(db, [member], department, level=AccessLevel.MANAGE)
             board = project_board(db)
-            db.add(BoardGroup(board_id=board.id, group_id=access.group_id, level="manage"))
-            dashboard = Dashboard(department_id=department.id, name="Race Dashboard " + uuid7().hex)
+            db.add(BoardGroup(org_id=board.org_id, board_id=board.id,
+                              group_id=access.group_id, level="manage"))
+            dashboard = Dashboard(org_id=department.org_id, department_id=department.id,
+                                  name="Race Dashboard " + uuid7().hex)
             db.add(dashboard)
             now = utc_now()
             for key, actor in (("admin", admin), ("member", member)):
@@ -89,6 +92,7 @@ class ReferenceRaceWorld:
                 db.flush()
                 self.actors[key], self.sessions[key] = actor.id, live.id
             self.department_id, self.other_department_id = department.id, other_department.id
+            self.organization_id = department.org_id
             self.module_id, self.field_id = module.id, field.id
             self.group_id, self.board_id, self.dashboard_id = (
                 access.group_id,
@@ -208,7 +212,9 @@ class ReferenceRaceWorld:
                 ("modules", "id", [self.module_id]),
                 ("departments", "id", [self.department_id, self.other_department_id]),
                 ("audit_logs", "performed_by", list(self.actors.values())),
+                ("memberships", "user_id", list(self.actors.values())),
                 ("users", "id", list(self.actors.values())),
+                ("organizations", "id", [self.organization_id]),
             ):
                 connection.execute(
                     text(f"DELETE FROM public.{table} WHERE {column} = ANY(:ids)"), {"ids": ids}

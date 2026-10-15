@@ -126,7 +126,7 @@ def test_assignment_commits_delete_and_create_audits_same_request(
     field, _, target_module, sources, targets = _seed_graph(integration_db, owned_ids)
     original = create_relationship(integration_db, field.id, sources[0].id, targets[0].id)
     owned_ids.add(original.id)
-    new_target = Record(module_id=target_module.id, data={})
+    new_target = Record(org_id=target_module.org_id, module_id=target_module.id, data={})
     integration_db.add(new_target)
     integration_db.flush()
     owned_ids.add(new_target.id)
@@ -168,7 +168,7 @@ def test_assignment_rollback_removes_replacement_and_audit_mutations(
         owned_ids, with_edge=True
     )
     assert original is not None
-    new_target = Record(module_id=target_module.id, data={})
+    new_target = Record(org_id=target_module.org_id, module_id=target_module.id, data={})
     integration_db.add(new_target)
     integration_db.flush()
     owned_ids.add(new_target.id)

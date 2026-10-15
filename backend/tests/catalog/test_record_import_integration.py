@@ -98,6 +98,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     fields = {}
     for position, (name, field_type, required, config) in enumerate(definitions):
         field = Field(
+            org_id=module.org_id,
             module_id=module.id,
             name=name,
             type=field_type,

@@ -19,8 +19,10 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.views.models import SavedView
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
@@ -104,21 +106,28 @@ def export_world(fake_provider_account) -> Iterator[ExportWorld]:
     with Session(owner) as db:
         actor = db.get(User, actor_id)
         assert actor is not None
+        db.info["rbac_organization"] = db.get(
+            WorkspaceProfile, sole_active_membership(db, actor_id).org_id
+        )
         actor.supabase_user_id = provider_id
         actor.display_name = "Export reader"
         department = add_department(db)
         module = add_module(db, department, "Sales / ledger")
-        label = Field(module_id=module.id, name="Label", type="text", position=0, config={})
-        amount = Field(module_id=module.id, name="Amount", type="decimal", position=1, config={})
+        label = Field(org_id=module.org_id, module_id=module.id,
+                      name="Label", type="text", position=0, config={})
+        amount = Field(org_id=module.org_id, module_id=module.id,
+                       name="Amount", type="decimal", position=1, config={})
         db.add_all([label, amount])
         db.flush()
         records = [
-            Record(module_id=module.id, data={str(label.id): name, str(amount.id): value})
+            Record(org_id=module.org_id, module_id=module.id,
+                   data={str(label.id): name, str(amount.id): value})
             for name, value in (("Alpha", "2"), ("Beta", "10"), ("Gamma", "3"))
         ]
         db.add_all(records)
         grant = make_group_access(db, [actor], department, module, level=AccessLevel.READ)
         view = SavedView(
+            org_id=module.org_id,
             module_id=module.id,
             name="Reviewed records",
             definition={"version": 1, "columns": []},

@@ -78,7 +78,8 @@ def chart_world(integration_owner_db: Session) -> ChartWorld:
     module = add_module(db, department)
     other_module = add_module(db, other_department)
     fields = [
-        Field(module_id=module.id, name=name, type=kind, position=position, config={})
+        Field(org_id=module.org_id, module_id=module.id,
+              name=name, type=kind, position=position, config={})
         for position, (name, kind) in enumerate(
             [
                 ("Label", FieldType.TEXT),

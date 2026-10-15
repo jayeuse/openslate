@@ -39,11 +39,13 @@ def titled_module(
     db: Session, titles: list[object], *, kind: str = "text"
 ) -> tuple[Module, Field, list[Record]]:
     module = add_module(db, add_department(db), "Search assets")
-    field = Field(module_id=module.id, name="Title", type=kind, position=0, config={})
+    field = Field(org_id=module.org_id, module_id=module.id,
+                  name="Title", type=kind, position=0, config={})
     db.add(field)
     db.flush()
     module.title_field_id = field.id
-    rows = [Record(module_id=module.id, data={str(field.id): title}) for title in titles]
+    rows = [Record(org_id=module.org_id, module_id=module.id, data={str(field.id): title})
+            for title in titles]
     db.add_all(rows)
     db.flush()
     return module, field, rows
