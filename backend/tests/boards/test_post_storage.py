@@ -75,11 +75,12 @@ def test_published_snapshot_remains_private_and_immutable_during_scheduled_repla
     )
     db.add_all([author, reader])
     db.flush()
-    board = Board(scope="project", name="Posts")
+    board = Board(org_id=organization(db).id, scope="project", name="Posts")
     db.add(board)
     db.flush()
     now = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
     post = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="First published title",
@@ -91,6 +92,7 @@ def test_published_snapshot_remains_private_and_immutable_during_scheduled_repla
     db.add(post)
     db.flush()
     published = BoardPostRevision(
+        org_id=post.org_id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -193,11 +195,12 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
     )
     db.add(author)
     db.flush()
-    board = Board(scope="project", name="Constraint board")
+    board = Board(org_id=organization(db).id, scope="project", name="Constraint board")
     db.add(board)
     db.flush()
     now = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
     base = {
+        "org_id": board.org_id,
         "board_id": board.id,
         "author_id": author.id,
         "title": "Notice",
@@ -223,6 +226,7 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
     db.add(post)
     db.flush()
     published = BoardPostRevision(
+        org_id=post.org_id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -239,6 +243,7 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
     db.add(published)
     db.flush()
     revision_base = {
+        "org_id": post.org_id,
         "post_id": post.id,
         "publication_number": 2,
         "publication_key": uuid7(),

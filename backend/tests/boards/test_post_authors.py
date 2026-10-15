@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.models import Board
 from app.systems.boards.post_author_router import router
@@ -28,6 +29,7 @@ def _published(
     published_at: datetime | None = None,
 ) -> BoardPost:
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="Private post title",
@@ -39,6 +41,7 @@ def _published(
     db.flush()
     db.add(
         BoardPostRevision(
+            org_id=item.org_id,
             post_id=item.id,
             publication_number=1,
             publication_key=uuid7(),
@@ -127,7 +130,7 @@ def test_inactive_deleted_or_unestablished_authors_are_not_choices(
     disabled.status = UserStatus.DISABLED.value
     deleted.is_deleted = True
     deleted.deleted_at = datetime.now(UTC)
-    unestablished.invitation_sent_at = datetime.now(UTC)
+    sole_active_membership(db, unestablished.id).invitation_sent_at = datetime.now(UTC)
     db.commit()
 
     response = board_client(db, viewer, router).get(f"/api/boards/{board.id}/post-authors")
@@ -302,11 +305,13 @@ def test_author_ids_intersect_visible_eligible_authors_before_search_and_paging(
             status="archived" if state == "archived" else "published",
             expires_at=past if state == "expired-post" else None,
         )
-    unavailable["expired-user"].expires_at = past
+    sole_active_membership(db, unavailable["expired-user"].id).expires_at = past
     unavailable["disabled"].status = UserStatus.DISABLED.value
     unavailable["deleted"].is_deleted = True
     unavailable["deleted"].deleted_at = datetime.now(UTC)
-    unavailable["unestablished"].invitation_sent_at = datetime.now(UTC)
+    sole_active_membership(db, unavailable["unestablished"].id).invitation_sent_at = datetime.now(
+        UTC,
+    )
     db.commit()
     client = board_client(db, viewer, router)
     endpoint = f"/api/boards/{board.id}/post-authors"
