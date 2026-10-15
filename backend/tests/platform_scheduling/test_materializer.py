@@ -7,14 +7,16 @@ from datetime import UTC, datetime, time
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.reports.models import Report
 from app.systems.openview.reports.schedule_models import ReportSchedule
 from app.systems.platform.scheduling.materializer import materialize_due_schedules, next_due_after
@@ -101,6 +103,7 @@ def _subject(
         db, label="Materializer", role=role, grant_read=False
     )
     schedule = ReportSchedule(
+        org_id=report.org_id,
         report_id=report.id,
         enabled=True,
         cadence="daily",
@@ -129,13 +132,13 @@ def _committed_subject(due: datetime) -> Iterator[tuple[Engine, dict[str, UUID]]
                 "schedule": schedule.id,
                 "module": module.id,
                 "department": department.id,
+                "organization": report.org_id,
             }
             setup.commit()
         yield engine, ids
     finally:
         if ids:
-            with AuditSession(engine) as cleanup:
-                cleanup.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
+            with Session(engine) as cleanup:
                 for work in cleanup.scalars(
                     select(ScheduledWork).where(ScheduledWork.report_id == ids["report"])
                 ):
@@ -146,11 +149,22 @@ def _committed_subject(due: datetime) -> Iterator[tuple[Engine, dict[str, UUID]]
                     ("report", Report),
                     ("module", Module),
                     ("department", Department),
-                    ("owner", User),
                 ):
                     if (row := cleanup.get(model, ids[key])) is not None:
                         cleanup.delete(row)
                         cleanup.flush()
+                for membership in cleanup.scalars(
+                    select(Membership).where(Membership.user_id == ids["owner"])
+                ):
+                    cleanup.delete(membership)
+                cleanup.flush()
+                cleanup.delete(cleanup.get(User, ids["owner"]))
+                cleanup.flush()
+                cleanup.connection().execute(
+                    text("DELETE FROM audit_logs WHERE org_id = :org_id"),
+                    {"org_id": ids["organization"]},
+                )
+                cleanup.delete(cleanup.get(WorkspaceProfile, ids["organization"]))
                 cleanup.commit()
         engine.dispose()
 
@@ -234,6 +248,7 @@ def test_schedule_edits_replace_due_cursor_and_one_policy_is_enforced(integratio
     savepoint = db.begin_nested()
     db.add(
         ReportSchedule(
+            org_id=report.org_id,
             report_id=report.id,
             enabled=False,
             cadence="daily",

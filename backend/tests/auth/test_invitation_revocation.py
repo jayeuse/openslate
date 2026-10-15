@@ -137,7 +137,7 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
     with Session(owner) as db:
         user = db.get(User, local_id)
         user.supabase_user_id = provider_id
-        user.role = "admin"
+        db.scalars(select(Membership).where(Membership.user_id == local_id)).one().role = "admin"
         db.commit()
     source = uuid4().bytes
     client_address = (f"198.18.{source[0]}.{source[1]}", 50000)
@@ -177,7 +177,10 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
         with Session(owner) as db:
             pending = db.scalar(select(User).where(User.email == invite_email))
             assert pending is not None and pending.status == "pending"
-            assert pending.invitation_sent_at is None
+            membership = db.scalars(
+                select(Membership).where(Membership.user_id == pending.id)
+            ).one()
+            assert membership.invitation_sent_at is None
             events = db.scalars(
                 select(SecurityEvent).where(
                     SecurityEvent.event_type == "user.invitation_revocation",
@@ -253,5 +256,10 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
                     select(IdentitySession).where(IdentitySession.user_id == user.id)
                 ):
                     db.delete(session)
+                for membership in db.scalars(
+                    select(Membership).where(Membership.user_id == user.id)
+                ):
+                    db.delete(membership)
+                db.flush()
                 db.delete(user)
                 db.commit()
