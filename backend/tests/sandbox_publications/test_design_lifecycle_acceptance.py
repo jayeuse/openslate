@@ -250,7 +250,7 @@ def test_closing_a_module_with_active_records_is_blocked_and_changes_nothing(
     customer_id = bound_field(
         api.db, "field", "sample-customers:sample-field-customers-customer-id"
     )
-    record = Record(module_id=module.id, data={str(customer_id.id): "CUS-1"})
+    record = Record(org_id=module.org_id, module_id=module.id, data={str(customer_id.id): "CUS-1"})
     api.db.add(record)
     api.db.flush()
     api.db.commit()

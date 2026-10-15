@@ -64,11 +64,14 @@ def _with_cross_department_relationship() -> SandboxDocument:
 
 
 def _link(db: Session, relationship_id: str, target_module_id: str) -> RelationshipEdge:
-    source = Record(module_id=bound_module(db, "sample-requests").id, data={})
-    target = Record(module_id=bound_module(db, target_module_id).id, data={})
+    source_module = bound_module(db, "sample-requests")
+    target_module = bound_module(db, target_module_id)
+    source = Record(org_id=source_module.org_id, module_id=source_module.id, data={})
+    target = Record(org_id=target_module.org_id, module_id=target_module.id, data={})
     db.add_all([source, target])
     db.flush()
     edge = RelationshipEdge(
+        org_id=source.org_id,
         field_id=bound_field(db, "relationship", relationship_id).id,
         source_record_id=source.id,
         target_record_id=target.id,
@@ -111,10 +114,12 @@ def test_module_move_publishes_with_an_unbound_incoming_relationship(
     publisher, document = publish_structure(integration_owner_db)
     operations = bound_department(integration_owner_db, "sample-operations")
     requests = bound_module(integration_owner_db, "sample-requests")
-    outside = Module(department_id=operations.id, module_name="Outside Sandbox")
+    outside = Module(org_id=operations.org_id,
+                     department_id=operations.id, module_name="Outside Sandbox")
     integration_owner_db.add(outside)
     integration_owner_db.flush()
     incoming = Field(
+        org_id=outside.org_id,
         module_id=outside.id,
         name="Incoming request",
         type="relationship",
