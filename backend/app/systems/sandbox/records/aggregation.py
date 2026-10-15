@@ -41,9 +41,9 @@ from app.systems.sandbox.records.query_schemas import (
 )
 
 
-def _workspace_timezone(db: Session) -> tuple[str, ZoneInfo]:
+def _workspace_timezone(db: Session, org_id: UUID) -> tuple[str, ZoneInfo]:
     timezone_name = db.scalars(
-        select(WorkspaceProfile.timezone)
+        select(WorkspaceProfile.timezone).where(WorkspaceProfile.id == org_id)
     ).one_or_none()
     if not timezone_name:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
@@ -53,8 +53,10 @@ def _workspace_timezone(db: Session) -> tuple[str, ZoneInfo]:
         raise HTTPException(503, detail="Workspace timezone is unavailable") from error
 
 
-def _workspace_week_start(db: Session) -> str:
-    value = db.scalars(select(WorkspaceProfile.week_start)).one_or_none()
+def _workspace_week_start(db: Session, org_id: UUID) -> str:
+    value = db.scalars(
+        select(WorkspaceProfile.week_start).where(WorkspaceProfile.id == org_id)
+    ).one_or_none()
     if value not in {"monday", "sunday"}:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
     return str(value)
@@ -94,7 +96,7 @@ def _date_window_predicates(
     if field.type == FieldType.DATE:
         return (date_expression >= from_date, date_expression <= to_date)
 
-    timezone_name, workspace_timezone = _workspace_timezone(db)
+    timezone_name, workspace_timezone = _workspace_timezone(db, field.org_id)
     bucket_expression = func.timezone(timezone_name, date_expression).cast(Date())
     lower = datetime.combine(from_date, time.min, tzinfo=workspace_timezone)
     if to_date == date.max:
@@ -166,9 +168,9 @@ def _date_series_aggregate(
     local_date = (
         date_expression
         if field.type == FieldType.DATE
-        else func.timezone(_workspace_timezone(db)[0], date_expression).cast(Date())
+        else func.timezone(_workspace_timezone(db, field.org_id)[0], date_expression).cast(Date())
     )
-    week_start = _workspace_week_start(db) if payload.bucket == "week" else "monday"
+    week_start = _workspace_week_start(db, field.org_id) if payload.bucket == "week" else "monday"
     try:
         starts = calendar_buckets(payload.from_date, payload.to_date, payload.bucket, week_start)
     except ValueError as error:

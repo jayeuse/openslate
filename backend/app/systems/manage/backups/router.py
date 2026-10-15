@@ -145,7 +145,7 @@ def update_policy(
             raise service.BackupStateError("stale_revision")
         # Read before any assignment: a query would autoflush a disabled schedule
         # that still has its old due time and break ck_backup_policies_disabled_due.
-        timezone = service.workspace(db).timezone
+        timezone = policy.timezone
         for field in payload.model_fields_set - {"revision"}:
             setattr(policy, field, getattr(payload, field))
         policy.timezone = timezone

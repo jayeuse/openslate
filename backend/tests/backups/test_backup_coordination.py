@@ -16,12 +16,52 @@ from app.systems.access.users.models import UserRole
 from app.systems.manage.backups import service
 from app.systems.manage.backups.models import BackupPolicy, BackupRun
 from app.systems.manage.backups.schemas import InspectCommand
+from app.systems.manage.workspace.models import PlatformSettings
 from operations.backup_state import coordinated_session, execute
 from operations.reset.models import _RESET_ADVISORY_LOCK_KEY
 from tests.conftest import guarded_create_engine
+from tests.race_support import backend_pid, join, start, wait_until_blocked_by
 from tests.rbac.support import _client, add_user
 
 pytestmark = pytest.mark.integration
+
+
+def test_absent_backup_policy_creation_is_serialized_by_installation_settings() -> None:
+    engine = guarded_create_engine(os.environ["TEST_DATABASE_URL"])
+    owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
+    policy_id = None
+    worker = None
+    try:
+        with AuditSession(engine, expire_on_commit=False) as first:
+            instance = service.installation_id(first)
+            policy = service.lock_policy(first, instance)
+            policy_id = policy.id
+
+            def create_policy():
+                with AuditSession(engine) as second:
+                    result = service.lock_policy(second, instance).id
+                    second.commit()
+                    return result
+
+            worker, results = start(create_policy)
+            try:
+                wait_until_blocked_by(owner, backend_pid(first))
+            finally:
+                first.commit()
+            assert join(worker, results) == policy_id
+        with Session(engine) as observer:
+            assert observer.scalars(select(BackupPolicy.id)).all() == [policy_id]
+            assert observer.scalar(select(PlatformSettings.id)) is not None
+    finally:
+        if worker is not None:
+            worker.join(10)
+        if policy_id is not None:
+            with owner.begin() as cleanup:
+                cleanup.execute(text("DELETE FROM audit_logs WHERE entity_id = :id"),
+                                {"id": policy_id})
+                cleanup.execute(BackupPolicy.__table__.delete().where(BackupPolicy.id == policy_id))
+        engine.dispose()
+        owner.dispose()
 
 
 def test_concurrent_lost_response_replay_commits_only_one_request() -> None:

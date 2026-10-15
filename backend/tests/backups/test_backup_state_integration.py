@@ -164,11 +164,34 @@ def test_foreign_history_is_not_claimed_and_inherited_policy_requires_adoption(
     assert foreign.state == "running" and foreign.installation_id == "old-installation"
 
 
-def test_due_schedule_catches_up_once_and_timezone_rebases_cursor(integration_db: Session) -> None:
+@pytest.mark.parametrize(
+    ("organization_count", "expected_timezone"),
+    [(0, "UTC"), (1, "Asia/Manila"), (2, "UTC")],
+)
+def test_backup_timezone_initializes_from_only_a_sole_organization(
+    integration_db: Session, organization_count: int, expected_timezone: str,
+) -> None:
+    from app.systems.manage.backups import service
+    from tests.conftest import create_organization
+
+    for _ in range(organization_count):
+        create_organization(integration_db, timezone="Asia/Manila")
+    instance = _identity(integration_db)
+    assert service.policy_response(integration_db, instance).timezone == expected_timezone
+    policy = service.lock_policy(integration_db, instance)
+    integration_db.flush()
+    integration_db.refresh(policy)
+    assert policy.timezone == expected_timezone
+
+
+def test_due_schedule_catches_up_once_and_policy_timezone_is_independent(
+    integration_db: Session,
+) -> None:
     from app.systems.manage.backups import service
     from app.systems.manage.backups.models import BackupPolicy, BackupRun
-    from app.systems.manage.workspace.models import WorkspaceProfile
+    from tests.conftest import create_organization
 
+    profile = create_organization(integration_db, timezone="UTC")
     instance = _identity(integration_db)
     policy = BackupPolicy(
         installation_id=instance,
@@ -184,16 +207,16 @@ def test_due_schedule_catches_up_once_and_timezone_rebases_cursor(integration_db
     assert policy.next_due_at > NOW
     assert len(integration_db.scalars(select(BackupRun)).all()) == 1
     policy.timezone, policy.next_due_at = "Asia/Manila", NOW - timedelta(days=1)
-    profile = integration_db.scalar(select(WorkspaceProfile))
-    profile.timezone = "UTC"
+    profile.timezone = "America/New_York"
     pending = service.policy_response(integration_db, instance, now=NOW)
-    assert pending.timezone == "UTC" and pending.next_due_at > NOW
+    assert pending.timezone == "Asia/Manila" and pending.next_due_at == NOW - timedelta(days=1)
     assert policy.timezone == "Asia/Manila" and policy.next_due_at < NOW
     claimed.finished_at, claimed.reconciled_at, claimed.state = NOW, NOW, "failed"
     claimed.failure_code = "backup_failed"
+    policy.next_due_at = NOW + timedelta(days=1)
     integration_db.flush()
     assert service.claim_run(integration_db, instance, uuid4(), now=NOW) is None
-    assert policy.timezone == "UTC" and policy.next_due_at > NOW
+    assert policy.timezone == "Asia/Manila" and policy.next_due_at > NOW
     assert len(integration_db.scalars(select(BackupRun)).all()) == 1
 
 

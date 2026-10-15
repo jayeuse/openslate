@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.schemas import DesignField, SandboxDocument
 from app.systems.sandbox.designs.validation import validate_document
 from app.systems.sandbox.fields.impact import validate_change_impact
@@ -284,7 +285,11 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     blockers.extend(close_blockers(db, by_kind, desired_ids, document, snapshot=snapshot))
     blockers.extend(hierarchy_close_blockers(document))
     blockers.extend(unmanaged_field_blockers(db, by_kind, document))
-    profile = db.scalars(select(WorkspaceProfile)).one_or_none()
+    profile = db.scalars(
+        select(WorkspaceProfile)
+        .join(SandboxDocumentRow, SandboxDocumentRow.org_id == WorkspaceProfile.id)
+        .where(SandboxDocumentRow.singleton_key.is_(True))
+    ).one_or_none()
     if profile is None:
         blockers.append(
             PublicationBlocker(

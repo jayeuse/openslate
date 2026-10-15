@@ -2,11 +2,12 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.systems.access.users.models import UserRole
-from tests.rbac.support import _client, add_user
+from app.systems.manage.backups.models import BackupPolicy
+from tests.rbac.support import _client, add_user, organization
 from tests.route_app_support import route_app
 
 
@@ -71,6 +72,8 @@ def test_non_admin_cannot_read_or_write_backup_authority(
     integration_db: Session, role: str
 ) -> None:
     actor = add_user(integration_db, role=role)
+    # Each denial rolls back its request; retain the account/membership fixture.
+    integration_db.commit()
     with _client(route_app(), actor, integration_db) as client:
         responses = [
             client.get("/api/backups/status"),
@@ -113,11 +116,18 @@ def test_policy_invalid_inputs_make_no_partial_write(
 def test_admin_can_turn_a_schedule_back_off(integration_db: Session) -> None:
     # Found by a live sample run: disabling a schedule failed with 503.
     admin = add_user(integration_db, role=UserRole.ADMIN)
+    stored = BackupPolicy(installation_id=integration_db.connection().scalar(
+        text("SELECT current_setting('cluster_name')")
+    ), timezone="Asia/Manila", schedule="disabled", retention_days=30)
+    integration_db.add(stored)
+    organization(integration_db).timezone = "America/New_York"
+    integration_db.flush()
     with _client(route_app(), admin, integration_db) as client:
         saved = client.patch(
             "/api/backups/status", json={"revision": 1, "schedule": "daily", "retention_days": 7}
         )
         assert saved.status_code == 200
+        assert saved.json()["policy"]["timezone"] == "Asia/Manila"
         disabled = client.patch(
             "/api/backups/status",
             json={"revision": 2, "schedule": "disabled", "retention_days": 30},
@@ -125,6 +135,8 @@ def test_admin_can_turn_a_schedule_back_off(integration_db: Session) -> None:
         assert disabled.status_code == 200
         policy = disabled.json()["policy"]
         assert policy["schedule"] == "disabled" and policy["next_due_at"] is None
+        assert policy["timezone"] == "Asia/Manila"
+        assert integration_db.scalar(select(BackupPolicy.timezone)) == "Asia/Manila"
 
 
 @pytest.mark.integration
