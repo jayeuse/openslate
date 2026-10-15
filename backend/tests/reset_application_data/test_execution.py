@@ -347,8 +347,9 @@ def test_ambiguous_database_commit_does_not_claim_profiles_were_retained(monkeyp
     storage.delete_and_verify_empty.assert_not_called()
 
 
-def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("arguments", [[], ["--execute"]])
+def test_reset_reads_the_canonical_environment_but_refuses_before_effects_until_s15(
+    monkeypatch, tmp_path, arguments
 ) -> None:
     url = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
     target = InstanceTarget(
@@ -370,14 +371,15 @@ def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
     }
     connection = Mock()
     storage = Mock(list_object_keys=Mock(return_value=()))
+    connect = Mock(return_value=connection)
+    storage_factory = Mock(return_value=storage)
+    auth_factory = Mock(return_value=Mock(list_account_ids=Mock(return_value=())))
     seen_paths = []
     monkeypatch.setattr(reset, "environment_inputs", lambda path: seen_paths.append(path) or values)
     monkeypatch.setattr(reset, "instance_target_for_process", lambda *_args: target)
-    monkeypatch.setattr(reset, "connect", lambda _url: connection)
-    monkeypatch.setattr(reset, "ResetStorage", lambda *_args: storage)
-    monkeypatch.setattr(
-        reset, "ResetAuth", lambda *_args: Mock(list_account_ids=Mock(return_value=()))
-    )
+    monkeypatch.setattr(reset, "connect", connect)
+    monkeypatch.setattr(reset, "ResetStorage", storage_factory)
+    monkeypatch.setattr(reset, "ResetAuth", auth_factory)
     monkeypatch.setattr(reset, "assert_provider_instance", Mock())
     monkeypatch.setattr(
         reset,
@@ -389,13 +391,15 @@ def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
     monkeypatch.setattr(reset, "_print_plan", lambda _plan: None)
     monkeypatch.setattr(reset, "assert_psycopg_target", Mock())
 
-    reset.main([])
+    with pytest.raises(SystemExit, match="S15"):
+        reset.main(arguments)
 
     assert seen_paths == [reset.DOTENV_PATH]
-    reset.assert_psycopg_target.assert_called_once_with(
-        connection, target, expected_user="openslate_owner"
-    )
-    connection.close.assert_called_once()
+    connect.assert_not_called()
+    storage_factory.assert_not_called()
+    auth_factory.assert_not_called()
+    assert connection.mock_calls == []
+    assert storage.mock_calls == []
 
 
 def test_reset_refuses_unbound_provider_before_privileged_calls(monkeypatch) -> None:

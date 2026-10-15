@@ -57,7 +57,6 @@ def test_create_listener_stages_and_writes_create_log() -> None:
         email="alice@example.com",
         username="alice",
         status="active",
-        role="member",
     )
     session.new = [user]
 
@@ -75,20 +74,15 @@ def test_create_listener_stages_and_writes_create_log() -> None:
     assert audit_log.after == {
         "email": "alice@example.com",
         "supabase_user_id": None,
-        "provider_invitation_operation_id": None,
         "username": "alice",
         "display_name": None,
-        "role": "member",
         "theme_preference": None,
         "appearance": None,
         "job_title": None,
         "phone": None,
         "bio": None,
         "avatar_file_id": None,
-        "sponsor_user_id": None,
-        "expires_at": None,
         "status": "active",
-        "mfa_required_since": None,
     }
     assert session.info[REALTIME_INVALIDATION_KEY] == [
         InvalidationEvent(entity="users", entity_id=user.id, administrators_only=True)
@@ -126,11 +120,13 @@ def test_record_create_snapshots_redact_current_dynamic_fields_in_one_query() ->
     logs = [entry for entry in session.added if isinstance(entry, AuditLog)]
     assert len(logs) == 2
     assert logs[0].after == {
+        "org_id": None,
         "lifecycle_close_operation_id": REDACTED,
         "module_id": str(module_id),
         "data": {redacted_key: REDACTED, "clear": "visible"},
     }
     assert logs[1].after == {
+        "org_id": None,
         "lifecycle_close_operation_id": REDACTED,
         "module_id": str(module_id),
         "data": {redacted_key: REDACTED},

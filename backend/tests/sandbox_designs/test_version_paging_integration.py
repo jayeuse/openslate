@@ -8,8 +8,9 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.service import _append_version, read_document
-from tests.rbac.support import make_user
+from tests.rbac.support import add_user, organization
 from tests.route_app_support import route_app
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
 
@@ -17,6 +18,8 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def version_page(integration_owner_db):
     db = integration_owner_db
+    create_document(db, organization(db))
+    actor = [add_user(db, "version-paging", role="admin")]
     document = read_document(db).document
     row = db.scalar(select(SandboxDocument))
     definitions = (
@@ -42,7 +45,6 @@ def version_page(integration_owner_db):
         versions.append(version)
     versions[4].is_deleted = True
     db.commit()
-    actor = [make_user("version-paging")]
     app = route_app()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: actor[0]
@@ -101,7 +103,8 @@ def test_version_filter_validation_is_bounded(version_page, params):
 
 def test_version_filters_do_not_change_administrator_only_access(version_page):
     client, actor, _versions = version_page
+    db = client.app.dependency_overrides[get_db]()
     for role in ("member", "guest"):
-        actor[0] = make_user(f"version-{role}", role=role)
+        actor[0] = add_user(db, f"version-{role}", role=role)
         response = client.get("/api/sandbox/versions", params={"kind": "checkpoint"})
         assert response.status_code == 403

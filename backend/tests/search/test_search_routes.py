@@ -79,7 +79,7 @@ def _event(db: Session, board: Board, author: User, title: str, **changes: objec
 
 def test_empty_search_is_an_empty_standard_page_without_database_queries() -> None:
     database = Mock(spec=Session)
-    api = _client(database, make_user("search-admin"))
+    api = _client(database, make_user("search-admin")[0])
     result = _search(api, "record", "   ", limit=10, offset=20)
     assert result == {
         "items": [],
@@ -98,7 +98,7 @@ def test_empty_search_is_an_empty_standard_page_without_database_queries() -> No
 def test_search_requires_identity_and_rejects_invalid_list_parameters() -> None:
     db = Mock(spec=Session)
     assert _client(db, None).get("/api/search?kind=record&search=test").status_code == 401
-    api = _client(db, make_user("search-admin"))
+    api = _client(db, make_user("search-admin")[0])
     for params in (
         {},
         {"kind": "file"},

@@ -103,7 +103,7 @@ def test_password_grant_admits_only_the_bound_application_session(
 @pytest.mark.parametrize("refused_by", ["provider", "admission"])
 def test_wrong_password_records_rate_limit_without_creating_local_session(
     monkeypatch: pytest.MonkeyPatch,
-    unit_workspace_policy,
+    unit_platform_policy,
     refused_by: str,
 ) -> None:
     from app.systems.access.identity import provider_login, rate_limits
@@ -139,7 +139,7 @@ def test_wrong_password_records_rate_limit_without_creating_local_session(
         "fingerprint",
         bucket,
         now,
-        policy=unit_workspace_policy,
+        policy=unit_platform_policy,
         login=True,
         source="127.0.0.1",
         identifier="person@example.test",
@@ -152,7 +152,7 @@ def test_wrong_password_records_rate_limit_without_creating_local_session(
 
 def test_a_blocked_login_budget_refuses_before_the_provider_with_the_remaining_wait(
     monkeypatch: pytest.MonkeyPatch,
-    unit_workspace_policy,
+    unit_platform_policy,
 ) -> None:
     from app.systems.access.identity import provider_login, rate_limits
 

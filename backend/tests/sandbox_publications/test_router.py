@@ -13,22 +13,23 @@ from uuid6 import uuid7
 import app.systems.sandbox.publications.router as publication_router
 from app.common.dependencies.auth import CurrentIdentity
 from app.systems.access.users.models import User, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleInvalidCredentials,
     LifecyclePasswordRateLimited,
 )
 from app.systems.sandbox.publications.schemas import PublicationRequest
+from tests.conftest import create_member
 
 
 def _identity() -> CurrentIdentity:
     role = "admin"
     now = datetime.now(UTC)
-    user = User(
+    user, _membership = create_member(None, WorkspaceProfile(id=uuid7()), role,
         id=uuid7(),
         email="publisher@example.test",
         username="publisher",
         status=UserStatus.ACTIVE.value,
-        role=role,
         created_at=now,
         updated_at=now,
         is_deleted=False,

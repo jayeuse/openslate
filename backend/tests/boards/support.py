@@ -17,7 +17,7 @@ from app.systems.access.users.models import User, UserRole
 from app.systems.boards.department_boards import sync_department_board
 from app.systems.boards.models import Board, BoardGroup, BoardScope
 from app.systems.sandbox.departments.models import Department
-from tests.rbac.support import add_department, add_user, make_group_access
+from tests.rbac.support import add_department, add_user, make_group_access, organization
 
 
 def client(db: Session, actor: User | None, *routers: APIRouter) -> TestClient:
@@ -45,12 +45,17 @@ def guest(db: Session, name: str = "board-guest") -> User:
 
 
 def company_board(db: Session) -> Board:
-    """The one company Board; the migration creates it in every database."""
+    """Create this test organization's company Board, formerly seeded by the root."""
 
     board = db.scalar(
-        select(Board).where(Board.scope == BoardScope.COMPANY.value, Board.is_deleted.is_(False))
+        select(Board).where(Board.scope == BoardScope.COMPANY.value,
+                            Board.org_id == organization(db).id, Board.is_deleted.is_(False))
     )
-    assert board is not None, "The migration creates the company Board"
+    if board is None:
+        board = Board(org_id=organization(db).id, scope=BoardScope.COMPANY.value,
+                      name="Company")
+        db.add(board)
+        db.flush()
     return board
 
 
@@ -65,6 +70,7 @@ def department_board(db: Session, department: Department | None = None) -> Board
 
 def project_board(db: Session, name: str | None = None, *, description: str | None = None) -> Board:
     board = Board(
+        org_id=organization(db).id,
         scope=BoardScope.PROJECT.value,
         name=name or f"Project {uuid7().hex[:8]}",
         description=description,
@@ -85,12 +91,12 @@ def board_group(
     """Give a new or existing group ``level`` on a project Board."""
 
     if group is None:
-        group = Group(name=f"Board group {uuid7().hex}")
+        group = Group(org_id=board.org_id, name=f"Board group {uuid7().hex}")
         db.add(group)
         db.flush()
     for user in members:
-        db.add(GroupMember(group_id=group.id, user_id=user.id))
-    row = BoardGroup(board_id=board.id, group_id=group.id, level=str(level))
+        db.add(GroupMember(org_id=board.org_id, group_id=group.id, user_id=user.id))
+    row = BoardGroup(org_id=board.org_id, board_id=board.id, group_id=group.id, level=str(level))
     db.add(row)
     db.flush()
     return row

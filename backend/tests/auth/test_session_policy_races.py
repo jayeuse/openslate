@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_user_cache import forget_provider_user
-from app.systems.access.users.models import User
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 
 pytest_plugins = ("tests.auth.session_policy_support",)
 
@@ -39,7 +40,10 @@ def test_locked_session_refuses_whole_policy_clamp_without_partial_commit(policy
         blocker.rollback()
     with Session(world.owner) as db:
         profile = db.query(WorkspaceProfile).one()
-        assert profile.revision == revision and profile.session_timeout_minutes == 60
+        assert (
+            profile.revision == revision
+            and db.query(PlatformSettings).one().session_timeout_minutes == 60
+        )
         assert db.get(IdentitySession, world.session_ids[0]).expires_at == deadline
 
 
@@ -48,7 +52,9 @@ def test_locked_user_refuses_entire_episode_change_without_revision_or_deadline_
     with Session(world.owner) as db:
         revision = db.query(WorkspaceProfile).one().revision
     with Session(world.owner) as blocker:
-        blocker.scalar(select(User).where(User.id == world.target_id).with_for_update())
+        blocker.scalar(
+            select(Membership).where(Membership.user_id == world.target_id).with_for_update()
+        )
         result = world.client.patch(
             "/api/workspace/security",
             headers=world.headers(),
@@ -64,8 +70,8 @@ def test_locked_user_refuses_entire_episode_change_without_revision_or_deadline_
     with Session(world.owner) as db:
         profile = db.query(WorkspaceProfile).one()
         assert profile.revision == revision and not profile.mfa_require_member
-        assert profile.session_timeout_minutes == 60
-        assert db.get(User, world.target_id).mfa_required_since is None
+        assert db.query(PlatformSettings).one().session_timeout_minutes == 60
+        assert sole_active_membership(db, world.target_id).mfa_required_since is None
 
 
 @pytest.mark.parametrize("loss, expected", [("role", 403), ("session", 401), ("cutoff", 401)])
@@ -86,7 +92,7 @@ def test_all_role_save_rechecks_actor_after_unlocked_provider_evidence(
                 with Session(world.owner) as db:
                     actor = db.get(User, world.actor_id)
                     if loss == "role":
-                        actor.role = "member"
+                        sole_active_membership(db, actor.id).role = "member"
                     elif loss == "cutoff":
                         actor.tokens_valid_after = world.clock + timedelta(minutes=1)
                     else:
@@ -125,7 +131,7 @@ def test_cap_reconciles_only_real_blocked_mfa_completion_and_retains_current(
     )
     world.factor_status = "unverified"
     with Session(world.owner) as db:
-        actor = db.get(User, world.actor_id)
+        actor = sole_active_membership(db, world.actor_id)
         actor.mfa_required_since = world.clock
         for slot, session_id in enumerate(world.session_ids):
             db.get(IdentitySession, session_id).created_at = world.clock - timedelta(
@@ -157,7 +163,7 @@ def test_cap_applies_at_eligible_admission_but_allows_pending_mfa_excess(policy_
     world.policy(session_concurrent_limit=2, mfa_require_admin=pending)
     world.login_slot = 4
     with Session(world.owner) as db:
-        db.get(User, world.actor_id).mfa_required_since = world.clock
+        sole_active_membership(db, world.actor_id).mfa_required_since = world.clock
         for slot, session_id in enumerate(world.session_ids):
             db.get(IdentitySession, session_id).created_at = world.clock - timedelta(
                 minutes=4 - slot
@@ -179,7 +185,7 @@ def test_stored_aal2_repeated_verification_does_not_evict_new_pending_sessions(p
     world.policy(session_concurrent_limit=2, mfa_require_admin=True)
     world.factor_status = "unverified"
     with Session(world.owner) as db:
-        db.get(User, world.actor_id).mfa_required_since = world.clock
+        sole_active_membership(db, world.actor_id).mfa_required_since = world.clock
         db.commit()
     path = f"/api/auth/mfa/factors/{world.factor_id}/verification"
     assert (
@@ -216,7 +222,7 @@ def test_failed_mfa_cap_commit_rolls_back_other_victims_and_invalidates_current(
     world.policy(session_concurrent_limit=2, mfa_require_admin=True)
     world.factor_status = "unverified"
     with Session(world.owner) as db:
-        db.get(User, world.actor_id).mfa_required_since = world.clock
+        sole_active_membership(db, world.actor_id).mfa_required_since = world.clock
         db.commit()
     original = AuditSession.commit
     calls = [0]
@@ -255,7 +261,7 @@ def test_concurrent_mfa_completions_refresh_one_locked_inventory_and_stay_within
     world.policy(session_concurrent_limit=2, mfa_require_admin=True)
     world.factor_status = "unverified"
     with Session(world.owner) as db:
-        db.get(User, world.actor_id).mfa_required_since = world.clock
+        sole_active_membership(db, world.actor_id).mfa_required_since = world.clock
         db.commit()
     entered, second_query, release = Event(), Event(), Event()
     attempted = [0]
@@ -339,7 +345,8 @@ def test_mfa_status_rechecks_current_authority_after_provider_read(policy_world,
             with Session(world.owner) as db:
                 actor = db.get(User, world.actor_id)
                 if loss == "role":
-                    actor.role, actor.mfa_required_since = "member", world.clock
+                    membership = sole_active_membership(db, actor.id)
+                    membership.role, membership.mfa_required_since = "member", world.clock
                 elif loss == "expiry":
                     db.get(IdentitySession, world.session_ids[0]).expires_at = (
                         world.clock - timedelta(seconds=1)
@@ -377,7 +384,7 @@ def test_person_security_rechecks_actor_deadline_and_mfa_after_target_read(
         world.factor_status = "verified"
     with Session(world.owner) as db:
         target_provider = db.get(User, world.target_id).supabase_user_id
-        db.get(User, world.actor_id).mfa_required_since = (
+        sole_active_membership(db, world.actor_id).mfa_required_since = (
             world.clock - timedelta(days=1) + timedelta(seconds=10)
         )
         db.get(IdentitySession, world.session_ids[0]).created_at = world.clock - timedelta(
@@ -410,7 +417,7 @@ def test_admin_mfa_reset_cleans_captured_target_after_actor_deadline_without_res
     since, target_session, factor_id = world.clock - timedelta(days=2), uuid4(), uuid4()
     with Session(world.owner) as db:
         target = db.get(User, world.target_id)
-        target.mfa_required_since = since
+        sole_active_membership(db, target.id).mfa_required_since = since
         target_provider = target.supabase_user_id
         db.get(IdentitySession, world.session_ids[0]).created_at = world.clock - timedelta(
             seconds=50
@@ -450,7 +457,7 @@ def test_admin_mfa_reset_cleans_captured_target_after_actor_deadline_without_res
     assert response.json()["detail"]["factors_cleared"] is True
     with Session(world.owner) as db:
         assert db.get(IdentitySession, target_session).revoked_at is not None
-        assert db.get(User, world.target_id).mfa_required_since == since
+        assert sole_active_membership(db, world.target_id).mfa_required_since == since
 
 
 def test_cached_refresh_cannot_renew_a_deadline_crossed_during_provider_read(policy_world):
@@ -485,11 +492,13 @@ def test_console_recovery_refuses_locked_episode_before_reset_or_factor_effect(p
     world = policy_world
     world.policy(mfa_require_member=True)
     with Session(world.owner) as db:
-        db.get(User, world.target_id).mfa_required_since = world.clock
+        sole_active_membership(db, world.target_id).mfa_required_since = world.clock
         revision = db.query(WorkspaceProfile).one().revision
         db.commit()
     with Session(world.owner) as blocker:
-        blocker.scalar(select(User).where(User.id == world.target_id).with_for_update())
+        blocker.scalar(
+            select(Membership).where(Membership.user_id == world.target_id).with_for_update()
+        )
         with AuditSession(get_engine()) as db:
             with pytest.raises(LocalSecurityRecoveryError):
                 recover_workspace_security(db, world.actor_id, local_invocation=True, elevated=True)
@@ -497,5 +506,5 @@ def test_console_recovery_refuses_locked_episode_before_reset_or_factor_effect(p
     with Session(world.owner) as db:
         profile = db.query(WorkspaceProfile).one()
         assert profile.mfa_require_member and profile.revision == revision
-        assert db.get(User, world.target_id).mfa_required_since == world.clock
+        assert sole_active_membership(db, world.target_id).mfa_required_since == world.clock
     assert not any("/factors" in path for _, path in world.calls)

@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import cast
 
 import pytest
@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from uuid6 import uuid7
 
 from app.core.config import get_settings
+from app.systems.access.users.models import Membership
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.models import File
 
@@ -60,6 +61,12 @@ class _Session:
     def scalar(self, _statement: object) -> object | None:
         return next(self.results, self.profile)
 
+    def scalars(self, _statement: object) -> object:
+        if _statement.column_descriptions[0]["entity"] is Membership:
+            return SimpleNamespace(all=lambda: [self.membership])
+        profile = next(self.results, self.profile)
+        return SimpleNamespace(all=lambda: [] if profile is None else [profile])
+
     def commit(self) -> None:
         self.commit_count += 1
 
@@ -77,6 +84,8 @@ def _client(
     from app.main import create_app
 
     workspace_router = _router_module()
+    database.dirty = set()
+    database.membership = Membership(user_id=actor.id, role="admin")
     application = create_app()
     monkeypatch.setattr(workspace_router, "lock_quota", lambda _db: None)
     monkeypatch.setattr(database, "flush", lambda: None, raising=False)

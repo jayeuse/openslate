@@ -97,9 +97,13 @@ def test_privileged_collection_detail_and_export_are_not_cached(event_world):
 def test_real_account_without_admin_role_cannot_read_filtered_feed_detail_or_export(
     event_world, role
 ):
+    from sqlalchemy import select
     from sqlalchemy.orm import Session
 
-    from app.systems.access.users.models import User
+    from app.systems.access.users.membership import sole_active_membership
+    from app.systems.access.users.models import Membership, User
+    from app.systems.manage.workspace.models import WorkspaceProfile
+    from tests.conftest import create_member
 
     world = event_world
     identity = append_committed(
@@ -111,21 +115,21 @@ def test_real_account_without_admin_role_cannot_read_filtered_feed_detail_or_exp
     sponsor_id = uuid4()
     with Session(world.owner) as db:
         actor = db.get(User, world.actor_id)
+        membership = sole_active_membership(db, actor.id)
         if role == "guest":
-            db.add(
-                User(
+            create_member(
+                    db, db.get(WorkspaceProfile, membership.org_id),
                     id=sponsor_id,
                     email=f"sponsor-{sponsor_id}@example.test",
                     username=f"sponsor-{sponsor_id.hex}",
                     status="active",
                     role="member",
                     supabase_user_id=uuid4(),
-                )
             )
             db.flush()
-            actor.sponsor_user_id = sponsor_id
-            actor.expires_at = datetime.now(UTC) + timedelta(days=1)
-        actor.role = role
+            membership.sponsor_user_id = sponsor_id
+            membership.expires_at = datetime.now(UTC) + timedelta(days=1)
+        membership.role = role
         db.commit()
     try:
         for path in [
@@ -138,9 +142,13 @@ def test_real_account_without_admin_role_cannot_read_filtered_feed_detail_or_exp
             assert "private.fixture" not in response.text
     finally:
         with Session(world.owner) as db:
-            actor = db.get(User, world.actor_id)
-            actor.role, actor.sponsor_user_id, actor.expires_at = "admin", None, None
+            membership = sole_active_membership(db, world.actor_id)
+            membership.role, membership.sponsor_user_id, membership.expires_at = "admin", None, None
             db.flush()
             if role == "guest":
+                db.delete(db.scalar(select(Membership).where(
+                    Membership.user_id == sponsor_id
+                )))
+                db.flush()
                 db.delete(db.get(User, sponsor_id))
             db.commit()

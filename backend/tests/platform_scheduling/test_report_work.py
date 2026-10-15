@@ -5,13 +5,13 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
 from app.systems.openview.reports.models import Report
@@ -25,9 +25,10 @@ from app.systems.platform.scheduling.service import (
 )
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, guarded_create_engine
 from tests.grant_support import assert_runtime_only_grants
 from tests.platform_scheduling.support import report_run, report_work_subject
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -77,6 +78,7 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     assert audit is not None
     assert audit.performed_by is None
     assert audit.after == {
+        "org_id": str(report.org_id),
         "work_id": str(work.id),
         "kind": "report-run",
         "subject_type": "report_run",
@@ -87,6 +89,7 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
     savepoint = db.begin_nested()
     db.add(
         InAppNotification(
+            org_id=report.org_id,
             work_id=work.id,
             recipient_id=owner.id,
             kind="report-run",
@@ -103,14 +106,13 @@ def test_persisted_due_occurrence_is_unique_and_stale_lease_cannot_notify(integr
         db.flush()
     savepoint.rollback()
     other_role = "member"
-    other = User(
+    other, _membership = create_member(
+        db, organization(db),
         email=f"report-other-{uuid7().hex}@example.test",
         username=f"report_other_{uuid7().hex[:16]}",
         status=UserStatus.ACTIVE.value,
         role=other_role,
     )
-    db.add(other)
-    db.flush()
     assert list_current_user_notifications(db, other.id) == []
     assert (
         db.scalar(select(InAppNotification).where(InAppNotification.work_id == future.id)) is None
@@ -124,14 +126,13 @@ def test_completion_needs_no_reader_and_a_lost_read_hides_the_notification(
 
     db = integration_owner_db
     owner, report, grant, _module, _department = report_work_subject(db)
-    other = User(
+    other, _membership = create_member(
+        db, organization(db),
         email=f"report-other-{uuid7().hex}@example.test",
         username=f"report_other_{uuid7().hex[:16]}",
         status=UserStatus.ACTIVE.value,
         role="member",
     )
-    db.add(other)
-    db.flush()
     now = datetime(2026, 1, 1, tzinfo=UTC)
     work = queue_report_occurrence(db, report.id, scheduled_for=now)
     claim = claim_due_work(db, now=now)[0]
@@ -274,6 +275,7 @@ def test_concurrent_claim_skips_locked_due_row_and_claims_next():
             setup.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
             owner, report, grant, module, department = report_work_subject(setup)
             ids.update(
+                organization=report.org_id,
                 owner=owner.id,
                 report=report.id,
                 grant=grant.id,
@@ -315,11 +317,21 @@ def test_concurrent_claim_skips_locked_due_row_and_claims_next():
                 ):
                     cleanup.delete(membership)
                 cleanup.flush()
+                for membership in cleanup.scalars(
+                    select(Membership).where(Membership.user_id == ids["owner"])
+                ):
+                    cleanup.delete(membership)
+                cleanup.flush()
                 for key, model in (("group", Group), ("owner", User)):
                     if key in ids and (row := cleanup.get(model, ids[key])) is not None:
                         cleanup.delete(row)
                         cleanup.flush()
                 cleanup.commit()
+            with engine.begin() as cleanup:
+                cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                                {"id": ids["organization"]})
+                cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                                {"id": ids["organization"]})
         engine.dispose()
 
 

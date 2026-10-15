@@ -22,12 +22,13 @@ from app.main import create_app
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import admit_provider_session
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.test_provider_email_integration import _email_action
 from tests.auth.totp_support import totp
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, guarded_create_engine
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
 pytestmark = pytest.mark.integration
@@ -158,14 +159,14 @@ def test_native_failed_final_admission_rolls_back_email_event_and_session_withou
     try:
         if failure == "all_row_collision":
             with Session(owner) as db:
-                collision = User(
+                organization = db.get(WorkspaceProfile, sole_active_membership(db, local_id).org_id)
+                collision, _membership = create_member(db, organization,
                     email=target,
                     username=f"email-collision-{uuid4().hex[:16]}",
                     role="member",
                     status="disabled",
                     is_deleted=True,
                 )
-                db.add(collision)
                 db.commit()
                 collision_id = collision.id
         with ExitStack() as stack:
@@ -183,6 +184,8 @@ def test_native_failed_final_admission_rolls_back_email_event_and_session_withou
             with Session(owner) as db:
                 collision = db.get(User, collision_id)
                 assert collision is not None
+                db.delete(db.scalar(select(Membership).where(Membership.user_id == collision_id)))
+                db.flush()
                 db.delete(collision)
                 db.commit()
     # This is real normal admission after legitimate conflict removal, not a repair command.
@@ -343,17 +346,17 @@ def test_native_final_confirmation_rechecks_local_admission_eligibility(email_ch
         elif loss == "unbound":
             user.supabase_user_id = None
         elif loss == "guest_expiry":
-            sponsor = User(
+            membership = sole_active_membership(db, user.id)
+            sponsor, _sponsor_membership = create_member(
+                db, db.get(WorkspaceProfile, membership.org_id),
                 email=f"email-sponsor-{uuid4().hex}@example.test",
                 username=f"email-sponsor-{uuid4().hex[:16]}",
                 role="member",
                 status="active",
             )
-            db.add(sponsor)
-            db.flush()
             sponsor_id = sponsor.id
-            user.role, user.sponsor_user_id = "guest", sponsor_id
-            user.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            membership.role, membership.sponsor_user_id = "guest", sponsor_id
+            membership.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         else:
             user.tokens_valid_after = datetime.now(UTC) + timedelta(minutes=1)
         db.commit()
@@ -368,8 +371,10 @@ def test_native_final_confirmation_rechecks_local_admission_eligibility(email_ch
     finally:
         if sponsor_id is not None:
             with Session(owner) as db:
-                user = db.get(User, local_id)
+                user = sole_active_membership(db, local_id)
                 user.role, user.sponsor_user_id, user.expires_at = "member", None, None
+                db.flush()
+                db.delete(db.scalar(select(Membership).where(Membership.user_id == sponsor_id)))
                 db.flush()
                 db.delete(db.get(User, sponsor_id))
                 db.commit()
@@ -483,7 +488,7 @@ def test_native_confirmed_email_preserves_admin_actor_and_old_target_binding_ref
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None
-        user.role = "admin"
+        sole_active_membership(db, user.id).role = "admin"
         db.commit()
     target = f"email-admin-binding-{uuid4().hex}@example.test"
     current, new = _start_change(primary, mail, email, target, password)

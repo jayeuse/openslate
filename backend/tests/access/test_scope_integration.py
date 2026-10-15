@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.policy.scope import allowed_module_ids, effective_levels, level_for
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import UserRole, UserStatus
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
@@ -110,9 +111,11 @@ def test_inactive_accounts_get_nothing(integration_db: Session, state: str) -> N
     )
     if state == "pending":
         user.status = UserStatus.PENDING.value
-        user.invitation_sent_at = utc_now()
+        sole_active_membership(integration_db, user.id).invitation_sent_at = utc_now()
     if state == "expired":
-        user.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        sole_active_membership(integration_db, user.id).expires_at = (
+            datetime.now(UTC) - timedelta(minutes=1)
+        )
     if state == "deleted":
         user.is_deleted = True
         user.deleted_at = utc_now()

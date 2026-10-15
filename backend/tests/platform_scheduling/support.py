@@ -33,7 +33,13 @@ from app.systems.platform.scheduling.notification_router import router as notifi
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.boards.support import board_group, client
-from tests.rbac.support import capability_actor, grant_capability_actors, make_group_access
+from tests.conftest import create_member
+from tests.rbac.support import (
+    capability_actor,
+    grant_capability_actors,
+    make_group_access,
+    organization,
+)
 
 # Reminder occurrences start here; post work is due at POST_DUE.
 REMINDER_START = datetime(2027, 3, 1, 9, 0, tzinfo=UTC)
@@ -50,16 +56,18 @@ def report_scope(
     """
 
     slug = label.lower().replace(" ", "_")
-    owner = User(
+    owner, _membership = create_member(
+        db, organization(db),
         email=f"{slug.replace('_', '-')}-{uuid7().hex}@example.test",
         username=f"{slug}_{uuid7().hex[:16]}",
         status=UserStatus.ACTIVE.value,
         role=role,
     )
-    department = Department(department_name=f"{label} {uuid7().hex}")
-    db.add_all((owner, department))
+    department = Department(org_id=organization(db).id, department_name=f"{label} {uuid7().hex}")
+    db.add(department)
     db.flush()
-    module = Module(department_id=department.id, module_name=f"{label} {uuid7().hex}")
+    module = Module(org_id=department.org_id, department_id=department.id,
+                    module_name=f"{label} {uuid7().hex}")
     db.add(module)
     db.flush()
     access = (
@@ -67,7 +75,7 @@ def report_scope(
         if grant_read
         else None
     )
-    report = Report(module_id=module.id, name="Scheduled", recipe={})
+    report = Report(org_id=module.org_id, module_id=module.id, name="Scheduled", recipe={})
     db.add(report)
     db.flush()
     return owner, report, access, module, department
@@ -87,6 +95,7 @@ def report_run(db: Session, report: Report, work: ScheduledWork) -> ReportRun:
     """An empty run of *report* for *work*, with its eligible readers captured."""
 
     run = ReportRun(
+        org_id=report.org_id,
         report_id=report.id,
         module_id=report.module_id,
         idempotency_key=work.id,
@@ -106,19 +115,19 @@ def post_work_subject(db: Session) -> tuple[User, str, Board, BoardPost, Schedul
     """A Board writer, a post scheduled for POST_DUE and its publish work."""
 
     role = "member"
-    actor = User(
+    actor, _membership = create_member(
+        db, organization(db),
         email=f"post-work-{uuid7().hex}@example.test",
         username=f"post_work_{uuid7().hex[:16]}",
         status=UserStatus.ACTIVE.value,
         role=role,
     )
-    db.add(actor)
-    db.flush()
-    board = Board(scope="project", name="Scheduled publication")
+    board = Board(org_id=organization(db).id, scope="project", name="Scheduled publication")
     db.add(board)
     db.flush()
     board_group(db, board, [actor], "write")
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Scheduled notice",
@@ -130,6 +139,7 @@ def post_work_subject(db: Session) -> tuple[User, str, Board, BoardPost, Schedul
     db.add(item)
     db.flush()
     work = ScheduledWork(
+        org_id=board.org_id,
         kind="post-publish",
         post_id=item.id,
         source_revision=item.revision,
@@ -224,14 +234,16 @@ def notification_actor(db: Session, *, read: bool = True) -> User:
 def notification_report(db: Session, owner: User) -> tuple[Report, Module]:
     """A Secret Report in a new module that every capability actor reads."""
 
-    department = Department(department_name=f"Notification {uuid7().hex}")
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Notification {uuid7().hex}")
     db.add(department)
     db.flush()
-    module = Module(department_id=department.id, module_name=f"Notification {uuid7().hex}")
+    module = Module(org_id=department.org_id, department_id=department.id,
+                    module_name=f"Notification {uuid7().hex}")
     db.add(module)
     db.flush()
     grant_capability_actors(db, department, module)
-    report = Report(module_id=module.id, name="Secret Report", recipe={})
+    report = Report(org_id=module.org_id, module_id=module.id, name="Secret Report", recipe={})
     db.add(report)
     db.flush()
     return report, module
@@ -244,6 +256,7 @@ def report_notification(
 
     when = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=minute)
     work = ScheduledWork(
+        org_id=report.org_id,
         report_id=report.id,
         scheduled_for=when,
         next_attempt_at=when,
@@ -252,6 +265,7 @@ def report_notification(
     db.add(work)
     db.flush()
     run = ReportRun(
+        org_id=report.org_id,
         report_id=report.id,
         module_id=report.module_id,
         idempotency_key=work.id,
@@ -263,10 +277,11 @@ def report_notification(
     )
     db.add(run)
     db.flush()
-    db.add(ReportRunEligibleUser(run_id=run.id, user_id=recipient.id))
+    db.add(ReportRunEligibleUser(org_id=report.org_id, run_id=run.id, user_id=recipient.id))
     work.run_id = run.id
     work.state = WorkState.SUCCEEDED
     notification = InAppNotification(
+        org_id=report.org_id,
         work_id=work.id,
         kind="report-run",
         subject_type="report_run",

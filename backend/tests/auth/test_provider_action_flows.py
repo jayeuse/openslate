@@ -27,7 +27,8 @@ from app.systems.access.identity.contracts import (
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 from app.systems.access.identity.schemas import RecoveryRequest
 from app.systems.access.users.coordination import InvitationError
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.access.users.models import Membership
+from app.systems.manage.workspace.models import PlatformSettings
 from tests.auth.local_identity_support import contract_user
 
 
@@ -154,7 +155,7 @@ def test_password_change_stops_before_provider_grant_when_backend_budget_blocked
 
 
 def _password_update_failure_case(failure: str):
-    user = contract_user()
+    user, membership = contract_user()
     user.supabase_user_id = uuid7()
     user.tokens_valid_after = datetime(2026, 10, 1, tzinfo=UTC)
     sessions = [
@@ -174,8 +175,12 @@ def _password_update_failure_case(failure: str):
         for _ in range(2)
     ]
     db = Mock(spec=Session)
+    db.dirty = set()
     db.get.return_value = db.scalar.return_value = user
-    db.scalars.return_value = sessions
+    db.scalars.side_effect = lambda query: (
+        Mock(all=lambda: [membership])
+        if query.column_descriptions[0]["entity"] is Membership else sessions
+    )
     client = Mock()
     tokens = ProviderTokens("temporary-action", "temporary-refresh", user.supabase_user_id, 600)
     client.password_grant.return_value = client.verify_email_action.return_value = tokens
@@ -190,21 +195,22 @@ def _password_update_failure_case(failure: str):
             if failure == "rejected"
             else SupabaseAuthUnavailable("provider unavailable")
         )
-    return user, sessions, db, client
+    return user, membership, sessions, db, client
 
 
-def _bind_invitation(user, client) -> None:
+def _bind_invitation(user, membership, client) -> None:
     """A pending profile whose provider user carries this profile's invitation binding."""
     user.status = "pending"
-    user.invitation_sent_at = datetime.now(UTC)
-    user.provider_invitation_operation_id = uuid7()
+    membership.status = "pending"
+    membership.invitation_sent_at = datetime.now(UTC)
+    membership.provider_invitation_operation_id = uuid7()
     client.get_user.return_value = ProviderUser(
         user.supabase_user_id,
         None,
         user.email,
         app_metadata={
             "openslate_user_id": str(user.id),
-            "openslate_invitation_operation_id": str(user.provider_invitation_operation_id),
+            "openslate_invitation_operation_id": str(membership.provider_invitation_operation_id),
         },
     )
 
@@ -248,7 +254,7 @@ def _assert_password_failure_preserves_local_state(user, sessions, db) -> None:
 
 @pytest.mark.parametrize("failure", ("rejected", "unavailable", "wrong_subject"))
 def test_password_change_preserves_sessions_when_provider_update_fails(failure: str) -> None:
-    user, sessions, db, client = _password_update_failure_case(failure)
+    user, _membership, sessions, db, client = _password_update_failure_case(failure)
     expected = {
         "rejected": InvalidProviderCredentials,
         "unavailable": SupabaseAuthUnavailable,
@@ -282,7 +288,7 @@ def test_password_change_preserves_sessions_when_provider_update_fails(failure: 
 
 @pytest.mark.parametrize("failure", ("rejected", "unavailable", "wrong_subject"))
 def test_recovery_preserves_sessions_when_provider_update_fails(failure: str) -> None:
-    user, sessions, db, client = _password_update_failure_case(failure)
+    user, _membership, sessions, db, client = _password_update_failure_case(failure)
     expected = {
         "rejected": InvalidProviderCredentials,
         "unavailable": SupabaseAuthUnavailable,
@@ -310,7 +316,7 @@ def test_recovery_preserves_sessions_when_provider_update_fails(failure: str) ->
 def test_password_change_preserves_unlisted_complete_candidate_before_provider_failure(
     password: str,
 ) -> None:
-    user, sessions, db, client = _password_update_failure_case("unavailable")
+    user, _membership, sessions, db, client = _password_update_failure_case("unavailable")
     with pytest.raises(SupabaseAuthUnavailable):
         provider_actions.change_password(
             db,
@@ -345,16 +351,16 @@ def test_password_policy_rejects_before_consuming_action_or_mutating_provider(
     password: str,
     message: str,
 ) -> None:
-    user, sessions, db, client = _password_update_failure_case("rejected")
+    user, membership, sessions, db, client = _password_update_failure_case("rejected")
     if kind == "invite":
-        _bind_invitation(user, client)
-    policy = WorkspaceProfile(
+        _bind_invitation(user, membership, client)
+    policy = PlatformSettings(
         password_min_length=minimum,
         password_require_mixed_case=mixed,
         password_require_number=number,
     )
     monkeypatch.setattr(
-        provider_actions, "load_workspace_policy", lambda _db: policy, raising=False
+        provider_actions, "load_platform_policy", lambda _db: policy
     )
 
     if kind == "change":
@@ -394,14 +400,14 @@ def test_mfa_policy_read_failure_after_rotation_revokes_instead_of_losing_pair(
     from app.core.integrations.supabase_auth import SupabaseAuthUnavailable
 
     c = mfa_context
-    current_policy = c.service.load_workspace_policy
+    current_policy = c.service.load_platform_policy
 
     def unavailable(_db):
         if c.mfa.challenge_and_verify.called:
             raise SupabaseAuthUnavailable("policy unavailable")
         return current_policy(_db)
 
-    monkeypatch.setattr(c.service, "load_workspace_policy", unavailable)
+    monkeypatch.setattr(c.service, "load_platform_policy", unavailable)
     with pytest.raises(SupabaseAuthUnavailable):
         c.service.verify_factor(
             c.db, c.user.id, c.session.id, c.factor_id, "123456", "old-access", c.auth
@@ -507,7 +513,7 @@ def test_the_recovery_budget_applies_only_while_anonymous_limits_are_on(
 def test_a_completed_password_update_revokes_sessions_in_the_recorded_local_commit(
     monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
-    user, sessions, db, client = _password_update_failure_case("none")
+    user, _membership, sessions, db, client = _password_update_failure_case("none")
     bucket = Mock()
     for name, value in {
         "cleanup_expired_buckets": Mock(return_value=0),
@@ -565,16 +571,16 @@ def test_a_completed_password_update_revokes_sessions_in_the_recorded_local_comm
     ],
 )
 def test_each_refused_password_change_spends_the_person_login_budget(
-    monkeypatch: pytest.MonkeyPatch, unit_workspace_policy, refusal: str
+    monkeypatch: pytest.MonkeyPatch, unit_platform_policy, refusal: str
 ) -> None:
-    user, sessions, db, client = _password_update_failure_case("none")
+    user, membership, sessions, db, client = _password_update_failure_case("none")
     clock = [datetime(2026, 10, 12, 9, 30, tzinfo=UTC)]
     monkeypatch.setattr(provider_actions, "utc_now", lambda: clock[0])
     # A budget unlike the built-in default (5 attempts, 15 minutes) shows that the
     # workspace sign-in policy is the one spent.
-    unit_workspace_policy.login_failed_attempt_threshold = 3
-    unit_workspace_policy.login_window_minutes = 30
-    unit_workspace_policy.login_cooldown_minutes = 7
+    unit_platform_policy.login_failed_attempt_threshold = 3
+    unit_platform_policy.login_window_minutes = 30
+    unit_platform_policy.login_cooldown_minutes = 7
     # The stored buckets by key; only the PostgreSQL lock and cleanup are faked.
     stored: dict[str, IdentityRateLimitBucket] = {}
     monkeypatch.setattr(
@@ -591,7 +597,7 @@ def test_each_refused_password_change_spends_the_person_login_budget(
     lockouts = Mock()
     monkeypatch.setattr(provider_actions.rate_limits, "append_security_event", lockouts)
     locked = SimpleNamespace(
-        supabase_user_id=user.supabase_user_id, status="active", is_deleted=False, expires_at=None
+        id=user.id, supabase_user_id=user.supabase_user_id, status="active", is_deleted=False
     )
     db.get.return_value = locked
     if refusal == "wrong_password":
@@ -609,7 +615,7 @@ def test_each_refused_password_change_spends_the_person_login_budget(
     elif refusal == "local_disabled":
         locked.status = "disabled"
     else:
-        locked.expires_at = datetime(2020, 1, 1, tzinfo=UTC)
+        membership.expires_at = datetime(2020, 1, 1, tzinfo=UTC)
 
     change = partial(
         provider_actions.change_password,
@@ -667,7 +673,7 @@ def test_each_refused_password_change_spends_the_person_login_budget(
     client.update_password.assert_not_called()
 
     # Another person keeps a budget of their own.
-    other = contract_user()
+    other, _other_membership = contract_user()
     other.email = "another-person@example.test"
     other.supabase_user_id = uuid7()
     with pytest.raises(InvalidCredentials):
@@ -691,17 +697,17 @@ def test_each_refused_password_change_spends_the_person_login_budget(
 def test_an_invitation_completes_only_for_the_exactly_bound_pending_profile(
     mismatch: str,
 ) -> None:
-    user, _sessions, db, client = _password_update_failure_case("none")
-    _bind_invitation(user, client)
+    user, membership, _sessions, db, client = _password_update_failure_case("none")
+    _bind_invitation(user, membership, client)
     provider = client.get_user.return_value
     if mismatch == "email":
         user.email = "someone-else@example.test"
     elif mismatch == "status":
         user.status = "active"
     elif mismatch == "never_sent":
-        user.invitation_sent_at = None
+        membership.invitation_sent_at = None
     elif mismatch == "no_operation":
-        user.provider_invitation_operation_id = None
+        membership.provider_invitation_operation_id = None
     elif mismatch == "other_profile":
         provider.app_metadata["openslate_user_id"] = str(uuid7())
     else:
@@ -716,8 +722,8 @@ def test_an_invitation_completes_only_for_the_exactly_bound_pending_profile(
 def test_a_bound_invitation_sets_the_password_on_the_invited_provider_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    user, _sessions, db, client = _password_update_failure_case("none")
-    _bind_invitation(user, client)
+    user, membership, _sessions, db, client = _password_update_failure_case("none")
+    _bind_invitation(user, membership, client)
     accept = Mock()
     monkeypatch.setattr(provider_actions, "accept_verified_invitation", accept)
 
@@ -731,7 +737,7 @@ def test_a_bound_invitation_sets_the_password_on_the_invited_provider_user(
 
 
 def test_an_email_action_for_another_provider_user_is_refused() -> None:
-    user, _sessions, db, client = _password_update_failure_case("none")
+    user, _membership, _sessions, db, client = _password_update_failure_case("none")
     client.get_user.return_value = ProviderUser(uuid7(), None, user.email)
 
     with pytest.raises(ActionTokenInvalid):

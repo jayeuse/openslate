@@ -4,8 +4,26 @@ from __future__ import annotations
 
 from uuid import NAMESPACE_URL, uuid5
 
+from sqlalchemy.orm import Session
+
+from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.sandbox.designs.defaults import empty_document
+from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.schemas import SandboxDocument
+from app.systems.sandbox.designs.service import canonical_document
 from tests.sandbox_documents import sandbox_document_payload, trigger_payload
+
+
+def create_document(db: Session, organization: WorkspaceProfile) -> SandboxDocumentRow:
+    """Create the empty draft explicitly; the S04 root intentionally seeds none."""
+    payload, content_hash, byte_count = canonical_document(empty_document())
+    identity = db.connection().execute(
+        SandboxDocumentRow.__table__.insert().values(
+            org_id=organization.id, document=payload,
+            content_hash=content_hash, byte_count=byte_count,
+        ).returning(SandboxDocumentRow.id)
+    ).scalar_one()
+    return db.get(SandboxDocumentRow, identity)
 
 
 def sample_option_id(field_id: str, label: str) -> str:

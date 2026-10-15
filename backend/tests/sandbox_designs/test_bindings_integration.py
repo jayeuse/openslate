@@ -10,8 +10,8 @@ from app.systems.sandbox.designs.schemas import ModuleDocument, SetFieldAction
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.publications.models import SandboxBinding
-from tests.rbac.support import _client, add_user
-from tests.sandbox_designs.fixtures import sample_document
+from tests.rbac.support import _client, add_user, organization
+from tests.sandbox_designs.fixtures import create_document, sample_document
 from tests.sandbox_publications.support import binding, bound_field, publish_structure
 
 pytestmark = pytest.mark.integration
@@ -21,6 +21,7 @@ def test_bindings_project_current_design_ids_and_actual_live_state(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
+    create_document(db, organization(db))
     reader = add_user(db, role="admin")
     db.commit()
     application = FastAPI()
@@ -137,6 +138,7 @@ def test_bindings_project_current_design_ids_and_actual_live_state(
     inactive.is_deleted = False
     inactive.deleted_at = None
     conflicting = Field(
+        org_id=second_field.org_id,
         module_id=second_field.module_id,
         name="Conflicting binding target",
         type=second_field.type,
@@ -146,7 +148,8 @@ def test_bindings_project_current_design_ids_and_actual_live_state(
     )
     db.add(conflicting)
     db.flush()
-    db.add(SandboxBinding(kind="field", sandbox_id=canonical_second_key, field_id=conflicting.id))
+    db.add(SandboxBinding(org_id=second_field.org_id, kind="field",
+                         sandbox_id=canonical_second_key, field_id=conflicting.id))
     db.commit()
     conflict = client.get("/api/sandbox/bindings")
     assert conflict.status_code == 503

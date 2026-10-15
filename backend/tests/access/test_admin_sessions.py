@@ -17,8 +17,9 @@ from app.core.database import get_db
 from app.systems.access.auth.aggregate_router import router
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
-from app.systems.access.users.models import User, UserRole, UserStatus
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
+from tests.users.user_support import local_user
 
 
 @pytest.fixture(autouse=True)
@@ -27,8 +28,8 @@ def neutral_session_policy(monkeypatch):
 
     monkeypatch.setattr(
         sessions_router,
-        "load_workspace_policy",
-        lambda _db: WorkspaceProfile(
+        "load_platform_policy",
+        lambda _db: PlatformSettings(
             session_timeout_minutes=60, session_absolute_lifetime_minutes=None
         ),
     )
@@ -37,13 +38,8 @@ def neutral_session_policy(monkeypatch):
 def _admin_identity() -> tuple[User, CurrentIdentity]:
     admin_id = uuid7()
     current_session_id = uuid7()
-    admin = User(
-        id=admin_id,
-        email="admin@example.test",
-        username="admin",
-        status=UserStatus.ACTIVE.value,
-        role=UserRole.ADMIN.value,
-    )
+    admin, _membership = local_user(UserRole.ADMIN)
+    admin.id = admin_id
     return admin, CurrentIdentity(admin, current_session_id, False, False)
 
 
@@ -61,7 +57,6 @@ def _target_user(user_id) -> User:
         email="target@example.test",
         username="target",
         status=UserStatus.ACTIVE.value,
-        role=UserRole.MEMBER.value,
     )
 
 
@@ -314,6 +309,10 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(
     member = _target_user(admin.id)
     db = Mock(spec=Session)
     db.scalar.return_value = member
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [Membership(
+        user_id=member.id, role="member", status="active", is_deleted=False,
+    )]
     cached_actor = admin if stale_admin else member
     application = _application(db, CurrentIdentity(cached_actor, identity.session_id, False, False))
 
@@ -345,10 +344,11 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(
     monkeypatch.setattr(
         auth_dependencies,
         "load_workspace_policy",
-        lambda _db: WorkspaceProfile(
-            ip_allow_list=[], session_timeout_minutes=60, session_absolute_lifetime_minutes=None
-        ),
+        lambda _db: WorkspaceProfile(ip_allow_list=[]),
     )
+    monkeypatch.setattr(auth_dependencies, "load_platform_policy", lambda _db: PlatformSettings(
+        session_timeout_minutes=60, session_absolute_lifetime_minutes=None,
+    ))
     monkeypatch.setattr(sessions_router, "require_fresh_exact_admin", lambda *_args: admin)
     monkeypatch.setattr(sessions_router, "load_user", lambda *_args: _target_user(target_id))
     application = FastAPI()
@@ -435,6 +435,10 @@ def test_admin_session_collection_returns_paged_public_person_and_client_metadat
     identity = CurrentIdentity(admin, session.id, False, False)
     db = Mock(spec=Session)
     db.scalar.return_value = admin
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [Membership(
+        user_id=admin.id, role="admin", status="active", is_deleted=False,
+    )]
     db.execute.return_value.mappings.return_value.all.return_value = [
         {
             "session_id": session.id,

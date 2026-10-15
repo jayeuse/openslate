@@ -9,7 +9,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member, create_organization
 
 pytestmark = pytest.mark.integration
 
@@ -39,7 +41,7 @@ def fail_after_owned_commit(monkeypatch):
     commit = Session.commit
 
     def fail_setup(db):
-        users = [str(row.id) for row in db.new if isinstance(row, User)]
+        users = [str(row.id) for row in db.identity_map.values() if isinstance(row, User)]
         commit(db)
         if users:
             Path({str(owned_ids)!r}).write_text("\\n".join(users))
@@ -55,14 +57,15 @@ def test_owned_fixture_setup(fail_after_owned_commit, world):
     )
     try:
         with Session(owner) as db:
-            db.add(
-                User(
+            organization = create_organization(db)
+            org_id = organization.id
+            create_member(
+                    db, organization,
                     id=unrelated,
                     username=str(unrelated),
                     email=f"{unrelated}@example.test",
                     status="active",
                     role="member",
-                )
             )
             db.commit()
         completed = subprocess.run(
@@ -98,6 +101,15 @@ def test_owned_fixture_setup(fail_after_owned_commit, world):
         if owned_ids.exists():
             cleanup_ids.extend(UUID(value) for value in owned_ids.read_text().splitlines())
         with Session(owner) as db:
+            org_ids = set(db.scalars(
+                select(Membership.org_id).where(Membership.user_id.in_(cleanup_ids))
+            )) | {org_id}
+            for row in db.scalars(select(Membership).where(Membership.user_id.in_(cleanup_ids))):
+                db.delete(row)
+            db.flush()
             for row in db.scalars(select(User).where(User.id.in_(cleanup_ids))):
+                db.delete(row)
+            db.flush()
+            for row in db.scalars(select(WorkspaceProfile).where(WorkspaceProfile.id.in_(org_ids))):
                 db.delete(row)
             db.commit()

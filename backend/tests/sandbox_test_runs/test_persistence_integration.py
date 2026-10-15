@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import UserStatus
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.records.models import Record
@@ -12,6 +12,9 @@ from app.systems.sandbox.relationships.models import RelationshipEdge
 from app.systems.sandbox.test_runs.models import SandboxTestRun
 from app.systems.sandbox.test_runs.schemas import SandboxTestRunCreateRequest
 from app.systems.sandbox.test_runs.service import create_run
+from tests.conftest import create_member
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 from tests.sandbox_test_runs.fixtures import option_id, sandbox_document
 
 pytestmark = pytest.mark.integration
@@ -22,14 +25,15 @@ def test_temporary_test_persists_only_evidence(
 ) -> None:
     role = "admin"
     assert role is not None
-    actor = User(
+    org = organization(integration_owner_db)
+    actor, _membership = create_member(
+        integration_owner_db, org,
         email="sandbox-test-owner@example.test",
         username="sandbox-test-owner",
         status=UserStatus.ACTIVE.value,
         role=role,
     )
-    integration_owner_db.add(actor)
-    integration_owner_db.flush()
+    create_document(integration_owner_db, org)
     initial = read_document(integration_owner_db)
     saved = replace_document(
         integration_owner_db,
@@ -66,11 +70,14 @@ def test_temporary_test_persists_only_evidence(
 def test_runtime_role_can_manage_saved_test_evidence(
     integration_db: Session,
 ) -> None:
+    org = organization(integration_db)
+    create_document(integration_db, org)
     document = integration_db.scalar(
-        select(SandboxDocument).where(SandboxDocument.singleton_key.is_(True))
+        select(SandboxDocument).where(SandboxDocument.org_id == org.id)
     )
     assert document is not None
     run = SandboxTestRun(
+        org_id=document.org_id,
         document_id=document.id,
         document_revision=document.revision,
         document_hash=document.content_hash,

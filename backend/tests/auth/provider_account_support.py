@@ -11,15 +11,16 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.config.provider_instance import assert_provider_instance
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine
 
 
 @pytest.fixture
@@ -45,14 +46,14 @@ def provider_account():
             assert created.status_code in {200, 201}
             provider_id = UUID(created.json()["id"])
             with Session(owner) as db:
-                user = User(
+                organization = create_organization(db)
+                user, _membership = create_member(db, organization,
                     email=email,
                     username=f"journey-{uuid4().hex[:16]}",
                     status=UserStatus.ACTIVE.value,
                     role="member",
                     # Deliberately unbound first: matching email cannot grant access.
                 )
-                db.add(user)
                 db.commit()
                 local_id = user.id
             yield email, password, provider_id, local_id, owner
@@ -71,8 +72,18 @@ def provider_account():
                     ):
                         db.delete(notice)
                     db.flush()
+                    membership = db.scalar(select(Membership).where(Membership.user_id == local_id))
+                    organization = db.get(WorkspaceProfile, membership.org_id)
+                    db.connection().execute(
+                        text("DELETE FROM public.audit_logs WHERE org_id = :org_id"),
+                        {"org_id": organization.id},
+                    )
+                    db.delete(membership)
+                    db.flush()
                     user = db.get(User, local_id)
                     if user is not None:
                         db.delete(user)
+                    db.flush()
+                    db.delete(organization)
                     db.commit()
             owner.dispose()

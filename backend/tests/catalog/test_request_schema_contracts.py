@@ -1,4 +1,5 @@
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,16 +28,16 @@ from tests.route_app_support import route_app
 _PATH_ID = "0190a000-0000-7000-8000-000000000001"
 
 
-def _actor() -> object:
-    return make_user("schema-admin")
-
-
 @pytest.fixture
 def client() -> TestClient:
     application = route_app()
-    application.dependency_overrides[get_current_user] = _actor
+    actor, membership = make_user("schema-admin")
+    application.dependency_overrides[get_current_user] = lambda: actor
     override_catalog_authorization(application)
-    application.dependency_overrides[get_db] = lambda: object()
+    database = Mock()
+    database.dirty = set()
+    database.scalars.return_value.all.return_value = [membership]
+    application.dependency_overrides[get_db] = lambda: database
     with TestClient(application) as test_client:
         yield test_client
     application.dependency_overrides.clear()

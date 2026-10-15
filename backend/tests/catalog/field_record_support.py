@@ -54,7 +54,7 @@ def _make_validation_client(*, db: Session | None = None) -> TestClient:
     app.include_router(fields_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
     database = db or Mock(spec=Session)
-    override_catalog_authorization(app)
+    override_catalog_authorization(app, database)
     app.dependency_overrides[get_db] = lambda: database
     return TestClient(app)
 

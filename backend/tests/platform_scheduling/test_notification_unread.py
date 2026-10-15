@@ -9,14 +9,14 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select
+from sqlalchemy import event, select, text
 from sqlalchemy.orm import Session
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from app.systems.manage.audit.models import AuditLog
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunEligibleUser
@@ -144,6 +144,7 @@ def committed_subject():
             report, module = notification_report(db, owner)
             notice = report_notification(db, report, owner, minute=1)
             ids = {
+                "organization": report.org_id,
                 "owner": owner.id,
                 "report": report.id,
                 "module": module.id,
@@ -205,8 +206,18 @@ def committed_subject():
                 for group_id in ids["groups"]:
                     db.delete(db.get(Group, group_id))
                 db.flush()
+                for membership in db.scalars(
+                    select(Membership).where(Membership.user_id == ids["owner"])
+                ):
+                    db.delete(membership)
+                db.flush()
                 db.delete(db.get(User, ids["owner"]))
                 db.commit()
+            with engine.begin() as cleanup:
+                cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                                {"id": ids["organization"]})
+                cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                                {"id": ids["organization"]})
         engine.dispose()
 
 

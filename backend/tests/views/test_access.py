@@ -3,10 +3,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException, Request, Response
 from sqlalchemy import func, select
-from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.router import (
@@ -51,7 +49,7 @@ def test_view_is_shared_with_every_module_reader_and_hidden_from_others(query_db
         query_db,
         Response(),
     )
-    admin = User(id=uuid7(), status="active", role="admin")
+    admin = actor(query_db, role="admin")
 
     assert get_view(query_db, viewer, view.id).id == view.id
     assert [

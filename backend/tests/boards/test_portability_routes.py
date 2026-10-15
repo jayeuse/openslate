@@ -90,8 +90,10 @@ def _upload(api: TestClient, bundle: dict[str, object]) -> object:
 
 
 def test_import_rejects_nonportable_bundle_before_any_database_write() -> None:
-    actor = make_user("portability_pure")
+    actor, membership = make_user("portability_pure")
     db = Mock(spec=Session)
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
     response = client(db, actor, router).post(
         "/api/boards/import",
         content=b'{"kind":"openslate-board","version":2}',
@@ -106,8 +108,10 @@ def test_import_rejects_nonportable_bundle_before_any_database_write() -> None:
 
 def test_import_and_duplicate_are_administrator_only() -> None:
     for role in ("member", "guest"):
-        actor = make_user(f"portability_{role}", role=role)
+        actor, membership = make_user(f"portability_{role}", role=role)
         db = Mock(spec=Session)
+        db.dirty = set()
+        db.scalars.return_value.all.return_value = [membership]
         api = client(db, actor, router)
         assert api.post(f"/api/boards/{actor.id}/duplicate").status_code == 403
         assert (

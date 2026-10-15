@@ -18,21 +18,27 @@ from uuid6 import uuid7
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.access.users.models import User
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import RecordQuery
+from tests.conftest import create_member
+from tests.rbac.support import organization
 from tests.route_app_support import route_app
 
 
 @pytest.fixture
 def query_db(integration_owner_db: Session) -> Session:
+    create_member(integration_owner_db, organization(integration_owner_db), "admin",
+                  id=READER.id, email="query-reader@example.test", username="query-reader")
     return integration_owner_db
 
 
 # An administrator reads every module, so direct query calls need no group.
-READER = User(id=uuid7(), status="active", role="admin", is_deleted=False)
+READER, _READER_MEMBERSHIP = create_member(None, WorkspaceProfile(id=uuid7()), "admin",
+                                         id=uuid7(), status="active", is_deleted=False)
 
 
 def option_id(label: str) -> str:
@@ -43,15 +49,12 @@ def route_actor(db: Session, *, records_read: bool = True) -> User:
     """Give HTTP query tests a persisted actor for Access policy evaluation."""
 
     actor_id = uuid7()
-    actor = User(
+    actor, _membership = create_member(db, organization(db), "admin" if records_read else "member",
         id=actor_id,
         email=f"query-{actor_id.hex}@example.test",
         username=f"query_{actor_id.hex[:16]}",
         status="active",
-        role="admin" if records_read else "member",
     )
-    db.add(actor)
-    db.flush()
     return actor
 
 
@@ -67,13 +70,14 @@ def route_client(db: Session, actor: User, **options: object) -> Iterator[TestCl
 
 
 def setup_rows(db: Session, kind: str, values: list[object]):
-    department = Department(department_name=f"query-{uuid7()}")
+    department = Department(org_id=organization(db).id, department_name=f"query-{uuid7()}")
     db.add(department)
     db.flush()
-    module = Module(department_id=department.id, module_name="Records")
+    module = Module(org_id=department.org_id, department_id=department.id, module_name="Records")
     db.add(module)
     db.flush()
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Value",
         type=kind,
@@ -94,6 +98,7 @@ def setup_rows(db: Session, kind: str, values: list[object]):
     db.flush()
     rows = [
         Record(
+            org_id=module.org_id,
             module_id=module.id,
             data=(
                 {}
@@ -132,6 +137,7 @@ def add_values(
     position: int = 1,
 ) -> Field:
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name=name,
         type=kind,

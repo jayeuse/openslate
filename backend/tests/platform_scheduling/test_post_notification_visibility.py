@@ -18,8 +18,9 @@ from app.systems.platform.scheduling.models import (
 )
 from app.systems.platform.scheduling.service import current_user_notification_query
 from tests.boards.support import department_board
+from tests.conftest import create_member
 from tests.platform_scheduling.support import assert_notice_hidden, notification_client
-from tests.rbac.support import add_department, make_group_access
+from tests.rbac.support import add_department, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 NOW = datetime(2026, 9, 24, 12, tzinfo=UTC)
@@ -27,14 +28,13 @@ NOW = datetime(2026, 9, 24, 12, tzinfo=UTC)
 
 def _actor(db: Session, label: str) -> User:
     role = "member"
-    actor = User(
+    actor, _membership = create_member(
+        db, organization(db),
         email=f"post-notice-{uuid7().hex}@example.test",
         username=f"post_notice_{uuid7().hex[:12]}",
         status="active",
         role=role,
     )
-    db.add(actor)
-    db.flush()
     return actor
 
 
@@ -48,6 +48,7 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     access = make_group_access(db, [viewer], department, level=AccessLevel.READ)
     board = department_board(db, department)
     post = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Private published heading",
@@ -58,6 +59,7 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     db.add(post)
     db.flush()
     revision = BoardPostRevision(
+        org_id=board.org_id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -70,6 +72,7 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     db.add(revision)
     db.flush()
     work = ScheduledWork(
+        org_id=board.org_id,
         kind=WorkKind.POST_PUBLISH,
         post_id=post.id,
         source_revision=1,
@@ -82,6 +85,7 @@ def test_post_notice_list_and_read_hide_after_department_revocation_or_board_arc
     db.add(work)
     db.flush()
     notice = InAppNotification(
+        org_id=board.org_id,
         work_id=work.id,
         recipient_id=viewer.id,
         kind="post-publish",

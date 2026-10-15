@@ -24,9 +24,9 @@ from app.core.integrations.supabase_auth import (
 from app.systems.access.identity import provider_sessions
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from tests.auth.provider_jwt_support import client_for_key, signed_access
+from tests.conftest import create_member
 
 
 def test_verified_provider_access_uses_exact_instance_session_and_assurance() -> None:
@@ -99,7 +99,7 @@ def _protected_app(
     key = ec.generate_private_key(ec.SECP256R1())
     local_id, provider_id, provider_session = uuid4(), uuid4(), uuid4()
     provider = client_for_key(key, user_id=provider_id, factors=factors)
-    user = User(
+    user, membership = create_member(None, profile,
         id=local_id,
         supabase_user_id=provider_id,
         email=f"{name}@example.test",
@@ -117,12 +117,17 @@ def _protected_app(
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db = Mock(spec=Session)
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
     db.scalar.side_effect = lambda query: (
         session if query.column_descriptions[0]["entity"] is IdentitySession else user
     )
     db.execute.return_value.scalar_one.return_value = True
     monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile, raising=False)
+    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile)
+    platform = PlatformSettings(session_timeout_minutes=60, session_absolute_lifetime_minutes=None)
+    monkeypatch.setattr(provider_sessions, "load_platform_policy", lambda _db: platform)
+    monkeypatch.setattr(dependency, "load_platform_policy", lambda _db: platform)
     monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: provider)
     app = FastAPI()
     app.dependency_overrides[get_db] = lambda: db
@@ -165,8 +170,6 @@ def test_signed_assurance_policy_cannot_be_bypassed_by_request_parameters(
         mfa_require_member=policy == "everyone",
         mfa_require_guest=policy == "everyone",
         mfa_grace_days=0,
-        session_timeout_minutes=60,
-        session_absolute_lifetime_minutes=None,
         ip_allow_list=[],
     )
     app, signed_token = _protected_app(
@@ -191,8 +194,6 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
 ):
 
     profile = WorkspaceProfile(
-        session_timeout_minutes=60,
-        session_absolute_lifetime_minutes=None,
         ip_allow_list=["10.0.0.0/8"],
     )
     app, signed_token = _protected_app(monkeypatch, profile, role="member", name="ip")
@@ -229,8 +230,6 @@ def test_auth_actions_reject_disallowed_transport_address_before_provider_work(
     from app.systems.access.auth import router as auth_routes
 
     profile = WorkspaceProfile(
-        session_timeout_minutes=60,
-        session_absolute_lifetime_minutes=None,
         ip_allow_list=["10.0.0.0/8"],
     )
     provider = Mock()

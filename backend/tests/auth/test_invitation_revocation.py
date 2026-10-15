@@ -21,16 +21,18 @@ from app.systems.access.auth.aggregate_router import router as access_router
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users import invitations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationNotFound
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.test_provider_email_integration import _email_action
+from tests.conftest import create_member
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
 
 
-def _admin() -> User:
-    return User(
+def _admin() -> tuple[User, Membership]:
+    return create_member(None, WorkspaceProfile(id=uuid7()),
         id=uuid7(),
         email="admin@example.test",
         username="admin",
@@ -59,7 +61,8 @@ def test_invitation_revocation_route_exists_and_requires_authentication() -> Non
 def test_invitation_revocation_rejects_setup_only_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    identity = CurrentIdentity(_admin(), uuid7(), True, True)
+    user, _membership = _admin()
+    identity = CurrentIdentity(user, uuid7(), True, True)
     revoke = Mock()
     monkeypatch.setattr(invitations_router, "revoke_invitation", revoke)
 
@@ -72,7 +75,7 @@ def test_invitation_revocation_rejects_setup_only_identity(
 def test_authorized_invitation_revocation_returns_empty_204(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    admin = _admin()
+    admin, _membership = _admin()
     db = Mock(spec=Session)
     user_id = uuid7()
     revoke = Mock()
@@ -100,7 +103,8 @@ def test_invitation_revocation_maps_missing_and_closed_states(
     expected_status: int,
     expected_detail: str,
 ) -> None:
-    identity = CurrentIdentity(_admin(), uuid7(), True, False)
+    user, _membership = _admin()
+    identity = CurrentIdentity(user, uuid7(), True, False)
     monkeypatch.setattr(invitations_router, "revoke_invitation", Mock(side_effect=error))
 
     response = _client(Mock(spec=Session), identity).delete(f"/api/auth/invitations/{uuid7()}")

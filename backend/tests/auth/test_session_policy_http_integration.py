@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_user_cache import forget_provider_user
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 
@@ -36,7 +37,7 @@ def test_role_grace_expires_but_verified_factor_always_requires_aal2(policy_worl
     since = world.clock - timedelta(days=1) + timedelta(minutes=2)
     world.policy(**{f"mfa_require_{role}": True}, mfa_grace_days=1)
     with Session(world.owner) as db:
-        actor = db.get(User, world.actor_id)
+        actor = sole_active_membership(db, world.actor_id)
         actor.role = role
         if role == "guest":
             actor.sponsor_user_id, actor.expires_at = (
@@ -58,7 +59,7 @@ def test_role_grace_expires_but_verified_factor_always_requires_aal2(policy_worl
     assert world.client.get("/api/auth/me", headers=world.headers()).status_code == 403
     assert world.client.get("/api/auth/mfa", headers=world.headers()).json()["required"] is True
     with Session(world.owner) as db:
-        db.get(User, world.actor_id).mfa_required_since = None
+        sole_active_membership(db, world.actor_id).mfa_required_since = None
         db.commit()
     missing = world.client.get("/api/auth/mfa", headers=world.headers()).json()
     assert missing["required"] is True and missing["enrollment_deadline"] is None
@@ -276,7 +277,7 @@ def test_policy_episode_survives_role_disable_grace_and_restarts_only_after_opti
     )
     assert saved.status_code == 200
     with Session(world.owner) as db:
-        since = db.get(User, world.target_id).mfa_required_since
+        since = sole_active_membership(db, world.target_id).mfa_required_since
         assert since is not None
     enabled = world.client.patch(
         "/api/workspace/security",
@@ -298,7 +299,7 @@ def test_policy_episode_survives_role_disable_grace_and_restarts_only_after_opti
         )
         assert result.status_code == 200
         with Session(world.owner) as db:
-            assert db.get(User, world.target_id).mfa_required_since == since
+            assert sole_active_membership(db, world.target_id).mfa_required_since == since
     off = world.client.patch(
         "/api/workspace/security",
         headers=world.headers(),
@@ -309,14 +310,14 @@ def test_policy_episode_survives_role_disable_grace_and_restarts_only_after_opti
     )
     assert off.status_code == 200
     with Session(world.owner) as db:
-        assert db.get(User, world.target_id).mfa_required_since is None
+        assert sole_active_membership(db, world.target_id).mfa_required_since is None
     # A role transition into a still-required role starts a new continuous episode.
     result = world.client.patch(
         f"/api/users/{world.target_id}", headers=world.headers(), json={"role": "member"}
     )
     assert result.status_code == 200
     with Session(world.owner) as db:
-        assert db.get(User, world.target_id).mfa_required_since is not None
+        assert sole_active_membership(db, world.target_id).mfa_required_since is not None
 
 
 @pytest.mark.parametrize(
@@ -380,20 +381,20 @@ def test_role_transition_clears_optional_and_starts_new_required_episode(policy_
     world.policy(mfa_require_member=True, mfa_grace_days=1)
     old = world.clock - timedelta(hours=12)
     with Session(world.owner) as db:
-        db.get(User, world.target_id).mfa_required_since = old
+        sole_active_membership(db, world.target_id).mfa_required_since = old
         db.commit()
     promoted = world.client.patch(
         f"/api/users/{world.target_id}", headers=world.headers(), json={"role": "admin"}
     )
     assert promoted.status_code == 200
     with Session(world.owner) as db:
-        assert db.get(User, world.target_id).mfa_required_since is None
+        assert sole_active_membership(db, world.target_id).mfa_required_since is None
     returned = world.client.patch(
         f"/api/users/{world.target_id}", headers=world.headers(), json={"role": "member"}
     )
     assert returned.status_code == 200
     with Session(world.owner) as db:
-        since = db.get(User, world.target_id).mfa_required_since
+        since = sole_active_membership(db, world.target_id).mfa_required_since
         assert since is not None and since > old
 
 
@@ -413,9 +414,11 @@ def test_invitation_completion_starts_current_role_episode_and_replay_preserves_
     operation = uuid4()
     with Session(world.owner) as db:
         target = db.get(User, world.target_id)
-        target.status, target.invitation_accepted_at = "pending", None
-        target.invitation_sent_at = world.clock - timedelta(days=1)
-        target.provider_invitation_operation_id = operation
+        membership = sole_active_membership(db, target.id)
+        target.status = membership.status = "pending"
+        membership.invitation_accepted_at = None
+        membership.invitation_sent_at = world.clock - timedelta(days=1)
+        membership.provider_invitation_operation_id = operation
         provider_id, email = target.supabase_user_id, target.email
         db.commit()
     settings = get_settings()
@@ -463,11 +466,12 @@ def test_invitation_completion_starts_current_role_episode_and_replay_preserves_
     assert result.status_code == 204
     with Session(world.owner) as db:
         target = db.get(User, world.target_id)
-        assert target.status == "active" and target.mfa_required_since == world.clock
-        since = target.mfa_required_since
+        membership = sole_active_membership(db, target.id)
+        assert target.status == "active" and membership.mfa_required_since == world.clock
+        since = membership.mfa_required_since
     world.clock += timedelta(minutes=1)
     with Session(world.owner) as db:
         replay = accept_verified_invitation(
             db, world.target_id, verified_email=email, verified_identity=world.target_id
         )
-        assert replay.mfa_required_since == since
+        assert sole_active_membership(db, replay.id).mfa_required_since == since

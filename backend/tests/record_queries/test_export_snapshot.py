@@ -3,19 +3,21 @@ import io
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records import export as exporter
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import ExportRequest
-from tests.rbac.support import add_department, add_module, add_user
+from tests.conftest import create_member
+from tests.rbac.support import add_department, add_module, add_user, organization
 from tests.record_queries.support import request_for, setup_rows
 
 
@@ -30,6 +32,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         assignee.display_name = "Avery Person"
         option_id = str(uuid7())
         select_field = Field(
+            org_id=module.org_id,
             module_id=module.id,
             name="Status",
             type=FieldType.SELECT,
@@ -38,6 +41,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
             config={"options": [{"id": option_id, "label": "Pending"}]},
         )
         user_field = Field(
+            org_id=module.org_id,
             module_id=module.id,
             name="Assignee",
             type="user",
@@ -48,6 +52,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         setup.add_all((select_field, user_field))
         setup.flush()
         record = Record(
+            org_id=module.org_id,
             module_id=module.id,
             data={str(select_field.id): option_id, str(user_field.id): str(assignee.id)},
         )
@@ -55,6 +60,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         setup.commit()
         record_id, select_id, user_field_id = record.id, select_field.id, user_field.id
         module_id, department_id = module.id, department.id
+        org_id = department.org_id
         actor_id, assignee_id = actor.id, assignee.id
 
     payload = ExportRequest(
@@ -93,6 +99,9 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
                 (Field, [select_id, user_field_id]),
                 (Module, [module_id]),
                 (Department, [department_id]),
+                (Membership, list(cleanup.scalars(select(Membership.id).where(
+                    Membership.user_id.in_([actor_id, assignee_id])
+                )))),
                 (User, [actor_id, assignee_id]),
             ):
                 for identifier in ids:
@@ -101,6 +110,11 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
                         cleanup.delete(row)
                 cleanup.flush()
             cleanup.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
 
 
 @pytest.mark.integration
@@ -112,6 +126,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
         reader_id = add_user(setup, "export-reader", role="admin").id
         setup.commit()
         module_id, field_id, department_id = module.id, field.id, module.department_id
+        org_id = module.org_id
         row_ids = [row.id for row in rows]
         payload = request_for(module, field)
         payload.limit = 1
@@ -141,12 +156,20 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
                 (Field, [field_id]),
                 (Module, [module_id]),
                 (Department, [department_id]),
+                (Membership, list(cleanup.scalars(select(Membership.id).where(
+                    Membership.user_id == reader_id
+                )))),
                 (User, [reader_id]),
             ):
                 for identifier in ids:
                     cleanup.delete(cleanup.get(model, identifier))
                 cleanup.flush()
             cleanup.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
 
 
 @pytest.mark.integration
@@ -168,15 +191,14 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     with AuditSession(engine) as setup:
         role = "admin"
         assert role is not None
-        actor = User(
+        actor, membership = create_member(
+            setup, organization(setup),
             id=actor_id,
             email=f"p7-export-{actor_id}@example.com",
             username=f"p7_export_{actor_id.hex[:12]}",
             role=role,
             status="active",
         )
-        setup.add(actor)
-        setup.flush()
         identity_session = IdentitySession(
             user_id=actor_id,
             refresh_token_digest=uuid7().hex * 2,
@@ -187,6 +209,7 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
         module, field, records = setup_rows(setup, "decimal", ["2", "10"])
         setup.commit()
         module_id, field_id, department_id = module.id, field.id, module.department_id
+        org_id, membership_id = module.org_id, membership.id
         session_id = identity_session.id
         row_ids = [record.id for record in records]
         payload = request_for(
@@ -196,7 +219,7 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
                 {"field_id": field.id, "expected_type": "decimal", "operator": "gt", "value": "2"}
             ],
         )
-        _ = actor.role
+        _ = actor.id
         setup.expunge(actor)
 
     def database():
@@ -238,6 +261,13 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
                 cleanup.flush()
             cleanup.delete(cleanup.get(IdentitySession, session_id))
             cleanup.flush()
+            cleanup.delete(cleanup.get(Membership, membership_id))
+            cleanup.flush()
             cleanup.delete(cleanup.get(User, actor_id))
             cleanup.flush()
             cleanup.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})

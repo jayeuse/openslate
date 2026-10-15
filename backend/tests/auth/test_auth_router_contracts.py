@@ -185,7 +185,8 @@ def test_password_change_requires_the_current_access_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    identity = CurrentIdentity(contract_user(), uuid7(), True, False)
+    user, _membership = contract_user()
+    identity = CurrentIdentity(user, uuid7(), True, False)
     change = Mock()
     monkeypatch.setattr(auth_router.provider_actions, "change_password", change)
     payload = PasswordChangeRequest(
@@ -217,7 +218,7 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    user = contract_user()
+    user, _membership = contract_user()
     identity = CurrentIdentity(user, uuid7(), True, False)
     request = contract_request(cookies="openslate_access=access; openslate_refresh=refresh")
     request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
@@ -262,7 +263,7 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    user = contract_user()
+    user, _membership = contract_user()
     created_at = datetime.now(UTC)
     current = IdentitySession(
         id=uuid7(),
@@ -326,7 +327,7 @@ def test_self_session_end_records_one_redacted_event_only_when_state_changes(
     from app.systems.access.auth.aggregate_router import router
 
     db = Mock(spec=Session)
-    user = contract_user()
+    user, _membership = contract_user()
     timestamp = datetime.now(UTC)
     current = IdentitySession(id=uuid7(), user_id=user.id, revoked_at=None)
     other = IdentitySession(id=uuid7(), user_id=user.id, revoked_at=None)
@@ -359,7 +360,8 @@ def test_change_password_maps_safe_provider_errors_and_preserves_current_session
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    identity = CurrentIdentity(contract_user(), uuid7(), True, False)
+    user, _membership = contract_user()
+    identity = CurrentIdentity(user, uuid7(), True, False)
     payload = PasswordChangeRequest(
         current_password="old password", password="new sufficiently long password"
     )

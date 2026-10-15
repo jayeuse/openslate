@@ -1,5 +1,6 @@
 """Concurrent download readers must cooperate while mutations remain authoritative."""
 
+import os
 from hashlib import sha256
 from io import BytesIO
 from threading import Event, Thread
@@ -11,13 +12,13 @@ import pytest
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import event, inspect, select
+from sqlalchemy import event, inspect, select, text
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.main import create_app
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.router import update_workspace
@@ -25,6 +26,7 @@ from app.systems.manage.workspace.schemas import WorkspaceUpdate
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.storage import get_storage
+from tests.conftest import create_member, create_organization, guarded_create_engine
 
 pytestmark = pytest.mark.integration
 
@@ -33,21 +35,25 @@ pytestmark = pytest.mark.integration
 def committed_logo(guarded_db):
     # The central guard ran before this engine was obtained. Commit only this owned
     # fixture so two independent request sessions can observe the same rows.
-    engine = guarded_db.get_bind().engine
+    engine = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     actor_id, file_id = uuid4(), uuid4()
     output = BytesIO()
     Image.new("RGB", (2, 2)).save(output, format="PNG")
     content = output.getvalue()
     with AuditSession(engine) as db:
-        actor = User(
+        profile = create_organization(db)
+        org_id = profile.id
+        actor, membership = create_member(
+            db, profile,
             id=actor_id,
             email=f"logo-concurrency-{actor_id}@example.com",
             username=f"logo_{actor_id.hex[:12]}",
             role="admin",
             status="active",
         )
-        db.add(actor)
+        membership_id = membership.id
         file = File(
+            org_id=org_id,
             id=file_id,
             purpose="workspace_logo",
             creator_id=actor_id,
@@ -94,10 +100,18 @@ def committed_logo(guarded_db):
                 for column in inspect(WorkspaceProfile).column_attrs
             } == profile_snapshot
         with AuditSession(engine) as db:
+            db.delete(db.get(Membership, membership_id))
+            db.flush()
             actor = db.get(User, actor_id)
             if actor is not None:
                 db.delete(actor)
             db.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
+        engine.dispose()
 
 
 def client_for(engine, actor_id, storage):

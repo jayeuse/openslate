@@ -15,8 +15,10 @@ from app.systems.access.identity.contracts import ActionTokenInvalid, InvalidCre
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.identity.provider_login import login_with_provider
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import User, UserRole, UserStatus
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.manage.audit.models import SecurityEvent
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
+from tests.conftest import create_member
 
 
 def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
@@ -25,7 +27,7 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
     monkeypatch.setattr("app.systems.access.identity.eligibility.utc_now", lambda: now)
     provider_id, provider_session_id = uuid4(), uuid4()
     role = UserRole.MEMBER
-    user = User(
+    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
         id=uuid4(),
         email="expiry@example.test",
         username="expiry",
@@ -47,7 +49,7 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
         user.email,
         {
             "openslate_user_id": str(user.id),
-            "openslate_invitation_operation_id": str(user.provider_invitation_operation_id),
+            "openslate_invitation_operation_id": str(membership.provider_invitation_operation_id),
         },
         email_confirmed_at=now - timedelta(minutes=1),
     )
@@ -75,10 +77,10 @@ def _subject(monkeypatch, *, expired: bool, status=UserStatus.ACTIVE.value):
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    return now, user, session, claims, client
+    return now, user, membership, session, claims, client
 
 
-def _identity_database(user, now, *, session=None):
+def _identity_database(user, membership, now, *, session=None):
     observation = IdentityMfaObservation(
         user_id=user.id,
         observed_provider_user_id=user.supabase_user_id,
@@ -90,8 +92,14 @@ def _identity_database(user, now, *, session=None):
         User.supabase_user_id: user.supabase_user_id,
         IdentitySession: session,
         IdentityMfaObservation: observation,
+        SecurityEvent.id: uuid4(),
     }
     db = Mock(spec=Session)
+    db.dirty = set()
+    db.scalars.side_effect = lambda query: (
+        Mock(all=lambda: [membership])
+        if query.column_descriptions[0]["entity"] is Membership else []
+    )
     db.scalar.side_effect = lambda query: rows[query.column_descriptions[0]["expr"]]
 
     def get(model, identifier, **_kwargs):
@@ -110,9 +118,8 @@ def _identity_database(user, now, *, session=None):
 
 
 def test_expired_user_is_denied_password_login_with_the_generic_credential_error(monkeypatch):
-    now, user, _session, _claims, client = _subject(monkeypatch, expired=True)
-    db = Mock(spec=Session)
-    db.scalar.return_value = user
+    now, user, membership, _session, _claims, client = _subject(monkeypatch, expired=True)
+    db = _identity_database(user, membership, now)
     with pytest.raises(InvalidCredentials, match="Invalid credentials"):
         login_with_provider(
             db, user.email, "correct password", client, now=now, enforce_rate_limit=False
@@ -122,8 +129,8 @@ def test_expired_user_is_denied_password_login_with_the_generic_credential_error
 
 
 def test_null_account_expiry_remains_eligible_for_password_login(monkeypatch):
-    now, user, _session, _claims, client = _subject(monkeypatch, expired=False)
-    db = _identity_database(user, now)
+    now, user, membership, _session, _claims, client = _subject(monkeypatch, expired=False)
+    db = _identity_database(user, membership, now)
     issued = login_with_provider(
         db, user.email, "correct password", client, now=now, enforce_rate_limit=False
     )
@@ -137,13 +144,11 @@ def test_null_account_expiry_remains_eligible_for_password_login(monkeypatch):
 
 
 def test_expired_user_cannot_refresh_or_validate_an_existing_session(monkeypatch):
-    now, user, session, claims, client = _subject(monkeypatch, expired=True)
-    access_db = Mock(spec=Session)
-    access_db.scalar.side_effect = [session, user]
+    now, user, membership, session, claims, client = _subject(monkeypatch, expired=True)
+    access_db = _identity_database(user, membership, now, session=session)
     assert provider_sessions.resolve_provider_session(access_db, claims, client, now=now) is None
 
-    db = Mock(spec=Session)
-    db.scalar.side_effect = [session, session, user]
+    db = _identity_database(user, membership, now, session=session)
     with pytest.raises(InvalidCredentials, match="Invalid credentials"):
         provider_sessions.refresh_provider_session(db, "r" * 48, client, now=now)
     assert session.revoked_at == now
@@ -152,13 +157,12 @@ def test_expired_user_cannot_refresh_or_validate_an_existing_session(monkeypatch
 
 @pytest.mark.parametrize("kind", ["recovery", "invite"])
 def test_expired_user_cannot_complete_provider_email_actions(monkeypatch, kind):
-    _now, user, _session, _claims, client = _subject(
+    now, user, membership, _session, _claims, client = _subject(
         monkeypatch,
         expired=True,
         status=UserStatus.PENDING.value if kind == "invite" else UserStatus.ACTIVE.value,
     )
-    db = Mock(spec=Session)
-    db.scalar.return_value = user
+    db = _identity_database(user, membership, now)
     action = (
         provider_actions.complete_invitation
         if kind == "invite"
@@ -176,14 +180,12 @@ def test_expired_user_cannot_complete_provider_email_actions(monkeypatch, kind):
 
 @pytest.mark.parametrize("minutes", [15, 30, 60, 480])
 def test_admission_uses_workspace_session_timeout(monkeypatch, minutes):
-    now, user, _session, _claims, client = _subject(monkeypatch, expired=False)
-    policy = WorkspaceProfile(session_timeout_minutes=minutes, ip_allow_list=[])
+    now, user, membership, _session, _claims, client = _subject(monkeypatch, expired=False)
+    policy = PlatformSettings(session_timeout_minutes=minutes)
     monkeypatch.setattr(
-        provider_sessions, "load_workspace_policy", lambda _db: policy, raising=False
+        provider_sessions, "load_platform_policy", lambda _db: policy
     )
-    db = Mock(spec=Session)
-    db.scalar.return_value = user
-    db.execute.return_value.scalar_one.return_value = True
+    db = _identity_database(user, membership, now)
 
     provider_sessions.admit_provider_session(
         db, client.password_grant.return_value, client, now=now
@@ -196,14 +198,14 @@ def test_admission_uses_workspace_session_timeout(monkeypatch, minutes):
 
 @pytest.mark.parametrize("cached", [True, False])
 def test_successful_refresh_renews_workspace_timeout_on_both_paths(monkeypatch, cached):
-    now, user, session, claims, client = _subject(monkeypatch, expired=False)
-    policy = WorkspaceProfile(session_timeout_minutes=30)
+    now, user, membership, session, claims, client = _subject(monkeypatch, expired=False)
+    policy = PlatformSettings(session_timeout_minutes=30)
     monkeypatch.setattr(
-        provider_sessions, "load_workspace_policy", lambda _db: policy, raising=False
+        provider_sessions, "load_platform_policy", lambda _db: policy
     )
     session.refreshed_at = now - timedelta(minutes=5)
     session.expires_at = now + timedelta(minutes=1)
-    db = _identity_database(user, now, session=session)
+    db = _identity_database(user, membership, now, session=session)
     if not cached:
         from app.core.integrations.supabase_auth import InvalidProviderToken
 
@@ -220,7 +222,7 @@ def test_successful_refresh_renews_workspace_timeout_on_both_paths(monkeypatch, 
 
 
 def test_expired_workspace_session_cannot_be_revived(monkeypatch):
-    now, _user, session, _claims, client = _subject(monkeypatch, expired=False)
+    now, _user, _membership, session, _claims, client = _subject(monkeypatch, expired=False)
     session.expires_at = now
     session.refreshed_at = now - timedelta(minutes=30)
     db = Mock(spec=Session)
@@ -238,7 +240,7 @@ def test_expired_workspace_session_cannot_be_revived(monkeypatch):
 def test_failed_provider_refresh_never_extends_workspace_expiry(monkeypatch):
     from app.core.integrations.supabase_auth import InvalidProviderToken, SupabaseAuthUnavailable
 
-    now, _user, session, _claims, client = _subject(monkeypatch, expired=False)
+    now, _user, _membership, session, _claims, client = _subject(monkeypatch, expired=False)
     session.refreshed_at = now - timedelta(minutes=5)
     session.expires_at = now + timedelta(minutes=1)
     db = Mock(spec=Session)

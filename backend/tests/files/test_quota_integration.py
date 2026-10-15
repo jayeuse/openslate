@@ -10,7 +10,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.platform.files import service
@@ -20,8 +20,10 @@ from app.systems.platform.files.quota import QUOTA_LOCK, lock_quota
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.validation import ValidatedContent
 from app.systems.sandbox.departments.models import Department
+from tests.conftest import create_member
 from tests.files.conftest import library_department
 from tests.files.test_integration import Store, reserve
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 MIB = 1024 * 1024
@@ -31,6 +33,7 @@ def inventory(db, actor, *, count, size=1, state="awaiting_upload"):
     department_id = library_department(db)
     rows = [
         File(
+            org_id=organization(db).id,
             purpose="library_document",
             department_id=department_id,
             creator_id=actor.id,
@@ -186,18 +189,19 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
     with AuditSession(engine) as db:
         db.info[AUDIT_CONTEXT_KEY] = context
         department_id = library_department(db)
-        db.add(
-            User(
+        org_id = organization(db).id
+        create_member(
+                db, organization(db),
                 id=actor_id,
                 email=f"quota-lock-{actor_id}@example.com",
                 username=f"quota_{actor_id.hex[:12]}",
                 role="admin",
                 status="active",
-            )
         )
         db.flush()
         db.add(
             File(
+                org_id=org_id,
                 id=stale_id,
                 purpose="library_document",
                 department_id=department_id,
@@ -249,10 +253,18 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
             if department is not None:
                 db.delete(department)
             db.flush()
+            for membership in db.scalars(select(Membership).where(Membership.user_id == actor_id)):
+                db.delete(membership)
+            db.flush()
             actor = db.get(User, actor_id)
             if actor is not None:
                 db.delete(actor)
             db.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
 
 
 def test_upload_rechecks_reservation_expiry_after_parser(guarded_db, actor, monkeypatch):
@@ -279,6 +291,7 @@ def test_full_pending_uploads_do_not_prevent_confirmed_cleanup(guarded_db, actor
     actor_id = actor.id
     inventory(db, actor, count=100)
     ready = File(
+        org_id=organization(db).id,
         purpose="library_document",
         department_id=library_department(db),
         creator_id=actor_id,
@@ -309,18 +322,19 @@ def test_expiration_skips_a_locked_reservation_without_waiting(guarded_db):
     with AuditSession(engine) as db:
         db.info[AUDIT_CONTEXT_KEY] = context
         department_id = library_department(db)
-        db.add(
-            User(
+        org_id = organization(db).id
+        create_member(
+                db, organization(db),
                 id=actor_id,
                 email=f"expiry-lock-{actor_id}@example.com",
                 username=f"expiry_{actor_id.hex[:12]}",
                 role="admin",
                 status="active",
-            )
         )
         db.flush()
         db.add(
             File(
+                org_id=org_id,
                 id=stale_id,
                 purpose="library_document",
                 department_id=department_id,
@@ -354,10 +368,18 @@ def test_expiration_skips_a_locked_reservation_without_waiting(guarded_db):
             if department is not None:
                 db.delete(department)
             db.flush()
+            for membership in db.scalars(select(Membership).where(Membership.user_id == actor_id)):
+                db.delete(membership)
+            db.flush()
             actor = db.get(User, actor_id)
             if actor is not None:
                 db.delete(actor)
             db.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
 
 
 def test_expiration_skips_a_reservation_whose_parent_refuses_and_expires_the_rest(

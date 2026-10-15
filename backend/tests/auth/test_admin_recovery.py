@@ -1,7 +1,7 @@
 """Elevated administrator recovery sends provider email without a local secret."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -19,16 +19,17 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity.admin_recovery import LocalRecoveryError, recover_local_admin
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY
 from app.systems.manage.audit.models import AuditLog, SecurityEvent, SecurityEventOutcome
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 
-def _admin() -> User:
+def _admin() -> tuple[User, Membership]:
     role = UserRole.ADMIN
-    return User(
+    return create_member(None, WorkspaceProfile(id=uuid7()),
         id=uuid7(),
         email="admin@example.com",
         username="admin",
@@ -45,9 +46,11 @@ def test_recovery_refuses_nonlocal_or_non_elevated(local: bool, elevated: bool) 
 
 
 def test_recovery_refuses_unbound_or_ineligible_administrator() -> None:
-    user = _admin()
+    user, membership = _admin()
     user.supabase_user_id = None
     db = Mock(spec=Session)
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
     db.scalar.return_value = user
     with pytest.raises(LocalRecoveryError):
         recover_local_admin(db, user.id, local_invocation=True, elevated=True)
@@ -57,7 +60,7 @@ def test_recovery_refuses_unbound_or_ineligible_administrator() -> None:
 def test_recovery_revokes_sessions_then_sends_provider_email(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    user = _admin()
+    user, membership = _admin()
     session = IdentitySession(
         id=uuid7(),
         user_id=user.id,
@@ -66,8 +69,12 @@ def test_recovery_revokes_sessions_then_sends_provider_email(
         expires_at=datetime.now(UTC) + timedelta(days=7),
     )
     db = Mock(spec=Session)
+    db.dirty = set()
     db.scalar.return_value = user
-    db.scalars.return_value = [session]
+    db.scalars.side_effect = lambda query: (
+        Mock(all=lambda: [membership])
+        if query.column_descriptions[0]["entity"] is Membership else [session]
+    )
     events: list[str] = []
     db.commit.side_effect = lambda: events.append("commit")
     client = Mock()
@@ -89,10 +96,14 @@ def test_recovery_revokes_sessions_then_sends_provider_email(
 
 
 def test_recovery_commit_failure_does_not_send_mail(monkeypatch: pytest.MonkeyPatch) -> None:
-    user = _admin()
+    user, membership = _admin()
     db = Mock(spec=Session)
+    db.dirty = set()
     db.scalar.return_value = user
-    db.scalars.return_value = []
+    db.scalars.side_effect = lambda query: (
+        Mock(all=lambda: [membership])
+        if query.column_descriptions[0]["entity"] is Membership else []
+    )
     db.commit.side_effect = SQLAlchemyError("offline")
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(user.supabase_user_id, None, user.email)
@@ -108,16 +119,13 @@ def test_recovery_commit_failure_does_not_send_mail(monkeypatch: pytest.MonkeyPa
 def security_recovery(monkeypatch: pytest.MonkeyPatch):
     import app.systems.access.identity.security_recovery as security
 
-    user = _admin()
+    user, membership = _admin()
     profile = WorkspaceProfile(
-        id=uuid7(),
+        id=membership.org_id,
         mfa_require_admin=True,
         mfa_require_member=True,
         mfa_require_guest=True,
         mfa_grace_days=3,
-        session_absolute_lifetime_minutes=240,
-        session_concurrent_limit=2,
-        login_failed_attempt_threshold=4,
         ip_allow_list=["10.0.0.0/8"],
         revision=7,
     )
@@ -127,6 +135,7 @@ def security_recovery(monkeypatch: pytest.MonkeyPatch):
         )
     ]
     db = Mock(spec=Session)
+    db.dirty = set()
     db.scalar.side_effect = lambda query: (
         None
         if query.column_descriptions[0]["entity"] is IdentityMfaObservation
@@ -135,7 +144,8 @@ def security_recovery(monkeypatch: pytest.MonkeyPatch):
         else profile
     )
     db.scalars.side_effect = lambda query: (
-        [user] if query.column_descriptions[0]["entity"] is User else sessions
+        MagicMock(all=lambda: [membership], __iter__=lambda _self: iter([membership]))
+        if query.column_descriptions[0]["entity"] is Membership else sessions
     )
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(user.supabase_user_id, None, user.email)
@@ -144,14 +154,14 @@ def security_recovery(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(security, "get_supabase_auth_client", lambda: client)
     monkeypatch.setattr(security, "append_security_event", lambda _db, event: events.append(event))
     monkeypatch.setattr(security, "append_committed_security_event", events.append)
-    return security, db, user, profile, sessions, client, events
+    return security, db, user, profile, sessions, client, events, membership
 
 
 @pytest.mark.parametrize("local,elevated", [(False, True), (True, False)])
 def test_security_recovery_requires_elevated_local_console(
     security_recovery, local: bool, elevated: bool
 ) -> None:
-    security, db, user, _, _, client, _ = security_recovery
+    security, db, user, _, _, client, _, _membership = security_recovery
     with pytest.raises(security.LocalSecurityRecoveryError):
         security.recover_workspace_security(db, user.id, local_invocation=local, elevated=elevated)
     db.scalar.assert_not_called()
@@ -170,8 +180,8 @@ def test_security_recovery_requires_elevated_local_console(
     ],
 )
 def test_security_recovery_refuses_ineligible_admin(security_recovery, field, value) -> None:
-    security, db, user, _, _, client, _ = security_recovery
-    setattr(user, field, value)
+    security, db, user, _, _, client, _, membership = security_recovery
+    setattr(membership if field in {"role", "expires_at"} else user, field, value)
     with pytest.raises(security.LocalSecurityRecoveryError):
         security.recover_workspace_security(db, user.id, local_invocation=True, elevated=True)
     db.commit.assert_not_called()
@@ -180,7 +190,7 @@ def test_security_recovery_refuses_ineligible_admin(security_recovery, field, va
 
 @pytest.mark.parametrize("mismatch", ["id", "email", "ban"])
 def test_security_recovery_validates_bound_provider(security_recovery, mismatch) -> None:
-    security, db, user, profile, _, client, _ = security_recovery
+    security, db, user, profile, _, client, _, _membership = security_recovery
     client.get_admin_user.return_value = ProviderUser(
         uuid7() if mismatch == "id" else user.supabase_user_id,
         datetime.now(UTC) + timedelta(days=1) if mismatch == "ban" else None,
@@ -196,7 +206,7 @@ def test_security_recovery_validates_bound_provider(security_recovery, mismatch)
 def test_security_recovery_clears_policy_factors_and_newly_admitted_sessions(
     security_recovery,
 ) -> None:
-    security, db, user, profile, sessions, client, events = security_recovery
+    security, db, user, profile, sessions, client, events, _membership = security_recovery
     late_session = IdentitySession(
         id=uuid7(), user_id=user.id, refresh_token_digest="late", csrf_token_digest="late"
     )
@@ -224,7 +234,7 @@ def test_security_recovery_clears_policy_factors_and_newly_admitted_sessions(
 def test_security_recovery_local_commit_failure_prevents_factor_deletion(
     security_recovery,
 ) -> None:
-    security, db, user, _, _, client, _ = security_recovery
+    security, db, user, _, _, client, _, _membership = security_recovery
     db.commit.side_effect = SQLAlchemyError("private database diagnostic")
     with pytest.raises(security.LocalSecurityRecoveryError) as caught:
         security.recover_workspace_security(db, user.id, local_invocation=True, elevated=True)
@@ -240,7 +250,7 @@ def test_security_recovery_partial_factor_failure_is_truthful_and_rerunnable(
 ) -> None:
     from app.core.integrations.supabase_auth import SupabaseAuthUnavailable
 
-    security, db, user, profile, sessions, client, events = security_recovery
+    security, db, user, profile, sessions, client, events, _membership = security_recovery
     factor_id = uuid7()
     client.admin_list_factors.side_effect = [[factor_id], [factor_id], []]
     client.admin_delete_factor.side_effect = [SupabaseAuthUnavailable("private provider"), None]
@@ -263,7 +273,7 @@ def test_security_recovery_partial_factor_failure_is_truthful_and_rerunnable(
 
 
 def test_security_recovery_refuses_factors_remaining_after_cleanup(security_recovery) -> None:
-    security, db, user, _, _, client, _ = security_recovery
+    security, db, user, _, _, client, _, _membership = security_recovery
     client.admin_list_factors.side_effect = [[uuid7()], [uuid7()]]
     with pytest.raises(security.LocalSecurityRecoveryError) as caught:
         security.recover_workspace_security(db, user.id, local_invocation=True, elevated=True)
@@ -274,7 +284,7 @@ def test_security_recovery_refuses_factors_remaining_after_cleanup(security_reco
 def test_security_recovery_does_not_overwrite_concurrently_changed_policy(
     security_recovery,
 ) -> None:
-    security, db, user, profile, _, client, events = security_recovery
+    security, db, user, profile, _, client, events, _membership = security_recovery
     client.admin_delete_factor.side_effect = lambda *_args: setattr(
         profile, "mfa_require_admin", True
     )
@@ -291,7 +301,7 @@ def test_security_recovery_final_commit_failure_reports_completed_provider_effec
     security_recovery,
     failure_commit: int,
 ) -> None:
-    security, db, user, _, _, _, events = security_recovery
+    security, db, user, _, _, _, events, _membership = security_recovery
     fault = SQLAlchemyError("private diagnostic")
     db.commit.side_effect = [None] * (failure_commit - 1) + [fault, None]
     with pytest.raises(security.LocalSecurityRecoveryError) as caught:
@@ -315,7 +325,7 @@ def test_security_recovery_persists_audited_reset_without_provider_io_in_transac
     engine = integration_owner_db.get_bind().engine
     db = AuditSession(engine)
     db.info.update(integration_owner_db.info)
-    user = _admin()
+    user, membership = _admin()
     user_id, provider_id, email = user.id, user.supabase_user_id, user.email
     profile = db.scalar(select(WorkspaceProfile))
     assert profile is not None

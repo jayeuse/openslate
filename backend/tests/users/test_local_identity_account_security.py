@@ -1,7 +1,7 @@
 """Application account security with Supabase-owned authentication."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -16,7 +16,7 @@ from app.systems.access.identity.provider_actions import complete_invitation
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.access.users.schemas import UserUpdate
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings
 from tests.users.user_support import local_user
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
@@ -26,11 +26,13 @@ pytestmark = pytest.mark.usefixtures("local_identity_security_events")
 def test_account_security_state_changes_revoke_provider_backed_sessions(
     monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
-    actor = local_user(UserRole.ADMIN)
-    member = local_user()
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    member, membership = local_user()
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, member]
-    db.scalars.return_value = []
+    db.dirty = set()
+    db.scalars.return_value = MagicMock()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
     revoke = Mock()
     monkeypatch.setattr(account_operations, "revoke_user_sessions", revoke, raising=False)
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
@@ -47,10 +49,13 @@ def test_account_security_state_changes_revoke_provider_backed_sessions(
 def test_resend_rejects_non_pending_or_deleted_profiles(
     monkeypatch: pytest.MonkeyPatch, deleted: bool
 ) -> None:
-    admin = local_user(UserRole.ADMIN)
-    active = local_user(deleted=deleted)
+    admin, admin_membership = local_user(UserRole.ADMIN)
+    active, _membership = local_user(deleted=deleted)
     db = Mock(spec=Session)
     db.scalar.side_effect = [admin, active]
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [admin_membership]
+    db.scalars.return_value.one_or_none.return_value = None
     provider = Mock()
 
     with pytest.raises(InvitationError, match="not pending"):
@@ -67,11 +72,11 @@ def test_provider_rejected_invitation_cannot_change_account_or_password(
     db = Mock(spec=Session)
     provider = Mock()
     provider.verify_email_action.side_effect = InvalidProviderCredentials("expired or consumed")
-    policy = WorkspaceProfile(
+    policy = PlatformSettings(
         password_min_length=12, password_require_mixed_case=True, password_require_number=False
     )
     monkeypatch.setattr(
-        "app.systems.access.identity.provider_actions.load_workspace_policy", lambda _db: policy
+        "app.systems.access.identity.provider_actions.load_platform_policy", lambda _db: policy
     )
 
     with pytest.raises(InvitationError, match="Invitation token is invalid"):
@@ -83,21 +88,26 @@ def test_provider_rejected_invitation_cannot_change_account_or_password(
 
 
 def test_pending_user_cannot_be_enabled_or_disabled_by_administrator() -> None:
-    admin = local_user(UserRole.ADMIN)
-    pending = local_user(status=UserStatus.PENDING)
+    admin, admin_membership = local_user(UserRole.ADMIN)
+    pending, membership = local_user(status=UserStatus.PENDING)
     for requested in (UserStatus.ACTIVE, UserStatus.DISABLED):
         db = Mock(spec=Session)
         db.scalar.side_effect = [admin, pending]
+        db.dirty = set()
+        db.scalars.return_value.all.return_value = [admin_membership]
+        db.scalars.return_value.one.return_value = membership
         with pytest.raises(HTTPException) as error:
             account_operations.update_user(pending.id, UserUpdate(status=requested), admin, db)
         assert error.value.status_code == 409
 
 
 def test_last_active_admin_cannot_be_deleted() -> None:
-    actor = local_user(UserRole.ADMIN)
-    target = local_user(UserRole.ADMIN)
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    target, membership = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1]
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
 
     with pytest.raises(HTTPException) as error:
         account_operations.delete_user(target.id, actor, db)
@@ -108,10 +118,12 @@ def test_last_active_admin_cannot_be_deleted() -> None:
 
 @pytest.mark.parametrize("expiry_offset", [-timedelta(days=1), timedelta(days=1)])
 def test_last_administrator_cannot_be_given_an_expiry(expiry_offset: timedelta) -> None:
-    actor = local_user(UserRole.ADMIN)
-    target = local_user(UserRole.ADMIN)
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    target, membership = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1, 1]
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
 
     with pytest.raises(HTTPException) as error:
         account_operations.update_user(
@@ -122,18 +134,19 @@ def test_last_administrator_cannot_be_given_an_expiry(expiry_offset: timedelta) 
         )
 
     assert error.value.status_code == 409
-    assert target.expires_at is None
+    assert membership.expires_at is None
     db.commit.assert_not_called()
 
 
 def test_only_durable_administrator_cannot_be_disabled_when_another_will_expire(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = local_user(UserRole.ADMIN)
-    target = local_user(UserRole.ADMIN)
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    target, membership = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 2, 1]
-    db.scalars.return_value = []
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
 
     with pytest.raises(HTTPException) as error:
@@ -147,11 +160,12 @@ def test_only_durable_administrator_cannot_be_disabled_when_another_will_expire(
 def test_only_durable_administrator_cannot_be_deleted_when_another_will_expire(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = local_user(UserRole.ADMIN)
-    target = local_user(UserRole.ADMIN)
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    target, membership = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 2, 1]
-    db.scalars.return_value = []
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
 
     with pytest.raises(HTTPException) as error:
@@ -165,20 +179,22 @@ def test_only_durable_administrator_cannot_be_deleted_when_another_will_expire(
 def test_disabled_user_is_locally_revoked_without_provider_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = local_user(UserRole.ADMIN)
-    member = local_user()
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    member, membership = local_user()
     events = Mock()
     monkeypatch.setattr(account_operations, "_record_security_event", events)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, member, member.id]
-    db.scalars.return_value = []
+    db.dirty = set()
+    db.scalars.return_value = MagicMock()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
 
     result = account_operations.update_user(
         member.id, UserUpdate(status=UserStatus.DISABLED), actor, db
     )
 
     assert result.status == UserStatus.DISABLED.value
-    assert result.tokens_valid_after is not None
+    assert member.tokens_valid_after is not None
     db.commit.assert_called_once()
     assert [call.kwargs["outcome"].value for call in events.call_args_list] == [
         "attempt",
@@ -189,15 +205,17 @@ def test_disabled_user_is_locally_revoked_without_provider_call(
 def test_deleted_established_member_can_be_restored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = local_user(UserRole.ADMIN)
-    target = local_user(deleted=True)
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    target, membership = local_user(deleted=True)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target]
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
 
     result = account_operations.restore_user(target.id, actor, db)
 
-    assert result is target
+    assert result.id == target.id
     assert target.is_deleted is False
     assert target.status == UserStatus.ACTIVE.value
     db.commit.assert_called_once()
@@ -214,9 +232,11 @@ def test_empty_user_patch_is_rejected_before_database_work() -> None:
 
 
 def test_user_cannot_delete_their_own_account() -> None:
-    admin = local_user(UserRole.ADMIN)
+    admin, membership = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [admin, admin]
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
 
     with pytest.raises(HTTPException) as error:
         account_operations.delete_user(admin.id, admin, db)
@@ -226,10 +246,12 @@ def test_user_cannot_delete_their_own_account() -> None:
 
 
 def test_removing_last_admin_role_assignment_is_rejected() -> None:
-    actor = local_user(UserRole.ADMIN)
-    target = local_user(UserRole.ADMIN)
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    target, membership = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1]
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
 
     with pytest.raises(HTTPException) as error:
         account_operations.update_user(
@@ -240,18 +262,20 @@ def test_removing_last_admin_role_assignment_is_rejected() -> None:
         )
 
     assert error.value.status_code == 409
-    assert target.role == UserRole.ADMIN.value
+    assert membership.role == UserRole.ADMIN.value
 
 
 def test_local_disable_commit_failure_records_attempt_and_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 
-    actor = local_user(UserRole.ADMIN)
-    target = local_user()
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    target, membership = local_user()
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, target.id]
-    db.scalars.return_value = []
+    db.dirty = set()
+    db.scalars.return_value = MagicMock()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
     db.commit.side_effect = SQLAlchemyError("database unavailable")
     events = Mock()
     monkeypatch.setattr(account_operations, "_record_security_event", events)

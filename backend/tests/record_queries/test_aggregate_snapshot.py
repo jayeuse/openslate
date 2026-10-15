@@ -36,6 +36,7 @@ from app.systems.sandbox.records.query_schemas import (
     DateSeriesAggregateQuery,
     GroupedAggregateSnapshotQuery,
 )
+from tests.conftest import create_member, create_organization
 
 
 def test_aggregate_snapshot_requires_authentication() -> None:
@@ -121,20 +122,26 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
     date_key = str(date_field_id)
 
     with Session(engine) as setup:
-        actor = User(
+        organization = create_organization(setup)
+        org_id = organization.id
+        actor, _membership = create_member(
+            setup, organization,
             id=actor_id,
             email=f"snapshot-{actor_id}@example.com",
             username=f"snapshot_{actor_id.hex[:12]}",
             status="active",
             role="member",
         )
-        department = Department(id=department_id, department_name=f"snapshot-{department_id}")
+        department = Department(org_id=org_id, id=department_id,
+                                department_name=f"snapshot-{department_id}")
         module = Module(
+            org_id=org_id,
             id=module_id,
             department_id=department_id,
             module_name=f"Snapshot {module_id}",
         )
         dimension = Field(
+            org_id=org_id,
             id=dimension_id,
             module_id=module_id,
             name="Category",
@@ -148,6 +155,7 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
             },
         )
         date_field = Field(
+            org_id=org_id,
             id=date_field_id,
             module_id=module_id,
             name="Date",
@@ -163,14 +171,15 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
             csrf_token_digest=uuid7().hex * 2,
             expires_at=datetime.now(UTC) + timedelta(days=1),
         )
-        setup.add_all([department, module, dimension, date_field, actor])
+        setup.add_all([department, module, dimension, date_field])
         setup.flush()
         setup.add(db_session)
-        setup.add(Group(id=group_id, name=f"Snapshot {group_id.hex}"))
+        setup.add(Group(org_id=org_id, id=group_id, name=f"Snapshot {group_id.hex}"))
         setup.flush()
-        setup.add(GroupMember(group_id=group_id, user_id=actor_id))
+        setup.add(GroupMember(org_id=org_id, group_id=group_id, user_id=actor_id))
         setup.add(
             GroupAccess(
+                org_id=org_id,
                 group_id=group_id,
                 department_id=department_id,
                 module_id=module_id,
@@ -180,6 +189,7 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
         setup.add_all(
             [
                 Record(
+                    org_id=org_id,
                     id=record_id,
                     module_id=module_id,
                     data={dimension_key: select_ids[value], date_key: day},
@@ -240,7 +250,13 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
                 text("DELETE FROM public.departments WHERE id = :id"),
                 {"id": department_id},
             )
+            cleanup.execute(text("DELETE FROM public.memberships WHERE user_id = :id"),
+                            {"id": actor_id})
             cleanup.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": actor_id})
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
 
 
 def _post_snapshot(
@@ -293,6 +309,7 @@ def test_snapshot_returns_every_group_and_commits_safe_audit_event(
         setup.add_all(
             [
                 Record(
+                    org_id=dimension.org_id,
                     module_id=snapshot_fixture.module_id,
                     data={str(snapshot_fixture.dimension_id): new_options[value]},
                 )

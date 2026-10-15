@@ -16,7 +16,7 @@ from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 
 
 def provider_settings() -> SimpleNamespace:
@@ -82,7 +82,7 @@ def client_for_key(private_key: ec.EllipticCurvePrivateKey, *, user_id=None, fac
     return SupabaseAuthClient(provider_settings(), transport=httpx.MockTransport(respond))
 
 
-def session_database(user: User, session: IdentitySession) -> Mock:
+def session_database(user: User, membership: Membership, session: IdentitySession) -> Mock:
     observation = IdentityMfaObservation(
         user_id=user.id,
         observed_provider_user_id=user.supabase_user_id,
@@ -96,6 +96,8 @@ def session_database(user: User, session: IdentitySession) -> Mock:
         IdentityMfaObservation: observation,
     }
     db = Mock(spec=Session)
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
     db.scalar.side_effect = lambda query: rows[query.column_descriptions[0]["expr"]]
 
     def get(model, identifier, **_kwargs):

@@ -1,5 +1,6 @@
 """HTTP request admission must not reach persistence for forbidden operations."""
 
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -8,23 +9,21 @@ from fastapi.testclient import TestClient
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import User
+from app.systems.access.users.models import UserRole
 from app.systems.platform.files.router import router
+from tests.users.user_support import local_user
 
 
 @pytest.fixture
 def client():
     app = FastAPI()
     app.include_router(router, prefix="/api")
-    actor = User(
-        id=uuid4(),
-        status="active",
-        is_deleted=False,
-        role="guest",
-    )
+    actor, membership = local_user(UserRole.GUEST)
+    database = Mock()
+    database.dirty = set()
+    database.scalars.return_value.all.return_value = [membership]
     app.dependency_overrides[get_current_user] = lambda: actor
-    # Forbidden metadata/list operations must not query this unusable connection.
-    app.dependency_overrides[get_db] = lambda: None
+    app.dependency_overrides[get_db] = lambda: database
     with TestClient(app) as client:
         yield client
 

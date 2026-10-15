@@ -16,6 +16,7 @@ from app.systems.platform.files.providers import (
 )
 from app.systems.platform.files.schemas import FileCreate
 from tests.files.conftest import library_department
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -185,9 +186,10 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
     from app.systems.sandbox.records.models import Record
 
     db = guarded_db
-    department = Department(department_name=str(uuid4()))
-    module = Module(department=department, module_name="Files")
-    record = Record(module=module, data={})
+    org_id = organization(db).id
+    department = Department(org_id=org_id, department_name=str(uuid4()))
+    module = Module(org_id=org_id, department=department, module_name="Files")
+    record = Record(org_id=org_id, module=module, data={})
     db.add_all([department, module, record])
     db.commit()
     record_id = record.id

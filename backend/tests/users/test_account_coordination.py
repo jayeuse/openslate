@@ -92,18 +92,19 @@ def test_some_active_and_some_durable_administrator_always_remains(
     refusal: str | None,
 ) -> None:
     _admin_counts(monkeypatch, active, durable)
-    user = local_user(role)
+    user, membership = local_user(role)
+    monkeypatch.setattr(coordination, "sole_active_membership", lambda *_: membership)
     arguments = {
-        "destination_role": user.role,
+        "destination_role": membership.role,
         "destination_status": UserStatus.ACTIVE.value,
         **change,
     }
 
     if refusal is None:
-        ensure_projected_admin_remains(Mock(spec=Session), user, **arguments)
+        ensure_projected_admin_remains(Mock(spec=Session), user, membership, **arguments)
         return
     with pytest.raises(HTTPException) as error:
-        ensure_projected_admin_remains(Mock(spec=Session), user, **arguments)
+        ensure_projected_admin_remains(Mock(spec=Session), user, membership, **arguments)
     assert error.value.status_code == 409
     # The People panel shows a 409 detail to the administrator.
     assert error.value.detail == refusal
@@ -135,9 +136,13 @@ def test_some_active_and_some_durable_administrator_always_remains(
 def test_guest_profile_rules_refuse_with_the_shown_reason(
     role: UserRole, sponsor: str | None, expires_at: datetime | None, message: str
 ) -> None:
-    sponsor_user = local_user(UserRole(sponsor)) if sponsor is not None else None
+    sponsor_user, membership = (
+        local_user(UserRole(sponsor)) if sponsor is not None else (None, None)
+    )
     db = Mock(spec=Session)
+    db.dirty = set()
     db.scalar.return_value = sponsor_user
+    db.scalars.return_value.all.return_value = [membership]
 
     with pytest.raises(ProfileValidationError) as error:
         validate_identity_profile(

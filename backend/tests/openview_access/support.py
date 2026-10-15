@@ -26,6 +26,7 @@ def new_area(db: Session) -> Area:
     department = add_department(db)
     module = add_module(db, department)
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Status",
         type=FieldType.TEXT,

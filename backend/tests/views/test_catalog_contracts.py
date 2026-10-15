@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.dialects import postgresql
@@ -5,7 +7,7 @@ from uuid6 import uuid7
 
 from app.common.listing import StandardListRequest
 from app.common.listing.schemas import PaginationMetadata
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership
 from app.systems.openview.views.catalog import (
     DataSourceSort,
     FieldSort,
@@ -14,6 +16,7 @@ from app.systems.openview.views.catalog import (
 )
 from app.systems.openview.views.schemas import ViewDataSourceResponse, ViewFieldResponse
 from app.systems.sandbox.fields.models import Field, FieldType
+from tests.rbac.support import make_user
 
 
 def test_saved_view_catalog_responses_keep_their_wire_fields() -> None:
@@ -93,6 +96,7 @@ def test_field_catalog_filters_relationship_fields_before_offset_pagination() ->
             return self.items
 
     class CatalogSession:
+        dirty = set()
         def __init__(self) -> None:
             self.list_statements: list[object] = []
             self.module_statement: object | None = None
@@ -105,14 +109,17 @@ def test_field_catalog_filters_relationship_fields_before_offset_pagination() ->
             return 1 if excludes_relationship(statement) else 2
 
         def scalars(self, statement: object) -> Rows:
+            if statement.column_descriptions[0]["entity"] is Membership:
+                return Rows([membership])
             self.list_statements.append(statement)
             items = [primitive] if excludes_relationship(statement) else [relationship, primitive]
             return Rows(items)
 
     session = CatalogSession()
+    user, membership = make_user("catalog-admin")
     result = list_data_source_fields(
         module_id,
-        User(id=uuid7(), status="active", role="admin"),
+        user,
         session,  # type: ignore[arg-type]
         StandardListRequest[FieldSort](limit=1, offset=0),
     )
@@ -141,10 +148,12 @@ def test_data_source_catalog_lists_every_active_module(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(catalog, "execute_standard_list", list_result)
-    user = User(id=uuid7(), status="active", role="admin")
+    user, membership = make_user("catalog-admin")
+    database = Mock(dirty=set())
+    database.scalars.return_value.all.return_value = [membership]
     list_data_sources(
         user,
-        object(),  # type: ignore[arg-type]
+        database,
         StandardListRequest[DataSourceSort](),
     )
 

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel, GroupAccess
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.validation import ValidatedContent
@@ -56,6 +57,7 @@ def library_file(
 ):
     content = _png()
     file = File(
+        org_id=department.org_id,
         purpose="library_document",
         department_id=department.id,
         creator_id=creator.id,
@@ -193,7 +195,7 @@ def test_inactive_library_accounts_cannot_read_or_reserve(guarded_db, state):
     if state in {"disabled", "pending"}:
         actor.status = state
     elif state == "expired":
-        actor.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        sole_active_membership(db, actor.id).expires_at = datetime.now(UTC) - timedelta(seconds=1)
     else:
         actor.is_deleted = True
     db.commit()
@@ -322,7 +324,7 @@ def test_library_missing_department_is_not_found_and_record_envelope_stays_stand
     db = guarded_db
     department = add_department(db)
     module = add_module(db, department)
-    record = Record(module_id=module.id, data={})
+    record = Record(org_id=module.org_id, module_id=module.id, data={})
     db.add(record)
     db.commit()
     with _client(db, actor, _Store(db)) as client:

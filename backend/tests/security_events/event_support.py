@@ -16,11 +16,12 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.database.session import AuditSession, get_engine
 from app.main import create_app
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from tests.auth.session_policy_support import DEFAULTS, POLICY_FIELDS
 from tests.fake_provider_support import fake_provider as fake_provider
 from tests.fake_provider_support import fake_provider_account as fake_provider_account
@@ -39,9 +40,11 @@ class EventWorld:
 
     def policy(self, **values):
         with Session(self.owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.get(WorkspaceProfile, sole_active_membership(db, self.actor_id).org_id)
+            platform = db.scalar(select(PlatformSettings))
             for name, value in values.items():
-                setattr(profile, name, value)
+                setattr(platform if name in PlatformSettings.__table__.columns else profile,
+                        name, value)
             db.commit()
 
     def records(self, event_type=None, *, operation_id=None, actor_id=None):
@@ -71,11 +74,17 @@ def event_world(fake_provider_account):
     email, password, provider_id, actor_id, owner = fake_provider_account
     with Session(owner) as db:
         actor = db.get(User, actor_id)
-        actor.supabase_user_id, actor.role = provider_id, "admin"
-        profile = db.scalar(select(WorkspaceProfile))
-        saved = {name: getattr(profile, name) for name in POLICY_FIELDS}
+        actor.supabase_user_id = provider_id
+        membership = sole_active_membership(db, actor_id)
+        membership.role = "admin"
+        profile = db.get(WorkspaceProfile, membership.org_id)
+        platform = db.scalar(select(PlatformSettings))
+        saved = {name: getattr(
+            platform if name in PlatformSettings.__table__.columns else profile, name
+        ) for name in POLICY_FIELDS}
         for name, value in DEFAULTS.items():
-            setattr(profile, name, value)
+            setattr(platform if name in PlatformSettings.__table__.columns else profile,
+                    name, value)
         db.commit()
     client = TestClient(
         create_app(),
@@ -96,9 +105,11 @@ def event_world(fake_provider_account):
     finally:
         client.close()
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.get(WorkspaceProfile, sole_active_membership(db, actor_id).org_id)
+            platform = db.scalar(select(PlatformSettings))
             for name, value in saved.items():
-                setattr(profile, name, value)
+                setattr(platform if name in PlatformSettings.__table__.columns else profile,
+                        name, value)
             db.commit()
 
 

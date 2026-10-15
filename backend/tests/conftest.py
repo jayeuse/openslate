@@ -17,12 +17,74 @@ from app.core.config import provider_instance as _provider_instance_module
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession
 from app.systems.access.identity.provider_user_cache import clear_provider_users
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.config_support import settings_environment
 from tests.database_pool import pooled_engine
 from tests.postgres_runtime import assert_runner_database_url
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
+
+
+def create_organization(db: Session, **values) -> WorkspaceProfile:
+    """Create owned fixture data without manufacturing application audit actions."""
+    identity = values.pop("id", uuid7())
+    db.connection().execute(
+        WorkspaceProfile.__table__.insert().values(
+            id=identity,
+            **{
+                "slug": f"test-{identity}", "display_name": "Test organization",
+                "timezone": "UTC", "locale": "en-US", **values,
+            },
+        )
+    )
+    organization = db.get(WorkspaceProfile, identity)
+    assert organization is not None
+    return organization
+
+
+def create_member(
+    db: Session | None, organization: WorkspaceProfile, role: str = UserRole.MEMBER.value,
+    *, user: User | None = None, **values,
+) -> tuple[User, Membership]:
+    """Build the account and its explicit organization-local fixture membership."""
+    identity = values.pop("id", uuid7())
+    status = values.pop("status", "active")
+    membership_values = {
+        key: values.pop(key)
+        for key in (
+            "sponsor_user_id", "expires_at", "invitation_sent_at", "invitation_accepted_at",
+            "provider_invitation_operation_id", "mfa_required_since",
+        )
+        if key in values
+    }
+    if user is None:
+        account = User(
+            id=identity, email=values.pop("email", f"person-{identity}@example.test"),
+            username=values.pop("username", f"person-{identity}"), status=status, **values,
+        )
+        if db is None:
+            user = account
+        else:
+            db.connection().execute(User.__table__.insert().values(
+                **{column.name: getattr(account, column.name)
+                   for column in User.__table__.columns if column.name in account.__dict__}
+            ))
+            user = db.get(User, identity)
+            assert user is not None
+    membership = Membership(
+        id=uuid7(), org_id=organization.id, user_id=user.id, role=role,
+        status=status, **membership_values,
+    )
+    if db is not None:
+        db.connection().execute(Membership.__table__.insert().values(
+            **{column.name: getattr(membership, column.name)
+               for column in Membership.__table__.columns if column.name in membership.__dict__}
+        ))
+        membership = db.get(Membership, membership.id)
+        assert membership is not None
+    return user, membership
 
 # The runner-owned stack does not change while one pytest process runs, so repeated
 # `docker inspect` answers are memoized per process and Docker endpoint. Each app lifespan

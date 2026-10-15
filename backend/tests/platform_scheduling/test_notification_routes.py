@@ -28,6 +28,7 @@ from tests.platform_scheduling.support import (
     notification_report,
     report_notification,
 )
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -101,7 +102,8 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
 ) -> None:
     db = integration_owner_db
     owner = notification_actor(db)
-    board = Board(scope="project", name=f"Notification hydration {uuid7().hex}")
+    board = Board(org_id=organization(db).id, scope="project",
+                  name=f"Notification hydration {uuid7().hex}")
     db.add(board)
     db.flush()
     board_group(db, board, [owner], "read")
@@ -112,6 +114,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
         scheduled_for = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=index)
         if index % 2 == 0:
             post = BoardPost(
+                org_id=board.org_id,
                 board_id=board.id,
                 author_id=owner.id,
                 title=f"Private heading {index}",
@@ -123,6 +126,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
             db.add(post)
             db.flush()
             revision = BoardPostRevision(
+                org_id=board.org_id,
                 post_id=post.id,
                 publication_number=1,
                 publication_key=uuid7(),
@@ -135,6 +139,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
             db.add(revision)
             db.flush()
             work = ScheduledWork(
+                org_id=board.org_id,
                 kind=WorkKind.POST_PUBLISH,
                 post_id=post.id,
                 source_revision=1,
@@ -168,6 +173,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
         else:
             event_start = scheduled_for + timedelta(days=1)
             board_event = BoardEvent(
+                org_id=board.org_id,
                 board_id=board.id,
                 author_id=owner.id,
                 title=f"Private event {index}",
@@ -179,10 +185,12 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
             private_content.append(board_event.title)
             db.add(board_event)
             db.flush()
-            reminder = BoardEventReminder(board_id=board.id, event_id=board_event.id, timing="1d")
+            reminder = BoardEventReminder(org_id=board.org_id, board_id=board.id,
+                                          event_id=board_event.id, timing="1d")
             db.add(reminder)
             db.flush()
             work = ScheduledWork(
+                org_id=board.org_id,
                 kind=WorkKind.EVENT_REMINDER,
                 reminder_id=reminder.id,
                 occurrence_start_at=event_start,
@@ -217,6 +225,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
         db.add(work)
         db.flush()
         notification = InAppNotification(
+            org_id=board.org_id,
             work_id=work.id,
             kind=reference_fields["kind"],
             subject_type="board_post" if work.kind == WorkKind.POST_PUBLISH else "board_event",
@@ -234,7 +243,7 @@ def test_mixed_notification_list_hydrates_references_with_page_bounded_queries(
     db.commit()
     # Keep the detached principal usable by the route dependency while forcing
     # each request to hydrate its page references from PostgreSQL again.
-    _ = owner.role
+    _ = owner.id
     db.expunge_all()
 
     select_counts: list[int] = []

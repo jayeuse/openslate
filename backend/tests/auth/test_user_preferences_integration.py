@@ -15,8 +15,11 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.database.session import AuditSession
 from app.main import create_app
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import AuditLog
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -230,21 +233,21 @@ def test_same_theme_uses_fresh_locked_value_after_authentication(
 ):
     _, _, provider_id, local_id, owner = fake_provider_account
     with Session(owner) as db:
-        sponsor = User(
+        membership = sole_active_membership(db, local_id)
+        sponsor, _sponsor_membership = create_member(
+            db, db.get(WorkspaceProfile, membership.org_id),
             email=f"theme-sponsor-{uuid4().hex}@example.test",
             username=f"theme-sponsor-{uuid4().hex[:16]}",
             status="active",
             role="member",
         )
-        db.add(sponsor)
-        db.flush()
         sponsor_id = sponsor.id
         user = db.get(User, local_id)
         assert user is not None
         user.supabase_user_id = provider_id
-        user.role = role
-        user.sponsor_user_id = sponsor_id if role == "guest" else None
-        user.expires_at = datetime.now(UTC) + timedelta(days=30) if role == "guest" else None
+        membership.role = role
+        membership.sponsor_user_id = sponsor_id if role == "guest" else None
+        membership.expires_at = datetime.now(UTC) + timedelta(days=30) if role == "guest" else None
         db.commit()
     client = _login(fake_provider_account)
     path = f"/api/users/{local_id}/preferences"
@@ -282,8 +285,13 @@ def test_same_theme_uses_fresh_locked_value_after_authentication(
         with Session(owner) as db:
             user = db.get(User, local_id)
             if user is not None:
-                user.role, user.sponsor_user_id, user.expires_at = "member", None, None
+                membership = sole_active_membership(db, user.id)
+                membership.role, membership.sponsor_user_id, membership.expires_at = (
+                    "member", None, None,
+                )
                 db.flush()
+            db.delete(db.scalar(select(Membership).where(Membership.user_id == sponsor_id)))
+            db.flush()
             db.delete(db.get(User, sponsor_id))
             db.commit()
 

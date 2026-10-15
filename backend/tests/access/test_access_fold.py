@@ -26,7 +26,7 @@ from app.systems.access.policy.scope import (
     includes,
     rank,
 )
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from tests.property_support import PROPERTY
 
 READ, WRITE, MANAGE = AccessLevel.READ, AccessLevel.WRITE, AccessLevel.MANAGE
@@ -260,12 +260,17 @@ def test_only_a_manager_of_every_department_a_group_reaches_may_change_its_membe
 def test_the_account_check_uses_the_given_instant(instant: datetime, unrestricted: bool) -> None:
     # An administrator reaches everything without a read, so no database is needed.
     administrator = User(
-        role=UserRole.ADMIN.value,
         status=UserStatus.ACTIVE.value,
         is_deleted=False,
+    )
+    membership = Membership(
+        role=UserRole.ADMIN.value, status=UserStatus.ACTIVE.value,
+        invitation_sent_at=None, invitation_accepted_at=None,
         expires_at=datetime(2020, 1, 1, 12, 0, tzinfo=UTC),
     )
     db = Mock(spec=Session)
+    db.scalars.return_value.all.return_value = [membership]
+    db.dirty = set()
 
     assert effective_levels(db, administrator, now=instant).unrestricted is unrestricted
     assert allowed_module_ids(db, administrator, READ, now=instant) == (

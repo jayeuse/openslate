@@ -16,7 +16,7 @@ from app.systems.access.users.coordination import (
     InvitationError,
     ProfileValidationError,
 )
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.audit.models import SecurityEvent, SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -37,7 +37,7 @@ def test_invitation_requires_actor_outside_bootstrap() -> None:
 
 def test_invitation_rejects_duplicate_email_or_username() -> None:
     db = Mock(spec=Session)
-    db.scalar.side_effect = [local_user()]
+    db.scalar.side_effect = [local_user()[0]]
 
     with pytest.raises(InvitationConflict):
         user_service.invite_user(db, _invitation(), bootstrap=True)
@@ -49,7 +49,7 @@ def test_invitation_keeps_duplicate_conflict_when_failure_audit_cannot_persist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    db.scalar.side_effect = [local_user()]
+    db.scalar.side_effect = [local_user()[0]]
     monkeypatch.setattr(
         user_service,
         "_security_event",
@@ -123,11 +123,12 @@ def test_email_invitation_commits_pending_reservation_then_correlated_success(mo
     result = user_service.invite_user(db, _invitation(), bootstrap=True, client=provider)
     assert result.status == UserStatus.PENDING.value
     assert result.supabase_user_id is not None
-    assert result.invitation_sent_at is not None
+    membership = _added(db, Membership)[0]
+    assert membership.invitation_sent_at is not None
     event = user_service.append_security_event.call_args.args[1]
     assert event.event_type == "user.invitation"
     assert event.outcome.value == "success"
-    assert event.operation_id == result.provider_invitation_operation_id
+    assert event.operation_id == membership.provider_invitation_operation_id
     assert event.subject_id == result.id
     assert db.commit.call_count == 2
     assert outcomes == []
@@ -177,11 +178,14 @@ def _actor_session(existing: User | None = None, groups: tuple = ()) -> tuple[Mo
     are the active ones, and no MFA observation exists yet.
     """
 
-    admin = local_user(UserRole.ADMIN)
+    admin, membership = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
     reads: list[User | None] = [admin, existing]
     db.scalar.side_effect = lambda _statement: reads.pop(0) if reads else _added(db, User)[0]
-    db.scalars.return_value.all.return_value = list(groups)
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [
+        [membership], [membership], [membership], list(groups)
+    ]
     db.get.return_value = None
 
     def assign_identity() -> None:
@@ -234,7 +238,7 @@ def test_an_invitation_reserves_the_profile_its_observation_and_its_memberships(
         (
             "user.invitation",
             SecurityEventOutcome.SUCCESS,
-            result.provider_invitation_operation_id,
+            _added(db, Membership)[0].provider_invitation_operation_id,
             admin.id,
             result.id,
         )
@@ -254,7 +258,7 @@ def test_a_refused_invitation_records_one_failure_event_for_its_administrator(
     monkeypatch: pytest.MonkeyPatch, failure: str, error_type: type, reserved: bool
 ) -> None:
     events = _committed_events(monkeypatch)
-    db, admin = _actor_session(existing=local_user() if failure == "duplicate" else None)
+    db, admin = _actor_session(existing=local_user()[0] if failure == "duplicate" else None)
     provider = _provider([], email="other@example.com" if failure == "identity" else None)
     if failure == "reservation":
         db.commit.side_effect = SQLAlchemyError("commit unavailable")
@@ -269,7 +273,7 @@ def test_a_refused_invitation_records_one_failure_event_for_its_administrator(
     ] == [("user.invitation", SecurityEventOutcome.FAILURE, admin.id, None)]
     if reserved:
         # The failure belongs to the operation that the reservation carries.
-        assert events[0].operation_id == _added(db, User)[0].provider_invitation_operation_id
+        assert events[0].operation_id == _added(db, Membership)[0].provider_invitation_operation_id
 
 
 @pytest.mark.parametrize(
@@ -306,10 +310,11 @@ def test_an_invitation_that_stopped_pending_during_delivery_is_not_bound(
 ) -> None:
     db, admin = _actor_session()
 
-    def refresh(instance: User, **_options: object) -> None:
+    def refresh(instance: User | Membership, **_options: object) -> None:
         # A revocation or deletion committed while the provider sent the email.
         for name, value in change.items():
-            setattr(instance, name, value)
+            if name != "provider_invitation_operation_id" or isinstance(instance, Membership):
+                setattr(instance, name, value)
 
     db.refresh.side_effect = refresh
 
@@ -317,7 +322,7 @@ def test_an_invitation_that_stopped_pending_during_delivery_is_not_bound(
         user_service.invite_user(db, _invitation(), actor_id=admin.id, client=_provider([]))
 
     reserved = _added(db, User)[0]
-    assert (reserved.supabase_user_id, reserved.invitation_sent_at) == (None, None)
+    assert (reserved.supabase_user_id, _added(db, Membership)[0].invitation_sent_at) == (None, None)
 
 
 @pytest.mark.parametrize(
@@ -391,6 +396,6 @@ def test_the_guest_duration_must_be_a_whole_number_of_days_from_1_to_365(
 
     if days is None:
         with pytest.raises(InvitationError, match="^Invitation settings are unavailable$"):
-            user_service._guest_duration_days(db)
+            user_service._guest_duration_days(db, uuid7())
     else:
-        assert user_service._guest_duration_days(db) == days
+        assert user_service._guest_duration_days(db, uuid7()) == days

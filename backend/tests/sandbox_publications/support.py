@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.access.users.models import User, UserStatus
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.service import read_document, replace_document
 from app.systems.sandbox.fields.models import Field
@@ -18,7 +19,9 @@ from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.rules import _field_key
 from app.systems.sandbox.publications.schemas import PublicationResponse
-from tests.sandbox_designs.fixtures import sample_document
+from tests.conftest import create_member
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document, sample_document
 
 
 class Saved(Protocol):
@@ -75,14 +78,16 @@ def publish_saved(
 def actor(db: Session) -> User:
     role = "admin"
     assert role is not None
-    value = User(
+    org = organization(db)
+    value, _membership = create_member(
+        db, org,
         email="publication-owner@example.test",
         username="publication-owner",
         status=UserStatus.ACTIVE.value,
         role=role,
     )
-    db.add(value)
-    db.flush()
+    if db.scalar(select(SandboxDocumentRow.id).where(SandboxDocumentRow.org_id == org.id)) is None:
+        create_document(db, org)
     return value
 
 

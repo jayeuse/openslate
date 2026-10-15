@@ -10,6 +10,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import OperationalError
 from uuid6 import uuid7
 
+from app.systems.access.users.models import Membership
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.manage.audit.router import (
     AuditLogExportRequest,
@@ -40,6 +41,11 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
     database.scalar.return_value = 3
     database.get.return_value = log
     database.execute.return_value.all.return_value = []
+    actor, membership = make_user("audit-admin")
+    database.dirty = set()
+    database.scalars.side_effect = lambda query: Mock(all=lambda: (
+        [membership] if query.column_descriptions[0]["entity"] is Membership else [log, log]
+    ))
     params = AuditLogListRequest(
         limit=1,
         offset=2,
@@ -49,7 +55,7 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
     )
 
     result = get_audit_logs(
-        make_user("audit-admin"),
+        actor,
         database,
         params,
         action=AuditAction.UPDATE,
@@ -74,11 +80,11 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
     assert "audit_logs.entity_type ILIKE" in sql
     assert "ORDER BY audit_logs.request_path DESC" in sql
     assert "LIMIT" in sql and "OFFSET" in sql
-    detail = get_audit_log(log.id, make_user("audit-admin"), database)
+    detail = get_audit_log(log.id, actor, database)
     assert detail.before == log.before and detail.after == log.after
     assert detail.actor_label == log.actor_label and detail.note == log.note
     assert detail.actor_name is None
-    exported = export_audit_logs(make_user("audit-admin"), database, AuditLogExportRequest())
+    exported = export_audit_logs(actor, database, AuditLogExportRequest())
     assert len(list(csv.DictReader(io.StringIO(bytes(exported.body).decode())))) == 2
     assert exported.headers["x-audit-export-count"] == "2"
     with pytest.raises(
@@ -87,7 +93,7 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
         AuditLogListRequest(limit=101)
     database.get.return_value = None
     with pytest.raises(HTTPException) as error:
-        get_audit_log(uuid7(), make_user("audit-admin"), database)
+        get_audit_log(uuid7(), actor, database)
     assert error.value.status_code == 404
 
 
@@ -96,7 +102,7 @@ def test_audit_export_database_failure_cannot_return_partial_csv() -> None:
     database.scalar.return_value = 1
     database.scalars.side_effect = OperationalError("audit read", {}, RuntimeError("unavailable"))
     with pytest.raises(HTTPException) as error:
-        export_audit_logs(make_user("audit-export-admin"), database, AuditLogExportRequest())
+        export_audit_logs(make_user("audit-export-admin")[0], database, AuditLogExportRequest())
     assert error.value.status_code == 503
     assert error.value.detail == "Audit export unavailable"
     database.rollback.assert_called_once()

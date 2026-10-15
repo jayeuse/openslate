@@ -32,6 +32,7 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
     database.__enter__.return_value = database
     existing = profile if existing_profile else None
     database.scalar.side_effect = [None, existing, existing, admin_count]
+    database.scalars.return_value.all.return_value = [profile] if existing_profile else []
     monkeypatch.setattr(bootstrap, "AuditSession", lambda _: database)
     monkeypatch.setattr(bootstrap, "get_engine", lambda: object())
     invite = Mock(return_value=profile)

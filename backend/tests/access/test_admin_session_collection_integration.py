@@ -18,11 +18,12 @@ from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users import sessions_router
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import SecurityEvent
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.access.user_admin_support import UserAdminWorld, add_session
 from tests.access.user_admin_support import world as world
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine
 from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
@@ -148,15 +149,16 @@ def test_concurrent_bulk_session_end_records_each_target_only_once(
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], pool_size=3)
     admin_id, member_id, current_id, remote_id = (uuid7() for _ in range(4))
     with Session(owner) as db:
+        organization = create_organization(db)
+        org_id = organization.id
         for user_id, role in ((admin_id, "admin"), (member_id, "member")):
-            db.add(
-                User(
+            create_member(
+                    db, organization,
                     id=user_id,
                     email=f"sessions-{user_id.hex}@example.test",
                     username=f"sessions_{user_id.hex[:20]}",
                     role=role,
                     status="active",
-                )
             )
         db.flush()
         for session_id, user_id in ((current_id, admin_id), (remote_id, member_id)):
@@ -253,9 +255,16 @@ def test_concurrent_bulk_session_end_records_each_target_only_once(
                 if session is not None:
                     db.delete(session)
             for user_id in (admin_id, member_id):
+                for membership in db.scalars(
+                    select(Membership).where(Membership.user_id == user_id)
+                ):
+                    db.delete(membership)
+                db.flush()
                 user = db.get(User, user_id)
                 if user is not None:
                     db.delete(user)
+            db.flush()
+            db.delete(db.get(WorkspaceProfile, org_id))
             db.commit()
         runtime.dispose()
         owner.dispose()
