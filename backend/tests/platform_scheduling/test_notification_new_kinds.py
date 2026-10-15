@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from uuid6 import uuid7
 
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
 from tests.platform_scheduling.support import (
     assert_notice_hidden,
@@ -23,6 +24,7 @@ def test_failed_report_reference_is_visible_without_a_run_and_lost_access_hides_
     db = integration_owner_db
     owner, report, grant, _module, _department = report_work_subject(db)
     work = ScheduledWork(
+        org_id=report.org_id,
         report_id=report.id,
         scheduled_for=WHEN,
         next_attempt_at=WHEN,
@@ -33,6 +35,7 @@ def test_failed_report_reference_is_visible_without_a_run_and_lost_access_hides_
     db.add(work)
     db.flush()
     notice = InAppNotification(
+        org_id=work.org_id,
         work_id=work.id,
         recipient_id=owner.id,
         kind="report-run-failed",
@@ -82,18 +85,22 @@ def test_invalid_current_source_or_archived_notice_is_hidden_before_all_read_bou
 ):
     db = integration_owner_db
     owner, report, _grant, _module, _department = report_work_subject(db)
-    owner.role = "admin"
+    sole_active_membership(db, owner.id).role = "admin"
     work = None
     subject_id = uuid7()
     if kind == "report-run-failed":
         # Correct tuple, but the actual work is still pending, not exhausted.
-        work = ScheduledWork(report_id=report.id, scheduled_for=WHEN, next_attempt_at=WHEN)
+        work = ScheduledWork(
+            org_id=report.org_id, report_id=report.id,
+            scheduled_for=WHEN, next_attempt_at=WHEN,
+        )
         db.add(work)
         db.flush()
         subject_id = work.id
     elif kind == "access-changed":
         subject_id = owner.id
     notice = InAppNotification(
+        org_id=None if kind == "backup-failed" else report.org_id,
         kind=kind,
         subject_type=subject_type,
         subject_id=subject_id,
