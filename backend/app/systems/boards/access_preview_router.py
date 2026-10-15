@@ -22,7 +22,7 @@ from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.boards.access import board_level
 from app.systems.boards.models import Board
 from app.systems.boards.router import _board_with_access
@@ -83,8 +83,10 @@ def _manager_board(db: Session, manager: User, board_id: UUID) -> Board:
 def _eligible_users() -> Select[tuple[User]]:
     return (
         select(User)
+        .join(Membership, Membership.user_id == User.id)
         .where(
             User.status == UserStatus.ACTIVE.value,
+            Membership.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),
             User.deleted_at.is_(None),
             identity_eligible_clause(),

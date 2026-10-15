@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from tests.rbac.support import _client, add_department, add_user, make_group_access, organization
@@ -85,8 +86,9 @@ def test_option_search_precedes_caps_and_matches_current_or_latest_historical_na
     assert obsolete.json() == {"entity_types": [], "actors": []}
 
 
+@pytest.mark.parametrize("actor_state", ["disabled", "unaccepted"])
 def test_option_search_preserves_department_scope_and_inactive_name_redaction(
-    integration_db: Session,
+    integration_db: Session, actor_state: str,
 ) -> None:
     from app.main import create_app
 
@@ -98,7 +100,10 @@ def test_option_search_preserves_department_scope_and_inactive_name_redaction(
     visible_actor.display_name = "Scoped needle"
     hidden_actor.display_name = "Hidden needle"
     inactive_actor.display_name = "Inactive needle"
-    inactive_actor.status = UserStatus.DISABLED.value
+    if actor_state == "disabled":
+        inactive_actor.status = UserStatus.DISABLED.value
+    else:
+        sole_active_membership(db, inactive_actor.id).invitation_sent_at = inactive_actor.created_at
     _seed(
         db,
         [

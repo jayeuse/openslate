@@ -262,7 +262,7 @@ def list_audit_log_options(
     actor_conditions = [recent_actor_rows.c.actor_rank == 1]
     if pattern is not None:
         current_name_matches = exists(
-            select(User.id).where(
+            select(User.id).join(Membership, Membership.user_id == User.id).where(
                 User.id == recent_actor_rows.c.performed_by,
                 User.status == UserStatus.ACTIVE.value,
                 User.is_deleted.is_(False),

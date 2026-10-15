@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.boards.activity_router import router
 from app.systems.boards.models import BoardWidget
@@ -94,7 +95,10 @@ def test_board_activity_lists_metadata_groups_and_tiles_without_content(
     )
 
 
-def test_board_activity_hides_the_labels_of_inactive_actors(integration_owner_db: Session) -> None:
+@pytest.mark.parametrize("actor_state", ["disabled", "unaccepted"])
+def test_board_activity_hides_the_labels_of_inactive_actors(
+    integration_owner_db: Session, actor_state: str,
+) -> None:
     db = integration_owner_db
     author, viewer = member(db), member(db)
     board = project_board(db)
@@ -102,7 +106,10 @@ def test_board_activity_hides_the_labels_of_inactive_actors(integration_owner_db
     set_audit_actor(db, author.id)
     board.name = "Renamed"
     db.commit()
-    author.status = "disabled"
+    if actor_state == "disabled":
+        author.status = "disabled"
+    else:
+        sole_active_membership(db, author.id).invitation_sent_at = author.created_at
     db.commit()
 
     result = client(db, viewer, router).get(f"/api/boards/{board.id}/activity").json()
