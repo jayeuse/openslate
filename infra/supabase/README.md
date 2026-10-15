@@ -93,7 +93,7 @@ Restart the selected services in the documented order, verify installation/schem
 
 ### Upgrade from a commit with file scanning
 
-Installations from commits before 2026-10-05 ran a `clamav` service, a `scanner-worker` service and a second private bucket for unscanned uploads. Do these steps once, inside the normal update outage, after the offline backup and before you start the new application services:
+Installations from commits before `3343730f` ("retire the ClamAV and scanner-worker services", 2026-10-05) ran a `clamav` service, a `scanner-worker` service and a second private bucket for unscanned uploads. Do these steps once, inside the normal update outage, after the offline backup and before you start the new application services:
 
 1. Stop the application: `docker compose --project-name <instance> --env-file <private-env-path> -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml stop caddy api`.
 2. List the retired containers of this installation only. The project label limits the result to `<instance>`:

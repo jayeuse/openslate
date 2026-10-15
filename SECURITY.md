@@ -154,9 +154,11 @@ last-reviewed: 2026-10-15
 
 ### Rules
 
-**SEC-R1.** A tool MUST NOT put details of an unfixed vulnerability in a public place: issue, pull request title, body, or comment, commit message, branch name, code comment, or discussion.
+**SEC-R1.** A tool MUST NOT put details of an unfixed vulnerability in code on `main` in a public place: issue, pull request title, body, or comment, commit message, branch name, code comment, or discussion. A problem that exists only in the unmerged changes of a pull request MAY be described in that pull request's review, with the steps that SEC-R4 asks for, because no installation runs that code. If the same problem also exists on `main`, the review says only "possible security issue, details sent privately" and the tool drafts the private report for the user (SEC-R2).
 - Correct: "Commit message: `fix(<area>): tighten <control>`" with details only in the private advisory.
 - Wrong: "Commit message: `fix <attack> that bypasses <control> in <path>:<line>`" before the advisory is published.
+- Correct: "Review comment on PR #<n>: P1, this new route in the diff skips `scope.py`; steps: ..." (the problem exists only in the pull request).
+- Wrong: "Review comment: the existing `<route>` on main skips the access check; here is how to exploit it."
 
 **SEC-R2.** A tool MUST submit a vulnerability report only through the `contact` URL, and only when a human user tells it to. A tool MUST NOT submit reports on its own.
 - Correct: "Drafted the advisory text; the user submitted it."
@@ -198,5 +200,5 @@ last-reviewed: 2026-10-15
 | File allowlist, archive bounds, parser subprocess limits | `backend/app/systems/platform/files/` |
 | Private bucket; downloads as attachments with `nosniff` | `docs/architecture/14-security-architecture.md` |
 | `AuditSession` for every application mutation; no bulk or raw ORM changes | `docs/architecture/10-audit-and-history.md` |
-| Secrets stay out of the browser bundle and the API env | `docs/architecture/17-configuration.md` |
+| No secret reaches the browser bundle; provider bootstrap secrets (`DATABASE_BOOTSTRAP_URL`, `POSTGRES_PASSWORD`, the JWT signing keys) stay out of the API env | `docs/architecture/17-configuration.md` |
 | SHA-pinned Actions; least-privilege token permissions; no checkout of pull-request code under `pull_request_target` | `.github/workflows/` |

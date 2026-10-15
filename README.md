@@ -130,14 +130,14 @@ uv run alembic check
 uv run python operations/provision_storage.py
 ```
 
-### Update a development checkout from before 2026-10-05
+### Update a development checkout from before the scanner removal
 
 Tier 2 enables permanent delete in `.env.example` for new installations.
 `LIFECYCLE_PURGE_ENABLED` remains required. An upgrade keeps the existing
 installation's value; changing the example does not enable it in an existing
 private `.env`.
 
-Installations from commits before 2026-10-05 had antivirus file scanning. If
+Installations from commits before `3343730f` (2026-10-05) had antivirus file scanning. If
 your `.env` and local stack come from such a commit, do these steps once after
 you update the checkout:
 
