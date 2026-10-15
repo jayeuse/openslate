@@ -269,9 +269,7 @@ def test_the_account_check_uses_the_given_instant(instant: datetime, unrestricte
         expires_at=datetime(2020, 1, 1, 12, 0, tzinfo=UTC),
     )
     db = Mock(spec=Session)
-    db.execute.return_value.tuples.return_value.all.return_value = [
-        (membership, None, None, None, None)
-    ]
+    db.scalars.return_value.all.return_value = [membership]
     db.dirty = set()
 
     assert effective_levels(db, administrator, now=instant).unrestricted is unrestricted

@@ -276,6 +276,8 @@ Cloud tag: neutral.
 
 Acceptance: the matrix passes. The full backend coverage lane passes on the S04–S07 branch.
 
+Restore the original exact statement budgets in `backend/tests/relationships_integration/test_statement_budgets.py`: GET Record 4, POST Record 13, PATCH Record 14, POST Relationship 13, and PUT Relationship 15. Remove the temporary S04 membership-read allowance after integrating S05 `get_current_membership`.
+
 **Owner checkpoint.** After S07, the implementation agent stops and writes a checkpoint in the run record: the schema diagram, the D-row values used, and the test evidence. The owner reviews and releases Phase C.
 
 ### 5.6 W6. Organization scope in subsystems (S08, S09)

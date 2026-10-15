@@ -46,12 +46,5 @@ def override_catalog_authorization(application: FastAPI, db: Session | None = No
             if query.column_descriptions[0]["entity"] is Membership
             else original(query) if callable(original) else result
         )
-        executed, original_execute = db.execute.return_value, db.execute.side_effect
-        db.execute.side_effect = lambda query, *args, **kwargs: (
-            Mock(tuples=lambda: Mock(all=lambda: [(membership, None, None, None, None)]))
-            if query.column_descriptions[0]["type"] is Membership
-            else original_execute(query, *args, **kwargs)
-            if callable(original_execute) else executed
-        )
     for dependency in catalog_actor_dependencies():
         application.dependency_overrides[dependency] = lambda: actor

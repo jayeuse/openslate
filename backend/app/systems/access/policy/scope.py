@@ -23,8 +23,9 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import Select, and_, exists, false, or_, select, true
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.base_model import utc_now
@@ -164,47 +165,36 @@ def effective_levels(db: Session, user: User, *, now: datetime | None = None) ->
 def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
     """Rule 2 and the reads; :func:`_fold_access` applies the other rules."""
 
-    # TEMPORARY: removed in S07
-    active_membership = aliased(Membership, select(Membership).where(
-        Membership.user_id == user.id,
-        Membership.status == UserStatus.ACTIVE.value,
-        Membership.is_deleted.is_(False),
-    ).limit(2).subquery())
-    group_access = (
-        select(
-            GroupAccess.group_id, GroupAccess.department_id,
-            GroupAccess.module_id, GroupAccess.level,
-        )
-        .join(GroupMember, GroupMember.group_id == GroupAccess.group_id)
-        .join(Group, Group.id == GroupAccess.group_id)
-        .where(
-            GroupMember.user_id == user.id,
-            GroupMember.is_deleted.is_(False),
-            Group.is_deleted.is_(False),
-            GroupAccess.is_deleted.is_(False),
-        ).subquery()
-    )
-    pending = any(isinstance(row, Membership) and row.user_id == user.id for row in db.dirty)
-    membership_rows = db.execute(
-        select(active_membership, group_access.c.group_id, group_access.c.department_id,
-               group_access.c.module_id, group_access.c.level)
-        .select_from(active_membership).outerjoin(group_access, true())
-        .execution_options(populate_existing=not pending, autoflush=False)
-    ).tuples().all()
-    if len({row[0].id for row in membership_rows}) != 1:
+    # The temporary read-only bridge does not flush; resolve current transaction state first.
+    db.flush()
+    try:
+        membership = sole_active_membership(db, user.id)
+    except HTTPException:
         return _Resolution(NO_ACCESS)
-    membership = membership_rows[0][0]
     if (user.status != UserStatus.ACTIVE.value or not is_established_user(membership)
             or not is_identity_eligible(user, membership, now=now)):
         return _Resolution(NO_ACCESS)
     role = membership.role
     if role == UserRole.ADMIN.value:
         return _fold_access(role, (), {})
-    rows: list[AccessRow] = [
-        (group_id, department_id, module_id, level)
-        for _, group_id, department_id, module_id, level in membership_rows
-        if group_id is not None
-    ]
+    rows: list[AccessRow] = list(
+        db.execute(
+            select(
+                GroupAccess.group_id,
+                GroupAccess.department_id,
+                GroupAccess.module_id,
+                GroupAccess.level,
+            )
+            .join(GroupMember, GroupMember.group_id == GroupAccess.group_id)
+            .join(Group, Group.id == GroupAccess.group_id)
+            .where(
+                GroupMember.user_id == user.id,
+                GroupMember.is_deleted.is_(False),
+                Group.is_deleted.is_(False),
+                GroupAccess.is_deleted.is_(False),
+            )
+        ).tuples()
+    )
     if not rows:
         return _Resolution(NO_ACCESS)
     department_ids = {row[1] for row in rows if row[2] is None}
@@ -214,7 +204,7 @@ def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
         for module_id, department_id in db.execute(
             select(Module.id, Module.department_id).where(
                 or_(Module.department_id.in_(department_ids), Module.id.in_(module_ids))
-            ).execution_options(autoflush=False)
+            )
         ).tuples()
     }
     return _fold_access(role, rows, module_departments)

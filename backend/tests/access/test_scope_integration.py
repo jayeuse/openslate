@@ -153,6 +153,25 @@ def test_deleted_groups_memberships_and_rows_give_nothing(integration_db: Sessio
     assert level_for(integration_db, member, inventory.id, products.id) is None
 
 
+@pytest.mark.parametrize("removed", ["access", "membership"])
+def test_resolution_sees_access_removed_in_the_same_transaction(
+    integration_db: Session, removed: str,
+) -> None:
+    member = add_user(integration_db)
+    department = add_department(integration_db)
+    module = add_module(integration_db, department)
+    grant = make_group_access(integration_db, [member], department, level=READ)
+    membership = sole_active_membership(integration_db, member.id)
+    assert effective_levels(integration_db, member).module_ids(READ) == frozenset({module.id})
+
+    if removed == "access":
+        integration_db.delete(grant)
+    else:
+        membership.status = UserStatus.DISABLED.value
+
+    assert effective_levels(integration_db, member).module_ids(READ) == frozenset()
+
+
 @pytest.mark.parametrize(
     "state", ["none", "pending", "disabled", "deleted", "multiple", "unaccepted", "demoted"]
 )
@@ -182,7 +201,7 @@ def test_resolution_refuses_absent_ambiguous_or_stale_authority(integration_owne
 
 
 @pytest.mark.parametrize("entity", ["account", "membership"])
-def test_resolution_preserves_pending_changes_without_flushing(integration_owner_db, entity):
+def test_resolution_flushes_pending_changes_without_discarding_them(integration_owner_db, entity):
     db = integration_owner_db
     user = add_user(db)
     membership = sole_active_membership(db, user.id)
@@ -193,11 +212,10 @@ def test_resolution_preserves_pending_changes_without_flushing(integration_owner
         (user, "display_name", "Pending profile change") if entity == "account" else
         (membership, "expires_at", utc_now() + timedelta(days=1))
     )
-    previous = getattr(row, field)
     setattr(row, field, changed)
     assert allowed_module_ids(db, user, READ) == frozenset({module.id})
-    assert row in db.dirty
+    assert row not in db.dirty
     assert getattr(row, field) == changed
     assert db.connection().scalar(
         select(getattr(type(row), field)).where(type(row).id == row.id)
-    ) == previous
+    ) == changed
