@@ -698,6 +698,9 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     db.scalars.side_effect = lambda query: Mock(all=lambda: (
         [membership] if query.column_descriptions[0]["entity"] is type(membership) else [closed]
     ))
+    db.execute.return_value.tuples.return_value.all.return_value = [
+        (membership, None, None, None, None)
+    ]
 
     update_record(
         record.id,

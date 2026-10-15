@@ -62,16 +62,17 @@ def _add_fields(fixture: Any) -> tuple[UUID, UUID]:
         connection.execute(
             text(
                 "INSERT INTO public.fields "
-                "(id, module_id, name, type, required, position, config, "
+                "(id, org_id, module_id, name, type, required, position, config, "
                 "relationship_target_module_id, relationship_multiple_targets, "
                 "relationship_multiple_sources, is_deleted) VALUES "
-                "(:text_id, :source, :text_name, 'text', false, 3, "
+                "(:text_id, :org_id, :source, :text_name, 'text', false, 3, "
                 '\'{"kind": "text", "defaultValue": ""}\'::jsonb, NULL, NULL, NULL, false), '
-                "(:link_id, :source, :link_name, 'relationship', false, 4, '{}'::jsonb, "
+                "(:link_id, :org_id, :source, :link_name, 'relationship', false, 4, '{}'::jsonb, "
                 ":target, true, true, false)"
             ),
             {
                 "text_id": text_field,
+                "org_id": fixture.org_id,
                 "link_id": link_field,
                 "source": graph.source_module_id,
                 "target": graph.target_module_id,
