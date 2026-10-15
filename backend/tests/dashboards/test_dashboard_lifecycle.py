@@ -24,6 +24,8 @@ from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope
 from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 
 
 def _chart_config(module: Module) -> dict[str, object]:
@@ -31,11 +33,14 @@ def _chart_config(module: Module) -> dict[str, object]:
 
 
 def _closed_module(db) -> tuple[Department, Module]:
+    org = organization(db)
+    create_document(db, org)
     now = datetime.now(UTC)
-    department = Department(department_name=f"Dashboard purge {uuid7().hex}")
+    department = Department(org_id=org.id, department_name=f"Dashboard purge {uuid7().hex}")
     db.add(department)
     db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=f"Closed module {uuid7().hex}",
         is_deleted=True,
@@ -151,10 +156,12 @@ def test_module_purge_blocks_archived_and_deleted_dashboard_widgets_without_dele
     integration_db,
 ) -> None:
     department, module = _closed_module(integration_db)
-    other_department = Department(department_name=f"Other dashboard module {uuid7().hex}")
+    other_department = Department(org_id=department.org_id,
+                                  department_name=f"Other dashboard module {uuid7().hex}")
     integration_db.add(other_department)
     integration_db.flush()
     other_module = Module(
+        org_id=other_department.org_id,
         department_id=other_department.id,
         module_name="Another module",
     )
@@ -162,25 +169,30 @@ def test_module_purge_blocks_archived_and_deleted_dashboard_widgets_without_dele
     integration_db.flush()
     now = datetime.now(UTC)
     archived_dashboard = Dashboard(
+        org_id=department.org_id,
         department_id=department.id,
         name="Archived multi-module dashboard",
         is_deleted=True,
         deleted_at=now,
     )
-    active_dashboard = Dashboard(department_id=department.id, name="Active dashboard")
+    active_dashboard = Dashboard(org_id=department.org_id,
+                                 department_id=department.id, name="Active dashboard")
     integration_db.add_all([archived_dashboard, active_dashboard])
     integration_db.flush()
     archived_target_widget = DashboardWidget(
+        org_id=archived_dashboard.org_id,
         dashboard_id=archived_dashboard.id,
         position=0,
         config=_chart_config(module),
     )
     other_module_widget = DashboardWidget(
+        org_id=archived_dashboard.org_id,
         dashboard_id=archived_dashboard.id,
         position=1,
         config=_chart_config(other_module),
     )
     deleted_target_widget = DashboardWidget(
+        org_id=active_dashboard.org_id,
         dashboard_id=active_dashboard.id,
         position=0,
         config=_chart_config(module),
@@ -235,10 +247,12 @@ def test_module_purge_blocks_archived_and_deleted_dashboard_widgets_without_dele
 @pytest.mark.integration
 def test_module_purge_plan_drifts_when_its_dashboard_and_widget_change(integration_db) -> None:
     department, module = _closed_module(integration_db)
-    dashboard = Dashboard(department_id=department.id, name="Purge drift dashboard")
+    dashboard = Dashboard(org_id=department.org_id,
+                          department_id=department.id, name="Purge drift dashboard")
     integration_db.add(dashboard)
     integration_db.flush()
     widget = DashboardWidget(
+        org_id=dashboard.org_id,
         dashboard_id=dashboard.id,
         position=0,
         config=_chart_config(module),
@@ -329,6 +343,7 @@ def test_field_purge_blocks_retained_widget_reference_then_preserves_dashboard_o
     department, module = _closed_module(integration_db)
     now = datetime.now(UTC)
     target = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name=f"Referenced {location}",
         type=field_type,
@@ -339,6 +354,7 @@ def test_field_purge_blocks_retained_widget_reference_then_preserves_dashboard_o
         deleted_at=now,
     )
     other = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Unrelated dimension",
         type=FieldType.TEXT,
@@ -352,6 +368,7 @@ def test_field_purge_blocks_retained_widget_reference_then_preserves_dashboard_o
     archived = location == "date_field"
     deleted = location == "measure"
     dashboard = Dashboard(
+        org_id=department.org_id,
         department_id=department.id,
         name=f"Field purge {location}",
         is_deleted=archived,
@@ -360,6 +377,7 @@ def test_field_purge_blocks_retained_widget_reference_then_preserves_dashboard_o
     integration_db.add(dashboard)
     integration_db.flush()
     referencing_widget = DashboardWidget(
+        org_id=dashboard.org_id,
         dashboard_id=dashboard.id,
         position=0,
         config=_field_chart_config(module, target, other, location),
@@ -367,6 +385,7 @@ def test_field_purge_blocks_retained_widget_reference_then_preserves_dashboard_o
         deleted_at=now if deleted else None,
     )
     unrelated_widget = DashboardWidget(
+        org_id=dashboard.org_id,
         dashboard_id=dashboard.id, position=1, config=safe_config
     )
     integration_db.add_all([referencing_widget, unrelated_widget])
@@ -418,13 +437,16 @@ def test_department_purge_removes_its_dashboards_and_widgets(integration_db) -> 
     department.is_deleted = True
     department.deleted_at = datetime.now(UTC)
     now = datetime.now(UTC)
-    active = Dashboard(department_id=department.id, name="Department dashboard")
+    active = Dashboard(org_id=department.org_id,
+                       department_id=department.id, name="Department dashboard")
     archived = Dashboard(
+        org_id=department.org_id,
         department_id=department.id, name="Archived", is_deleted=True, deleted_at=now
     )
     integration_db.add_all([active, archived])
     integration_db.flush()
-    widget = DashboardWidget(dashboard_id=active.id, position=0, config=_chart_config(module))
+    widget = DashboardWidget(org_id=active.org_id,
+                             dashboard_id=active.id, position=0, config=_chart_config(module))
     integration_db.add(widget)
     integration_db.commit()
     ids = (department.id, active.id, archived.id, widget.id)

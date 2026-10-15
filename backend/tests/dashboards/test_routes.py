@@ -242,6 +242,7 @@ def test_dashboard_rejects_stale_record_widget_fields_without_saving(
     owner = _actor(db)
     module, _ = _module(db, name="Dashboard records query")
     deleted_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Deleted field",
         type=FieldType.TEXT,
@@ -275,7 +276,8 @@ def test_dashboards_are_hidden_outside_departments_the_user_can_read(
 ) -> None:
     db = integration_owner_db
     department = _department(db, "Hidden dashboards")
-    dashboard = Dashboard(department_id=department.id, name="Department dashboard")
+    dashboard = Dashboard(org_id=department.org_id,
+                          department_id=department.id, name="Department dashboard")
     db.add(dashboard)
     db.flush()
     outsider = add_user(db, "dash-outsider")

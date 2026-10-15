@@ -30,7 +30,8 @@ def view_list(query_db):
 
 
 def make_view(world, name, **values):
-    view = SavedView(module_id=world.module.id, name=name, definition={}, **values)
+    view = SavedView(org_id=world.module.org_id,
+                     module_id=world.module.id, name=name, definition={}, **values)
     world.db.add(view)
     world.db.flush()
     return view
@@ -107,7 +108,8 @@ def test_implicit_order_keeps_name_ties_and_filters_before_pages(view_list):
     archived = make_view(world, "Match archived default", is_default=True, is_deleted=True)
     make_view(world, "Other view")
     other_module, _, _ = setup_rows(world.db, "text", [])
-    world.db.add(SavedView(module_id=other_module.id, name="Match hidden module", definition={}))
+    world.db.add(SavedView(org_id=other_module.org_id,
+                          module_id=other_module.id, name="Match hidden module", definition={}))
     world.db.commit()
 
     pages = [read_page(world, search="Match", limit=1, offset=offset) for offset in range(3)]
