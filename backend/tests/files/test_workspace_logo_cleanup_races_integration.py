@@ -37,7 +37,9 @@ def test_cleanup_provider_io_has_no_workspace_file_or_quota_transaction_locks(lo
     def independent_locks():
         with Session(world.owner) as db:
             lock_quota(db)
-            db.scalar(select(WorkspaceProfile).with_for_update(nowait=True))
+            db.scalar(select(WorkspaceProfile).where(
+                WorkspaceProfile.id == world.logo_org_id
+            ).with_for_update(nowait=True))
             db.scalar(select(File).where(File.id == old).with_for_update(nowait=True))
             probed.append(current(world)[0])
 
@@ -114,7 +116,9 @@ def test_contended_admission_is_bounded_and_never_starts_storage_effect(logo_wor
     before = current(world)
     with Session(world.owner) as blocker:
         if locked == "workspace":
-            blocker.scalar(select(WorkspaceProfile).with_for_update())
+            blocker.scalar(select(WorkspaceProfile).where(
+                WorkspaceProfile.id == world.logo_org_id
+            ).with_for_update())
         elif locked == "file":
             blocker.scalar(select(File).where(File.id == old).with_for_update())
         else:

@@ -114,8 +114,14 @@ def test_avatar_pending_quota_charges_canonical_image_budget(avatar_world):
 
     world = avatar_world
     with Session(world.owner) as db:
+        from app.systems.access.users.models import Membership
+
+        org_id = db.scalars(
+            select(Membership.org_id).where(Membership.user_id == world.actor_id)
+        ).one()
         db.add(
             File(
+                org_id=org_id,
                 purpose="workspace_logo",
                 creator_id=world.actor_id,
                 filename="logo.png",
@@ -126,6 +132,7 @@ def test_avatar_pending_quota_charges_canonical_image_budget(avatar_world):
         )
         # Two actual pending images consume two canonical budgets, not two bytes.
         pending = File(
+            org_id=org_id,
             purpose="workspace_logo",
             creator_id=world.actor_id,
             filename="last.png",

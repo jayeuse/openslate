@@ -15,13 +15,14 @@ from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable
 from app.systems.platform.files.quota import lock_quota
 from tests.files.user_avatar_support import (
-    avatar_world as avatar_world,
-)
-from tests.files.user_avatar_support import (
+    actor_role,
     binding,
     native_avatar,
     profile_patch,
     stored_file,
+)
+from tests.files.user_avatar_support import (
+    avatar_world as avatar_world,
 )
 from tests.files.user_avatar_support import (
     policy_world as policy_world,
@@ -79,15 +80,11 @@ def test_cleanup_partial_503_keeps_saved_profile_and_admin_only_reconciliation(
     # A same-binding retry never retries cleanup or claims/deletes the current image.
     assert profile_patch(world, avatar_file_id=str(new)).status_code == 200
     assert stored_file(world, new).state == "ready"
-    with Session(world.owner) as db:
-        db.get(User, world.actor_id).role = "member"
-        db.commit()
+    actor_role(world, "member")
     assert (
         world.client.post(f"/api/files/{old}/reconcile", headers=world.headers()).status_code == 403
     )
-    with Session(world.owner) as db:
-        db.get(User, world.actor_id).role = "admin"
-        db.commit()
+    actor_role(world, "admin")
     world.storage.delete_effect = None
     world.storage.delete = lambda key: world.storage.objects.pop(key, None)
     done = world.client.post(f"/api/files/{old}/reconcile", headers=world.headers())
@@ -154,12 +151,19 @@ def test_profile_refuses_unbindable_avatar_without_mutating_old_binding(avatar_w
 
     world = avatar_world
     old, _ = native_avatar(world, bind=True)
-    new, _ = native_avatar(world, owner_id=world.target_id if defect == "foreign" else None)
+    if defect == "wrong_purpose":
+        from app.systems.access.users.models import Membership
+
+        with Session(world.owner) as db:
+            org_id = db.scalars(
+                select(Membership.org_id).where(Membership.user_id == world.actor_id)
+            ).one()
+        new, _ = native_avatar(world, purpose="workspace_logo", org_id=org_id)
+    else:
+        new, _ = native_avatar(world, owner_id=world.target_id if defect == "foreign" else None)
     with Session(world.owner) as db:
         file = db.get(File, new)
-        if defect == "wrong_purpose":
-            file.purpose = "workspace_logo"
-        elif defect == "awaiting":
+        if defect == "awaiting":
             file.state = "awaiting_upload"
         elif defect == "archived":
             file.is_deleted = True
