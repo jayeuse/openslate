@@ -272,13 +272,14 @@ def _commit_module_grant(engine: Engine, actor_id: UUID) -> tuple[UUID, UUID, UU
             status=UserStatus.ACTIVE.value,
             role="member",
         )
-        group = Group(name=f"Access check {uuid7()}")
+        group = Group(org_id=module.org_id, name=f"Access check {uuid7()}")
         db.add_all([member, group])
         db.flush()
         db.add_all(
             [
-                GroupMember(group_id=group.id, user_id=member.id),
+                GroupMember(org_id=group.org_id, group_id=group.id, user_id=member.id),
                 GroupAccess(
+                    org_id=group.org_id,
                     group_id=group.id,
                     department_id=module.department_id,
                     module_id=module.id,

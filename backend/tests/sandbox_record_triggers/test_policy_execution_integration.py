@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers.execution import (
@@ -78,9 +79,9 @@ def _remove_publisher_access(db: Session, actor: User, change: str) -> None:
     if change == "disabled":
         actor.status = UserStatus.DISABLED.value
     elif change == "expired":
-        actor.expires_at = utc_now() - timedelta(seconds=1)
+        sole_active_membership(db, actor.id).expires_at = utc_now() - timedelta(seconds=1)
     elif change == "demoted":
-        actor.role = UserRole.MEMBER.value
+        sole_active_membership(db, actor.id).role = UserRole.MEMBER.value
     else:
         raise AssertionError(change)
 
@@ -121,6 +122,7 @@ def test_delayed_person_assignment_rechecks_reader_and_rolls_back_prior_action(
     assignee = add_user(db, "delayed-assignee", role=UserRole.MEMBER)
     make_group_access(db, [assignee], module.department, module)
     person_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Assignee",
         type="user",
@@ -132,6 +134,7 @@ def test_delayed_person_assignment_rechecks_reader_and_rolls_back_prior_action(
     db.flush()
     db.add(
         RecordTriggerAction(
+            org_id=definition.org_id,
             trigger_id=definition.id,
             target_field_id=person_field.id,
             position=1,

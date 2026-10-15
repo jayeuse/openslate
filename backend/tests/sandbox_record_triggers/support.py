@@ -16,6 +16,7 @@ from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.boards.models import Board
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
@@ -36,6 +37,7 @@ from app.systems.sandbox.record_triggers.models import (
 )
 from tests.conftest import create_member
 from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 from tests.sandbox_documents import field_payload, sandbox_document_payload, trigger_payload
 from tests.sandbox_publications.support import publish_saved
 
@@ -43,6 +45,7 @@ from tests.sandbox_publications.support import publish_saved
 @dataclass(frozen=True)
 class DocumentBaseline:
     id: UUID
+    org_id: UUID
     revision: int
     document: dict[str, Any]
     content_hash: str
@@ -64,10 +67,14 @@ def _options(field_name: str, labels: tuple[str, ...]) -> list[dict[str, str]]:
 
 
 def document_baseline(db: Session) -> DocumentBaseline:
-    row = db.scalar(select(SandboxDocumentRow))
+    org = organization(db)
+    row = db.scalar(select(SandboxDocumentRow).where(SandboxDocumentRow.org_id == org.id))
+    if row is None:
+        row = create_document(db, org)
     assert row is not None
     return DocumentBaseline(
         id=row.id,
+        org_id=row.org_id,
         revision=row.revision,
         document=deepcopy(row.document),
         content_hash=row.content_hash,
@@ -164,7 +171,8 @@ def cleanup_committed_trigger(
                 updated_at=baseline.updated_at,
             )
         )
-        audit_filter = or_(AuditLog.performed_by == actor_id, AuditLog.entity_id == actor_id)
+        audit_filter = or_(AuditLog.performed_by == actor_id, AuditLog.entity_id == actor_id,
+                           AuditLog.org_id == baseline.org_id)
         if definition_id is not None:
             audit_filter = or_(
                 audit_filter,
@@ -175,6 +183,8 @@ def cleanup_committed_trigger(
         connection.execute(delete(AuditLog).where(audit_filter))
         connection.execute(delete(Membership).where(Membership.user_id == actor_id))
         connection.execute(delete(User).where(User.id == actor_id))
+        connection.execute(delete(SandboxDocumentRow).where(SandboxDocumentRow.id == baseline.id))
+        connection.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == baseline.org_id))
 
 
 def publish_trigger(
@@ -199,6 +209,7 @@ def publish_trigger(
         request_method="POST",
         request_path="/api/sandbox/publications",
     )
+    document_baseline(db)
     initial = read_document(db)
     if triggers is not None and record_trigger is not None:
         raise ValueError("Pass either trigger or triggers")
