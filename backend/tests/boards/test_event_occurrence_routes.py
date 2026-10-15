@@ -40,12 +40,14 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
 ) -> None:
     db = integration_owner_db
     owner = _actor(db)
-    board = Board(scope="project", name=f"Calendar {uuid7().hex[:12]}", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name=f"Calendar {uuid7().hex[:12]}", status="active")
     db.add(board)
     db.flush()
     board_group(db, board, [owner], AccessLevel.WRITE)
     spring_start = datetime(2026, 3, 7, 7, 30, tzinfo=UTC)
     spring = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Spring clock",
@@ -59,6 +61,7 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
     db.add(spring)
     db.add(
         BoardEvent(
+            org_id=board.org_id,
             board_id=board.id,
             author_id=owner.id,
             title="All day",
@@ -71,6 +74,7 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
     fall_start = datetime(2026, 10, 31, 5, 30, tzinfo=UTC)
     db.add(
         BoardEvent(
+            org_id=board.org_id,
             board_id=board.id,
             author_id=owner.id,
             title="Fall clock",
@@ -83,6 +87,7 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
         )
     )
     monthly_event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Monthly 31st",
@@ -117,6 +122,7 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
 
     db.add(
         BoardEvent(
+            org_id=board.org_id,
             board_id=board.id,
             author_id=owner.id,
             title="Dense recurring span",
@@ -135,6 +141,7 @@ def test_event_occurrence_window_paging_dst_and_explicit_density_limits(
 
     db.add_all(
         BoardEvent(
+            org_id=board.org_id,
             board_id=board.id,
             author_id=owner.id,
             title=f"Extra {index}",
@@ -160,11 +167,13 @@ def test_event_occurrence_search_escapes_like_wildcards_and_filters_before_count
 ) -> None:
     db = integration_owner_db
     owner = _actor(db)
-    board = Board(scope="project", name=f"Search calendar {uuid7().hex[:12]}", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name=f"Search calendar {uuid7().hex[:12]}", status="active")
     db.add(board)
     db.flush()
     board_group(db, board, [owner], AccessLevel.READ)
     visible_literal = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Budget 100%_ signed",
@@ -174,6 +183,7 @@ def test_event_occurrence_search_escapes_like_wildcards_and_filters_before_count
         timezone_name="UTC",
     )
     visible_similar = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Budget 100XY signed",
@@ -213,11 +223,13 @@ def test_timed_event_reads_and_occurrences_survive_non_utc_postgres_session(
 ) -> None:
     db = integration_owner_db
     owner = _actor(db)
-    board = Board(scope="project", name=f"Offset calendar {uuid7().hex[:12]}", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name=f"Offset calendar {uuid7().hex[:12]}", status="active")
     db.add(board)
     db.flush()
     board_group(db, board, [owner], AccessLevel.READ)
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="New York morning",

@@ -18,8 +18,11 @@ from tests.rbac.support import add_department, add_module
 pytestmark = pytest.mark.integration
 
 
-def _widget(board_id: UUID, module_id: UUID, name: str, position: int) -> BoardWidget:
+def _widget(
+    board_id: UUID, module_id: UUID, name: str, position: int, *, org_id: UUID,
+) -> BoardWidget:
     return BoardWidget(
+        org_id=org_id,
         board_id=board_id,
         module_id=module_id,
         name=name,
@@ -40,8 +43,8 @@ def test_board_activity_lists_metadata_groups_and_tiles_without_content(
     module = add_module(db, add_department(db))
     group_row = board_group(db, board, [reader], AccessLevel.READ)
     first, second = (
-        _widget(board.id, module.id, "First tile", 0),
-        _widget(board.id, module.id, "Second tile", 1),
+        _widget(board.id, module.id, "First tile", 0, org_id=board.org_id),
+        _widget(board.id, module.id, "Second tile", 1, org_id=board.org_id),
     )
     db.add_all([first, second])
     db.flush()

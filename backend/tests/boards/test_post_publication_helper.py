@@ -40,6 +40,7 @@ def test_locked_publication_helper_stages_snapshot_until_caller_commits(
     owner = _actor(db, "staged-publication")
     board = _board(db, owner)
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Original notice",
@@ -95,6 +96,7 @@ def test_locked_publication_helper_rejects_another_board_without_mutation(
     original = _board(db, owner)
     unrelated = _board(db, owner)
     item = BoardPost(
+        org_id=original.org_id,
         board_id=original.id,
         author_id=owner.id,
         title="Private notice",
@@ -137,10 +139,12 @@ def test_published_revision_retains_file_snapshot_after_draft_detach(
     owner = _actor(db, "attachment-publication")
     board = _board(db, owner)
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id, author_id=owner.id, title="Attachment notice",
         body="Published with a file",
     )
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=owner.id, filename="notice.pdf", object_key=uuid7().hex,
         expected_size=3, actual_size=3, digest="a" * 64,
@@ -149,6 +153,7 @@ def test_published_revision_retains_file_snapshot_after_draft_detach(
     db.add_all((item, file))
     db.flush()
     link = BoardAttachment(
+        org_id=board.org_id,
         board_id=board.id, file_id=file.id, post_id=item.id
     )
     db.add(link)

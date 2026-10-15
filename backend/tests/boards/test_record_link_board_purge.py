@@ -20,6 +20,7 @@ from app.systems.sandbox.records.models import Record
 from tests.boards.support import client as board_client
 from tests.boards.test_permanent_delete import _actor, _enabled
 from tests.boards.test_record_links import _source
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -30,11 +31,13 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
     db = integration_owner_db
     password = token_urlsafe(32)
     admin = _actor(db, admin=True, password=password)
-    board = Board(scope="project", name="Purge linked Board", status="archived")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Purge linked Board", status="archived")
     module, record = _source(db)
     db.add(board)
     db.flush()
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=admin.id,
         title="Retained event",
@@ -45,6 +48,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
         archived=True,
     )
     notice = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=admin.id,
         title="Archived notice",
@@ -54,6 +58,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
     db.add_all((event, notice))
     db.flush()
     revision = BoardPostRevision(
+        org_id=notice.org_id,
         post_id=notice.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -68,12 +73,14 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
     db.add_all(
         (
             BoardRecordLink(
+                org_id=board.org_id,
                 board_id=board.id,
                 event_id=event.id,
                 record_id=record.id,
                 module_id=module.id,
             ),
             BoardRecordLink(
+                org_id=board.org_id,
                 board_id=board.id,
                 post_id=notice.id,
                 record_id=record.id,
@@ -84,6 +91,7 @@ def test_board_purge_removes_record_links_and_snapshots_without_purging_source(
     db.flush()
     db.add(
         BoardPostRevisionRecordLink(
+            org_id=revision.org_id,
             revision_id=revision.id,
             record_id=record.id,
             module_id=module.id,
