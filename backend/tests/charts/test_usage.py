@@ -17,27 +17,30 @@ pytestmark = pytest.mark.integration
 def _consumers(world, chart_id):
     # Owned retained references model a post-move foreign Dashboard too. This
     # does not claim B2's public attachment behavior or a sample/live write.
-    visible_board = Board(scope="project", name="Visible %_ board")
-    private_board = Board(scope="project", name="PRIVATE BOARD CANARY")
+    visible_board = Board(org_id=world.module.org_id, scope="project", name="Visible %_ board")
+    private_board = Board(org_id=world.module.org_id, scope="project", name="PRIVATE BOARD CANARY")
     visible_dashboard = Dashboard(
+        org_id=world.module.org_id,
         department_id=world.module.department_id, name="Visible dashboard"
     )
     private_dashboard = Dashboard(
+        org_id=world.other_module.org_id,
         department_id=world.other_module.department_id,
         name="PRIVATE DASHBOARD CANARY",
         is_deleted=True,
         deleted_at=utc_now(),
     )
-    group = Group(name="Readable Board " + str(chart_id))
+    group = Group(org_id=visible_board.org_id, name="Readable Board " + str(chart_id))
     world.db.add_all([visible_board, private_board, visible_dashboard, private_dashboard, group])
     world.db.flush()
     world.db.add_all(
         [
-            GroupMember(group_id=group.id, user_id=world.users[key].id)
+            GroupMember(org_id=group.org_id, group_id=group.id, user_id=world.users[key].id)
             for key in ("manager", "reader")
         ]
     )
-    world.db.add(BoardGroup(board_id=visible_board.id, group_id=group.id, level="read"))
+    world.db.add(BoardGroup(org_id=visible_board.org_id,
+                            board_id=visible_board.id, group_id=group.id, level="read"))
     refs = []
     for board, position, deleted in [
         (visible_board, 0, False),
@@ -45,6 +48,7 @@ def _consumers(world, chart_id):
         (private_board, 0, False),
     ]:
         row = BoardWidget(
+            org_id=board.org_id,
             board_id=board.id,
             module_id=world.module.id,
             name="Reference",
@@ -59,6 +63,7 @@ def _consumers(world, chart_id):
         world.db.add(row)
     for dashboard in (visible_dashboard, private_dashboard):
         row = DashboardWidget(
+            org_id=dashboard.org_id,
             dashboard_id=dashboard.id,
             position=0,
             widget_type="chart",
