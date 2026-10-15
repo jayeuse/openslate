@@ -131,7 +131,8 @@ def test_missing_wrong_module_and_hidden_records_have_identical_forbidden_result
     world = batch_world
     own = create(world, "Own")
     other_module = add_module(world.db, add_department(world.db))
-    hidden = Record(module_id=other_module.id, data={"private": "must never return"})
+    hidden = Record(org_id=other_module.org_id,
+                    module_id=other_module.id, data={"private": "must never return"})
     world.db.add(hidden)
     world.db.commit()
     from uuid6 import uuid7
@@ -188,6 +189,7 @@ def test_batch_rejects_unsupported_field_changes_per_item(batch_world, bad_field
     world = batch_world
     row = create(world, "Keep")
     field = Field(
+        org_id=world.module.org_id,
         module_id=world.module.id, name="Unsupported", type="text", position=20, config={}
     )
     if bad_field == "closed":

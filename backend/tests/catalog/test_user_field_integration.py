@@ -34,6 +34,7 @@ def test_assignable_picker_and_record_writes_follow_current_module_readers(
     department = add_department(db)
     module = add_module(db, department)
     assignee = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Assignee",
         type="user",
