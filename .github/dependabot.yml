@@ -1,0 +1,46 @@
+# Monthly grouped updates keep the number of full CI runs low.
+# Security updates still open as soon as an advisory is published.
+# compose.yaml is not listed: its Supabase image pins change only with a tested stack upgrade.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      npm:
+        applies-to: version-updates
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /backend
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      uv-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      uv:
+        applies-to: version-updates
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /infra/docker
+    schedule:
+      interval: monthly
+    groups:
+      docker:
+        patterns: ["*"]

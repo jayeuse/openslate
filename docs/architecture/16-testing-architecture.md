@@ -124,7 +124,8 @@ the shards run `--project=http --workers=2 --test-list=<selected-file>` with the
 lockfile-pinned Chromium browser. The isolated CI job uses the configured default
 of one worker; local Playwright uses up to three workers. UTC, `en-US` and zero
 retries are pinned in the config. Failure contexts/traces and native JSON reports
-have their own artifact paths; the `verify` job preserves one required check.
+have their own artifact paths; the `verify` job preserves one required check
+(`frontend-verify`; the backend workflow has `backend-verify`).
 [`package.json`](../../frontend/package.json) declares `check` (formatting, lint,
 types, contrast), `build`, `test`, and `verify` (`check` → `build` → `test`), plus
 the existing section/affected/full selectors for scoped work. Full verification
