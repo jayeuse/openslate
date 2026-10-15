@@ -14,6 +14,7 @@ QUERY_CANARY = "owned private Chart query canary"
 
 def _chart(db, module, department_id):
     row = Chart(
+        org_id=module.org_id,
         module_id=module.id,
         department_id=department_id,
         name="Owned audit Chart",
