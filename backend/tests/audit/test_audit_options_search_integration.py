@@ -9,13 +9,14 @@ from uuid6 import uuid7
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog
-from tests.rbac.support import _client, add_department, add_user, make_group_access
+from tests.rbac.support import _client, add_department, add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 
 
 def _seed(db: Session, rows: list[AuditLog]) -> None:
     for row in rows:
+        row.org_id = organization(db).id
         object.__setattr__(row, "_audit_internal", True)
     db.add_all(rows)
     db.flush()

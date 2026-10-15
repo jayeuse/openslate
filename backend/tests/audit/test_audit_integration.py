@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
@@ -25,6 +26,7 @@ from tests.rbac.support import (
     add_module,
     add_user,
     make_group_access,
+    organization,
 )
 
 UPDATED_RENAMED_CANARY = token_urlsafe(32)
@@ -64,7 +66,8 @@ def audit_rows(session: Session, entity_id) -> list[AuditLog]:
 
 
 def test_crud_changes_are_audited_with_minimal_snapshots(integration_db: Session) -> None:
-    department = Department(department_name="Integration CRUD")
+    department = Department(org_id=organization(integration_db).id,
+                            department_name="Integration CRUD")
     integration_db.add(department)
     integration_db.flush()
 
@@ -81,6 +84,7 @@ def test_crud_changes_are_audited_with_minimal_snapshots(integration_db: Session
         AuditAction.DELETE,
     ]
     assert rows[0].after == {
+        "org_id": str(department.org_id),
         "department_name": "Integration CRUD",
         "lifecycle_close_operation_id": REDACTED,
     }
@@ -92,7 +96,8 @@ def test_crud_changes_are_audited_with_minimal_snapshots(integration_db: Session
 
 
 def test_rollback_does_not_keep_audit_rows(integration_db: Session) -> None:
-    department = Department(department_name="Integration Rollback")
+    department = Department(org_id=organization(integration_db).id,
+                            department_name="Integration Rollback")
     integration_db.add(department)
     integration_db.flush()
     department_id = department.id
@@ -104,7 +109,8 @@ def test_rollback_does_not_keep_audit_rows(integration_db: Session) -> None:
 
 
 def test_hard_delete_records_the_previous_state(integration_db: Session) -> None:
-    department = Department(department_name="Integration Hard Delete")
+    department = Department(org_id=organization(integration_db).id,
+                            department_name="Integration Hard Delete")
     integration_db.add(department)
     integration_db.flush()
     department_id = department.id
@@ -121,30 +127,36 @@ def test_hard_delete_records_the_previous_state(integration_db: Session) -> None
 def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     integration_db: Session,
 ) -> None:
-    department = Department(department_name=f"Audit Redaction {uuid7()}")
+    department = Department(org_id=organization(integration_db).id,
+                            department_name=f"Audit Redaction {uuid7()}")
     module = Module(
+        org_id=department.org_id,
         department=department,
         module_name="Governance export",
     )
     renamed = Field(
+        org_id=module.org_id,
         module=module,
         name="Original secret",
         type=FieldType.TEXT,
         position=0,
     )
     soft_deleted = Field(
+        org_id=module.org_id,
         module=module,
         name="Closed secret",
         type=FieldType.TEXT,
         position=1,
     )
     added = Field(
+        org_id=module.org_id,
         module=module,
         name="Added secret",
         type=FieldType.TEXT,
         position=2,
     )
     clear = Field(
+        org_id=module.org_id,
         module=module,
         name="Visible value",
         type=FieldType.TEXT,
@@ -154,6 +166,7 @@ def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     integration_db.flush()
 
     record = Record(
+        org_id=module.org_id,
         module=module,
         data={
             str(renamed.id): HISTORICAL_RENAMED_CANARY,
@@ -237,7 +250,9 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
     deleted_actor.is_deleted = True
     deleted_actor.deleted_at = datetime.now(UTC)
     unestablished_actor = add_user(integration_db, f"audit-unestablished-{token}")
-    unestablished_actor.invitation_sent_at = datetime.now(UTC)
+    sole_active_membership(integration_db, unestablished_actor.id).invitation_sent_at = (
+        datetime.now(UTC)
+    )
     removed_actor = add_user(integration_db, f"audit-removed-{token}")
 
     entity_id = uuid7()
@@ -253,6 +268,7 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
     ]
     rows = [
         AuditLog(
+            org_id=organization(integration_db).id,
             id=uuid7(),
             created_at=now + timedelta(seconds=index),
             action=AuditAction.UPDATE,
@@ -266,6 +282,8 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
     for row in rows:
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(rows)
+    integration_db.flush()
+    integration_db.delete(sole_active_membership(integration_db, removed_actor.id))
     integration_db.flush()
     integration_db.delete(removed_actor)
     integration_db.flush()
@@ -312,6 +330,7 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
 
 def _seed_audit_options(session: Session, rows: list[AuditLog]) -> None:
     for row in rows:
+        row.org_id = organization(session).id
         object.__setattr__(row, "_audit_internal", True)
     session.add_all(rows)
     session.flush()

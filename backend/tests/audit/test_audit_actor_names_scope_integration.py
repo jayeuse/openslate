@@ -19,6 +19,7 @@ from tests.rbac.support import (
     add_module,
     add_user,
     make_group_access,
+    organization,
 )
 
 pytestmark = pytest.mark.integration
@@ -43,6 +44,7 @@ def test_department_manager_audit_actor_names_follow_visible_rows(
     finance_entity_id = uuid7()
     logs = [
         AuditLog(
+            org_id=inventory.org_id,
             id=uuid7(),
             created_at=datetime.now(UTC),
             action=AuditAction.UPDATE,
@@ -52,6 +54,7 @@ def test_department_manager_audit_actor_names_follow_visible_rows(
             performed_by=inventory_actor.id,
         ),
         AuditLog(
+            org_id=finance.org_id,
             id=uuid7(),
             created_at=datetime.now(UTC),
             action=AuditAction.UPDATE,
@@ -107,6 +110,7 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
     )
     record_id = uuid7()
     record_log = AuditLog(
+        org_id=organization(integration_db).id,
         id=uuid7(),
         created_at=timestamp,
         action=AuditAction.UPDATE,
@@ -128,6 +132,7 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
         after={"role": f"after-value-{token}", "nested": [3, False]},
     )
     entity_type_log = AuditLog(
+        org_id=organization(integration_db).id,
         id=uuid7(),
         created_at=timestamp,
         action=AuditAction.UPDATE,
@@ -236,6 +241,7 @@ def test_admin_csv_exports_complete_filtered_history_with_safe_cells(
     horizon = datetime(2026, 10, 1, 12, tzinfo=UTC)
     rows = [
         AuditLog(
+            org_id=department.org_id,
             id=uuid7(),
             created_at=horizon,
             action=AuditAction.UPDATE,
@@ -262,6 +268,7 @@ def test_admin_csv_exports_complete_filtered_history_with_safe_cells(
         {"after": {"name": "Decoy", "marker": "literalXX"}},
     ):
         row = AuditLog(
+            org_id=department.org_id,
             id=uuid7(),
             created_at=horizon,
             action=AuditAction.UPDATE,
@@ -343,6 +350,7 @@ def test_admin_csv_accepts_10000_and_refuses_overflow_without_partial_data(
     entity_type = f"cap_{uuid7().hex}"
     rows = [
         AuditLog(
+            org_id=organization(integration_db).id,
             id=uuid7(),
             created_at=datetime.now(UTC),
             action=AuditAction.CREATE,
@@ -363,6 +371,7 @@ def test_admin_csv_accepts_10000_and_refuses_overflow_without_partial_data(
         assert accepted.headers["x-audit-export-count"] == "10000"
         assert len(list(csv.reader(io.StringIO(accepted.text)))) == 10001
         overflow = AuditLog(
+            org_id=organization(integration_db).id,
             id=uuid7(),
             created_at=datetime.now(UTC),
             action=AuditAction.CREATE,
@@ -393,9 +402,12 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
     inventory, finance = add_department(integration_db), add_department(integration_db)
     module, outside = add_module(integration_db, inventory), add_module(integration_db, finance)
     private_module = add_module(integration_db, inventory)
-    title = Field(module_id=module.id, name="Title", type=FieldType.TEXT, position=0)
-    outside_title = Field(module_id=outside.id, name="Title", type=FieldType.TEXT, position=0)
+    title = Field(org_id=module.org_id, module_id=module.id,
+                  name="Title", type=FieldType.TEXT, position=0)
+    outside_title = Field(org_id=outside.org_id, module_id=outside.id,
+                          name="Title", type=FieldType.TEXT, position=0)
     private_title = Field(
+        org_id=private_module.org_id,
         module_id=private_module.id,
         name="Title",
         type=FieldType.TEXT,
@@ -406,9 +418,12 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
     integration_db.flush()
     module.title_field_id, outside.title_field_id = title.id, outside_title.id
     private_module.title_field_id = private_title.id
-    public = Record(module_id=module.id, data={str(title.id): "Visible record"})
-    moved = Record(module_id=module.id, data={})
+    public = Record(
+        org_id=module.org_id, module_id=module.id, data={str(title.id): "Visible record"},
+    )
+    moved = Record(org_id=module.org_id, module_id=module.id, data={})
     secret = Record(
+        org_id=private_module.org_id,
         module_id=private_module.id, data={str(private_title.id): "Private title canary"}
     )
     integration_db.add_all([public, moved, secret])
@@ -419,6 +434,7 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
     unknown_id = uuid7()
     synthetic = [
         AuditLog(
+            org_id=inventory.org_id,
             id=uuid7(),
             action=AuditAction.UPDATE,
             entity_type="legacy_target",
@@ -428,6 +444,7 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
             before={"name": "Before name"},
         ),
         AuditLog(
+            org_id=inventory.org_id,
             id=uuid7(),
             action=AuditAction.DELETE,
             entity_type="legacy_target",
