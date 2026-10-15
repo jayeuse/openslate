@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.backups import exports, service
 from app.systems.manage.backups.models import BackupExportOperation, BackupRun
@@ -230,10 +230,13 @@ def test_export_source_refusal_and_invalidated_claim_never_handoff_secret(export
     with Session(world.auth.owner) as db:
         source = db.get(BackupRun, world.source_id)
         if reason in {"member", "guest"}:
-            db.get(User, world.auth.actor_id).role = reason
+            membership = db.scalars(
+                select(Membership).where(Membership.user_id == world.auth.actor_id)
+            ).one()
+            membership.role = reason
             if reason == "guest":
-                db.get(User, world.auth.actor_id).sponsor_user_id = world.auth.target_id
-                db.get(User, world.auth.actor_id).expires_at = world.auth.clock + timedelta(days=1)
+                membership.sponsor_user_id = world.auth.target_id
+                membership.expires_at = world.auth.clock + timedelta(days=1)
         elif reason == "revoked":
             db.get(IdentitySession, world.auth.session_ids[0]).revoked_at = world.auth.clock
         elif reason == "foreign":
