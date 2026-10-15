@@ -34,6 +34,8 @@ from tests.lifecycle_integration.lifecycle_integration_support import (
     PrimitiveFieldGraph,
     close_rows,
 )
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 from tests.sandbox_record_triggers.support import publish_trigger
 
 pytestmark = [
@@ -138,6 +140,7 @@ def test_external_active_and_closed_relationship_fields_block_module_and_departm
     department = lifecycle_graph.department_x
     external_module = lifecycle_graph.module_y
     active_incoming = Field(
+        org_id=external_module.org_id,
         module=external_module,
         name="Active incoming",
         type=FieldType.RELATIONSHIP,
@@ -147,6 +150,7 @@ def test_external_active_and_closed_relationship_fields_block_module_and_departm
         relationship_multiple_sources=True,
     )
     closed_incoming = Field(
+        org_id=external_module.org_id,
         module=external_module,
         name="Closed incoming",
         type=FieldType.RELATIONSHIP,
@@ -248,6 +252,7 @@ def test_record_purge_preflights_record_trigger_history(
 ) -> None:
     source = lifecycle_graph.source
     event = RecordTriggerEvent(
+        org_id=source.org_id,
         record_id=source.id,
         module_id=source.module_id,
         event_kind="record-created",
@@ -281,6 +286,7 @@ def test_module_purge_preflights_all_record_trigger_dependencies(
 ) -> None:
     _actor, module, fields, definition = publish_trigger(integration_db)
     event = RecordTriggerEvent(
+        org_id=module.org_id,
         module_id=module.id,
         scheduled_trigger_id=definition.id,
         event_kind="schedule",
@@ -296,6 +302,7 @@ def test_module_purge_preflights_all_record_trigger_dependencies(
     integration_db.flush()
     integration_db.add(
         RecordTriggerRun(
+            org_id=event.org_id,
             event_id=event.id,
             trigger_id=definition.id,
             state="succeeded",
@@ -329,12 +336,14 @@ def test_field_purge_preflights_cross_module_trigger_references_including_closed
 ) -> None:
     _actor, module, _fields, definition = publish_trigger(integration_db)
     referenced_module = Module(
+        org_id=module.org_id,
         department_id=module.department_id,
         module_name=f"Trigger references {uuid7()}",
     )
     integration_db.add(referenced_module)
     integration_db.flush()
     referenced_field = Field(
+        org_id=referenced_module.org_id,
         module_id=referenced_module.id,
         name="Cross-module reference",
         type=FieldType.TEXT,
@@ -394,10 +403,13 @@ def test_field_purge_preflights_cross_module_trigger_references_including_closed
 def test_department_purge_removes_its_owned_structural_binding(
     integration_db: Session,
 ) -> None:
-    department = Department(department_name=f"Bound department {uuid7()}")
+    org = organization(integration_db)
+    create_document(integration_db, org)
+    department = Department(org_id=org.id, department_name=f"Bound department {uuid7()}")
     integration_db.add(department)
     integration_db.flush()
     binding = SandboxBinding(
+        org_id=department.org_id,
         kind="department",
         sandbox_id=f"department-{uuid7()}",
         department_id=department.id,

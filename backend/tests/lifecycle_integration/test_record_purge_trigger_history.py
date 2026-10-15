@@ -42,7 +42,8 @@ from app.systems.sandbox.record_triggers.models import (
 from app.systems.sandbox.record_triggers.runner import execute_claim
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine
+from tests.sandbox_designs.fixtures import create_document
 from tests.sandbox_record_triggers.support import publish_trigger
 
 pytestmark = pytest.mark.integration
@@ -50,6 +51,7 @@ pytestmark = pytest.mark.integration
 
 def _event(record: Record, *, root: RecordTriggerEvent | None = None) -> RecordTriggerEvent:
     return RecordTriggerEvent(
+        org_id=record.org_id,
         record_id=record.id,
         module_id=record.module_id,
         event_kind="field-changed" if root else "record-created",
@@ -162,7 +164,8 @@ def test_api_created_record_purge_removes_owned_completed_history_and_records_co
     child = _event(record, root=root)
     api.db.add(child)
     api.db.flush()
-    api.db.add(RecordTriggerRun(event_id=child.id, trigger_id=api.definition.id, state="failed"))
+    api.db.add(RecordTriggerRun(org_id=child.org_id,
+                                event_id=child.id, trigger_id=api.definition.id, state="failed"))
     api.db.commit()
     owned_events = {root.id, child.id}
     owned_runs = set(
@@ -316,6 +319,7 @@ def test_late_failure_rolls_back_history_record_links_audit_and_success_counter(
     record, other = api.create("Atomic purge"), api.create("Link target")
     api.finish()
     field = Field(
+        org_id=api.module.org_id,
         module_id=api.module.id,
         name="Related",
         type=FieldType.RELATIONSHIP,
@@ -326,7 +330,8 @@ def test_late_failure_rolls_back_history_record_links_audit_and_success_counter(
     )
     api.db.add(field)
     api.db.flush()
-    edge = RelationshipEdge(field=field, source_record=record, target_record=other)
+    edge = RelationshipEdge(org_id=field.org_id,
+                            field=field, source_record=record, target_record=other)
     api.db.add(edge)
     api.db.commit()
     api.archive(record)
@@ -376,18 +381,23 @@ def test_worker_claim_lock_aborts_record_purge_without_removing_history(
     """Two real transactions coordinate a retry claim and the displayed purge plan."""
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"])
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
-    owned: set[UUID] = set()
+    org_id = uuid7()
+    owned: set[UUID] = {org_id}
     try:
         with AuditSession(runtime) as setup:
-            department = Department(department_name=f"History race {uuid7()}")
-            module = Module(department=department, module_name="Claim conflict")
-            record = Record(module=module, is_deleted=True, deleted_at=utc_now())
+            org = create_organization(setup, id=org_id)
+            draft = create_document(setup, org)
+            department = Department(org_id=org_id, department_name=f"History race {uuid7()}")
+            module = Module(org_id=department.org_id,
+                            department=department, module_name="Claim conflict")
+            record = Record(org_id=module.org_id,
+                            module=module, is_deleted=True, deleted_at=utc_now())
             setup.add_all([department, module, record])
             setup.flush()
             event = _event(record)
             setup.add(event)
             setup.flush()
-            owned.update([department.id, module.id, record.id, event.id])
+            owned.update([draft.id, department.id, module.id, record.id, event.id])
             record_id, event_id = record.id, event.id
             setup.commit()
         with AuditSession(runtime) as purge_db, AuditSession(runtime) as worker_db:
@@ -413,8 +423,10 @@ def test_worker_claim_lock_aborts_record_purge_without_removing_history(
                 "records",
                 "modules",
                 "departments",
+                "sandbox_documents",
+                "organizations",
             ):
-                key = "entity_id" if table == "audit_logs" else "id"
+                key = "org_id" if table == "audit_logs" else "id"
                 connection.execute(
                     text(f"DELETE FROM public.{table} WHERE {key} IN :ids").bindparams(
                         bindparam("ids", expanding=True)
@@ -432,20 +444,23 @@ def test_structural_purge_history_ownership_follows_records_not_dependencies(
 ) -> None:
     db = integration_db
     actor, external_module, _, definition = publish_trigger(db)
-    department = Department(department_name=f"History scope {uuid7()}", is_deleted=True)
+    department = Department(org_id=external_module.org_id,
+                            department_name=f"History scope {uuid7()}", is_deleted=True)
     db.add(department)
     db.flush()
-    module = Module(department_id=department.id, module_name="History owner", is_deleted=True)
+    module = Module(org_id=department.org_id,
+                    department_id=department.id, module_name="History owner", is_deleted=True)
     db.add(module)
     db.flush()
-    owned = Record(module_id=module.id, data={}, is_deleted=True)
-    external = Record(module_id=external_module.id, data={})
+    owned = Record(org_id=module.org_id, module_id=module.id, data={}, is_deleted=True)
+    external = Record(org_id=external_module.org_id, module_id=external_module.id, data={})
     db.add_all([owned, external])
     db.flush()
     root = _event(owned)
     db.add(root)
     db.flush()
-    run = RecordTriggerRun(event_id=root.id, trigger_id=definition.id, state="succeeded")
+    run = RecordTriggerRun(org_id=root.org_id,
+                           event_id=root.id, trigger_id=definition.id, state="succeeded")
     db.add(run)
     child = _event(external, root=root) if foreign_child else _event(owned, root=root)
     db.add(child)
