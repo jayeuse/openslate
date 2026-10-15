@@ -14,10 +14,17 @@ async function signIn(page: Page, identity: Identity) {
     const { pathname } = new URL(route.request().url());
     if (pathname === "/api/auth/session")
       return route.fulfill({
-        json: { authenticated: true, user_id: userId, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: userId,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       });
     if (pathname === "/api/auth/me")
-      return route.fulfill({ json: { id: userId, ...identity } });
+      return route.fulfill({
+        json: { id: userId, ...identity, default_organization_blocked: null },
+      });
     return route.fulfill({ status: 404, json: {} });
   });
 }
@@ -137,6 +144,7 @@ test("a different identity response cannot admit Security and offers a fresh Ret
     route.fulfill({
       json: {
         id: matching ? userId : "00000000-0000-4000-8000-000000000999",
+        default_organization_blocked: null,
         role: "admin",
         access: [],
       },

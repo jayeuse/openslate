@@ -25,18 +25,23 @@ const emailConfirmationResponse = z.discriminatedUnion("authenticated", [
     })
     .strict(),
 ]);
+export const defaultOrganizationBlockedSchema = z
+  .enum(["mfa_required", "ip_not_allowed", "organization_required"])
+  .nullable();
 const sessionResponse = z.discriminatedUnion("authenticated", [
   z.object({
     authenticated: z.literal(true),
     user_id: z.string().uuid(),
     setup_required: z.boolean(),
+    default_organization_blocked: defaultOrganizationBlockedSchema,
   }),
   z.object({ authenticated: z.literal(false) }),
 ]);
 const accessLevel = z.enum(["read", "write", "manage"]);
 const authMeResponse = z.object({
   id: z.string().uuid(),
-  role: z.enum(["admin", "member", "guest"]),
+  role: z.enum(["admin", "member", "guest"]).nullable(),
+  default_organization_blocked: defaultOrganizationBlockedSchema,
   access: z.array(
     z.object({
       department_id: z.string().uuid(),
@@ -60,8 +65,9 @@ export type AccessEntry = {
 };
 export type AuthMe = {
   id: string;
-  role: "admin" | "member" | "guest";
+  role: "admin" | "member" | "guest" | null;
   access: AccessEntry[];
+  defaultOrganizationBlocked: z.output<typeof defaultOrganizationBlockedSchema>;
 };
 
 export async function getAuthMe(signal?: AbortSignal): Promise<AuthMe> {
@@ -73,6 +79,7 @@ export async function getAuthMe(signal?: AbortSignal): Promise<AuthMe> {
   return {
     id: current.id,
     role: current.role,
+    defaultOrganizationBlocked: current.default_organization_blocked,
     access: current.access.map((entry) => ({
       departmentId: entry.department_id,
       moduleId: entry.module_id,

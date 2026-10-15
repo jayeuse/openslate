@@ -36,7 +36,7 @@ from app.systems.access.identity.session_revocation import (
     revoke_user_sessions,
 )
 from app.systems.access.users.eligibility import is_active_account
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import eligible_memberships
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -60,13 +60,15 @@ class MFAFactorUnavailable(RuntimeError):
     """The current provider identity has no matching TOTP factor."""
 
 
-def requires_mfa(profile: WorkspaceProfile, user: Membership, provider_user: ProviderUser) -> bool:
+def requires_mfa(
+    profile: WorkspaceProfile | None, user: Membership | None, provider_user: ProviderUser
+) -> bool:
     if any(
         factor.factor_type == "totp" and factor.status == "verified"
         for factor in provider_user.factors
     ):
         return True
-    if not mfa_role_required(profile, user.role):
+    if profile is None or user is None or not mfa_role_required(profile, user.role):
         return False
     deadline = mfa_enrollment_deadline(profile, user.mfa_required_since)
     return deadline is None or deadline <= utc_now()
@@ -89,7 +91,6 @@ def mfa_status(
         )
         .execution_options(populate_existing=True)
     )
-    policy = load_workspace_policy(db)
     timestamp = utc_now()
     if (
         user.supabase_user_id != claims.user_id
@@ -103,16 +104,16 @@ def mfa_status(
         or (user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after)
     ):
         raise InvalidCredentials("Invalid credentials")
-    membership = sole_active_membership(db, user.id)
-    policy_required = mfa_role_required(policy, membership.role)
-    since = membership.mfa_required_since if policy_required else None
+    policy, membership = _session_requirement(db, session) if session else (None, None)
+    policy_required = bool(policy and membership and mfa_role_required(policy, membership.role))
+    since = membership.mfa_required_since if policy_required and membership else None
     result = {
         "user_id": user.id,
         "assurance_level": claims.assurance_level,
         "required": requires_mfa(policy, membership, provider_user),
         "policy_required": policy_required,
         "required_since": since,
-        "enrollment_deadline": mfa_enrollment_deadline(policy, since),
+        "enrollment_deadline": mfa_enrollment_deadline(policy, since) if policy else None,
         "factors": [
             {"id": factor.id, "factor_type": factor.factor_type, "status": factor.status}
             for factor in provider_user.factors
@@ -182,10 +183,10 @@ def verify_factor(
     retry_after = rate_limits.mfa_verification_retry_after(user_id, source=source)
     if retry_after is not None:
         raise IdentityRateLimited("Too many attempts", retry_after=retry_after)
-    before_policy = load_workspace_policy(db)
+    before_policy, membership = _session_requirement(db, session)
     current_claims = client.verify_access_token(current_access)
     was_blocked = current_claims.assurance_level == "aal1" and requires_mfa(
-        before_policy, sole_active_membership(db, user.id), before_provider
+        before_policy, membership, before_provider
     )
     try:
         tokens = SupabaseMfaClient(client).challenge_and_verify(current_access, factor_id, code)
@@ -250,6 +251,15 @@ def verify_factor(
         _invalidate_after_rotation(db, user_id, session_id, client, tokens.access_token)
         raise SupabaseAuthUnavailable("Unable to persist MFA verification") from error
     return tokens.access_token
+
+
+def _session_requirement(
+    db: Session, session: IdentitySession,
+) -> tuple[WorkspaceProfile | None, Membership | None]:
+    membership = next((row for row in eligible_memberships(db, session.user_id)
+                       if row.org_id == session.active_org_id), None)
+    policy = load_workspace_policy(db, org_id=membership.org_id) if membership else None
+    return policy, membership
 
 
 def unenroll_factor(

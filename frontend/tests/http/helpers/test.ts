@@ -17,6 +17,7 @@ import { wireWorkspace } from "../../helpers/wire";
 // `browser.newContext()` get no default.
 
 export const defaultSignedInIdentity = {
+  default_organization_blocked: null,
   id: "00000000-0000-4000-8000-000000000001",
   role: "admin",
   access: [],
@@ -66,6 +67,7 @@ export async function signedInSession(
       json: {
         authenticated: true,
         user_id: userId,
+        default_organization_blocked: null,
         setup_required: options.setupRequired ?? false,
       },
     }),
@@ -83,6 +85,7 @@ export async function signedInAs(
     route.fulfill({
       json: {
         id: identity.id,
+        default_organization_blocked: null,
         role: identity.role,
         access: identity.access ?? [],
       },
@@ -123,6 +126,7 @@ export async function controlledSession(
         ? {
             authenticated: true,
             user_id: session.identity.id,
+            default_organization_blocked: null,
             setup_required: false,
           }
         : { authenticated: false },
@@ -134,6 +138,7 @@ export async function controlledSession(
         ? route.fulfill({
             json: {
               id: session.identity.id,
+              default_organization_blocked: null,
               role: session.identity.role,
               access: session.identity.access ?? [],
             },
@@ -153,6 +158,7 @@ export const test = base.extend({
         json: {
           authenticated: true,
           user_id: defaultSignedInIdentity.id,
+          default_organization_blocked: null,
           setup_required: false,
         },
       }),

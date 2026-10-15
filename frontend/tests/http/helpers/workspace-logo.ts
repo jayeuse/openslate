@@ -86,13 +86,19 @@ export async function installLogoApi(page: Page) {
           json: {
             authenticated: true,
             user_id: api.actor,
+            default_organization_blocked: null,
             setup_required: false,
           },
         });
   });
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: { id: api.actor, role: api.role, access: [] },
+      json: {
+        id: api.actor,
+        role: api.role,
+        access: [],
+        default_organization_blocked: null,
+      },
     }),
   );
   await page.route("**/api/workspace/appearance", (route) =>

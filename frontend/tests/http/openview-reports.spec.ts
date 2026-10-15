@@ -1678,11 +1678,23 @@ for (const operation of ["template", "create"] as const) {
     let account = userId;
     await page.route("**/api/auth/session", (route) =>
       route.fulfill({
-        json: { authenticated: true, user_id: account, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: account,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       }),
     );
     await page.route("**/api/auth/me", (route) =>
-      route.fulfill({ json: { id: account, role: "admin", access: [] } }),
+      route.fulfill({
+        json: {
+          id: account,
+          role: "admin",
+          access: [],
+          default_organization_blocked: null,
+        },
+      }),
     );
     let hold = false;
     const held = gate();
@@ -1806,7 +1818,12 @@ for (const operation of ["new", "template"] as const) {
         await session.wait;
       }
       return route.fulfill({
-        json: { authenticated: true, user_id: userId, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: userId,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       });
     });
     await page.goto("/openview?section=reports");

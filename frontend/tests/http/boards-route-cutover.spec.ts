@@ -78,7 +78,14 @@ test("a member reading a Board sees no Board menu and no manager actions", async
 }) => {
   await installBoardApi(page, () => true);
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: userId, role: "member", access: [] } }),
+    route.fulfill({
+      json: {
+        id: userId,
+        role: "member",
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   const reader = { ...board, level: "read" };
   await page.route(`**/api/boards/${boardId}`, (route) =>

@@ -79,6 +79,7 @@ test("confirmed commands mark only the reads they change as stale", async () => 
   seed(accessKeys.userAccess(user.id));
   queries.setQueryData(authMeOptions().queryKey, {
     id: user.id,
+    defaultOrganizationBlocked: null,
     role: "admin",
     access: [],
   });

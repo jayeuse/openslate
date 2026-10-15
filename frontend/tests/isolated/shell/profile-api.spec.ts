@@ -36,7 +36,7 @@ const avatarPng = Buffer.from(
 );
 
 function self(overrides: Record<string, unknown> = {}) {
-  return {
+  const flat = {
     id: userA,
     email: "person@example.test",
     username: "owned_person",
@@ -56,6 +56,32 @@ function self(overrides: Record<string, unknown> = {}) {
     is_deleted: false,
     performed_by: null,
     access: [],
+  };
+  const account = Object.fromEntries(
+    Object.entries(flat).filter(
+      ([key]) =>
+        ![
+          "role",
+          "access",
+          "sponsor_user_id",
+          "expires_at",
+          "invitation_sent_at",
+        ].includes(key),
+    ),
+  );
+  const org = {
+    org_id: userB,
+    name: "Example",
+    slug: "example",
+    role: flat.role,
+  };
+  return {
+    ...flat,
+    account,
+    memberships: [org],
+    pending_invitations: [],
+    current_organization: { ...org, access: flat.access },
+    default_organization_blocked: null,
     ...overrides,
   };
 }
@@ -66,6 +92,44 @@ test("the private profile read asks the self route without a cache", async () =>
     expect((await readProfileSelf(userA)).display_name).toBe("Maya Chen");
     expect(String(mock.requests[0]?.input)).toBe("/api/auth/me");
     expect(mock.requests[0]?.init?.cache).toBe("no-store");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("the private profile accepts an account without organization authority", async () => {
+  const mock = installFetch(() =>
+    Response.json(
+      self({
+        role: null,
+        current_organization: null,
+        memberships: [],
+        pending_invitations: [],
+      }),
+    ),
+  );
+  try {
+    expect((await readProfileSelf(userA)).role).toBeNull();
+  } finally {
+    mock.restore();
+  }
+});
+
+test("the private profile retains the saved-organization refusal reason", async () => {
+  const mock = installFetch(() =>
+    Response.json(
+      self({
+        role: null,
+        access: [],
+        current_organization: null,
+        default_organization_blocked: "organization_required",
+      }),
+    ),
+  );
+  try {
+    expect((await readProfileSelf(userA)).default_organization_blocked).toBe(
+      "organization_required",
+    );
   } finally {
     mock.restore();
   }

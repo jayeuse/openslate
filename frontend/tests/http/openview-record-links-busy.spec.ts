@@ -240,11 +240,21 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
     const method = request.method();
     if (url.pathname === "/api/auth/session")
       return route.fulfill({
-        json: { authenticated: true, user_id: userId, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: userId,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       });
     if (url.pathname === "/api/auth/me")
       return route.fulfill({
-        json: { id: userId, role: "admin", access: [] },
+        json: {
+          id: userId,
+          role: "admin",
+          access: [],
+          default_organization_blocked: null,
+        },
       });
     if (url.pathname === "/api/departments")
       return route.fulfill({

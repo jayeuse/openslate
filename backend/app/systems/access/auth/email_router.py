@@ -6,8 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import CurrentIdentity, get_current_identity
-from app.common.dependencies.auth import require_allowed_source
+from app.common.dependencies.auth import (
+    CurrentIdentity,
+    get_account_identity,
+    require_allowed_source,
+)
 from app.core.database import get_db
 from app.core.integrations import supabase_auth
 from app.systems.access.auth.cookies import set_browser_session
@@ -46,7 +49,7 @@ def _incomplete(error: email_changes.EmailChangeIncomplete) -> HTTPException:
 def request_email_change(
     payload: EmailChangeRequest,
     request: Request,
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, bool]:
     require_completed_identity(identity)

@@ -220,11 +220,23 @@ test("People membership cache is replaced when the verified account changes", as
   let signedInId = ids.rosa;
   api.on("GET", "/api/auth/session", (route) =>
     route.fulfill({
-      json: { authenticated: true, user_id: signedInId, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: signedInId,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     }),
   );
   api.on("GET", "/api/auth/me", (route) =>
-    route.fulfill({ json: { id: signedInId, role: "admin", access: [] } }),
+    route.fulfill({
+      json: {
+        id: signedInId,
+        role: "admin",
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   await page.goto("/access?view=people");
   const groups = await column(peopleRow(page), "Groups");

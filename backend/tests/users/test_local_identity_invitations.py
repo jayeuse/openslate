@@ -184,7 +184,7 @@ def _actor_session(existing: User | None = None, groups: tuple = ()) -> tuple[Mo
     db.scalar.side_effect = lambda _statement: reads.pop(0) if reads else _added(db, User)[0]
     db.dirty = set()
     db.scalars.return_value.all.side_effect = [
-        [membership], [membership], [membership], list(groups)
+        [membership], [membership], list(groups)
     ]
     db.get.return_value = None
 

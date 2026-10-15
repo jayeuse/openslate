@@ -156,13 +156,19 @@ async function installPostBrowserApi(page: Page) {
       body: JSON.stringify({
         authenticated: true,
         user_id: currentViewerId,
+        default_organization_blocked: null,
         setup_required: false,
       }),
     }),
   );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: { id: currentViewerId, role: "member", access: [] },
+      json: {
+        id: currentViewerId,
+        role: "member",
+        access: [],
+        default_organization_blocked: null,
+      },
     }),
   );
   await page.route("**/api/workspace", (route) =>

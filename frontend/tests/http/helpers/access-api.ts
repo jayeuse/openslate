@@ -391,12 +391,16 @@ export async function mockAccessApi(
         json: {
           authenticated: true,
           user_id: options.identity?.id ?? ids.rosa,
+          default_organization_blocked: null,
           setup_required: false,
         },
       });
     if (path === "/api/auth/me")
       return route.fulfill({
-        json: options.identity ?? { id: ids.rosa, role: "admin", access: [] },
+        json: {
+          default_organization_blocked: null,
+          ...(options.identity ?? { id: ids.rosa, role: "admin", access: [] }),
+        },
       });
     const capturedAt = options.now ?? Date.now();
     const established = (user: User) =>

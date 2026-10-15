@@ -37,6 +37,9 @@ class IdentitySession(Base):
     user_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    active_org_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True
+    )
     provider_user_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     provider_session_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True), unique=True

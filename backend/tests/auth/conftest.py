@@ -62,8 +62,8 @@ def unit_workspace_policy(request, monkeypatch: pytest.MonkeyPatch) -> Workspace
         id=uuid4(), mfa_require_admin=False, mfa_require_member=False,
         mfa_require_guest=False, mfa_grace_days=0, ip_allow_list=[],
     )
-    for module in (provider_sessions, mfa, auth_dependencies):
-        monkeypatch.setattr(module, "load_workspace_policy", lambda _db: profile)
+    for module in (provider_sessions, mfa):
+        monkeypatch.setattr(module, "load_workspace_policy", lambda _db, **_kwargs: profile)
     return profile
 
 

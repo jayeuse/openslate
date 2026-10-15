@@ -5,7 +5,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.systems.access.users.eligibility import is_active_account, is_established_user
+from app.systems.access.users.eligibility import (
+    is_active_account,
+    is_active_membership,
+    is_established_user,
+)
 from app.systems.access.users.models import UserRole, UserStatus
 from tests.users.user_support import local_user
 
@@ -35,13 +39,13 @@ def test_only_an_accepted_or_legacy_profile_is_established(
     assert is_established_user(membership) is established
 
 
-def test_the_caller_clock_decides_account_expiry() -> None:
-    # Access checks pass one frozen clock for a whole request; the account is judged at it.
+def test_the_caller_clock_decides_membership_expiry_without_disabling_the_account() -> None:
     user, membership = local_user(UserRole.GUEST)
     membership.expires_at = datetime(2020, 1, 2, tzinfo=UTC)
     db = Mock()
     db.dirty = set()
     db.scalars.return_value.all.return_value = [membership]
 
-    assert is_active_account(db, user, now=datetime(2020, 1, 1, tzinfo=UTC)) is True
-    assert is_active_account(db, user, now=datetime(2020, 1, 2, tzinfo=UTC)) is False
+    assert is_active_membership(user, membership, now=datetime(2020, 1, 1, tzinfo=UTC)) is True
+    assert is_active_membership(user, membership, now=datetime(2020, 1, 2, tzinfo=UTC)) is False
+    assert is_active_account(db, user, now=datetime(2020, 1, 2, tzinfo=UTC)) is True

@@ -171,10 +171,18 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         assert missing.status_code == 200
         assert missing.json()["assurance_level"] == "aal2"
         assert missing.json()["required"] is True and missing.json()["factors"] == []
-        denied = browser.get("/api/auth/session")
-        assert denied.status_code == 403
-        assert denied.json()["detail"]["code"] == "mfa_required"
-        assert browser.get("/api/auth/me").status_code == 403
+        status = browser.get("/api/auth/session")
+        assert status.status_code == 200
+        assert status.json()["default_organization_blocked"] == "mfa_required"
+        me = browser.get("/api/auth/me")
+        assert me.status_code == 200 and me.json()["current_organization"] is None
+        assert me.json()["default_organization_blocked"] == "mfa_required"
+        with Session(owner) as db:
+            org_id = db.scalar(select(WorkspaceProfile.id))
+        for path in ("/api/auth/session", "/api/auth/me", "/api/boards"):
+            denied = browser.get(path, headers={"X-Org": str(org_id)})
+            assert denied.status_code == 403
+            assert denied.json()["detail"]["code"] == "mfa_required"
         enrollment = browser.post("/api/auth/mfa/factors", json={})
         assert enrollment.status_code == 201
         factor_id, seed = enrollment.json()["id"], enrollment.json()["totp"]["secret"]

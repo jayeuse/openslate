@@ -74,12 +74,20 @@ async function installApi(page: Page): Promise<State> {
           json: {
             authenticated: state.authenticated,
             user_id: state.authenticated ? state.userId : null,
+            default_organization_blocked: null,
             setup_required: false,
           },
         }),
   );
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: state.userId, role: state.role, access: [] } }),
+    route.fulfill({
+      json: {
+        id: state.userId,
+        role: state.role,
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   await page.route("**/api/auth/refresh", (route) => {
     state.refreshes += 1;
@@ -627,7 +635,14 @@ test("Organization cached administrator role cannot admit edits while its fresh 
   await page.route("**/api/auth/me", async (route) => {
     readingRole = true;
     await gate.released;
-    await route.fulfill({ json: { id: userA, role: "member", access: [] } });
+    await route.fulfill({
+      json: {
+        id: userA,
+        role: "member",
+        access: [],
+        default_organization_blocked: null,
+      },
+    });
   });
   try {
     await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
@@ -660,7 +675,12 @@ test("Organization keeps a trusted background role refresh interactive but requi
     await (old ? oldRead : freshRead).released;
     await route
       .fulfill({
-        json: { id: userA, role: old ? "admin" : "member", access: [] },
+        json: {
+          id: userA,
+          role: old ? "admin" : "member",
+          access: [],
+          default_organization_blocked: null,
+        },
       })
       .catch(() => {});
     if (old) oldAnswered.release();

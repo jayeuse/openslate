@@ -100,6 +100,7 @@ async function installRecordFilesApi(
       json: {
         authenticated: true,
         user_id: activeUser,
+        default_organization_blocked: null,
         setup_required: false,
       },
     }),
@@ -109,6 +110,7 @@ async function installRecordFilesApi(
       json: {
         id: activeUser,
         role: options.role ?? "admin",
+        default_organization_blocked: null,
         access:
           options.role && options.role !== "admin"
             ? [
@@ -1109,6 +1111,7 @@ async function installViewsApi(
       body: JSON.stringify({
         id: userId,
         role: options.viewerRole ?? "admin",
+        default_organization_blocked: null,
         access:
           options.viewerRole === "member"
             ? [
@@ -2567,6 +2570,7 @@ test("a reader keeps temporary View filters in the address without save controls
       json: {
         id: userId,
         role: "member",
+        default_organization_blocked: null,
         access: [
           { department_id: departmentId, module_id: null, level: "read" },
         ],
@@ -2616,6 +2620,7 @@ test("a module reader can browse archived Views without a Restore action", async
       json: {
         id: userId,
         role: "member",
+        default_organization_blocked: null,
         access: [
           { department_id: departmentId, module_id: null, level: "read" },
         ],
@@ -4716,11 +4721,23 @@ test.describe("OpenView workspace regional dates", () => {
     });
     await page.route("**/api/auth/session", (route) =>
       route.fulfill({
-        json: { authenticated: true, user_id: actor, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: actor,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       }),
     );
     await page.route("**/api/auth/me", (route) =>
-      route.fulfill({ json: { id: actor, role: "admin", access: [] } }),
+      route.fulfill({
+        json: {
+          id: actor,
+          role: "admin",
+          access: [],
+          default_organization_blocked: null,
+        },
+      }),
     );
     await page.route("**/api/workspace", async (route) => {
       if (actor === userId) {
@@ -6114,7 +6131,12 @@ async function installS16Export(
   let actor = userId;
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({
-      json: { authenticated: true, user_id: actor, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: actor,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     }),
   );
   await page.route("**/api/auth/me", (route) =>

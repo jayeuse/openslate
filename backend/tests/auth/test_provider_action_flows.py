@@ -567,13 +567,12 @@ def test_a_completed_password_update_revokes_sessions_in_the_recorded_local_comm
         "provider_banned",
         "local_rebound",
         "local_disabled",
-        "local_expired",
     ],
 )
 def test_each_refused_password_change_spends_the_person_login_budget(
     monkeypatch: pytest.MonkeyPatch, unit_platform_policy, refusal: str
 ) -> None:
-    user, membership, sessions, db, client = _password_update_failure_case("none")
+    user, _membership, sessions, db, client = _password_update_failure_case("none")
     clock = [datetime(2026, 10, 12, 9, 30, tzinfo=UTC)]
     monkeypatch.setattr(provider_actions, "utc_now", lambda: clock[0])
     # A budget unlike the built-in default (5 attempts, 15 minutes) shows that the
@@ -614,8 +613,6 @@ def test_each_refused_password_change_spends_the_person_login_budget(
         locked.supabase_user_id = uuid7()
     elif refusal == "local_disabled":
         locked.status = "disabled"
-    else:
-        membership.expires_at = datetime(2020, 1, 1, tzinfo=UTC)
 
     change = partial(
         provider_actions.change_password,

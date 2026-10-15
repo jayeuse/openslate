@@ -15,7 +15,12 @@ function member(
   access: AuthMe["access"],
   role: AuthMe["role"] = "member",
 ): AuthMe {
-  return { id: "00000000-0000-4000-8000-000000000001", role, access };
+  return {
+    id: "00000000-0000-4000-8000-000000000001",
+    role,
+    access,
+    defaultOrganizationBlocked: null,
+  };
 }
 
 test("only manage on the department or the module shows OpenView change controls", () => {

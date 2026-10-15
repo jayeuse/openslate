@@ -26,6 +26,7 @@ CONTROL_ROUTES = frozenset(
     {
         ("GET", "/api/auth/session"),
         ("POST", "/api/auth/refresh"),
+        ("POST", "/api/auth/session/organization"),
         ("POST", "/api/auth/password/change"),
         ("POST", "/api/auth/recovery/request"),
         ("POST", "/api/auth/recovery/complete"),
@@ -37,6 +38,7 @@ CONTROL_ROUTES = frozenset(
 )
 
 _WRITES = {
+    "select_organization": ("POST", "/api/auth/session/organization", 200),
     "refresh_session": ("POST", "/api/auth/refresh", 200),
     "login_end_target": ("POST", "/api/auth/login", 200),
     "end_current_session": ("DELETE", "/api/auth/sessions/", 204),
@@ -201,6 +203,25 @@ def execute_account_control(
             baseline = (
                 mailbox.snapshot()
             )  # Refuse an unavailable mailbox before changing a password.
+            identity = _read_json(
+                request(primary, "read_organization", "GET", "/api/auth/me"),
+                step="read_organization",
+            )
+            organization = identity.get("current_organization")
+            if identity.get("id") != actor_id or not isinstance(organization, Mapping):
+                raise SamplePhaseActionError(
+                    "Account has no selected organization", step="read_organization"
+                )
+            org_id = _uuid(organization.get("org_id"), "read_organization")
+            selected = _read_json(request(
+                primary, "select_organization", "POST", "/api/auth/session/organization",
+                body={"org_id": org_id},
+            ), step="select_organization")
+            if (selected.get("id") != actor_id
+                    or selected.get("current_organization") != organization):
+                raise SamplePhaseActionError(
+                    "Organization selection readback differs", step="select_organization"
+                )
             current = _read_json(
                 request(primary, "read_session", "GET", "/api/auth/session"), step="read_session"
             )

@@ -22,6 +22,7 @@ PASSWORD = "original-fixture-password"
 TOKEN = "a" * 56
 USER_ID = "9ec0d287-ae14-4603-91c2-f9a4d7b73c0a"
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
+ORG_ID = "784ab345-b08c-46da-8646-5915c1a356a2"
 
 
 @pytest.mark.parametrize("pack_key", ["harbor", "school"])
@@ -123,7 +124,12 @@ class AccountServer:
         if path == "/api/auth/refresh":
             return self.response(body={"authenticated": True, "setup_required": False})
         if path == "/api/auth/me":
-            return self.response(body={"id": USER_ID, "role": "member", "status": "active"})
+            return self.response(body={"id": USER_ID, "role": "member", "status": "active",
+                                       "current_organization": {"org_id": ORG_ID}})
+        if path == "/api/auth/session/organization":
+            assert body == {"org_id": ORG_ID}
+            return self.response(body={"id": USER_ID, "role": "member",
+                                       "current_organization": {"org_id": ORG_ID}})
         if path == "/api/auth/sessions":
             return self.response(
                 body=[{"id": item, "current": item == session} for item in sorted(self.sessions)]
@@ -247,6 +253,7 @@ def test_account_actions_restore_original_password_keep_primary_usable_and_emit_
         assert {
             ("GET", "/api/auth/session"),
             ("POST", "/api/auth/refresh"),
+            ("POST", "/api/auth/session/organization"),
             ("POST", "/api/auth/password/change"),
             ("POST", "/api/auth/recovery/request"),
             ("POST", "/api/auth/recovery/complete"),

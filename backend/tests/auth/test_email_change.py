@@ -184,6 +184,31 @@ def test_email_request_requires_password_and_never_changes_saved_email(email_bou
     assert all("old@example.test" not in e.model_dump_json() for e in state["events"])
 
 
+@pytest.mark.parametrize("organizations", ["zero", "multiple", "restricted"])
+def test_global_email_request_does_not_depend_on_organization_policy(
+    email_boundary, unit_workspace_policy, organizations
+):
+    from app.systems.manage.workspace.models import WorkspaceProfile
+
+    browser, db, user, _, _, access, state = email_boundary
+    unit_workspace_policy.ip_allow_list = ["192.0.2.0/24"]
+    policies = [] if organizations == "zero" else [unit_workspace_policy]
+    if organizations == "multiple":
+        policies.append(WorkspaceProfile(id=uuid4()))
+    db.scalars.side_effect = lambda _query: SimpleNamespace(all=lambda: policies)
+    headers = {"Authorization": f"Bearer {access}"}
+    response = browser.post("/api/auth/me/email", headers=headers,
+                            json={"email": "new@example.test", "current_password": "correct"})
+    assert response.status_code == 200
+    assert response.json() == {"confirmation_required": True}
+    assert user.email == "old@example.test"
+    assert len([request for request in state["seen"] if request.method == "PUT"]) == 1
+    # Account access alone grants no organization authority.
+    denied = browser.get("/api/users", headers=headers)
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "organization_required"
+
+
 @pytest.mark.parametrize(
     "credentials",
     [
@@ -275,10 +300,10 @@ def test_admission_reconciles_out_of_band_confirmed_email_once(email_boundary):
 
 
 @pytest.mark.parametrize(
-    "fault", ["cutoff", "expired_during_provider", "ineligible_during_provider", "source_policy"]
+    "fault", ["cutoff", "expired_during_provider", "ineligible_during_provider"]
 )
 def test_admission_rechecks_after_provider_latency_before_email_mutation(
-    email_boundary, monkeypatch, unit_workspace_policy, fault
+    email_boundary, monkeypatch, fault
 ):
     from app.systems.access.identity import provider_sessions
 
@@ -287,8 +312,6 @@ def test_admission_rechecks_after_provider_latency_before_email_mutation(
     claims = client.verify_access_token(access)
     if fault == "cutoff":
         user.tokens_valid_after = claims.issued_at + timedelta(seconds=1)
-    elif fault == "source_policy":
-        unit_workspace_policy.ip_allow_list = ["192.0.2.0/24"]
     else:
         original = client.get_admin_user
 

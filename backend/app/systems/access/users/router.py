@@ -11,7 +11,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_admin
-from app.common.dependencies.auth import CurrentIdentity, _bearer, get_current_identity
+from app.common.dependencies.auth import (
+    CurrentIdentity,
+    _bearer,
+    get_account_user,
+    get_current_identity,
+)
 from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.auth.cookies import clear_browser_session
@@ -53,6 +58,7 @@ from app.systems.access.users.schemas import (
     UserResponse,
     UserSecurityResponse,
     UserSummaryResponse,
+    invitation_response,
 )
 from app.systems.access.users.security import read_security, recover_person, reset_person_mfa
 from app.systems.access.users.service import (
@@ -109,7 +115,7 @@ def get_user(
 
 @router.get("/{user_id}/preferences", response_model=UserPreferencesResponse)
 def get_user_preferences(
-    user_id: UUID, actor: CurrentUser, response: Response
+    user_id: UUID, actor: Annotated[User, Depends(get_account_user)], response: Response
 ) -> UserPreferencesResponse:
     if user_id != actor.id:
         raise HTTPException(
@@ -162,7 +168,7 @@ def get_person_avatar(
 def update_user_preferences(
     user_id: UUID,
     payload: UserPreferencesUpdate,
-    actor: CurrentUser,
+    actor: Annotated[User, Depends(get_account_user)],
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> UserPreferencesResponse:
@@ -261,9 +267,7 @@ def create_user(
         ) from error
     org_id = sole_active_membership(db, admin.id).org_id
     membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
-    return InvitationResponse(user=UserResponse(**{key: getattr(
-        user if key in User.__table__.columns else membership, key
-    ) for key in UserResponse.model_fields}))
+    return invitation_response(user, membership)
 
 
 @router.get("/{user_id}/security", response_model=UserSecurityResponse)

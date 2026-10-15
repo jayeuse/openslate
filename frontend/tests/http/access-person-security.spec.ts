@@ -393,7 +393,12 @@ test("a command returning 401 requests session verification without refresh or r
     verification.start();
     await verification.waiting;
     await route.fulfill({
-      json: { authenticated: true, user_id: ids.rosa, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: ids.rosa,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     });
   });
   api.on("POST", `/api/users/${ids.ben}/recovery`, (route) =>
@@ -435,7 +440,12 @@ test("old pending completion behind same-account verification cannot change curr
     verification.start();
     await verification.waiting;
     await route.fulfill({
-      json: { authenticated: true, user_id: ids.rosa, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: ids.rosa,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     });
   });
   await recheckSession(page);
@@ -539,11 +549,23 @@ test("account replacement clears old pending ownership and cannot display its re
   await held.begun;
   api.on("GET", "/api/auth/session", (route) =>
     route.fulfill({
-      json: { authenticated: true, user_id: ids.ben, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: ids.ben,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     }),
   );
   api.on("GET", "/api/auth/me", (route) =>
-    route.fulfill({ json: { id: ids.ben, role: "admin", access: [] } }),
+    route.fulfill({
+      json: {
+        id: ids.ben,
+        role: "admin",
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   api.on("GET", "/api/auth/mfa", (route) =>
     route.fulfill({

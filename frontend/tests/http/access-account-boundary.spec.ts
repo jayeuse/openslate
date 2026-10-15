@@ -23,6 +23,7 @@ async function mockSession(page: Page, verifiedUser: () => string) {
             : {
                 authenticated: true,
                 user_id: verifiedUser(),
+                default_organization_blocked: null,
                 setup_required: false,
               },
         ),
@@ -86,6 +87,7 @@ test("logout with a failed draft cleanup stays on a recovery screen", async ({
         : {
             authenticated: true,
             user_id: userA,
+            default_organization_blocked: null,
             setup_required: false,
           },
     });

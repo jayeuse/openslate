@@ -41,12 +41,11 @@ from app.systems.access.identity.provider_user_cache import (
 )
 from app.systems.access.identity.session_revocation import reconcile_session_cap, revoke_session
 from app.systems.access.users.eligibility import is_active_account
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import eligible_memberships
 from app.systems.access.users.models import User, UserStatus
 from app.systems.manage.workspace.models import PlatformSettings
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
-    ip_allowed,
     load_platform_policy,
     load_workspace_policy,
     renewed_session_expiry,
@@ -145,7 +144,6 @@ def admit_provider_session(
         or claims.expires_at <= timestamp
         or (user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after)
         or not _provider_session_exists(db, claims.user_id, claims.session_id)
-        or not ip_allowed(load_workspace_policy(db), ip_address)
     ):
         raise InvalidCredentials("Invalid credentials")
     assert user is not None and provider_user is not None
@@ -153,12 +151,17 @@ def admit_provider_session(
 
     synchronize_confirmed_email(db, user, provider_user, timestamp)
     initialize_observation(db, user.id)
+    memberships = eligible_memberships(db, user.id)
+    # A sole membership is a default selection, not admission to organization data.
+    # MFA/IP policy is rechecked on every organization entry by the dependency.
+    selected = memberships[0] if len(memberships) == 1 else None
     csrf = token_urlsafe(32)
     handle = token_urlsafe(48)
     cipher = _fernet()
     session = IdentitySession(
         id=uuid7(),
         user_id=user.id,
+        active_org_id=selected.org_id if selected is not None else None,
         provider_user_id=claims.user_id,
         provider_session_id=claims.session_id,
         provider_access_token_encrypted=cipher.encrypt(tokens.access_token.encode()).decode(),
@@ -174,9 +177,8 @@ def admit_provider_session(
     session.expires_at = renewed_session_expiry(session, policy, timestamp)
     db.add(session)
     db.flush()
-    if not requires_mfa(
-        load_workspace_policy(db), sole_active_membership(db, user.id), provider_user
-    ) or (
+    org_policy = load_workspace_policy(db, org_id=selected.org_id) if selected else None
+    if not requires_mfa(org_policy, selected, provider_user) or (
         claims.assurance_level == "aal2"
         and any(
             factor.factor_type == "totp" and factor.status == "verified"
@@ -299,9 +301,7 @@ def _resolved_provider_session(
         return None
     if (
         not allow_aal1
-        and requires_mfa(
-            load_workspace_policy(db), sole_active_membership(db, user.id), provider_user
-        )
+        and requires_mfa(None, None, provider_user)
         and (
             claims.assurance_level != "aal2"
             or not any(

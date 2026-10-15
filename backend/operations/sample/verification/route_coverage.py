@@ -205,6 +205,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("POST", "/api/auth/recovery/complete"),
         ("POST", "/api/auth/recovery/request"),
         ("POST", "/api/auth/refresh"),
+        ("POST", "/api/auth/session/organization"),
         ("POST", "/api/auth/sessions/revoke-others"),
         ("POST", "/api/backups"),
         ("POST", "/api/jobs/{kind}/{job_id}/retry"),

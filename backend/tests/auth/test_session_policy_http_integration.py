@@ -45,6 +45,7 @@ def test_role_grace_expires_but_verified_factor_always_requires_aal2(policy_worl
                 world.clock + timedelta(days=2),
             )
         actor.mfa_required_since = since
+        org_id = actor.org_id
         db.commit()
     status = world.client.get("/api/auth/mfa", headers=world.headers())
     assert status.status_code == 200
@@ -56,7 +57,15 @@ def test_role_grace_expires_but_verified_factor_always_requires_aal2(policy_worl
     )
     assert world.client.get("/api/auth/me", headers=world.headers()).status_code == 200
     world.clock += timedelta(minutes=3)
-    assert world.client.get("/api/auth/me", headers=world.headers()).status_code == 403
+    account = world.client.get("/api/auth/me", headers=world.headers())
+    assert account.status_code == 200 and account.json()["current_organization"] is None
+    assert account.json()["default_organization_blocked"] == "mfa_required"
+    explicit = world.client.get("/api/auth/me", headers={
+        **world.headers(), "X-Org": str(org_id),
+    })
+    assert explicit.status_code == 403 and explicit.json()["detail"]["code"] == "mfa_required"
+    resources = world.client.get("/api/boards", headers=world.headers())
+    assert resources.status_code == 403 and resources.json()["detail"]["code"] == "mfa_required"
     assert world.client.get("/api/auth/mfa", headers=world.headers()).json()["required"] is True
     with Session(world.owner) as db:
         sole_active_membership(db, world.actor_id).mfa_required_since = None

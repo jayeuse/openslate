@@ -11,6 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from uuid6 import uuid7
 
 from app.common.dependencies import CurrentIdentity, get_current_identity, require_fresh_exact_admin
+from app.common.dependencies.auth import get_account_identity
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.base_model import utc_now
 from app.core.database import get_db
@@ -152,7 +153,7 @@ def _commit_revocation(db: Session) -> None:
 
 @auth_router.get("/sessions", response_model=list[AdminSessionResponse])
 def list_sessions(
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
     db: Annotated[Session, Depends(get_db)],
 ) -> list[AdminSessionResponse]:
     identity = _require_completed_identity(identity)
@@ -285,7 +286,7 @@ def revoke_admin_session_collection(
 @auth_router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_one_session(
     session_id: UUID,
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
@@ -307,7 +308,7 @@ def revoke_one_session(
 
 @auth_router.post("/sessions/revoke-others", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_other_sessions(
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:

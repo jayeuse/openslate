@@ -29,7 +29,7 @@ from app.systems.manage.audit import service as audit_service
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
-from app.systems.manage.workspace.security_policy import load_platform_policy, load_workspace_policy
+from app.systems.manage.workspace.security_policy import load_platform_policy
 
 
 class EmailChangeConflict(Exception):
@@ -135,11 +135,7 @@ def request_email_change(
         current = _resolved_provider_session(db, client.verify_access_token(access_token), client)
         if current is None or current[0].id != person_id or current[1].id != session_id:
             raise InvalidCredentials("Invalid credentials")
-        # Resolution refreshes eligibility, cutoff, provider, MFA and source policy after I/O.
-        from app.systems.manage.workspace.security_policy import ip_allowed
-
-        if not ip_allowed(load_workspace_policy(db), source):
-            raise InvalidCredentials("Invalid credentials")
+        # Recheck account eligibility, cutoff, provider, session and account MFA after I/O.
         provider = current[2]
         if (
             provider.id != user.supabase_user_id

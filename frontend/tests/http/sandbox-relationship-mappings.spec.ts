@@ -4967,6 +4967,7 @@ for (const status of [401, 403, 404]) {
               : {
                   authenticated: true,
                   user_id: "00000000-0000-4000-8000-000000000001",
+                  default_organization_blocked: null,
                   setup_required: false,
                 },
         }),

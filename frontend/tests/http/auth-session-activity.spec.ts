@@ -50,6 +50,7 @@ async function workspaceSession(page: Page, baseURL: string | undefined) {
           ? {
               authenticated: true,
               user_id: state.userId,
+              default_organization_blocked: null,
               setup_required: false,
             }
           : { authenticated: false },
@@ -72,7 +73,14 @@ async function workspaceSession(page: Page, baseURL: string | undefined) {
     });
   });
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: state.userId, role: "admin", access: [] } }),
+    route.fulfill({
+      json: {
+        id: state.userId,
+        role: "admin",
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   await page.route("**/api/search?**", (route) => {
     if (
@@ -264,7 +272,12 @@ test("an API request sharing a pending activity probe still refreshes a live ses
     await route.fulfill({
       json:
         state.now < state.accessExpiresAt
-          ? { authenticated: true, user_id: userA, setup_required: false }
+          ? {
+              authenticated: true,
+              user_id: userA,
+              setup_required: false,
+              default_organization_blocked: null,
+            }
           : { authenticated: false },
     });
   });

@@ -14,7 +14,7 @@ from pydantic import (
 from app.common.listing import StandardListResponse
 from app.common.normalization import normalize_email, normalize_username
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 
 
 class UserResponse(BaseModel):
@@ -69,11 +69,70 @@ class AccessEntryResponse(BaseModel):
     level: AccessLevel
 
 
-class AuthMeResponse(UserResponse):
-    access: list[AccessEntryResponse]
+class AccountResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    email: str
+    username: str
+    status: UserStatus
+    display_name: str | None
+    job_title: str | None
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None
+    is_deleted: bool
+    performed_by: UUID | None
     phone: str | None = None
     bio: str | None = None
     avatar_file_id: UUID | None = None
+
+
+class OrganizationMembershipResponse(BaseModel):
+    org_id: UUID
+    name: str
+    slug: str
+    role: UserRole
+
+
+class CurrentOrganizationResponse(OrganizationMembershipResponse):
+    access: list[AccessEntryResponse]
+
+
+class PendingInvitationResponse(OrganizationMembershipResponse):
+    id: UUID
+    expires_at: datetime
+
+
+DefaultOrganizationBlocked = Literal["mfa_required", "ip_not_allowed", "organization_required"]
+
+
+class AuthenticatedSessionResponse(BaseModel):
+    authenticated: Literal[True]
+    user_id: UUID
+    setup_required: bool
+    default_organization_blocked: DefaultOrganizationBlocked | None
+
+
+class UnauthenticatedSessionResponse(BaseModel):
+    authenticated: Literal[False]
+
+
+class AuthMeResponse(AccountResponse):
+    account: AccountResponse
+    memberships: list[OrganizationMembershipResponse]
+    pending_invitations: list[PendingInvitationResponse]
+    current_organization: CurrentOrganizationResponse | None
+    default_organization_blocked: DefaultOrganizationBlocked | None
+    role: UserRole | None
+    access: list[AccessEntryResponse]
+    sponsor_user_id: UUID | None = None
+    expires_at: datetime | None = None
+    invitation_sent_at: datetime | None = None
+
+
+class OrganizationSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    org_id: UUID
 
 
 class SelfProfileUpdate(BaseModel):
@@ -192,7 +251,16 @@ class InvitationCreate(UserCreate):
 
 class InvitationResponse(BaseModel):
     user: UserResponse
-    delivery: Literal["email"] = "email"
+    delivery: Literal["email", "in_app"] = "email"
+
+
+def invitation_response(user: User, membership: Membership) -> InvitationResponse:
+    return InvitationResponse(
+        user=UserResponse(**{key: getattr(
+            membership if key == "status" or key not in User.__table__.columns else user, key
+        ) for key in UserResponse.model_fields}),
+        delivery="in_app" if user.status == "active" else "email",
+    )
 
 
 class InvitationResendRequest(BaseModel):

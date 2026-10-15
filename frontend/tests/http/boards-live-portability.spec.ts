@@ -132,10 +132,16 @@ test("real configuration download and import preserve the complete named normali
       return json({
         authenticated: true,
         user_id: actor,
+        default_organization_blocked: null,
         setup_required: false,
       });
     if (path === "/api/auth/me")
-      return json({ id: actor, role: "admin", access: [] });
+      return json({
+        id: actor,
+        role: "admin",
+        access: [],
+        default_organization_blocked: null,
+      });
     if (path === `/api/users/${actor}/preferences`)
       return json({
         user_id: actor,

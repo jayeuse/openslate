@@ -190,6 +190,60 @@ test("inviting a member sends the chosen groups", async ({ page }) => {
   ).toContainText("Pending");
 });
 
+test("an existing account invitation reports in-app delivery without promising email", async ({
+  page,
+}) => {
+  await mockAccessApi(page);
+  await page.route("**/api/auth/invitations", async (route) => {
+    await route.fulfill({
+      status: 201,
+      json: {
+        user: person({
+          id: ids.ben,
+          username: "ben",
+          email: "ben@example.com",
+          status: "pending",
+        }),
+        delivery: "in_app",
+      },
+    });
+  });
+  await page.goto("/access?view=people");
+  await page.getByRole("button", { name: "Invite person" }).click();
+  const dialog = page.getByRole("dialog", { name: "Invite a person" });
+  await dialog.getByLabel("Email").fill("ben@example.com");
+  await dialog.getByRole("button", { name: "Send invitation" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByText(
+      "ben@example.com can accept this invitation when signed in.",
+    ),
+  ).toBeVisible();
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.classList.toggle("dark", mode === "dark");
+      }, theme);
+      await expectNoHorizontalScroll(page);
+      await expect(
+        page.getByText(
+          "ben@example.com can accept this invitation when signed in.",
+        ),
+      ).toBeVisible();
+      await page.screenshot({
+        animations: "disabled",
+        path: test
+          .info()
+          .outputPath(`in-app-invitation-${viewport.width}-${theme}.png`),
+      });
+    }
+  }
+});
+
 test("a guest invitation needs a sponsor and starts from the workspace guest length", async ({
   page,
 }) => {

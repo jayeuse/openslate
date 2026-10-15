@@ -333,7 +333,7 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
 
     @app.get("/protected")
     def protected(
-        identity: Annotated[dependency.CurrentIdentity, Depends(dependency.get_current_identity)],
+        identity: Annotated[dependency.CurrentIdentity, Depends(dependency.get_account_identity)],
     ):
         return {"user_id": str(identity.user.id), "session_id": str(identity.session_id)}
 

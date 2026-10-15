@@ -24,6 +24,7 @@ from app.core.integrations.supabase_auth import (
 from app.systems.access.identity import provider_sessions
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentitySession
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from tests.auth.provider_jwt_support import client_for_key, signed_access
 from tests.conftest import create_member
@@ -98,6 +99,7 @@ def _protected_app(
 
     key = ec.generate_private_key(ec.SECP256R1())
     local_id, provider_id, provider_session = uuid4(), uuid4(), uuid4()
+    profile.id = uuid4()
     provider = client_for_key(key, user_id=provider_id, factors=factors)
     user, membership = create_member(None, profile,
         id=local_id,
@@ -110,6 +112,7 @@ def _protected_app(
     session = IdentitySession(
         id=uuid4(),
         user_id=local_id,
+        active_org_id=profile.id,
         provider_user_id=provider_id,
         provider_session_id=provider_session,
         created_at=datetime.now(UTC),
@@ -119,12 +122,14 @@ def _protected_app(
     db = Mock(spec=Session)
     db.dirty = set()
     db.scalars.return_value.all.return_value = [membership]
-    db.scalar.side_effect = lambda query: (
-        session if query.column_descriptions[0]["entity"] is IdentitySession else user
-    )
+    db.scalar.side_effect = lambda query: {
+        IdentitySession: session, Membership: membership, User: user,
+    }[query.column_descriptions[0]["entity"]]
+    db.get.side_effect = lambda model, _identifier, **_kwargs: {
+        IdentitySession: session, WorkspaceProfile: profile,
+    }[model]
     db.execute.return_value.scalar_one.return_value = True
-    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(dependency, "load_workspace_policy", lambda _db: profile)
+    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db, **_kwargs: profile)
     platform = PlatformSettings(session_timeout_minutes=60, session_absolute_lifetime_minutes=None)
     monkeypatch.setattr(provider_sessions, "load_platform_policy", lambda _db: platform)
     monkeypatch.setattr(dependency, "load_platform_policy", lambda _db: platform)

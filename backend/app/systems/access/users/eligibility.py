@@ -2,13 +2,11 @@
 
 from datetime import datetime
 
-from fastapi import HTTPException
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.systems.access.identity.eligibility import is_identity_eligible
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User, UserStatus
 
 
@@ -42,14 +40,15 @@ def established_user_clause() -> ColumnElement[bool]:
 
 
 def is_active_account(db: Session, user: User, *, now: datetime | None = None) -> bool:
-    """Return whether an account can act now: active, accepted, unexpired, not deleted."""
+    """Global admission is independent of organization membership or guest expiry."""
+    return user.status == UserStatus.ACTIVE.value and not user.is_deleted
 
-    try:
-        membership = sole_active_membership(db, user.id)
-    except HTTPException:
-        return False
+
+def is_active_membership(
+    user: User, membership: Membership, *, now: datetime | None = None
+) -> bool:
     return (
-        user.status == UserStatus.ACTIVE.value
+        membership.status == UserStatus.ACTIVE.value
         and is_established_user(membership)
         and is_identity_eligible(user, membership, now=now)
     )

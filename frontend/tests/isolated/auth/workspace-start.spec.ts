@@ -149,6 +149,7 @@ for (const row of rows) {
         return Response.json({
           id: userId,
           role: row.role,
+          default_organization_blocked: null,
           access: row.manages
             ? [
                 {

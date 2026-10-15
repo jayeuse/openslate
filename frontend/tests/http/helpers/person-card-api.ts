@@ -340,12 +340,20 @@ export async function installPersonCardApi(
       json: {
         authenticated: true,
         user_id: state.viewer,
+        default_organization_blocked: null,
         setup_required: false,
       },
     }),
   );
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: state.viewer, role: state.role, access: [] } }),
+    route.fulfill({
+      json: {
+        id: state.viewer,
+        role: state.role,
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   await page.route("**/api/users/*/preferences", (route) =>
     route.fulfill({

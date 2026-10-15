@@ -69,7 +69,7 @@ export const userSummarySchema = z.strictObject({
 /** `users/schemas.py` InvitationResponse. */
 export const invitationSchema = z.strictObject({
   user: userSchema,
-  delivery: z.literal("email"),
+  delivery: z.enum(["email", "in_app"]),
 });
 
 /** `users/schemas.py` InvitationCreate (= UserCreate). */

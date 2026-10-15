@@ -99,12 +99,20 @@ async function installHelpApi(page: Page) {
           json: {
             authenticated: true,
             user_id: api.userId,
+            default_organization_blocked: null,
             setup_required: false,
           },
         }),
   );
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: api.userId, role: api.role, access: [] } }),
+    route.fulfill({
+      json: {
+        id: api.userId,
+        role: api.role,
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   await page.route("**/api/users/*/preferences", (route) =>
     api.onPreferences
@@ -650,6 +658,7 @@ for (const boundary of ["close", "account", "curtain"] as const) {
             json: {
               authenticated: true,
               user_id: api.userId,
+              default_organization_blocked: null,
               setup_required: false,
             },
           });

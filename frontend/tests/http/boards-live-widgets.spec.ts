@@ -109,10 +109,16 @@ async function installS26WidgetApi(page: Page, widgets: unknown[]) {
       return reply({
         authenticated: true,
         user_id: actor,
+        default_organization_blocked: null,
         setup_required: false,
       });
     if (url.pathname === "/api/auth/me")
-      return reply({ id: actor, role: "admin", access: [] });
+      return reply({
+        id: actor,
+        role: "admin",
+        access: [],
+        default_organization_blocked: null,
+      });
     if (url.pathname === `/api/users/${actor}/preferences`)
       return reply({
         user_id: actor,
@@ -2188,11 +2194,23 @@ for (const replacement of ["board", "source", "account"] as const) {
       };
       await page.route("**/api/auth/session", (route) =>
         route.fulfill({
-          json: { authenticated: true, user_id: actor, setup_required: false },
+          json: {
+            authenticated: true,
+            user_id: actor,
+            setup_required: false,
+            default_organization_blocked: null,
+          },
         }),
       );
       await page.route("**/api/auth/me", (route) =>
-        route.fulfill({ json: { id: actor, role: "admin", access: [] } }),
+        route.fulfill({
+          json: {
+            id: actor,
+            role: "admin",
+            access: [],
+            default_organization_blocked: null,
+          },
+        }),
       );
       await page.route("**/api/users/*/preferences", (route) =>
         route.fulfill({
@@ -2895,10 +2913,16 @@ test("widget create and edit omit refresh even when the server returns a legacy 
       return reply({
         authenticated: true,
         user_id: actor,
+        default_organization_blocked: null,
         setup_required: false,
       });
     if (path === "/api/auth/me")
-      return reply({ id: actor, role: "admin", access: [] });
+      return reply({
+        id: actor,
+        role: "admin",
+        access: [],
+        default_organization_blocked: null,
+      });
     if (path === "/api/views/data-sources")
       return reply(
         pageOf(
@@ -3044,10 +3068,16 @@ test("widget metadata and scoped record bursts refresh once on the shared stream
       return reply({
         authenticated: true,
         user_id: actor,
+        default_organization_blocked: null,
         setup_required: false,
       });
     if (path === "/api/auth/me")
-      return reply({ id: actor, role: "admin", access: [] });
+      return reply({
+        id: actor,
+        role: "admin",
+        access: [],
+        default_organization_blocked: null,
+      });
     if (path === "/api/boards") return reply(pageOf([board], { limit: 25 }));
     if (path === `/api/boards/${boardId}`) return reply(board);
     if (path === `/api/boards/${boardId}/widgets`)

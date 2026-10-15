@@ -10,11 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import (
     CurrentIdentity,
-    get_current_identity,
-    get_current_user,
     require_admin,
 )
-from app.common.dependencies.auth import get_mfa_identity, require_allowed_source
+from app.common.dependencies.auth import (
+    get_account_identity,
+    get_mfa_identity,
+    require_allowed_source,
+)
 from app.core.database import get_db
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
@@ -30,6 +32,7 @@ from app.systems.access.auth.cookies import (
 from app.systems.access.auth.cookies import (
     set_browser_session as _set_browser_session,
 )
+from app.systems.access.auth.organization_router import router as organization_router
 from app.systems.access.auth.profile_router import router as profile_router
 from app.systems.access.auth.request_security import (
     bearer_credentials as _bearer_credentials,
@@ -78,14 +81,12 @@ from app.systems.access.users.account_operations import router as account_operat
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
 from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User
-from app.systems.access.users.profile import self_profile_response
 from app.systems.access.users.router import router as users_router
 from app.systems.access.users.schemas import (
-    AuthMeResponse,
     InvitationCreate,
     InvitationResendRequest,
     InvitationResponse,
-    UserResponse,
+    invitation_response,
 )
 from app.systems.access.users.service import (
     invite_user,
@@ -278,9 +279,7 @@ def invite(
         raise HTTPException(status_code=409, detail="Unable to create invitation") from error
     org_id = sole_active_membership(db, admin.id).org_id
     membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
-    return InvitationResponse(user=UserResponse(**{key: getattr(
-        user if key in User.__table__.columns else membership, key
-    ) for key in UserResponse.model_fields}))
+    return invitation_response(user, membership)
 
 
 @auth_router.post("/invitations/{user_id}/resend", response_model=InvitationResponse)
@@ -296,41 +295,13 @@ def resend_invite(
         raise HTTPException(status_code=409, detail="Unable to resend invitation") from error
     org_id = sole_active_membership(db, admin.id).org_id
     membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
-    return InvitationResponse(user=UserResponse(**{key: getattr(
-        user if key in User.__table__.columns else membership, key
-    ) for key in UserResponse.model_fields}))
-
-
-@auth_router.get("/me", response_model=AuthMeResponse)
-def me(
-    user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_db)],
-) -> AuthMeResponse:
-    return self_profile_response(db, user)
-
-
-@auth_router.get("/session")
-def session_status(
-    request: Request,
-    db: Annotated[Session, Depends(get_db)],
-) -> dict[str, object]:
-    try:
-        identity = get_current_identity(request, None, db)
-    except HTTPException as error:
-        if error.status_code != 401:
-            raise
-        return {"authenticated": False}
-    return {
-        "authenticated": True,
-        "user_id": identity.user.id,
-        "setup_required": identity.setup_only,
-    }
+    return invitation_response(user, membership)
 
 
 @auth_router.post("/password/change")
 def change_password(
     payload: PasswordChangeRequest,
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
     request: Request,
     response: Response,
     db: Annotated[Session, Depends(get_db)],
@@ -491,6 +462,7 @@ def complete_invitation(
 
 
 router.include_router(auth_router)
+router.include_router(organization_router)
 router.include_router(profile_router)
 router.include_router(template_router)
 router.include_router(users_router)

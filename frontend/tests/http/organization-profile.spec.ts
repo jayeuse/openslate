@@ -72,12 +72,20 @@ async function installProfile(page: Page): Promise<Api> {
           json: {
             authenticated: true,
             user_id: api.userId,
+            default_organization_blocked: null,
             setup_required: false,
           },
         }),
   );
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: api.userId, role: api.role, access: [] } }),
+    route.fulfill({
+      json: {
+        id: api.userId,
+        role: api.role,
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   await page.route("**/api/workspace/appearance", (route) =>
     route.fulfill({ json: { theme: api.workspace.theme } }),

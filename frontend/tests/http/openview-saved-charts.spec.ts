@@ -812,7 +812,14 @@ test("admin usage pages show every returned consumer without a restricted flag",
 }) => {
   await setup(page);
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: userId, role: "admin", access: [] } }),
+    route.fulfill({
+      json: {
+        id: userId,
+        role: "admin",
+        access: [],
+        default_organization_blocked: null,
+      },
+    }),
   );
   await page.route("**/api/charts?*", (route) =>
     route.fulfill({ json: pageOf([chart()], { limit: 25 }) }),

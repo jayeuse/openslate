@@ -156,22 +156,27 @@ class _Resolution:
     guest: bool = False
 
 
-def effective_levels(db: Session, user: User, *, now: datetime | None = None) -> EffectiveAccess:
+def effective_levels(
+    db: Session, user: User, *, now: datetime | None = None, membership: Membership | None = None
+) -> EffectiveAccess:
     """Resolve the user's level on every department and module they can reach."""
 
-    return _resolve(db, user, now=now).access
+    return _resolve(db, user, now=now, membership=membership).access
 
 
-def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
+def _resolve(
+    db: Session, user: User, *, now: datetime | None, membership: Membership | None = None
+) -> _Resolution:
     """Rule 2 and the reads; :func:`_fold_access` applies the other rules."""
 
     # The temporary read-only bridge does not flush; resolve current transaction state first.
     db.flush()
     try:
-        membership = sole_active_membership(db, user.id)
+        membership = membership or sole_active_membership(db, user.id)
     except HTTPException:
         return _Resolution(NO_ACCESS)
-    if (user.status != UserStatus.ACTIVE.value or not is_established_user(membership)
+    if (membership.user_id != user.id or membership.status != "active"
+            or user.status != UserStatus.ACTIVE.value or not is_established_user(membership)
             or not is_identity_eligible(user, membership, now=now)):
         return _Resolution(NO_ACCESS)
     role = membership.role
@@ -189,6 +194,9 @@ def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
             .join(Group, Group.id == GroupAccess.group_id)
             .where(
                 GroupMember.user_id == user.id,
+                GroupMember.org_id == membership.org_id,
+                Group.org_id == membership.org_id,
+                GroupAccess.org_id == membership.org_id,
                 GroupMember.is_deleted.is_(False),
                 Group.is_deleted.is_(False),
                 GroupAccess.is_deleted.is_(False),
@@ -203,6 +211,7 @@ def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
         module_id: department_id
         for module_id, department_id in db.execute(
             select(Module.id, Module.department_id).where(
+                Module.org_id == membership.org_id,
                 or_(Module.department_id.in_(department_ids), Module.id.in_(module_ids))
             )
         ).tuples()

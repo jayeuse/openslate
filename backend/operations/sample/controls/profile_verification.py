@@ -72,7 +72,7 @@ def verify_profile_controls(
         if (
             str(restored_self.id) != actor_id
             or restored_self.username != username
-            or restored_self.role.value != person.role
+            or restored_self.role is None or restored_self.role.value != person.role
             or restored_self.status.value != "active"
             or restored_self.is_deleted
             or restored_self.model_dump(mode="json", include=set(PROFILE_FIELDS)) != before

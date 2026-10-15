@@ -241,6 +241,7 @@ Acceptance: `alembic upgrade head` on an empty database builds the schema. `alem
 1. Add `identity_sessions.active_org_id`.
 2. Add a dependency `get_current_membership`. It reads `X-Org`, or uses the session's active organization when the header is absent. It checks an active membership, the organization's MFA requirement (D32), and the organization's IP allow list. Without a membership it returns 403 `organization_required`. An unknown organization returns 404.
 3. `GET /auth/me` returns the account, the list of memberships (organization id, name, slug, role), and the current organization with role and access.
+   Account reads (`/auth/me`, `/auth/session`) and self-profile updates remain available when an implicitly saved organization refuses entry. They project no current organization or organization authority and expose required nullable `default_organization_blocked`: `mfa_required`, `ip_not_allowed`, or `organization_required` for an invalid membership; no saved selection returns null. Explicit `X-Org` and organization resources retain their actual entry denials. Account-owned verified MFA still requires AAL2 before any account projection.
 4. Add `POST /auth/session/organization` to set the active organization.
 5. An account with no membership can sign in and reaches only `/auth/me`, sign-out, profile, and invitation acceptance.
 6. Invitations to an email that already has an account add a membership, instead of returning "Email or username is already in use" (`users/service.py:180-185`).
@@ -356,6 +357,7 @@ Acceptance: the step 2 test passes in the HTTP or fullstack lane. No browser UI 
 7. The invitation setup page joins an existing account to the organization.
 8. Before sign-in, the theme is Slate, or the last organization theme cached in this browser (D26).
 9. Update the HTTP base fixture (`frontend/tests/http/helpers/test.ts:149-200`) and `access-api.ts` with memberships. Update the 47 `/auth/me` mocks through the fixture helpers, not one by one.
+10. Drive organization MFA/network gates from `default_organization_blocked`, not an implicit-context 403 from `/auth/session`. S05 exposes and parses that contract; the gate UI and its transitions remain S13 work.
 
 **S14 — switcher and avatars.**
 1. Turn the organization name in `AppSidebarHeader` (`app-shell.tsx:563-617`) into an organization menu. Include it in the mobile drawer.

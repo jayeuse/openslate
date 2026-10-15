@@ -208,6 +208,7 @@ test("login accepts email and does not send a username field", async ({
         ? {
             authenticated: true,
             user_id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8",
+            default_organization_blocked: null,
             setup_required: false,
           }
         : { authenticated: false },
@@ -222,6 +223,7 @@ test("login accepts email and does not send a username field", async ({
         id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8",
         role: "member",
         access: [],
+        default_organization_blocked: null,
       },
     });
   });

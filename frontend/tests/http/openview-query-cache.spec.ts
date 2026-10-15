@@ -94,6 +94,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       body: JSON.stringify({
         authenticated: true,
         user_id: activeUser,
+        default_organization_blocked: null,
         setup_required: false,
       }),
     }),
@@ -103,6 +104,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       contentType: "application/json",
       body: JSON.stringify({
         id: activeUser,
+        default_organization_blocked: null,
         // An administrator manages every department, so Reports can be created.
         role: "admin",
         access: [],

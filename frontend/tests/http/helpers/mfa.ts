@@ -97,6 +97,7 @@ export async function mockMfa(
         id: state.userId,
         role: "admin",
         access: [],
+        default_organization_blocked: null,
       },
     }),
   );
@@ -133,7 +134,12 @@ export async function mockMfa(
               },
             }
           : state.authenticated
-            ? { authenticated: true, user_id: userId, setup_required: false }
+            ? {
+                authenticated: true,
+                user_id: userId,
+                setup_required: false,
+                default_organization_blocked: null,
+              }
             : { authenticated: false },
     });
   });

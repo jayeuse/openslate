@@ -198,6 +198,39 @@ def test_password_change_requires_the_current_access_credential(
     change.assert_not_called()
 
 
+@pytest.mark.parametrize("account_status,delivery", [("active", "in_app"), ("pending", "email")])
+@pytest.mark.parametrize("route", ["legacy", "invite", "resend"])
+def test_invitation_responses_project_pending_membership_and_actual_delivery(
+    monkeypatch, account_status, delivery, route
+):
+    from app.systems.access.users import router as users_router
+    from app.systems.access.users.schemas import (
+        InvitationCreate,
+        InvitationResendRequest,
+        UserCreate,
+    )
+
+    admin, _ = contract_user()
+    user, membership = contract_user()
+    user.status, membership.status = account_status, "pending"
+    db = Mock(spec=Session)
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
+    db.scalars.return_value.one.return_value = membership
+    target = users_router if route == "legacy" else auth_router
+    monkeypatch.setattr(target, "invite_user", Mock(return_value=user))
+    monkeypatch.setattr(auth_router, "resend_invitation", Mock(return_value=user))
+    payload = {"email": user.email, "username": user.username}
+    result = (
+        users_router.create_user(UserCreate(**payload), admin, db) if route == "legacy" else
+        auth_router.invite(InvitationCreate(**payload), admin, db) if route == "invite" else
+        auth_router.resend_invite(user.id, InvitationResendRequest(), admin, db)
+    )
+    assert result.user.status.value == "pending"
+    assert result.delivery == delivery
+    assert user.status == account_status
+
+
 def test_invalid_bearer_refresh_does_not_roll_back_provider_owned_revocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -223,7 +256,7 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
     request = contract_request(cookies="openslate_access=access; openslate_refresh=refresh")
     request.scope["headers"].append((b"x-csrf-token", b"csrf-token"))
     lookup = Mock(return_value=identity)
-    monkeypatch.setattr(auth_router, "get_current_identity", lookup)
+    monkeypatch.setattr(auth_router, "get_mfa_identity", lookup)
     revoke = Mock(return_value=identity.session_id)
     monkeypatch.setattr(auth_router, "revoke_provider_refresh_session", revoke)
     client = Mock()
@@ -240,7 +273,7 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
     db.commit.assert_called_once()
     signout.assert_called_once_with(db, identity.session_id, client)
 
-    monkeypatch.setattr(auth_router, "get_current_identity", Mock(side_effect=HTTPException(401)))
+    monkeypatch.setattr(auth_router, "get_mfa_identity", Mock(side_effect=HTTPException(401)))
     monkeypatch.setattr(
         auth_router, "revoke_provider_refresh_session", Mock(return_value=None), raising=False
     )
@@ -262,6 +295,9 @@ def test_logout_rejects_bad_refresh_but_clears_a_valid_browser_session(
 def test_session_and_session_management_routes_distinguish_setup_and_current_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.common.dependencies.auth import AccountOrganization
+    from app.systems.access.auth import organization_router
+
     db = Mock(spec=Session)
     user, _membership = contract_user()
     created_at = datetime.now(UTC)
@@ -284,17 +320,25 @@ def test_session_and_session_management_routes_distinguish_setup_and_current_ses
         expires_at=datetime.now(UTC) + timedelta(days=1),
     )
     identity = CurrentIdentity(user, current.id, True, False)
-    monkeypatch.setattr(auth_router, "get_current_identity", Mock(side_effect=HTTPException(401)))
-    assert auth_router.session_status(contract_request(method="GET", origin=None), db) == {
+    monkeypatch.setattr(organization_router, "get_account_identity",
+                        Mock(side_effect=HTTPException(401)))
+    assert organization_router.session_status(contract_request(method="GET", origin=None), db) == {
         "authenticated": False
     }
-    monkeypatch.setattr(auth_router, "get_current_identity", Mock(side_effect=HTTPException(503)))
+    monkeypatch.setattr(organization_router, "get_account_identity",
+                        Mock(side_effect=HTTPException(503)))
     with pytest.raises(HTTPException) as unavailable:
-        auth_router.session_status(contract_request(method="GET", origin=None), db)
+        organization_router.session_status(contract_request(method="GET", origin=None), db)
     assert unavailable.value.status_code == 503
-    monkeypatch.setattr(auth_router, "get_current_identity", Mock(return_value=identity))
+    monkeypatch.setattr(organization_router, "get_account_identity", Mock(return_value=identity))
+    monkeypatch.setattr(
+        organization_router, "get_account_organization",
+        Mock(return_value=AccountOrganization(_membership)),
+    )
     assert (
-        auth_router.session_status(contract_request(method="GET", origin=None), db)["user_id"]
+        organization_router.session_status(
+            contract_request(method="GET", origin=None), db
+        )["user_id"]
         == user.id
     )
     db.scalars.return_value.all.return_value = [current, other]
@@ -322,7 +366,7 @@ def test_self_session_end_records_one_redacted_event_only_when_state_changes(
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.common.dependencies.auth import get_current_identity
+    from app.common.dependencies.auth import get_account_identity
     from app.core.database import get_db
     from app.systems.access.auth.aggregate_router import router
 
@@ -339,7 +383,7 @@ def test_self_session_end_records_one_redacted_event_only_when_state_changes(
     application = FastAPI()
     application.include_router(router, prefix="/api")
     application.dependency_overrides[get_db] = lambda: db
-    application.dependency_overrides[get_current_identity] = lambda: identity
+    application.dependency_overrides[get_account_identity] = lambda: identity
     path = "/api/auth/sessions/revoke-others" if end_others else f"/api/auth/sessions/{other.id}"
     with TestClient(application, raise_server_exceptions=False) as client:
         first = client.request("POST" if end_others else "DELETE", path)

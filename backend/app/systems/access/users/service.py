@@ -109,7 +109,9 @@ def _lock_profile(db: Session, user_id: UUID) -> User | None:
     return profile
 
 
-def _other_administrator_exists(db: Session, excluded_user_id: UUID) -> bool:
+def _other_administrator_exists(
+    db: Session, excluded_user_id: UUID, org_id: UUID
+) -> bool:
     return bool(
         db.scalar(
             select(func.count())
@@ -117,6 +119,7 @@ def _other_administrator_exists(db: Session, excluded_user_id: UUID) -> bool:
             .join(Membership, Membership.user_id == User.id)
             .where(
                 Membership.role == UserRole.ADMIN.value,
+                Membership.org_id == org_id,
                 User.id != excluded_user_id,
                 User.is_deleted.is_(False),
             )
@@ -157,6 +160,7 @@ def invite_user(
     actor_id: UUID | None = None,
     bootstrap: bool = False,
     client: SupabaseAuthClient | None = None,
+    org_id: UUID | None = None,
 ) -> User:
     """Commit local authorization before creating and mailing a provider identity."""
 
@@ -168,7 +172,7 @@ def invite_user(
         if actor_id is not None:
             require_fresh_exact_admin(db, actor_id)
         org_id = (sole_active_membership(db, actor_id).org_id if actor_id is not None
-                  else load_workspace_policy(db).id)
+                  else org_id or load_workspace_policy(db).id)
         role = UserRole(payload.role)
         expires_at = payload.expires_at
         if role is UserRole.GUEST and expires_at is None:
@@ -184,19 +188,24 @@ def invite_user(
                 "Administrators have access everywhere and are not group members"
             )
         group_ids = _lock_active_groups(db, payload.group_ids)
-        # No row lock: a match is always refused, and a lock on it could wait for a
-        # Sandbox publish that holds its administrator's row while waiting for a group
-        # locked above. The unique indexes still refuse a concurrent duplicate.
-        existing = db.scalar(
-            select(User).where(or_(User.email == payload.email, User.username == payload.username))
-        )
-        if existing is not None:
+        # Email identifies an existing account; proposed profile fields apply only
+        # to new accounts. Unique indexes still refuse concurrent account creation.
+        existing = db.scalar(select(User).where(
+            or_(User.email == payload.email, User.username == payload.username)
+        ).order_by((User.email == payload.email).desc()))
+        if existing is not None and (
+            existing.email != payload.email or existing.is_deleted or existing.status != "active"
+            or existing.supabase_user_id is None
+            or db.scalar(select(Membership.id).where(
+                Membership.org_id == org_id, Membership.user_id == existing.id,
+            )) is not None
+        ):
             raise InvitationConflict("Email or username is already in use")
         if bootstrap:
             _lock_administrator_changes(db)
-            if role is UserRole.ADMIN and _other_administrator_exists(db, UUID(int=0)):
+            if role is UserRole.ADMIN and _other_administrator_exists(db, UUID(int=0), org_id):
                 raise InvitationError("An administrator reservation already exists")
-        user = User(
+        user = existing or User(
             email=payload.email,
             username=payload.username,
             display_name=payload.display_name,
@@ -209,6 +218,7 @@ def invite_user(
             org_id=org_id, user_id=user.id, role=role.value, status=UserStatus.PENDING.value,
             sponsor_user_id=payload.sponsor_user_id, expires_at=expires_at,
             provider_invitation_operation_id=operation_id,
+            invitation_sent_at=utc_now() if existing is not None else None,
         )
         db.add(membership)
         initialize_observation(db, user.id)
@@ -216,6 +226,10 @@ def invite_user(
             db.add(GroupMember(org_id=org_id, group_id=group_id, user_id=user.id,
                                performed_by=actor_id))
         db.commit()
+        if existing is not None:
+            # An invitation is organization authority, not a new account or a
+            # provider action. Only this signed-in account can accept it.
+            return get_user(db, user.id)
     except InvitationError:
         db.rollback()
         _record_invitation_failure(operation_id, actor_id)
@@ -284,13 +298,14 @@ def revoke_invitation(db: Session, user_id: UUID, *, actor_id: UUID) -> None:
         ).with_for_update()).one_or_none()
         if profile is None or profile.is_deleted:
             raise InvitationNotFound("Invitation does not exist")
-        if (profile.status != UserStatus.PENDING.value or membership is None
+        if (membership is None
                 or membership.invitation_sent_at is None):
             raise InvitationConflict("Invitation is no longer pending")
         timestamp = utc_now()
         membership.invitation_sent_at = None
-        profile.tokens_valid_after = token_cutoff(timestamp)
-        revoke_user_sessions(db, profile.id, except_session_id=None, now=timestamp)
+        if profile.status == UserStatus.PENDING.value:
+            profile.tokens_valid_after = token_cutoff(timestamp)
+            revoke_user_sessions(db, profile.id, except_session_id=None, now=timestamp)
         append_security_event(
             db,
             SecurityEventIngestRequest(
@@ -340,12 +355,17 @@ def resend_invitation(
         if (
             profile is None
             or profile.is_deleted
-            or profile.status != UserStatus.PENDING.value
             or membership is None
             or membership.invitation_accepted_at is not None
             or profile.supabase_user_id is None
             or membership.provider_invitation_operation_id is None
         ):
+            raise InvitationError("Invitation is not pending")
+        if profile.status == UserStatus.ACTIVE.value:
+            membership.invitation_sent_at = utc_now()
+            db.commit()
+            return get_user(db, profile.id)
+        if profile.status != UserStatus.PENDING.value:
             raise InvitationError("Invitation is not pending")
         provider_user = prepare_invitation_user(provider, profile, membership)
         sent = provider.admin_send_invitation(profile.email)
@@ -387,6 +407,7 @@ def reconcile_invitation(
     actor_id: UUID | None,
     bootstrap: bool = False,
     client: SupabaseAuthClient | None = None,
+    org_id: UUID | None = None,
 ) -> User:
     """Explicitly recover a provider invite after a local commit failure."""
 
@@ -398,7 +419,7 @@ def reconcile_invitation(
             require_fresh_exact_admin(db, actor_id)
         profile = _lock_profile(db, user_id)
         org_id = (sole_active_membership(db, actor_id).org_id if actor_id is not None
-                  else load_workspace_policy(db).id)
+                  else org_id or load_workspace_policy(db).id)
         membership = db.scalars(select(Membership).where(
             Membership.user_id == user_id, Membership.org_id == org_id,
             Membership.status == "pending", Membership.is_deleted.is_(False),
@@ -415,7 +436,7 @@ def reconcile_invitation(
         if bootstrap:
             _lock_administrator_changes(db)
             if membership.role != UserRole.ADMIN.value or _other_administrator_exists(
-                db, profile.id
+                db, profile.id, org_id
             ):
                 raise InvitationError("Bootstrap reservation is unavailable")
         operation_id = membership.provider_invitation_operation_id

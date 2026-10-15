@@ -87,11 +87,21 @@ async function installArchivedBoard(page: Page) {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/auth/session")
       return route.fulfill({
-        json: { authenticated: true, user_id: actorId, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: actorId,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       });
     if (path === "/api/auth/me")
       return route.fulfill({
-        json: { id: actorId, role: "admin", access: [] },
+        json: {
+          id: actorId,
+          role: "admin",
+          access: [],
+          default_organization_blocked: null,
+        },
       });
     if (path === "/api/workspace")
       return route.fulfill(

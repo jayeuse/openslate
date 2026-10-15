@@ -43,7 +43,7 @@ export function profileSelf(
   id = profileUserA,
   role: "admin" | "member" | "guest" = "member",
 ) {
-  return {
+  const flat = {
     id,
     email: id === profileUserB ? "second@example.test" : "person@example.test",
     username: id === profileUserB ? "second_person" : "owned_person",
@@ -67,6 +67,32 @@ export function profileSelf(
       module_id: string | null;
       level: "read" | "write" | "manage";
     }[],
+  };
+  const account = Object.fromEntries(
+    Object.entries(flat).filter(
+      ([key]) =>
+        ![
+          "role",
+          "access",
+          "sponsor_user_id",
+          "expires_at",
+          "invitation_sent_at",
+        ].includes(key),
+    ),
+  );
+  const org = {
+    org_id: "00000000-0000-4000-8000-000000000901",
+    name: "Example",
+    slug: "example",
+    role,
+  };
+  return {
+    ...flat,
+    account,
+    memberships: [org],
+    pending_invitations: [],
+    current_organization: { ...org, access: flat.access },
+    default_organization_blocked: null,
   };
 }
 
@@ -155,6 +181,7 @@ export async function installProfileApi(
         json: {
           authenticated: true,
           user_id: state.userId,
+          default_organization_blocked: null,
           setup_required: false,
         },
       }),

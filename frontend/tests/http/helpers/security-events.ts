@@ -148,6 +148,7 @@ export async function mockSecurityEvents(page: Page) {
       json: {
         id: auth.userId,
         role: state.role,
+        default_organization_blocked: null,
         access: state.manager
           ? [
               {

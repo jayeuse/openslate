@@ -131,6 +131,135 @@
         "title": "AccessLevel",
         "type": "string"
       },
+      "AccountResponse": {
+        "properties": {
+          "avatar_file_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar File Id"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_deleted": {
+            "title": "Is Deleted",
+            "type": "boolean"
+          },
+          "job_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Title"
+          },
+          "performed_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Performed By"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "username",
+          "status",
+          "display_name",
+          "job_title",
+          "created_at",
+          "updated_at",
+          "deleted_at",
+          "is_deleted",
+          "performed_by"
+        ],
+        "title": "AccountResponse",
+        "type": "object"
+      },
       "ActionTokenCompleteRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1165,6 +1294,9 @@
             "title": "Access",
             "type": "array"
           },
+          "account": {
+            "$ref": "#/components/schemas/AccountResponse"
+          },
           "avatar_file_id": {
             "anyOf": [
               {
@@ -1192,6 +1324,32 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "current_organization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentOrganizationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_organization_blocked": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mfa_required",
+                  "ip_not_allowed",
+                  "organization_required"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Organization Blocked"
           },
           "deleted_at": {
             "anyOf": [
@@ -1264,6 +1422,20 @@
             ],
             "title": "Job Title"
           },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationMembershipResponse"
+            },
+            "title": "Memberships",
+            "type": "array"
+          },
+          "pending_invitations": {
+            "items": {
+              "$ref": "#/components/schemas/PendingInvitationResponse"
+            },
+            "title": "Pending Invitations",
+            "type": "array"
+          },
           "performed_by": {
             "anyOf": [
               {
@@ -1288,7 +1460,14 @@
             "title": "Phone"
           },
           "role": {
-            "$ref": "#/components/schemas/UserRole"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sponsor_user_id": {
             "anyOf": [
@@ -1320,20 +1499,64 @@
           "email",
           "username",
           "status",
-          "role",
           "display_name",
           "job_title",
-          "sponsor_user_id",
-          "expires_at",
-          "invitation_sent_at",
           "created_at",
           "updated_at",
           "deleted_at",
           "is_deleted",
           "performed_by",
+          "account",
+          "memberships",
+          "pending_invitations",
+          "current_organization",
+          "default_organization_blocked",
+          "role",
           "access"
         ],
         "title": "AuthMeResponse",
+        "type": "object"
+      },
+      "AuthenticatedSessionResponse": {
+        "properties": {
+          "authenticated": {
+            "const": true,
+            "title": "Authenticated",
+            "type": "boolean"
+          },
+          "default_organization_blocked": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mfa_required",
+                  "ip_not_allowed",
+                  "organization_required"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Organization Blocked"
+          },
+          "setup_required": {
+            "title": "Setup Required",
+            "type": "boolean"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authenticated",
+          "user_id",
+          "setup_required",
+          "default_organization_blocked"
+        ],
+        "title": "AuthenticatedSessionResponse",
         "type": "object"
       },
       "BackupCreate": {
@@ -3250,6 +3473,42 @@
           "value"
         ],
         "title": "CreateRecordValue",
+        "type": "object"
+      },
+      "CurrentOrganizationResponse": {
+        "properties": {
+          "access": {
+            "items": {
+              "$ref": "#/components/schemas/AccessEntryResponse"
+            },
+            "title": "Access",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "name",
+          "slug",
+          "role",
+          "access"
+        ],
+        "title": "CurrentOrganizationResponse",
         "type": "object"
       },
       "DashboardAggregateConfig": {
@@ -6691,8 +6950,11 @@
       "InvitationResponse": {
         "properties": {
           "delivery": {
-            "const": "email",
             "default": "email",
+            "enum": [
+              "email",
+              "in_app"
+            ],
             "title": "Delivery",
             "type": "string"
           },
@@ -8072,6 +8334,49 @@
         "title": "OccurrenceResponse",
         "type": "object"
       },
+      "OrganizationMembershipResponse": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "name",
+          "slug",
+          "role"
+        ],
+        "title": "OrganizationMembershipResponse",
+        "type": "object"
+      },
+      "OrganizationSelectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id"
+        ],
+        "title": "OrganizationSelectionRequest",
+        "type": "object"
+      },
       "PaginationMetadata": {
         "properties": {
           "count": {
@@ -8131,6 +8436,46 @@
           "password"
         ],
         "title": "PasswordChangeRequest",
+        "type": "object"
+      },
+      "PendingInvitationResponse": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "name",
+          "slug",
+          "role",
+          "id",
+          "expires_at"
+        ],
+        "title": "PendingInvitationResponse",
         "type": "object"
       },
       "PersonCardPublicResponse": {
@@ -14669,6 +15014,20 @@
         "title": "TriggerRunResponse",
         "type": "object"
       },
+      "UnauthenticatedSessionResponse": {
+        "properties": {
+          "authenticated": {
+            "const": false,
+            "title": "Authenticated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "authenticated"
+        ],
+        "title": "UnauthenticatedSessionResponse",
+        "type": "object"
+      },
       "UnreadCountResponse": {
         "properties": {
           "unread_count": {
@@ -19160,6 +19519,47 @@
         ]
       }
     },
+    "/api/auth/invitations/{invitation_id}/accept": {
+      "post": {
+        "operationId": "accept_membership_invitation_api_auth_invitations__invitation_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invitation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invitation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Membership Invitation",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/invitations/{user_id}": {
       "delete": {
         "operationId": "revoke_invite_api_auth_invitations__user_id__delete",
@@ -19369,6 +19769,25 @@
     "/api/auth/me": {
       "get": {
         "operationId": "me_api_auth_me_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -19379,6 +19798,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -19445,6 +19874,25 @@
     "/api/auth/me/profile": {
       "patch": {
         "operationId": "update_profile_api_auth_me_profile_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -19827,21 +20275,102 @@
     "/api/auth/session": {
       "get": {
         "operationId": "session_status_api_auth_session_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Session Status Api Auth Session Get",
-                  "type": "object"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/AuthenticatedSessionResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UnauthenticatedSessionResponse"
+                    }
+                  ],
+                  "title": "Response Session Status Api Auth Session Get"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Session Status",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/session/organization": {
+      "post": {
+        "operationId": "select_organization_api_auth_session_organization_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationSelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthMeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Select Organization",
         "tags": [
           "auth"
         ]

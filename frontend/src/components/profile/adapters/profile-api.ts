@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ApiContractError, ApiError, apiFetch, apiRequest } from "@/lib/api";
+import { defaultOrganizationBlockedSchema } from "@/lib/auth-api";
 import {
   fileWireSchema,
   reserveFile,
@@ -10,13 +11,21 @@ import {
 const uuid = z.uuid();
 const timestamp = z.iso.datetime({ offset: true });
 const nullableText = z.string().nullable();
+const membershipSchema = z
+  .object({
+    org_id: uuid,
+    name: z.string(),
+    slug: z.string(),
+    role: z.enum(["admin", "member", "guest"]),
+  })
+  .strict();
 const selfSchema = z
   .object({
     id: uuid,
     email: z.string(),
     username: z.string(),
     status: z.enum(["pending", "active", "disabled"]),
-    role: z.enum(["admin", "member", "guest"]),
+    role: z.enum(["admin", "member", "guest"]).nullable(),
     display_name: nullableText,
     job_title: nullableText,
     phone: nullableText,
@@ -41,7 +50,25 @@ const selfSchema = z
     ),
   })
   .strict();
-export type ProfileSelf = z.output<typeof selfSchema>;
+const accountSchema = selfSchema.omit({
+  role: true,
+  sponsor_user_id: true,
+  expires_at: true,
+  invitation_sent_at: true,
+  access: true,
+});
+const profileSchema = selfSchema.extend({
+  default_organization_blocked: defaultOrganizationBlockedSchema,
+  account: accountSchema,
+  memberships: z.array(membershipSchema),
+  pending_invitations: z.array(
+    membershipSchema.extend({ id: uuid, expires_at: timestamp }),
+  ),
+  current_organization: membershipSchema
+    .extend({ access: selfSchema.shape.access })
+    .nullable(),
+});
+export type ProfileSelf = z.output<typeof profileSchema>;
 export type PersonCardViewer = {
   id: string;
   role: "admin" | "member" | "guest";
@@ -120,7 +147,7 @@ function requireOwner(self: ProfileSelf, userId: string): ProfileSelf {
 }
 export async function readProfileSelf(userId: string, signal?: AbortSignal) {
   return requireOwner(
-    await apiFetch("/auth/me", selfSchema, {
+    await apiFetch("/auth/me", profileSchema, {
       signal,
       cache: "no-store",
       refreshOnUnauthorized: false,
@@ -134,7 +161,7 @@ export async function saveProfile(
   signal?: AbortSignal,
 ) {
   return requireOwner(
-    await apiFetch("/auth/me/profile", selfSchema, {
+    await apiFetch("/auth/me/profile", profileSchema, {
       method: "PATCH",
       body: JSON.stringify(patchSchema.parse(patch)),
       signal,

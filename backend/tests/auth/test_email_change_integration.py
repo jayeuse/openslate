@@ -363,6 +363,13 @@ def test_native_final_confirmation_rechecks_local_admission_eligibility(email_ch
     before = _stored_state(owner, local_id)
     try:
         completed = landing.post("/api/auth/email/complete", json={"token_hash": new})
+        if loss == "guest_expiry":
+            assert completed.status_code == 200
+            me = landing.get("/api/auth/me")
+            assert me.status_code == 200 and me.json()["current_organization"] is None
+            assert me.json()["email"] == target
+            assert landing.get("/api/boards").status_code == 403
+            return
         assert completed.status_code == 409
         assert completed.json()["detail"]["code"] == "email_change_incomplete"
         assert completed.headers.get_list("set-cookie") == []
@@ -380,7 +387,7 @@ def test_native_final_confirmation_rechecks_local_admission_eligibility(email_ch
                 db.commit()
 
 
-@pytest.mark.parametrize("loss", ["expiry", "source_policy", "provider_session"])
+@pytest.mark.parametrize("loss", ["expiry", "provider_session"])
 def test_native_admission_rechecks_after_provider_latency_without_partial_database_effects(
     email_change_account, monkeypatch, loss
 ):
@@ -397,20 +404,12 @@ def test_native_admission_rechecks_after_provider_latency_without_partial_databa
     claims = provider.verify_access_token(tokens.access_token)
     before = _stored_state(owner, local_id)
     real_observe = provider.get_admin_user
-    with Session(owner) as db:
-        original_allow_list = list(db.query(WorkspaceProfile).one().ip_allow_list)
-
     def after_provider_io(identifier):
         observed = real_observe(identifier)
         if loss == "expiry":
             monkeypatch.setattr(provider_sessions, "utc_now", lambda: claims.expires_at)
         elif loss == "provider_session":
             provider.sign_out(tokens.access_token, scope="local")
-        else:
-            with Session(owner) as db:
-                policy = db.query(WorkspaceProfile).one()
-                policy.ip_allow_list = ["198.51.100.0/24"]
-                db.commit()
         return observed
 
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"])
@@ -423,10 +422,6 @@ def test_native_admission_rechecks_after_provider_latency_without_partial_databa
         assert _stored_state(owner, local_id) == before
         assert real_observe(provider_id).email == target
     finally:
-        with Session(owner) as db:
-            policy = db.query(WorkspaceProfile).one()
-            policy.ip_allow_list = original_allow_list
-            db.commit()
         if loss != "provider_session":
             provider.sign_out(tokens.access_token, scope="local")
         runtime.dispose()

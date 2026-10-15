@@ -648,9 +648,15 @@ test("notification reads: a cancelled read's success cannot clear a refusal", as
   }
 });
 
-const administrator = { id: ids.user, role: "admin", access: [] };
+const administrator = {
+  id: ids.user,
+  role: "admin",
+  access: [],
+  defaultOrganizationBlocked: null,
+};
 // Reads the second department only; the identity cache holds the parsed form.
 const reader = {
+  defaultOrganizationBlocked: null,
   id: ids.user,
   role: "member",
   access: [

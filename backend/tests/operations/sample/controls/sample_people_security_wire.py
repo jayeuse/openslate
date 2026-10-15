@@ -195,6 +195,14 @@ class PeopleWire:
             assert request.headers["x-csrf-token"] == "owned-csrf"
         if path == "/api/auth/me":
             body = {**self.profiles[actor], "access": []}
+            account = {key: value for key, value in body.items() if key not in {
+                "role", "access", "sponsor_user_id", "expires_at", "invitation_sent_at",
+            }}
+            org = {"org_id": self.admin, "name": "Example", "slug": "example",
+                   "role": body["role"]}
+            body.update(account=account, memberships=[org], pending_invitations=[],
+                        current_organization={**org, "access": []},
+                        default_organization_blocked=None)
             if actor == self.target and self.primary_logins > 1 and self.fault == "reauth_identity":
                 body["id"] = self.admin
                 self.fault_hits.add(self.fault)
