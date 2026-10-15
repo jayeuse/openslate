@@ -1,6 +1,6 @@
 """Strict list-only directory projections and local inventory through real signed HTTP."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -194,6 +194,39 @@ def test_server_status_precedence_and_ending_match_the_designed_directory(
     complete = get_rows(context, status=status, limit=100)
     assert {UUID(row["id"]) for row in complete["items"]} == {
         context.people[key] for key in expected
+    }
+
+
+def test_disabling_an_account_updates_directory_status_filters_without_changing_expiry(
+    directory_world,
+):
+    context = directory_world
+    target_id = context.people["active"]
+    expires_at = context.world.clock + timedelta(days=7)
+    assert target_id in {
+        UUID(row["id"]) for row in get_rows(context, status="ending")["items"]
+    }
+
+    disabled = context.world.client.patch(
+        f"/api/users/{target_id}", json={"status": "disabled"}
+    )
+
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["status"] == "disabled"
+    assert datetime.fromisoformat(disabled.json()["expires_at"]) == expires_at
+    rows = get_rows(context, ids=str(target_id))["items"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "disabled"
+    assert datetime.fromisoformat(rows[0]["expires_at"]) == expires_at
+    filtered = {
+        status: {UUID(row["id"]) for row in get_rows(context, status=status)["items"]}
+        for status in ("active", "disabled", "ending", "expired")
+    }
+    assert filtered == {
+        "active": {context.people[key] for key in ("false", "unknown", "stale")},
+        "disabled": {context.people[key] for key in ("active", "disabled")},
+        "ending": {context.people["pending"]},
+        "expired": {context.people["expired"]},
     }
 
 

@@ -137,13 +137,13 @@ def _filtered_users(params: UserListRequest, now: datetime, org_id: UUID) -> Sel
             condition = Membership.expires_at <= now
         elif params.status == "ending":
             condition = and_(
-                Membership.status.in_(("active", "pending")),
+                User.status.in_(("active", "pending")),
                 Membership.expires_at > now,
                 Membership.expires_at <= now + timedelta(days=14),
             )
         else:
             condition = and_(
-                Membership.status == params.status,
+                User.status == params.status,
                 or_(Membership.expires_at.is_(None), Membership.expires_at > now)
             )
         statement = statement.where(User.is_deleted.is_(False), condition)
