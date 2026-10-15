@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.systems.access.users.membership import sole_active_membership
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.post_service import publish_locked
@@ -79,13 +80,16 @@ def test_manual_publication_inbox_snapshots_only_current_board_readers(
     viewer = _actor(db, "inbox-viewer")
     manager = _actor(db, "inbox-manager")
     expired_viewer = _actor(db, "inbox-expired-viewer")
-    expired_viewer.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    sole_active_membership(db, expired_viewer.id).expires_at = (
+        datetime.now(UTC) - timedelta(seconds=1)
+    )
     outsider = _actor(db, "inbox-outsider")
     board = _board(db, owner)
     _grant(db, board, viewer, "view")
     _grant(db, board, manager, "manage")
     _grant(db, board, expired_viewer, "view")
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Publication inbox test",

@@ -43,7 +43,8 @@ def _subject(db: Session) -> tuple[TestClient, Board, User]:
     )
     db.add(actor)
     db.flush()
-    board = Board(scope="project", name=f"Post schedule {uuid7().hex[:8]}")
+    board = Board(org_id=organization(db).id, scope="project",
+                  name=f"Post schedule {uuid7().hex[:8]}")
     db.add(board)
     db.flush()
     board_group(db, board, [actor], "write")
