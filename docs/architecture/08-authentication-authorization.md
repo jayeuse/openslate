@@ -20,6 +20,8 @@ Session listing and revocation remain application-owned. Logout, self/admin revo
 
 Access administrators manage the [workspace Security policy](../../backend/app/systems/manage/workspace/security_router.py) and inspect [People security](../../backend/app/systems/access/users/security.py). Recovery and MFA-reset actions recheck the administrator's session and target provider binding before effects; MFA reset preserves required provider-assurance checks. Local history alone cannot authorize these actions.
 
+MFA code verification uses [durable application budgets](../../backend/app/systems/access/identity/rate_limits.py): five failed codes per account in fifteen minutes start a fifteen-minute cooldown, and each transport source has a separate twenty-failure, fifteen-minute window. The [verification route](../../backend/app/systems/access/auth/mfa_router.py) refuses an exhausted budget before provider challenge or verification with `429` and a `Retry-After` delay in seconds. Failures commit independently of the route transaction; a successful verification clears only the account budget. A security event records entry into cooldown, not every refused request.
+
 ## Invitations and recovery
 
 Administrators set invitation eligibility and application access on the local profile before FastAPI calls the Auth invitation endpoint. The returned provider subject is explicitly bound to that profile. Provider metadata can carry exact invitation reconciliation markers, but it is not an authorization source. Resending or reconciling an invitation never links an account from email equality alone.

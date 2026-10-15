@@ -13,6 +13,7 @@ from uuid6 import uuid7
 from app.common.normalization import normalize_email, normalize_username
 from app.core.base_model import utc_now
 from app.core.config import get_settings
+from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.models import IdentityRateLimitBucket
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
@@ -21,6 +22,10 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 
 LOGIN_WINDOW = timedelta(minutes=15)
 LOGIN_COOLDOWN = timedelta(minutes=15)
+MFA_WINDOW = timedelta(minutes=15)
+MFA_COOLDOWN = timedelta(minutes=15)
+MFA_ACCOUNT_FAILURE_LIMIT = 5
+MFA_SOURCE_FAILURE_LIMIT = 20
 STALE_BUCKET_RETENTION = timedelta(hours=48)
 STALE_BUCKET_CLEANUP_LIMIT = 100
 
@@ -112,12 +117,14 @@ def record_attempt(
     login: bool = False,
     source: str | None = None,
     actor_id: UUID | None = None,
-) -> None:
-    window = timedelta(minutes=policy.login_window_minutes) if policy is not None else LOGIN_WINDOW
-    cooldown = (
-        timedelta(minutes=policy.login_cooldown_minutes) if policy is not None else LOGIN_COOLDOWN
-    )
-    threshold = policy.login_failed_attempt_threshold if policy is not None else 5
+    threshold: int = 5,
+    window: timedelta = LOGIN_WINDOW,
+    cooldown: timedelta = LOGIN_COOLDOWN,
+) -> IdentityRateLimitBucket:
+    if policy is not None:
+        window = timedelta(minutes=policy.login_window_minutes)
+        cooldown = timedelta(minutes=policy.login_cooldown_minutes)
+        threshold = policy.login_failed_attempt_threshold
     was_blocked = (
         bucket is not None and bucket.blocked_until is not None and bucket.blocked_until > timestamp
     )
@@ -139,6 +146,71 @@ def record_attempt(
         bucket.blocked_until = timestamp + cooldown
         if login and not was_blocked:
             _record_login_lockout(db, timestamp, source, actor_id)
+    return bucket
+
+
+def mfa_verification_retry_after(user_id: UUID, *, source: str | None) -> int | None:
+    return _mfa_budget(user_id, source=source, failed=False)
+
+
+def record_mfa_failure(user_id: UUID, *, source: str | None) -> None:
+    """Commit a failed code and any cooldown transition independently of the request."""
+    _mfa_budget(user_id, source=source, failed=True)
+
+
+def _mfa_budget(user_id: UUID, *, source: str | None, failed: bool = False) -> int | None:
+    """Check or commit a failed code independently of the request's transaction."""
+
+    limits = {
+        rate_limit_fingerprint("mfa-account", str(user_id), None): MFA_ACCOUNT_FAILURE_LIMIT,
+        rate_limit_fingerprint("mfa-source", source or "", None): MFA_SOURCE_FAILURE_LIMIT,
+    }
+    with AuditSession(get_engine()) as db:
+        buckets = [(value, lock_bucket(db, value)) for value in sorted(limits)]
+        timestamp = now()
+        retry_after = max(
+            (
+                ceil((bucket.blocked_until - timestamp).total_seconds())
+                for _, bucket in buckets
+                if bucket is not None and bucket.blocked_until is not None
+            ),
+            default=0,
+        )
+        started_cooldown = False
+        if failed and retry_after <= 0:
+            for value, bucket in buckets:
+                bucket = record_attempt(
+                    db,
+                    value,
+                    bucket,
+                    timestamp,
+                    threshold=limits[value],
+                    window=MFA_WINDOW,
+                    cooldown=MFA_COOLDOWN,
+                )
+                if limits[value] == MFA_SOURCE_FAILURE_LIMIT and bucket.blocked_until is not None:
+                    bucket.blocked_until = bucket.window_started_at + MFA_WINDOW
+                started_cooldown |= (
+                    bucket.blocked_until is not None and bucket.blocked_until > timestamp
+                )
+        if started_cooldown:
+            append_security_event(
+                db,
+                SecurityEventIngestRequest(
+                    event_type="identity.lockout",
+                    outcome="denied",
+                    source="identity.mfa_budget",
+                    operation_id=uuid7(),
+                    occurred_at=timestamp,
+                    actor_id=user_id,
+                    subject_id=user_id,
+                    reason="failed_attempt_limit",
+                    metadata={"ip_address": canonical_source(source)},
+                ),
+            )
+        if failed:
+            db.commit()
+        return retry_after if retry_after > 0 else None
 
 
 def _record_login_lockout(

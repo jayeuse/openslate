@@ -152,5 +152,8 @@ def mfa_context(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(service, "SupabaseMfaClient", lambda _auth: mfa_client, raising=False)
+    # Durable admission is exercised with real PostgreSQL in test_mfa_budget_integration.
+    monkeypatch.setattr(service.rate_limits, "mfa_verification_retry_after", lambda *_a, **_k: None)
+    monkeypatch.setattr(service.rate_limits, "lock_bucket", lambda *_a: None)
     monkeypatch.setattr(service, "append_security_event", lambda *_args: None, raising=False)
     return context

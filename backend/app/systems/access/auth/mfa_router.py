@@ -18,9 +18,9 @@ from app.core.integrations.supabase_auth import (
     get_supabase_auth_client,
 )
 from app.systems.access.auth.cookies import clear_browser_session, set_browser_access
-from app.systems.access.auth.request_security import bearer_credentials
+from app.systems.access.auth.request_security import bearer_credentials, source
 from app.systems.access.identity import mfa
-from app.systems.access.identity.contracts import InvalidCredentials
+from app.systems.access.identity.contracts import IdentityRateLimited, InvalidCredentials
 
 router = APIRouter(prefix="/auth/mfa", tags=["auth"])
 
@@ -68,6 +68,7 @@ class VerifyResponse(BaseModel):
 
 
 _ERRORS: tuple[type[Exception], ...] = (
+    IdentityRateLimited,
     mfa.MFARequired,
     mfa.MFAFactorUnavailable,
     InvalidCredentials,
@@ -79,6 +80,12 @@ _ERRORS: tuple[type[Exception], ...] = (
 
 
 def _error(error: Exception, *, verification: bool = False) -> HTTPException:
+    if isinstance(error, IdentityRateLimited):
+        return HTTPException(
+            status_code=429,
+            detail="Too many attempts",
+            headers={"Retry-After": str(error.retry_after)},
+        )
     if isinstance(error, mfa.MFARequired):
         return HTTPException(
             status_code=403,
@@ -162,7 +169,19 @@ def enroll(
     }
 
 
-@router.post("/factors/{factor_id}/verification", response_model=VerifyResponse)
+@router.post(
+    "/factors/{factor_id}/verification",
+    response_model=VerifyResponse,
+    responses={
+        429: {
+            "description": "MFA verification budget exhausted",
+            "headers": {
+                "Retry-After": {"schema": {"type": "integer"}, "description": "Seconds to wait"}
+            },
+            "content": {"application/json": {"example": {"detail": "Too many attempts"}}},
+        }
+    },
+)
 def verify(
     factor_id: UUID,
     payload: VerifyRequest,
@@ -181,6 +200,7 @@ def verify(
             payload.code,
             _access(request, identity),
             get_supabase_auth_client(),
+            source=source(request),
         )
     except _ERRORS as error:
         db.rollback()

@@ -20,7 +20,8 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
 )
 from app.core.integrations.supabase_mfa import SupabaseMfaClient, TotpEnrollment
-from app.systems.access.identity.contracts import InvalidCredentials
+from app.systems.access.identity import rate_limits
+from app.systems.access.identity.contracts import IdentityRateLimited, InvalidCredentials
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.mfa_observations import (
     commit_bound_observation,
@@ -169,18 +170,32 @@ def verify_factor(
     code: str,
     presented_access: str,
     client: SupabaseAuthClient,
+    *,
+    source: str | None = None,
 ) -> str:
     user, session, current_access, _ = _locked_context(
         db, user_id, session_id, presented_access, client
     )
     before_provider = _provider_actor(client, current_access, user)
     _factor(before_provider, factor_id)
+    # Keep the existing user/session order, then serialize this source until route completion.
+    # This lock has no bucket row; accounting uses independent short transactions.
+    rate_limits.lock_bucket(
+        db, rate_limits.rate_limit_fingerprint("mfa-source-guard", source or "", None)
+    )
+    retry_after = rate_limits.mfa_verification_retry_after(user_id, source=source)
+    if retry_after is not None:
+        raise IdentityRateLimited("Too many attempts", retry_after=retry_after)
     before_policy = load_workspace_policy(db)
     current_claims = client.verify_access_token(current_access)
     was_blocked = current_claims.assurance_level == "aal1" and requires_mfa(
         before_policy, user, before_provider
     )
-    tokens = SupabaseMfaClient(client).challenge_and_verify(current_access, factor_id, code)
+    try:
+        tokens = SupabaseMfaClient(client).challenge_and_verify(current_access, factor_id, code)
+    except InvalidProviderCredentials:
+        rate_limits.record_mfa_failure(user_id, source=source)
+        raise
     # A factor verified through OpenSlate requires AAL2 from every session at once.
     forget_provider_user(tokens.user_id)
     try:
@@ -226,6 +241,11 @@ def verify_factor(
         session.expires_at = renewed_session_expiry(session, policy, timestamp)
         if was_blocked:
             reconcile_session_cap(db, user.id, session.id, policy, now=timestamp)
+        bucket = rate_limits.lock_bucket(
+            db, rate_limits.rate_limit_fingerprint("mfa-account", str(user_id), None)
+        )
+        if bucket is not None:
+            db.delete(bucket)
         _record(db, user_id, "verified")
         record_provider_observation(db, user_id, after_provider, started_at)
         record_activity(db, user_id, after_provider.id, timestamp)
