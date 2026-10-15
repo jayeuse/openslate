@@ -1,0 +1,106 @@
+# Labels applied automatically to pull requests by .github/workflows/labeler.yml.
+# area: and layer: labels come from changed paths; agent: labels come from the branch prefix.
+# type:, priority: and status: labels need judgement and are set by hand.
+
+"area: sandbox":
+  - changed-files:
+      - any-glob-to-any-file:
+          - backend/app/systems/sandbox/**
+          - frontend/src/components/systems/sandbox/**
+          - frontend/src/components/sandbox/**
+          - frontend/src/app/**/sandbox/**
+          - frontend/tests/isolated/sandbox/**
+          - frontend/tests/http/sandbox-*
+
+"area: boards":
+  - changed-files:
+      - any-glob-to-any-file:
+          - backend/app/systems/boards/**
+          - frontend/src/components/systems/boards/**
+          - frontend/src/app/**/boards/**
+          - frontend/tests/isolated/boards/**
+          - frontend/tests/http/boards-*
+          - frontend/tests/http/board-*
+
+"area: comms":
+  - changed-files:
+      - any-glob-to-any-file:
+          - backend/app/systems/comms/**
+          - frontend/src/components/systems/comms/**
+          - frontend/src/app/**/comms/**
+          - frontend/tests/isolated/comms/**
+          - frontend/tests/http/comms-*
+
+"area: access":
+  - changed-files:
+      - any-glob-to-any-file:
+          - backend/app/systems/access/**
+          - frontend/src/components/systems/access/**
+          - frontend/src/app/**/access/**
+          - frontend/tests/isolated/access/**
+          - frontend/tests/http/access-*
+
+"area: openview":
+  - changed-files:
+      - any-glob-to-any-file:
+          - backend/app/systems/openview/**
+          - frontend/src/components/systems/openview/**
+          - frontend/src/app/**/openview/**
+          - frontend/tests/isolated/openview/**
+          - frontend/tests/http/openview-*
+
+"area: manage":
+  - changed-files:
+      - any-glob-to-any-file:
+          - backend/app/systems/manage/**
+          - frontend/src/components/systems/manage/**
+          - frontend/src/app/**/manage/**
+          - frontend/tests/isolated/manage/**
+          - frontend/tests/http/manage-*
+
+"area: platform":
+  - changed-files:
+      - any-glob-to-any-file:
+          - backend/app/systems/platform/**
+          - frontend/src/components/systems/platform/**
+          - frontend/src/components/help/**
+          - frontend/src/components/profile/**
+          - frontend/src/app/**/platform/**
+          - frontend/tests/isolated/platform/**
+          - frontend/tests/http/platform-*
+
+"layer: frontend":
+  - changed-files:
+      - any-glob-to-any-file: frontend/**
+
+"layer: backend":
+  - changed-files:
+      - any-glob-to-any-file: backend/**
+
+"layer: infra":
+  - changed-files:
+      - any-glob-to-any-file:
+          - infra/**
+          - packaging/**
+          - compose*.yaml
+          - .dockerignore
+
+"layer: ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - scripts/**
+          - tests/**
+          - frontend/tooling/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - "**/*.md"
+
+"agent: claude":
+  - head-branch: ["^claude/"]
+
+"agent: codex":
+  - head-branch: ["^codex/"]
