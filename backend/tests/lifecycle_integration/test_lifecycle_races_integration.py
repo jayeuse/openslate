@@ -27,9 +27,10 @@ from app.systems.sandbox.lifecycle.planner import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleOperation, LifecycleTargetType
 from app.systems.sandbox.lifecycle.service import execute_lifecycle
 from app.systems.sandbox.modules.models import Module
-from tests.conftest import _guard_integration_database
+from tests.conftest import _guard_integration_database, create_organization
 from tests.conftest import guarded_create_engine as create_engine
 from tests.lifecycle_integration.lifecycle_integration_support import delete_committed_scope
+from tests.sandbox_designs.fixtures import create_document
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = [
@@ -45,6 +46,7 @@ pytestmark = [
 class _LifecycleRaceFixture:
     department_id: UUID
     module_id: UUID
+    organization_id: UUID
 
 
 @dataclass(frozen=True)
@@ -109,8 +111,12 @@ def _seed_committed_scope(ids: set[UUID]) -> _LifecycleRaceFixture:
             )
             try:
                 token = uuid7().hex
-                department = Department(department_name=f"Lifecycle race {token}")
+                organization = create_organization(database)
+                create_document(database, organization)
+                department = Department(org_id=organization.id,
+                                        department_name=f"Lifecycle race {token}")
                 module = Module(
+                    org_id=department.org_id,
                     department=department,
                     module_name=f"Lifecycle race module {token}",
                 )
@@ -118,14 +124,14 @@ def _seed_committed_scope(ids: set[UUID]) -> _LifecycleRaceFixture:
                 database.flush()
                 database.commit()
                 ids.update({department.id, module.id})
-                return _LifecycleRaceFixture(department.id, module.id)
+                return _LifecycleRaceFixture(department.id, module.id, organization.id)
             finally:
                 database.close()
     finally:
         owner_engine.dispose()
 
 
-def _cleanup(ids: set[UUID]) -> None:
+def _cleanup(ids: set[UUID], fixture: _LifecycleRaceFixture) -> None:
     if not ids:
         return
     engine = create_engine(_owner_url())
@@ -134,6 +140,12 @@ def _cleanup(ids: set[UUID]) -> None:
             delete_committed_scope(
                 connection, audit_entity_ids=ids, module_ids=ids, department_ids=ids
             )
+            for table in ("sandbox_documents", "audit_logs", "organizations"):
+                column = "id" if table == "organizations" else "org_id"
+                connection.execute(
+                    text(f"DELETE FROM public.{table} WHERE {column} = :id"),
+                    {"id": fixture.organization_id},
+                )
     finally:
         engine.dispose()
 
@@ -265,7 +277,7 @@ def test_competing_lifecycle_closes_serialize_and_rollback_audit_atomically(
         assert not loser_ids.intersection({row.request_id for row in audit_rows})
         assert {row.entity_id for row in audit_rows} == set(owned_ids)
     finally:
-        _cleanup(owned_ids)
+        _cleanup(owned_ids, fixture)
 
 
 def test_lifecycle_commit_failure_rolls_back_rows_and_audit_for_observer(
@@ -328,4 +340,4 @@ def test_lifecycle_commit_failure_rolls_back_rows_and_audit_for_observer(
         assert state == (False, False)
         assert audit_count == 0
     finally:
-        _cleanup(owned_ids)
+        _cleanup(owned_ids, fixture)
