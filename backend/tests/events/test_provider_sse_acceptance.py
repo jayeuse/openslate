@@ -30,6 +30,7 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import create_member, create_organization, guarded_create_engine
 from tests.postgres_runtime import write_worker_database_manifest
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
 
@@ -42,6 +43,7 @@ class ProviderIdentity:
     email: str
     password: str
     owner_engine: Engine
+    organization_id: UUID
 
 
 @dataclass(slots=True)
@@ -102,6 +104,7 @@ def provider_identity(tmp_path: Path) -> Iterator[ProviderIdentity]:
             if role is None:
                 raise AssertionError("baseline application admin role is missing")
             organization = create_organization(db)
+            create_document(db, organization)
             created_user, _membership = create_member(db, organization,
                 email=email,
                 username=f"provider-sse-{uuid4().hex}",
@@ -110,10 +113,11 @@ def provider_identity(tmp_path: Path) -> Iterator[ProviderIdentity]:
                 supabase_user_id=provider_user_id,
             )
             db.add(created_user)
+            organization_id = organization.id
             db.commit()
             local_user_id = created_user.id
 
-        yield ProviderIdentity(email, password, owner_engine)
+        yield ProviderIdentity(email, password, owner_engine, organization_id)
     finally:
         admin.close()
         try:
@@ -148,6 +152,11 @@ def provider_identity(tmp_path: Path) -> Iterator[ProviderIdentity]:
                         if existing_user is not None:
                             db.delete(existing_user)
                         db.flush()
+                        for table in ("sandbox_documents", "audit_logs"):
+                            db.execute(
+                                text(f"DELETE FROM public.{table} WHERE org_id = :org_id"),
+                                {"org_id": organization.id},
+                            )
                         db.delete(organization)
                         db.commit()
             finally:
@@ -202,7 +211,8 @@ def test_two_api_processes_deliver_opaque_invalidation_and_recheck_revoked_sessi
                 _require_resync(_read_sse_event(stream_lines))
 
                 department_id = _seed_closed_department(
-                    provider_identity.owner_engine, department_name
+                    provider_identity.owner_engine, department_name,
+                    provider_identity.organization_id,
                 )
                 reopened = client_b.post(
                     f"/api/departments/{department_id}/reopen",
@@ -292,11 +302,14 @@ def test_two_api_processes_deliver_opaque_invalidation_and_recheck_revoked_sessi
                 )
 
 
-def _seed_closed_department(owner_engine: Engine, department_name: str) -> UUID:
+def _seed_closed_department(
+    owner_engine: Engine, department_name: str, organization_id: UUID
+) -> UUID:
     """Commit a closed department without an invalidation; API B then reopens it."""
 
     with Session(owner_engine) as db:
         department = Department(
+            org_id=organization_id,
             department_name=department_name,
             is_deleted=True,
             deleted_at=datetime.now(UTC),
