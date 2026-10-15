@@ -797,9 +797,8 @@ for (const [entry, destination] of [
   }) => {
     await installProfileApi(page);
     await page.goto(entry);
-    await expect(page).toHaveURL(
-      new RegExp(`${destination.replace("#", "#")}$`),
-    );
+    const escaped = destination.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    await expect(page).toHaveURL(new RegExp(`${escaped}$`));
     await expect(
       page.getByRole("heading", { name: "Your profile", exact: true }),
     ).toBeVisible();

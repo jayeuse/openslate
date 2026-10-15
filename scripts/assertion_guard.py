@@ -111,7 +111,9 @@ _TS_TOKEN: Final = re.compile(
     r"`(?:\\[\s\S]|[^`\\])*`|[\w$]+|===|!==|>>>?=?|<<=?|\*\*=?|=>|==|!=|<=|>=|"
     r"\?\.|\?\?=?|&&=?|\|\|=?|\+\+|--|[+*/%&|^!-]=|\.\.\.|[^\s]"
 )
-_TS_REGEX: Final = re.compile(r"/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\r\n])+/[a-z]*")
+# "[" may only open a class; letting it also match as a plain character made
+# "[]" ambiguous and the match exponential (CodeQL py/redos).
+_TS_REGEX: Final = re.compile(r"/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\r\n\[])+/[a-z]*")
 _REGEX_PREFIX: Final = frozenset(
     [""]
     + (

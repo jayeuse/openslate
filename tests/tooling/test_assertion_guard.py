@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -41,6 +42,20 @@ class AssertionCountTests(unittest.TestCase):
             "  const expected = 4;",
         ]
         self.assertEqual(guard.count_assertions("frontend/tests/http/a.spec.ts", lines), 3)
+
+
+class RegexLiteralTests(unittest.TestCase):
+    def test_regex_literals_keep_their_full_match(self):
+        for literal in ("/a[b]c/g", r"/x\/y/", "/[/]/", "/a]b/", "/[[]/"):
+            match = guard._TS_REGEX.match(literal)
+            self.assertIsNotNone(match, literal)
+            self.assertEqual(match.group(), literal)
+
+    def test_unterminated_bracket_pairs_do_not_backtrack_exponentially(self):
+        # CodeQL py/redos: "[]" matched both as an empty class and as two characters.
+        started = time.perf_counter()
+        self.assertIsNone(guard._TS_REGEX.match("/" + "[]" * 26))
+        self.assertLess(time.perf_counter() - started, 0.5)
 
 
 class LedgerTests(unittest.TestCase):
