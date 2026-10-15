@@ -1,6 +1,6 @@
 # OpenSlate Supabase infrastructure
 
-This directory contains the pinned provider services for one OpenSlate installation. The implementation contract is [PLAN.md](PLAN.md). Supabase Database is PostgreSQL; this stack replaces the standalone PostgreSQL container and pgweb topology while keeping direct SQLAlchemy/Alembic connections. It does not migrate existing data. Realtime, Functions, Analytics, and Supavisor are not started.
+This directory contains the pinned provider services for one OpenSlate installation. The implementation contract is [PLAN.md](PLAN.md). Supabase Database is PostgreSQL; this stack replaces the standalone PostgreSQL container and pgweb topology while keeping direct SQLAlchemy/Alembic connections. It does not migrate existing data. PostgREST is not included; FastAPI owns application data access and Storage connects directly to PostgreSQL. Realtime, Functions, Analytics, and Supavisor are not started.
 
 ## Version and source
 
@@ -8,13 +8,12 @@ The service wiring follows Supabase [`self-hosted/v0.8.2`](https://github.com/su
 
 | Service | Image tag | Pinned index digest |
 | --- | --- | --- |
-| Database | `supabase/postgres:17.6.1.136` | `f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00` |
+| Database | `supabase/postgres:17.11.0.004` | `6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc` |
 | Auth | `supabase/gotrue:v2.196.0` | `c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232` |
-| Storage | `supabase/storage-api:v1.74.0` | `f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85` |
+| Storage | `supabase/storage-api:v1.81.0` | `98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54` |
 | Gateway | `envoyproxy/envoy:v1.39.1` | `57e14a549d7bd43c8d3f6d03e8cfa653e037d4b38e133acd9b54f38c524401b4` |
-| Studio | `supabase/studio:2026.09.07-sha-7996410` | `94a2a9d2906e8b4109e55159a62e241c3044709a492913ea8edd34b14973d288` |
-| postgres-meta | `supabase/postgres-meta:v0.99.0` | `9a079ac1c94d89629262822a4bd1902d5b1be4adb464e5a0a8fd078aaed72158` |
-| PostgREST | `postgrest/postgrest:v14.17` | `c9dc201e555f5d8e37e7f39cdd4df0229774996e213bfd7de8d10ac609030f2c` |
+| Studio | `supabase/studio:2026.10.05-sha-94b8b06` | `d878dcd9dba73b66d1c2c19aeaf53d07704e71604d93013225be1d1c51475237` |
+| postgres-meta | `supabase/postgres-meta:v0.100.0` | `145325b7e39f8ef4931d6e8cfd3f6f4d655de09d72a2ccc96d9513542c2202bd` |
 | imgproxy | `darthsim/imgproxy:v3.31.4` | `73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712` |
 | Development mail catcher | `axllent/mailpit:v1.27.9` | `b004cc0672d0692f097ba8ab9e5956ae08eeafee3d0a6bf2ab239750101ac538` |
 
@@ -52,7 +51,7 @@ docker compose --project-name <instance> --env-file <private-env-path> -f infra/
 The commands above start development providers only. For production, prepare the inputs below and start only provider services first:
 
 ```sh
-docker compose --project-name <instance> --env-file <private-env-path> -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml up -d db auth rest storage imgproxy meta studio api-gw
+docker compose --project-name <instance> --env-file <private-env-path> -f infra/supabase/compose.yaml -f infra/supabase/compose.production.yaml up -d db auth storage imgproxy meta studio api-gw
 ```
 
 Wait for provider health and build the release-tagged server image. Provision through one short-lived container on this installation's private provider network; the production database does not need a published host port. Prepare a separate owner-only provisioning env file in Docker's literal `KEY=value` format, without shell quotes or Compose interpolation. It contains `ENVIRONMENT=production`, `OPENSLATE_INSTANCE_ID`, `POSTGRES_HOST=db`, `POSTGRES_PORT=5432`, `POSTGRES_DATABASE=postgres`, bootstrap/owner/runtime database URLs at `db:5432/postgres`, `SUPABASE_URL=http://api-gw:8000`, the matching `SUPABASE_AUTH_ISSUER`, and `SUPABASE_SECRET_KEY`.

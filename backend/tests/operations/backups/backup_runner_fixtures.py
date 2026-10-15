@@ -26,7 +26,6 @@ MANIFEST = "a" * 64
 SERVICES = (
     "db",
     "auth",
-    "rest",
     "storage",
     "imgproxy",
     "meta",

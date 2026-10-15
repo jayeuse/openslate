@@ -2,7 +2,7 @@
 # the deliberately narrowed API gateway. Supply --project-name for each instance.
 services:
   db:
-    image: supabase/postgres:17.6.1.136@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+    image: supabase/postgres:17.11.0.004@sha256:6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc
     restart: unless-stopped
     environment:
       POSTGRES_HOST: /var/run/postgresql
@@ -103,36 +103,6 @@ services:
       - provider
       - mail-egress
 
-  rest:
-    image: postgrest/postgrest:v14.17@sha256:c9dc201e555f5d8e37e7f39cdd4df0229774996e213bfd7de8d10ac609030f2c
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}@db:5432/postgres
-      PGRST_DB_SCHEMAS: storage
-      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
-      PGRST_DB_ANON_ROLE: anon
-      PGRST_JWT_SECRET: ${JWT_JWKS:?Generate the public verification JWKS}
-      PGRST_DB_USE_LEGACY_GUCS: "false"
-      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-900}
-      PGRST_ADMIN_SERVER_HOST: localhost
-      PGRST_ADMIN_SERVER_PORT: "3001"
-    command: [postgrest]
-    healthcheck:
-      test: ["CMD", "postgrest", "--ready"]
-      interval: 5s
-      timeout: 5s
-      retries: 3
-    user: "1000:1000"
-    read_only: true
-    cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - provider
-
   imgproxy:
     image: darthsim/imgproxy:v3.31.4@sha256:73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712
     restart: unless-stopped
@@ -162,7 +132,7 @@ services:
   # The official Storage/Studio images leave new named volumes root-owned.
   # This one-shot owner setup lets their long-running processes stay non-root.
   provider-volume-init:
-    image: supabase/storage-api:v1.74.0@sha256:f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85
+    image: supabase/storage-api:v1.81.0@sha256:98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54
     entrypoint: ["/bin/sh", "-c"]
     command: ["chown 1000:1000 /var/lib/storage /app/snippets"]
     restart: "no"
@@ -179,12 +149,10 @@ services:
       - provider
 
   storage:
-    image: supabase/storage-api:v1.74.0@sha256:f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85
+    image: supabase/storage-api:v1.81.0@sha256:98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54
     restart: unless-stopped
     depends_on:
       db:
-        condition: service_healthy
-      rest:
         condition: service_healthy
       imgproxy:
         condition: service_healthy
@@ -193,7 +161,6 @@ services:
     environment:
       ANON_KEY: ${ANON_KEY:?Generate the legacy anon key}
       SERVICE_KEY: ${SERVICE_ROLE_KEY:?Generate the legacy service key}
-      POSTGREST_URL: http://rest:3000
       AUTH_JWT_SECRET: ${JWT_SECRET:?Generate JWT_SECRET}
       JWT_JWKS: ${JWT_JWKS:?Generate the public verification JWKS}
       DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}@db:5432/postgres
@@ -228,7 +195,7 @@ services:
       - provider
 
   meta:
-    image: supabase/postgres-meta:v0.99.0@sha256:9a079ac1c94d89629262822a4bd1902d5b1be4adb464e5a0a8fd078aaed72158
+    image: supabase/postgres-meta:v0.100.0@sha256:145325b7e39f8ef4931d6e8cfd3f6f4d655de09d72a2ccc96d9513542c2202bd
     restart: unless-stopped
     depends_on:
       db:
@@ -252,7 +219,7 @@ services:
       - operator
 
   studio:
-    image: supabase/studio:2026.09.07-sha-7996410@sha256:94a2a9d2906e8b4109e55159a62e241c3044709a492913ea8edd34b14973d288
+    image: supabase/studio:2026.10.05-sha-94b8b06@sha256:d878dcd9dba73b66d1c2c19aeaf53d07704e71604d93013225be1d1c51475237
     restart: unless-stopped
     depends_on:
       meta:
@@ -268,8 +235,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}
       POSTGRES_USER_READ_WRITE: postgres
       PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY:?Generate PG_META_CRYPTO_KEY}
-      PGRST_DB_SCHEMAS: storage
-      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
       DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-OpenSlate}
       DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT:-OpenSlate}
       SUPABASE_URL: http://api-gw:8000

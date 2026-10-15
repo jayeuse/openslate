@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 
 from app.core.config import Settings, get_settings
 from app.core.config.provider_instance import assert_provider_instance
+from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable
 from app.systems.platform.files.supabase_storage import SupabaseStorage
 from tests.conftest import _guard_integration_database
+from tests.files.test_workspace_policy_integration import _actor_with_record, _client, _png
 
 pytestmark = pytest.mark.integration
 
@@ -89,6 +91,41 @@ def stored_object(
 def test_upload_lands_in_the_private_ready_bucket(stored_object) -> None:
     _settings, storage, _client, key, content = stored_object
     assert storage.download(key) == content
+
+
+def test_fastapi_file_roundtrip_reaches_real_private_storage(guarded_db, live_provider_storage):
+    _settings, storage, _provider = live_provider_storage
+    actor, _grant, record = _actor_with_record(guarded_db, role="admin")
+    content = _png()
+    with _client(guarded_db, actor, storage) as client:
+        reserved = client.post(
+            "/api/files",
+            json={
+                "purpose": "record_attachment",
+                "record_id": str(record.id),
+                "filename": "provider-roundtrip.png",
+                "expected_size": len(content),
+            },
+        )
+        assert reserved.status_code == 201, reserved.text
+        file_id = UUID(reserved.json()["id"])
+        key = guarded_db.get(File, file_id).object_key
+        try:
+            uploaded = client.put(
+                f"/api/files/{file_id}/content",
+                headers={"Content-Type": "application/octet-stream"},
+                content=content,
+            )
+            assert uploaded.status_code == 200, uploaded.text
+            assert uploaded.json()["state"] == "ready"
+            assert storage.download(key) == content
+            downloaded = client.get(f"/api/files/{file_id}/content")
+            assert downloaded.status_code == 200, downloaded.text
+            assert downloaded.content == content
+            assert downloaded.headers["content-disposition"].startswith("attachment;")
+            assert downloaded.headers["x-content-type-options"] == "nosniff"
+        finally:
+            storage.delete(key)
 
 
 def test_delete_retries_after_a_failed_provider_delete(stored_object) -> None:

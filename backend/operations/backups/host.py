@@ -22,7 +22,6 @@ SERVICES = frozenset(
     {
         "db",
         "auth",
-        "rest",
         "storage",
         "imgproxy",
         "meta",

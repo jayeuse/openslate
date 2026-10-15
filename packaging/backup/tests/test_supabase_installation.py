@@ -20,7 +20,6 @@ SNAPSHOT = "f" * 64
 _BASE_SERVICES = (
     "db",
     "auth",
-    "rest",
     "storage",
     "imgproxy",
     "meta",

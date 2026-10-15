@@ -168,7 +168,7 @@ def resume_existing(host: Host, journal: Json) -> None:
     host.save(journal)
     for stage in (
         {"db"},
-        {"auth", "rest", "storage", "imgproxy", "meta", "studio", "api-gw"},
+        {"auth", "storage", "imgproxy", "meta", "studio", "api-gw"},
         {"api"},
     ):
         start_existing(host, journal, stage)
