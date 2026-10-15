@@ -115,7 +115,9 @@ def _source(db: Session, *readers) -> tuple[Module, Field]:
     department = add_department(db)
     module = add_module(db, department, "Requests")
     make_group_access(db, readers, department)
-    field = Field(module_id=module.id, name="Label", type=FieldType.TEXT, position=0)
+    field = Field(
+        org_id=module.org_id, module_id=module.id, name="Label", type=FieldType.TEXT, position=0
+    )
     db.add(field)
     db.flush()
     return module, field
@@ -207,6 +209,7 @@ def test_widget_writes_omit_refresh_and_preserve_the_live_response(
         "refresh": "five-minutes",
     }
     source = BoardWidget(
+        org_id=board.org_id,
         board_id=board.id,
         position=0,
         name="Legacy requests",

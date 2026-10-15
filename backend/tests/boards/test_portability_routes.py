@@ -32,7 +32,9 @@ from tests.rbac.support import add_department, add_module, make_user
 def _source(db: Session) -> tuple[Department, Module, Field]:
     department = add_department(db)
     module = add_module(db, department, "Requests")
-    field = Field(module_id=module.id, name="Label", type=FieldType.TEXT, position=0)
+    field = Field(
+        org_id=module.org_id, module_id=module.id, name="Label", type=FieldType.TEXT, position=0
+    )
     db.add(field)
     db.flush()
     return department, module, field
@@ -182,6 +184,7 @@ def test_managers_export_and_administrators_duplicate_every_widget(
     department, module, field = _source(db)
     option_id = str(uuid7())
     status_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Status",
         type=FieldType.SELECT,
@@ -189,6 +192,7 @@ def test_managers_export_and_administrators_duplicate_every_widget(
         config={"options": [{"id": option_id, "label": "Open"}]},
     )
     assignee_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Assignee",
         type=FieldType.USER,
@@ -220,6 +224,7 @@ def test_managers_export_and_administrators_duplicate_every_widget(
         ]
         db.add(
             BoardWidget(
+                org_id=board.org_id,
                 board_id=board.id,
                 position=position,
                 name=name,
@@ -309,6 +314,7 @@ def test_valued_person_filters_fail_board_bundle_export_and_import(
     administrator, manager = admin(db), member(db)
     department, module, label_field = _source(db)
     assignee_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Assignee",
         type=FieldType.USER,
@@ -330,6 +336,7 @@ def test_valued_person_filters_fail_board_bundle_export_and_import(
     ]
     db.add(
         BoardWidget(
+            org_id=board.org_id,
             board_id=board.id,
             position=0,
             name="Assigned records",
@@ -377,6 +384,7 @@ def test_import_and_duplicate_fail_atomically_when_source_changed(
     source_board = project_board(db, "Failure source")
     db.add(
         BoardWidget(
+            org_id=source_board.org_id,
             board_id=source_board.id,
             position=0,
             name="Invalid source",
@@ -438,6 +446,7 @@ def test_duplicate_and_import_copy_no_board_files(integration_owner_db: Session)
     board = project_board(db, "Source with files")
     db.add(
         BoardWidget(
+            org_id=board.org_id,
             board_id=board.id,
             position=0,
             name="First",
@@ -447,6 +456,7 @@ def test_duplicate_and_import_copy_no_board_files(integration_owner_db: Session)
         )
     )
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=administrator.id,
         title="Inspection",
@@ -457,6 +467,7 @@ def test_duplicate_and_import_copy_no_board_files(integration_owner_db: Session)
     )
     content = b"source board bytes"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -471,7 +482,8 @@ def test_duplicate_and_import_copy_no_board_files(integration_owner_db: Session)
     )
     db.add_all((event, file))
     db.flush()
-    db.add(BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
+    db.add(BoardAttachment(org_id=board.org_id,
+                           board_id=board.id, file_id=file.id, event_id=event.id))
     db.commit()
     set_audit_actor(db, administrator.id)
     api = session_client(db, administrator, router)
