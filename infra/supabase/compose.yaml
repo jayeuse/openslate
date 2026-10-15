@@ -208,6 +208,13 @@ services:
       PG_META_DB_USER: postgres
       PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}
       CRYPTO_KEY: ${PG_META_CRYPTO_KEY:?Generate PG_META_CRYPTO_KEY}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/health').then((r) => {if (r.status !== 200) throw new Error(r.status)})\""]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      # Allow concurrent-stack startup; a passing check still ends the grace period at once.
+      start_period: 60s
     user: "1000:1000"
     read_only: true
     tmpfs:
