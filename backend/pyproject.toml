@@ -21,7 +21,7 @@ dependencies = [
     "defusedxml>=0.7.1,<1",
     "cryptography>=46.0.5",
     # 3.2.9 removes upstream typing required by our strict mypy checks.
-    "xlsxwriter>=3.2.8,<3.2.9",
+    "xlsxwriter>=3.2.8,<3.2.10",
 ]
 
 [dependency-groups]
