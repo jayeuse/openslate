@@ -11,7 +11,8 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.modules.models import Module
-from tests.rbac.support import add_user, make_group_access
+from tests.rbac.support import add_user, make_group_access, organization
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
 
@@ -20,8 +21,10 @@ def test_closing_a_department_is_not_blocked_and_keeps_its_group_access(
     integration_owner_db,
 ) -> None:
     db = integration_owner_db
+    org = organization(db)
+    create_document(db, org)
     member = add_user(db)
-    department = Department(department_name=f"Close keeps access {uuid7()}")
+    department = Department(org_id=org.id, department_name=f"Close keeps access {uuid7()}")
     db.add(department)
     db.flush()
     grant = make_group_access(db, [member], department, level=AccessLevel.WRITE)
@@ -39,8 +42,11 @@ def test_department_purge_removes_every_group_access_row_that_references_it(
     integration_owner_db,
 ) -> None:
     db = integration_owner_db
+    org = organization(db)
+    create_document(db, org)
     member = add_user(db)
     department = Department(
+        org_id=org.id,
         department_name=f"Access purge {uuid7()}",
         is_deleted=True,
         deleted_at=datetime.now(UTC),
@@ -48,6 +54,7 @@ def test_department_purge_removes_every_group_access_row_that_references_it(
     db.add(department)
     db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=f"Purged module {uuid7().hex[-12:]}",
         is_deleted=True,

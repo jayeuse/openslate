@@ -41,9 +41,11 @@ def test_field_purge_plan_lists_only_records_with_the_top_level_key(
     assert isinstance(archived, Record)
     key = str(field.id)
 
-    explicit_null = Record(module_id=module.id, data={key: None})
-    nested_value = Record(module_id=module.id, data={key: {"nested": [1, None]}})
-    key_only_nested = Record(module_id=module.id, data={"other": {"nested": key}})
+    explicit_null = Record(org_id=module.org_id, module_id=module.id, data={key: None})
+    nested_value = Record(org_id=module.org_id, module_id=module.id,
+                          data={key: {"nested": [1, None]}})
+    key_only_nested = Record(org_id=module.org_id, module_id=module.id,
+                             data={"other": {"nested": key}})
     integration_db.add_all([explicit_null, nested_value, key_only_nested])
     integration_db.flush()
 
@@ -71,7 +73,8 @@ def test_relationship_field_purge_deletes_active_and_closed_edges_but_preserves_
     source = lifecycle_graph.source
     same_target = lifecycle_graph.same_target
     deleted_target = lifecycle_graph.deleted_target
-    title_field = Field(module_id=module.id, name="Work order", type=FieldType.TEXT, position=2)
+    title_field = Field(org_id=module.org_id, module_id=module.id, name="Work order",
+                        type=FieldType.TEXT, position=2)
     integration_db.add(title_field)
     integration_db.flush()
     module.title_field_id = title_field.id

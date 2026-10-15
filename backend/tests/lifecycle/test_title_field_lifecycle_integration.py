@@ -13,7 +13,8 @@ from app.systems.sandbox.lifecycle.service import (
     reopen_lifecycle,
 )
 from app.systems.sandbox.modules.models import Module
-from tests.rbac.support import add_department, add_module
+from tests.rbac.support import add_department, add_module, organization
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
 
@@ -22,8 +23,10 @@ def test_selected_title_field_blocks_standalone_close_but_module_lifecycle_remai
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
+    create_document(db, organization(db))
     module = add_module(db, add_department(db))
     title_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Title",
         type=FieldType.TEXT,
