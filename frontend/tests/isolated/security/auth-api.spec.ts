@@ -128,6 +128,8 @@ test("loads the authenticated user's role and compact access levels", async () =
       memberships: [organization],
       pendingInvitations: [],
       currentOrganization: organization,
+      organizationOwner: false,
+      operator: false,
     });
     expect(requests.map(({ input }) => input)).toEqual(["/api/auth/me"]);
     expect(requests[0]?.init?.cache).toBe("no-store");

@@ -114,10 +114,9 @@ const dark = (page: Page) =>
 test("a cold preference load is disabled, fails visibly, and retries without changing local motion or organization look", async ({
   page,
 }) => {
-  await installIdentity(page, "guest");
-  await page.route(appearanceUrl, (route) =>
-    route.fulfill({ json: { theme: "stockroom" } }),
-  );
+  // The organization's look is Stockroom for the public read and the
+  // signed-in organization read alike.
+  await installIdentity(page, "guest", "stockroom");
 
   const gate = heldResponse();
   let reads = 0;

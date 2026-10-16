@@ -38,6 +38,7 @@ export const user = {
 /** Only GET /users list rows carry monitoring projections. */
 export const directoryUser = {
   ...user,
+  avatar_url: null,
   active_session_count: 0,
   mfa_verified_totp: null,
   mfa_observed_at: null,

@@ -56,6 +56,9 @@ def session_status(
         "user_id": identity.user.id,
         "setup_required": identity.setup_only,
         "default_organization_blocked": organization.default_organization_blocked,
+        "organization_id": (
+            organization.membership.org_id if organization.membership is not None else None
+        ),
     }
 
 

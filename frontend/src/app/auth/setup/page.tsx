@@ -83,7 +83,8 @@ export default function AuthSetupPage() {
     };
   }, []);
   useEffect(() => {
-    if (!ready || invitationToken) return;
+    // Without a link, ask whether an account is signed in (it may join here).
+    if (!hydrated || invitationToken) return;
     const controller = new AbortController();
     void (async () => {
       try {

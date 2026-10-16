@@ -1545,6 +1545,18 @@
             ],
             "title": "Default Organization Blocked"
           },
+          "organization_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organization Id"
+          },
           "setup_required": {
             "title": "Setup Required",
             "type": "boolean"

@@ -60,6 +60,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { PersonPanel } from "./person-panel";
 import { openRowClassName } from "./row-open-button";
+import { PersonAvatar } from "@/components/person-avatar";
 import { PersonCardPopover } from "@/components/person-card";
 
 const sortOptions: readonly { value: DirectorySort; label: string }[] = [
@@ -256,11 +257,12 @@ function OpenPersonButton({
   row,
   onOpen,
 }: {
-  row: DirectoryRow;
+  row: DirectoryRow<AccessDirectoryUser>;
   onOpen: (id: string) => void;
 }) {
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3">
+      <PersonAvatar name={row.name} avatarUrl={row.user.avatar_url} />
       <div className="relative z-10 min-w-0">
         <PersonCardPopover
           personId={row.user.id}

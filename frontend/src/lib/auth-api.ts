@@ -38,6 +38,9 @@ const sessionResponse = z.discriminatedUnion("authenticated", [
     user_id: z.string().uuid(),
     setup_required: z.boolean(),
     default_organization_blocked: defaultOrganizationBlockedSchema,
+    // The organization a tab without its own choice opens; null when the
+    // person must choose. Older servers omit it: the tab follows the session.
+    organization_id: z.string().uuid().nullable().optional(),
   }),
   z.object({ authenticated: z.literal(false) }),
 ]);

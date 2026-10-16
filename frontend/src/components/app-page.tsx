@@ -385,9 +385,18 @@ export function AppPage({ children }: AppPageProps) {
             result = "network";
           else if (result === "valid") {
             responseOrganizationId = currentOrganizationId();
-            if (responseOrganizationId === null) {
-              // First check in this tab: open the session's organization,
-              // or let the person choose (or see that there is none yet).
+            const sessionOrganization = body.authenticated
+              ? body.organization_id
+              : undefined;
+            // First check in this tab: open the session's organization, or
+            // let the person choose (or see that there is none yet).
+            if (responseOrganizationId === null && sessionOrganization)
+              responseOrganizationId = sessionOrganization;
+            else if (
+              responseOrganizationId === null &&
+              (sessionOrganization === null ||
+                blocked === "organization_required")
+            ) {
               const me = await getAuthMe(controller.signal);
               if (me.id !== responseUserId) result = "unavailable";
               else if (me.currentOrganization)

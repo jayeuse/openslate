@@ -114,6 +114,8 @@ class AuthenticatedSessionResponse(BaseModel):
     user_id: UUID
     setup_required: bool
     default_organization_blocked: DefaultOrganizationBlocked | None
+    # The organization a tab without its own choice opens; None when the person chooses.
+    organization_id: UUID | None = None
 
 
 class UnauthenticatedSessionResponse(BaseModel):
