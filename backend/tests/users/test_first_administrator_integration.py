@@ -36,6 +36,7 @@ from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
 from operations import bootstrap_admin as bootstrap
 from tests.conftest import guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import WAIT, backend_pid, wait_until_waiting
 from tests.rbac.support import add_user, organization
 
@@ -145,7 +146,6 @@ def test_two_bootstraps_that_start_together_reserve_one_administrator(
     first_counted, release_first = Event(), Event()
     second_pid: list[int] = []
     original_exists = user_service._other_administrator_exists
-    original_count = bootstrap._admin_assignment_count
 
     def pause_first_under_the_lock(db: Session, excluded_user_id: UUID, org_id: UUID) -> bool:
         found = original_exists(db, excluded_user_id, org_id)
@@ -154,13 +154,17 @@ def test_two_bootstraps_that_start_together_reserve_one_administrator(
             assert release_first.wait(WAIT)
         return found
 
-    def note_second_connection(db: Session, **options: Any) -> int:
+    original_validate = bootstrap._validate_schema
+
+    def note_second_connection(db: Session) -> None:
+        # Bootstraps serialize on the installation settings row, taken right after this
+        # check; record the second connection before it can wait there.
         if first_counted.is_set() and not second_pid:
             second_pid.append(backend_pid(db))
-        return original_count(db, **options)
+        original_validate(db)
 
     monkeypatch.setattr(user_service, "_other_administrator_exists", pause_first_under_the_lock)
-    monkeypatch.setattr(bootstrap, "_admin_assignment_count", note_second_connection)
+    monkeypatch.setattr(bootstrap, "_validate_schema", note_second_connection)
     results: dict[str, object] = {}
 
     def run(invitation: InvitationCreate) -> None:
@@ -169,7 +173,10 @@ def test_two_bootstraps_that_start_together_reserve_one_administrator(
         except bootstrap.BootstrapError as error:
             results[invitation.email] = error
 
-    runs = [Thread(target=run, args=(first,)), Thread(target=run, args=(second,))]
+    runs = [
+        Thread(target=in_context(run), args=(first,)),
+        Thread(target=in_context(run), args=(second,)),
+    ]
     try:
         runs[0].start()
         assert first_counted.wait(WAIT)

@@ -27,6 +27,7 @@ from app.systems.manage.audit.models import AuditLog, SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.access.access_race_support import add_race_user
 from tests.conftest import create_organization, guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
@@ -98,7 +99,7 @@ def test_a_delete_that_commits_while_the_invitation_email_is_sent_is_kept(
             except InvitationError as error:
                 outcome.append(error)
 
-    inviter = Thread(target=invite)
+    inviter = Thread(target=in_context(invite))
     inviter.start()
     try:
         assert sending.wait(WAIT)

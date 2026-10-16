@@ -167,7 +167,10 @@ def test_a_publish_behind_a_record_edit_refuses_its_stale_review_and_writes_noth
                 )
                 == publications_before
             )
-            assert db.scalar(select(SandboxDocumentRow.revision)) == saved.revision
+            assert db.scalar(
+                select(SandboxDocumentRow.revision)
+                .where(SandboxDocumentRow.org_id == module.org_id)
+            ) == saved.revision
     finally:
         edit_engine.dispose()
         if cleanup is not None:

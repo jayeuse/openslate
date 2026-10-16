@@ -15,6 +15,7 @@ from app.systems.access.users.models import Membership, User, UserRole, UserStat
 from app.systems.access.users.schemas import UserUpdate
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.conftest import create_member, create_organization, guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = [
@@ -88,9 +89,9 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            first = executor.submit(disable_self, first_id)
+            first = executor.submit(in_context(disable_self), first_id)
             assert first_at_commit.wait(timeout=5)
-            second = executor.submit(disable_self, second_id)
+            second = executor.submit(in_context(disable_self), second_id)
             try:
                 wait_until_blocked_by(engine, holder[0])
                 assert not second_projection_done.is_set()
