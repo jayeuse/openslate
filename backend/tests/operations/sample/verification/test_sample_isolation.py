@@ -15,6 +15,8 @@ from operations.sample.verification.isolation import roster_logins, verify_isola
 
 HARBOR = "0190a000-0000-7000-8000-0000000000aa"
 SCHOOL = "0190a000-0000-7000-8000-0000000000bb"
+PARTNER = "0190a000-0000-7000-8000-0000000000ab"
+SLUGS = {HARBOR: "sample-harbor", SCHOOL: "sample-school", PARTNER: "sample-harbor-partner"}
 SCHOOL_MODULE = "0190a000-0000-7000-8000-0000000000c1"
 SCHOOL_RECORD = "0190a000-0000-7000-8000-0000000000d1"
 ADMIN = ("owner@install.example", "admin-fixture")
@@ -26,7 +28,9 @@ class _Wire:
 
     def __init__(self, *, leaky: bool = False, school: bool = True) -> None:
         self.leaky = leaky
-        self.memberships = {ADMIN[0]: {HARBOR, SCHOOL} if school else {HARBOR}, MEMBER[0]: {HARBOR}}
+        # The administrator also runs the pack's partner organization, which is not probed.
+        admin = {HARBOR, PARTNER, SCHOOL} if school else {HARBOR, PARTNER}
+        self.memberships = {ADMIN[0]: admin, MEMBER[0]: {HARBOR, PARTNER}}
         self.logins: list[str] = []
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -41,10 +45,7 @@ class _Wire:
         user = request.headers["cookie"].split("openslate_access=")[1].split(";")[0]
         member_of = self.memberships[user]
         if path == "/api/auth/me":
-            rows = [
-                {"org_id": org_id, "slug": "sample-harbor" if org_id == HARBOR else "sample-school"}
-                for org_id in sorted(member_of)
-            ]
+            rows = [{"org_id": org_id, "slug": SLUGS[org_id]} for org_id in sorted(member_of)]
             return httpx.Response(
                 200, json={"memberships": rows, "current_organization": {"org_id": org}}
             )

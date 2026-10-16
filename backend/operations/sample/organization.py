@@ -35,9 +35,12 @@ class OrganizationUsage:
     administered: bool
 
 
-def sample_slug(pack_key: str) -> str:
-    """The stable slug that finds a pack's organization again in the same install."""
-    return f"sample-{pack_key}"
+def sample_slug(pack_key: str, *, partner: bool = False) -> str:
+    """The stable slug that finds a pack's organization again in the same install.
+
+    The partner organization is the second one the account control joins and switches to.
+    """
+    return f"sample-{pack_key}-partner" if partner else f"sample-{pack_key}"
 
 
 def pack_email_domains(pack: OrganizationPack) -> frozenset[str]:
@@ -98,7 +101,8 @@ def pack_provider_accounts(
 
 
 def create_sample_organization(
-    values: Mapping[str, str], target: Any, pack: OrganizationPack, admin_id: UUID
+    values: Mapping[str, str], target: Any, pack: OrganizationPack, admin_id: UUID,
+    *, partner: bool = False,
 ) -> UUID:
     """Create the pack organization, owned by the administrator, on the verified owner target."""
     from psycopg import connect
@@ -122,7 +126,9 @@ def create_sample_organization(
     try:
         with AuditSession(engine) as db:
             organization = provision(
-                db, name=_INITIAL_NAME, slug=sample_slug(pack.identity.key),
+                db,
+                name=f"{pack.identity.workspace_name} Partner" if partner else _INITIAL_NAME,
+                slug=sample_slug(pack.identity.key, partner=partner),
                 admin_user_id=admin_id,
             )
             return organization.id

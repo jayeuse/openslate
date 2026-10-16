@@ -96,6 +96,8 @@ def test_population_accepts_the_ready_core_components(
 ADMIN_ID = "0190a000-0000-7000-8000-000000000001"
 EXISTING_ORG = "0190a000-0000-7000-8000-0000000000aa"
 CREATED_ORG = "0190a000-0000-7000-8000-0000000000bb"
+EXISTING_PARTNER = "0190a000-0000-7000-8000-0000000000ac"
+CREATED_PARTNER = "0190a000-0000-7000-8000-0000000000bc"
 
 
 def _populate(
@@ -116,12 +118,14 @@ def _populate(
         events.append("password")
         return "fixture-password"
 
-    def create(_values: object, _target: object, pack: Any, admin_id: object) -> str:
-        events.append(f"create:{pack.identity.key}:{admin_id}")
-        return CREATED_ORG
+    def create(
+        _values: object, _target: object, pack: Any, admin_id: object, *, partner: bool = False
+    ) -> str:
+        events.append(f"create:{pack.identity.key}:{admin_id}:{'partner' if partner else 'pack'}")
+        return CREATED_PARTNER if partner else CREATED_ORG
 
     def populate(**kwargs: Any) -> object:
-        populated.append(kwargs["organization_id"])
+        populated.append((kwargs["organization_id"], kwargs["partner_organization_id"]))
         return population.SamplePopulationReport("complete", tmp_path, (), {})
 
     monkeypatch.setattr(commands, "_local_preflight", preflight)
@@ -146,23 +150,29 @@ def test_populate_reuses_the_pack_organization_found_by_slug(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     status, packs, events, populated = _populate(
-        monkeypatch, tmp_path, {"organization_id": EXISTING_ORG}
+        monkeypatch,
+        tmp_path,
+        {"organization_id": EXISTING_ORG, "partner_organization_id": EXISTING_PARTNER},
     )
 
     assert status == 0
     assert [pack.identity.key for pack in packs] == ["school"]
     assert events == ["password"]
-    assert populated == [EXISTING_ORG]
+    assert populated == [(EXISTING_ORG, EXISTING_PARTNER)]
 
 
 def test_populate_creates_the_missing_pack_organization_after_the_password(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    status, _packs, events, populated = _populate(monkeypatch, tmp_path, {"organization_id": None})
+    status, _packs, events, populated = _populate(
+        monkeypatch, tmp_path, {"organization_id": None, "partner_organization_id": None}
+    )
 
     assert status == 0
-    assert events == ["password", f"create:school:{ADMIN_ID}"]
-    assert populated == [CREATED_ORG]
+    assert events == [
+        "password", f"create:school:{ADMIN_ID}:pack", f"create:school:{ADMIN_ID}:partner"
+    ]
+    assert populated == [(CREATED_ORG, CREATED_PARTNER)]
 
 
 @pytest.mark.parametrize("usage", ["organization_members", "organization_records"])

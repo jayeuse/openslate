@@ -195,6 +195,7 @@ SEEDER_ROUTES: frozenset[Route] = frozenset(
         ("POST", "/api/access/groups"),
         ("POST", "/api/auth/invitations"),
         ("POST", "/api/auth/invitations/complete"),
+        ("POST", "/api/auth/invitations/{invitation_id}/accept"),
         ("POST", "/api/auth/invitations/{user_id}/reconcile"),
         ("POST", "/api/auth/invitations/{user_id}/resend"),
         ("POST", "/api/auth/login"),

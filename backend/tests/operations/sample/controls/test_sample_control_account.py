@@ -23,6 +23,8 @@ TOKEN = "a" * 56
 USER_ID = "9ec0d287-ae14-4603-91c2-f9a4d7b73c0a"
 ADMIN_ID = "6e6a48f9-77c2-44cc-8c4d-2f87a73d47e8"
 ORG_ID = "784ab345-b08c-46da-8646-5915c1a356a2"
+PARTNER_ID = "0190a000-0000-7000-8000-0000000000ab"
+INVITATION_ID = "0190a000-0000-7000-8000-0000000000e1"
 
 
 @pytest.mark.parametrize("pack_key", ["harbor", "school"])
@@ -61,6 +63,8 @@ class AccountServer:
         self.requests = []
         self.uncertain_password = uncertain_password
         self.streams_closed = 0
+        self.invited = self.accepted = False
+        self.selected: list[str] = []
 
     def access_token(self, session: str) -> str:
         return session
@@ -124,12 +128,25 @@ class AccountServer:
         if path == "/api/auth/refresh":
             return self.response(body={"authenticated": True, "setup_required": False})
         if path == "/api/auth/me":
+            pending = [{"id": INVITATION_ID, "org_id": PARTNER_ID}]
             return self.response(body={"id": USER_ID, "role": "member", "status": "active",
-                                       "current_organization": {"org_id": ORG_ID}})
+                                       "current_organization": {"org_id": ORG_ID},
+                                       "pending_invitations": pending if self.invited
+                                       and not self.accepted else []})
+        if path == "/api/auth/invitations":
+            assert request.headers["x-org"] == PARTNER_ID
+            assert body["email"] == self.email and body["role"] == "member"
+            self.invited = True
+            return self.response(201, {"user": {"id": USER_ID}, "delivery": "in_app"})
+        if path == f"/api/auth/invitations/{INVITATION_ID}/accept":
+            assert self.invited and not self.accepted
+            self.accepted = True
+            return self.response(204)
         if path == "/api/auth/session/organization":
-            assert body == {"org_id": ORG_ID}
+            assert body["org_id"] in ({ORG_ID, PARTNER_ID} if self.accepted else {ORG_ID})
+            self.selected.append(body["org_id"])
             return self.response(body={"id": USER_ID, "role": "member",
-                                       "current_organization": {"org_id": ORG_ID}})
+                                       "current_organization": {"org_id": body["org_id"]}})
         if path == "/api/auth/sessions":
             return self.response(
                 body=[{"id": item, "current": item == session} for item in sorted(self.sessions)]
@@ -212,6 +229,15 @@ def _setup(tmp_path, monkeypatch, *, uncertain_password=False, server_type=Accou
             transport=httpx.MockTransport(server.handle),
         )
 
+    def partner_admin():
+        # The fixture server accepts one identity; the partner client stands in for the admin.
+        client = SampleClient(
+            "http://api.example.test", ORIGIN, tmp_path / "requests.jsonl", PARTNER_ID,
+            transport=httpx.MockTransport(server.handle),
+        )
+        assert client.login(person.email, PASSWORD).status_code == 200
+        return client
+
     primary = new_client()
     assert primary.login(person.email, PASSWORD).status_code == 200
     context = PhaseExecutionContext(
@@ -228,6 +254,7 @@ def _setup(tmp_path, monkeypatch, *, uncertain_password=False, server_type=Accou
                 action.actor_key: SampleActorCredential(USER_ID, person.email, PASSWORD)
             },
             "new_client": new_client,
+            "partner_admin": partner_admin,
             "mailpit_url": "http://127.0.0.1:8025",
             "origin": ORIGIN,
         },
@@ -273,6 +300,34 @@ def test_account_actions_restore_original_password_keep_primary_usable_and_emit_
         for secret in (PASSWORD, TOKEN, changed, server.email, "not-rotated"):
             assert secret not in serialized
         assert all(row["request_id"] for row in result["request_evidence"])
+        # The actor joins the partner organization in the app and switches there and back.
+        assert server.accepted and server.selected == [PARTNER_ID, ORG_ID]
+        assert (result["partner_organization_id"], result["partner_invitation_id"]) == (
+            PARTNER_ID, INVITATION_ID
+        )
+        assert [row["step"] for row in result["request_evidence"]][:3] == [
+            "accept_partner_invitation", "select_partner_organization", "select_organization"
+        ]
+    finally:
+        primary.close()
+
+
+def test_account_verification_requires_the_run_partner_organization(
+    tmp_path, monkeypatch
+) -> None:
+    from operations.sample.controls.account import execute_account_control, verify_account_controls
+
+    dataset, action, context, primary, server = _setup(tmp_path, monkeypatch)
+    try:
+        result = execute_account_control(action, dataset, context)
+        manifest = {
+            "control_results": [result],
+            "actor_ids": {action.actor_key: USER_ID},
+            "partner_organization_id": "0190a000-0000-7000-8000-0000000000ff",
+        }
+        counts, issues = verify_account_controls(None, dataset, manifest, ADMIN_ID)
+        assert counts["account_control_actions"] == 0
+        assert issues == ["account control end-state evidence differs from the planned non-admin"]
     finally:
         primary.close()
 

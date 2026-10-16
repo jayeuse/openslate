@@ -72,6 +72,7 @@ def run_population(
     mfa_observer: Callable[..., object] | None = None,
     host_control: Callable[..., object] | None = None,
     organization_id: str | None = None,
+    partner_organization_id: str | None = None,
 ) -> dict[str, int]:
     """Perform the sample workflow sequentially and persist only safe evidence."""
     journal = run_directory / "requests.jsonl"
@@ -300,6 +301,15 @@ def run_population(
         }
         if prune_fixture is not None:
             private_values["sandbox_prune_fixture"] = prune_fixture
+        if partner_organization_id is not None:
+
+            def partner_admin() -> SampleClient:
+                client = SampleClient(api_url, origin, journal, partner_organization_id)
+                clients[f"partner-admin-{len(clients)}"] = client
+                _login(client, admin_email, admin_password, expected_id=expected_admin_id)
+                return client
+
+            private_values["partner_admin"] = partner_admin
         if mfa_observer is not None:
             private_values["mfa_observer"] = mfa_observer
         if host_control is not None:

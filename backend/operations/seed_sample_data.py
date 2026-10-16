@@ -277,11 +277,17 @@ def _local_preflight(
         object_keys = storage.list_object_keys()
         reset_plan = build_reset_plan(connection, admin_email, storage_object_keys=object_keys)
         slug = sample_slug(pack.identity.key) if pack is not None else None
-        usage = (
-            organization_usage(connection, slug, reset_plan.preserved_admin_id) if slug else None
+        # The pack organization, then its partner; each is absent or must be empty.
+        usage, partner = (
+            organization_usage(connection, sample_slug(pack.identity.key, partner=side),
+                               reset_plan.preserved_admin_id)
+            if pack is not None
+            else None
+            for side in (False, True)
         )
         connection.rollback()
-    if usage is not None and not usage.administered:
+    found = [row for row in (usage, partner) if row is not None]
+    if any(not row.administered for row in found):
         raise SampleOperationError("The pack organization is not run by the configured admin")
     provider_accounts = pack_provider_accounts(
         ResetAuth(provider_url, provider_secret, timeout),
@@ -298,9 +304,12 @@ def _local_preflight(
         "database_rows": sum(reset_plan.counts.values()),
         "organization_slug": slug,
         "organization_id": str(organization_id) if organization_id is not None else None,
-        "organization_members": usage.other_members if usage is not None else 0,
-        "organization_records": usage.records if usage is not None else 0,
-        "storage_objects": organization_storage_objects(object_keys, organization_id),
+        "partner_organization_id": str(partner.organization_id) if partner is not None else None,
+        "organization_members": sum(row.other_members for row in found),
+        "organization_records": sum(row.records for row in found),
+        "storage_objects": sum(
+            organization_storage_objects(object_keys, row.organization_id) for row in found
+        ),
         "provider_accounts": provider_accounts,
     }
     return report, api_url, mailpit_url
@@ -391,9 +400,14 @@ def main(
                 )
                 _print_plan(dataset, report, mailpit_url)
                 assert pack is not None
-                organization_id = report.get("organization_id") or str(
-                    create_sample_organization(values, target, pack, UUID(str(report["admin_id"])))
-                )
+                def create(partner: bool) -> str:
+                    admin_id = UUID(str(report["admin_id"]))
+                    return str(
+                        create_sample_organization(values, target, pack, admin_id, partner=partner)
+                    )
+
+                organization_id = report.get("organization_id") or create(False)
+                partner_id = report.get("partner_organization_id") or create(True)
                 result = populate_sample_data(
                     api_url=api_url,
                     origin=origin,
@@ -409,6 +423,7 @@ def main(
                     mfa_observer=mfa_observer,
                     host_control=host_control,
                     organization_id=organization_id,
+                    partner_organization_id=partner_id,
                 )
             else:
                 result = verify_sample_data(

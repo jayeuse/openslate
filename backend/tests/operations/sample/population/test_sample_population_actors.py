@@ -297,6 +297,7 @@ def _callback_population(tmp_path, monkeypatch, *, entry, supplied=True, fail_ob
                 {
                     "admin_id": _id("admin"),
                     "organization_id": _id("organization"),
+                    "partner_organization_id": _id("partner"),
                     "storage_objects": 0,
                     "provider_accounts": 0,
                 },

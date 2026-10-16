@@ -28,6 +28,7 @@ def _preflight(*_args: object) -> tuple[dict[str, object], str, str]:
             "admin_eligible": True,
             "admin_id": "admin-id",
             "organization_id": "0190a000-0000-7000-8000-0000000000aa",
+            "partner_organization_id": "0190a000-0000-7000-8000-0000000000ab",
             "storage_objects": 0,
             "provider_accounts": 0,
         },

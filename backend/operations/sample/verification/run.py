@@ -90,13 +90,14 @@ def read_run_manifest(directory: Path, expected_admin_id: str) -> dict[str, Any]
         )
     ):
         raise SampleVerificationError("Run manifest is incomplete or invalid")
-    organization_id = value.get("organization_id")
-    try:
-        # Runs before one organization per pack have none; the session's one applies.
-        if organization_id is not None and str(UUID(organization_id)) != organization_id:
-            raise ValueError
-    except (TypeError, ValueError, AttributeError):
-        raise SampleVerificationError("Run organization is invalid") from None
+    for key in ("organization_id", "partner_organization_id"):
+        organization_id = value.get(key)
+        try:
+            # Runs before one organization per pack have none; the session's one applies.
+            if organization_id is not None and str(UUID(organization_id)) != organization_id:
+                raise ValueError
+        except (TypeError, ValueError, AttributeError):
+            raise SampleVerificationError("Run organization is invalid") from None
     _manifest_plan(value)
     read_phase_plan(value)
     return value
