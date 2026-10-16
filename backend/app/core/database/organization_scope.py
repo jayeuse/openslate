@@ -2,7 +2,8 @@
 
 Row-level security policies read the transaction-local setting ``openslate.org_id``.
 A request stores its resolved organization on the session; a background worker
-binds one organization for each pass of its loop. The setting is applied with
+binds one organization for each pass of its loop, which covers every transaction
+the thread begins, ORM or Core. The setting is applied with
 ``is_local => true`` at the start of every transaction, so it never outlives the
 transaction or leaks to the next user of a pooled connection. A transaction
 without an organization reads no organization rows.
@@ -16,7 +17,7 @@ from contextvars import ContextVar
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, event, text
+from sqlalchemy import Connection, Engine, event, text
 from sqlalchemy.orm import Session
 
 ORGANIZATION_SCOPE_KEY = "openslate.org_id"
@@ -70,8 +71,18 @@ def _apply_on_begin(session: Session, _transaction: Any, connection: Connection)
         apply_connection_scope(connection, org_id)
 
 
+def _apply_worker_scope(connection: Connection) -> None:
+    org_id = _worker_organization.get()
+    if org_id is not None:
+        connection.exec_driver_sql(
+            "SELECT set_config('openslate.org_id', %(org_id)s, true)", {"org_id": str(org_id)}
+        )
+
+
 def register(session_class: type[Session]) -> None:
-    """Apply the bound organization whenever the session begins a transaction."""
+    """Apply the bound organization whenever a session or connection begins a transaction."""
 
     if not event.contains(session_class, "after_begin", _apply_on_begin):
         event.listen(session_class, "after_begin", _apply_on_begin)
+    if not event.contains(Engine, "begin", _apply_worker_scope):
+        event.listen(Engine, "begin", _apply_worker_scope)

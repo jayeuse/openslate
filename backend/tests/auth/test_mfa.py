@@ -121,6 +121,8 @@ def _protected_app(
     )
     db = Mock(spec=Session)
     db.dirty = set()
+    db.info = {}
+    db.in_transaction.return_value = False
     db.scalars.return_value.all.return_value = [membership]
     db.scalar.side_effect = lambda query: {
         IdentitySession: session, Membership: membership, User: user,

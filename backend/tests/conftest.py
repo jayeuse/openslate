@@ -23,6 +23,7 @@ from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.config_support import settings_environment
 from tests.database_pool import pooled_engine
+from tests.organization_scope_support import bind_test_organization, organization_bindings
 from tests.postgres_runtime import assert_runner_database_url
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
@@ -44,6 +45,9 @@ def create_organization(db: Session, **values) -> WorkspaceProfile:
     assert organization is not None
     # Like the operator command, bind the session to the organization it just created.
     scope_session(db, identity)
+    # Raw runtime connections and direct worker calls in this test thread use it as well;
+    # request handlers run in TestClient threads and still bind their own organization.
+    bind_test_organization(identity)
     return organization
 
 
@@ -173,6 +177,12 @@ def _guard_for_test(request, database_url: str) -> None:
         return
     _guard_integration_database(database_url, ownership_cache=_OWNERSHIP_CACHE)
     guarded.add(key)
+
+
+@pytest.fixture(autouse=True)
+def _bound_test_organizations():
+    with organization_bindings():
+        yield
 
 
 @pytest.fixture(autouse=True)

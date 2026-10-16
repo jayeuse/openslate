@@ -32,6 +32,7 @@ from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.access.access_race_support import add_race_user, group_etag_of, run_action
 from tests.conftest import create_organization, guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 
 pytestmark = [
@@ -88,7 +89,7 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
             manager=manager,
             member=member,
             manager_group=_group(db, inventory.id, AccessLevel.MANAGE, manager),
-            target=_group(db, inventory.id, AccessLevel.READ, member),
+            target=in_context(_group)(db, inventory.id, AccessLevel.READ, member),
             outsider=add_race_user(db, organization, "race", UserRole.MEMBER.value),
         )
         db.commit()
@@ -158,8 +159,7 @@ def test_manager_waits_for_a_widening_of_the_group_and_is_then_refused(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            admin = executor.submit(
-                run_action,
+            admin = executor.submit(in_context(run_action),
                 engine,
                 lambda db: policy_service.replace_group_access(
                     db, data.target, widened, etag, data.admin
@@ -167,7 +167,8 @@ def test_manager_waits_for_a_widening_of_the_group_and_is_then_refused(
             )
             assert admin_at_commit.wait(timeout=5)
             manager = executor.submit(
-                run_action, engine, _replace_as(data.manager, data.target, [], etag)
+                in_context(run_action), engine,
+                _replace_as(data.manager, data.target, [], etag),
             )
             try:
                 wait_until_blocked_by(engine, holder[0])
@@ -216,13 +217,14 @@ def test_revoking_the_managers_authority_waits_for_the_managers_change(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            manager = executor.submit(
-                run_action,
+            manager = executor.submit(in_context(run_action),
                 engine,
                 _replace_as(data.manager, data.target, [data.member, data.manager], target_etag),
             )
             assert manager_decided.wait(timeout=5)
-            admin = executor.submit(run_action, engine, revoke(data, manager_group_etag))
+            admin = executor.submit(
+                in_context(run_action), engine, revoke(data, manager_group_etag)
+            )
             try:
                 wait_until_blocked_by(engine, holder[0])
                 assert not admin.done()
@@ -247,8 +249,7 @@ def test_adding_an_administrator_is_refused_without_waiting_for_their_row(
     etag = group_etag_of(engine, data.target)
     with Session(engine) as publisher, ThreadPoolExecutor(max_workers=1) as executor:
         publisher.scalar(select(User.id).where(User.id == data.admin).with_for_update(read=True))
-        refused = executor.submit(
-            run_action,
+        refused = executor.submit(in_context(run_action),
             engine,
             _replace_as(data.manager, data.target, [data.member, data.admin], etag),
         )
@@ -281,7 +282,7 @@ def test_an_invitation_that_reuses_an_administrators_email_does_not_wait_for_the
 
     with Session(engine) as publisher, ThreadPoolExecutor(max_workers=1) as executor:
         publisher.scalar(select(User.id).where(User.id == data.admin).with_for_update(read=True))
-        refused = executor.submit(invite)
+        refused = executor.submit(in_context(invite))
         try:
             assert refused.result(timeout=WAIT) is InvitationConflict
         finally:
@@ -309,8 +310,7 @@ def test_a_user_promoted_between_the_two_administrator_checks_is_not_added(
 
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
-            manager = executor.submit(
-                run_action,
+            manager = executor.submit(in_context(run_action),
                 engine,
                 _replace_as(data.manager, data.target, [data.member, data.outsider], etag),
             )

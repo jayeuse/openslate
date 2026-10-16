@@ -9,6 +9,7 @@ from uuid6 import uuid7
 
 from app.common.normalization import normalize_email
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import scope_session
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User, UserStatus
@@ -118,6 +119,8 @@ def accept_verified_invitation(
         db.rollback()
         raise InvitationError("Invitation is not pending")
     membership = memberships[0]
+    # Acceptance is anonymous; the invited membership names the organization it writes in.
+    scope_session(db, membership.org_id)
     if profile.status == UserStatus.ACTIVE.value and membership.invitation_accepted_at is not None:
         db.rollback()
         _security_event(

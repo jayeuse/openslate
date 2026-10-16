@@ -33,6 +33,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.access.access_race_support import add_race_user, group_etag_of, run_action
 from tests.conftest import create_organization, guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = [
@@ -168,9 +169,9 @@ def test_revocation_waits_until_the_fresh_checked_output_commits(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            output = executor.submit(run_action, engine, check_then_commit_output)
+            output = executor.submit(in_context(run_action), engine, check_then_commit_output)
             assert checked.wait(timeout=5)
-            admin = executor.submit(run_action, engine, revoke(data, etag))
+            admin = executor.submit(in_context(run_action), engine, revoke(data, etag))
             try:
                 wait_until_blocked_by(engine, holder[0])
                 assert not admin.done()
@@ -214,9 +215,9 @@ def test_fresh_check_waits_for_a_pending_revocation_and_is_then_refused(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            admin = executor.submit(run_action, engine, revoke(data, etag))
+            admin = executor.submit(in_context(run_action), engine, revoke(data, etag))
             assert admin_at_commit.wait(timeout=5)
-            output = executor.submit(run_action, engine, _fresh_check(data))
+            output = executor.submit(in_context(run_action), engine, _fresh_check(data))
             try:
                 wait_until_blocked_by(engine, holder[0])
                 assert not output.done()

@@ -20,6 +20,8 @@ from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from tests.organization_scope_support import in_context
+
 WAIT = 10.0
 
 
@@ -62,7 +64,8 @@ def start(call: Callable[[], Any]) -> tuple[threading.Thread, list[Any]]:
         except Exception as error:
             results.append(error)
 
-    thread = threading.Thread(target=run)
+    # The racing thread keeps the caller's context and bound organization.
+    thread = threading.Thread(target=in_context(run))
     thread.start()
     return thread, results
 

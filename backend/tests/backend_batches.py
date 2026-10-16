@@ -36,6 +36,8 @@ def parse_batch(arguments, backend):
     parser.add_argument("--match")
     # Record per-test coverage contexts for a consolidation review (plan item 4).
     parser.add_argument("--contexts", action="store_true")
+    # Run past failures to inventory a broad change in one batch; fail-fast stays the default.
+    parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("targets", nargs="+")
     batch = vars(parser.parse_args(arguments[1:]))
     try:
@@ -113,7 +115,7 @@ def run_backend_batches(run, backend, private, environment, run_id, batch):
                     "pytest",
                     *coverage,
                     "-v",
-                    "-x",
+                    *([] if batch.get("keep_going") else ["-x"]),
                     f"--junitxml={junit}",
                     *filters,
                     *targets,

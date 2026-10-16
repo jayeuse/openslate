@@ -24,7 +24,7 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
-from tests.organization_scope_support import scoped_override
+from tests.organization_scope_support import in_context, scoped_override
 from tests.rbac.support import add_department, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -105,8 +105,7 @@ def test_locked_recipient_refuses_atomically_then_retry_succeeds(audience, opera
     group_id = ids[3][0]
     with Session(engine) as holder, ThreadPoolExecutor(max_workers=1) as pool:
         holder.scalar(select(User).where(User.id == ids[1]).with_for_update())
-        refused = pool.submit(
-            _write,
+        refused = pool.submit(in_context(_write),
             engine,
             ids,
             group_id,
@@ -148,9 +147,9 @@ def test_cross_group_writer_refuses_stale_snapshot_and_retries_under_current_aut
     monkeypatch.setattr(service, "commit", pause)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(_write, engine, ids, ids[3][0])
+            first = pool.submit(in_context(_write), engine, ids, ids[3][0])
             assert at_commit.wait(5)
-            second = pool.submit(_write, engine, ids, ids[3][1], level=None)
+            second = pool.submit(in_context(_write), engine, ids, ids[3][1], level=None)
             try:
                 assert second.result(timeout=5) == 503
             finally:
@@ -233,8 +232,8 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
     event.listen(engine, "handle_error", observe_database_error)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(request_members, actor_ids[0], group_ids[0])
-            second = pool.submit(request_members, actor_ids[1], group_ids[1])
+            first = pool.submit(in_context(request_members), actor_ids[0], group_ids[0])
+            second = pool.submit(in_context(request_members), actor_ids[1], group_ids[1])
             outcomes = [first.result(timeout=15), second.result(timeout=15)]
         # The result contract admits a prompt NOWAIT refusal as well as two
         # serial successes. A database deadlock is never that refusal.

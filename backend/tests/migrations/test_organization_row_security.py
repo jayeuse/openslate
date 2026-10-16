@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import Engine, inspect, text
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.organization_scope import (
@@ -148,13 +149,20 @@ def test_session_scope_survives_commit_and_rollback(two_organizations):
         assert db.get(Department, world.first_department) is None
 
 
-def test_worker_organization_binds_new_sessions(two_organizations):
+def test_worker_organization_binds_sessions_and_raw_connections(two_organizations):
     world = two_organizations
-    with worker_organization(world.second), AuditSession(world.runtime) as db:
-        assert db.get(Department, world.second_department) is not None
-        assert db.get(Department, world.first_department) is None
+    with worker_organization(world.second):
+        with AuditSession(world.runtime) as db:
+            assert db.get(Department, world.second_department) is not None
+            assert db.get(Department, world.first_department) is None
+        with Session(world.runtime) as db:
+            assert db.get(Department, world.second_department) is not None
+        with world.runtime.begin() as connection:
+            assert _department_ids(connection, world) == {world.second_department}
     with AuditSession(world.runtime) as db:
         assert db.get(Department, world.second_department) is None
+    with world.runtime.connect() as connection:
+        assert _department_ids(connection, world) == set()
 
 
 def test_audit_rows_append_for_any_organization_but_read_only_in_scope(two_organizations):

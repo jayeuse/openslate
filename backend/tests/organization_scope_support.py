@@ -8,12 +8,15 @@ organization the same way.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import contextvars
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
 from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import Connection, Engine, event, select
 from sqlalchemy.orm import Session
 
 from app.core.database.organization_scope import scope_session
@@ -48,3 +51,55 @@ def scoped_override(
         return value
 
     return dependency
+
+
+# The organization a test created applies to raw connections on the test's own threads.
+# It is keyed by thread, not by context variable: TestClient copies context variables
+# into request handling, and a request must bind its organization the production way.
+_bound_threads: dict[int, UUID] = {}
+
+
+@contextmanager
+def organization_bindings() -> Iterator[None]:
+    """Forget every thread binding when the test ends."""
+
+    try:
+        yield
+    finally:
+        _bound_threads.clear()
+
+
+def bind_test_organization(org_id: UUID) -> None:
+    """Bind raw connections and direct worker calls on this thread to ``org_id``."""
+
+    _bound_threads[threading.get_ident()] = org_id
+
+
+def _apply_test_scope(connection: Connection) -> None:
+    org_id = _bound_threads.get(threading.get_ident())
+    if org_id is not None:
+        connection.exec_driver_sql(
+            "SELECT set_config('openslate.org_id', %(org_id)s, true)", {"org_id": str(org_id)}
+        )
+
+
+if not event.contains(Engine, "begin", _apply_test_scope):
+    event.listen(Engine, "begin", _apply_test_scope)
+
+
+def in_context(function: Callable[..., Any]) -> Callable[..., Any]:
+    """Run ``function`` in another thread with this thread's context and binding."""
+
+    context = contextvars.copy_context()
+    org_id = _bound_threads.get(threading.get_ident())
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        if org_id is not None:
+            _bound_threads[threading.get_ident()] = org_id
+        try:
+            return context.run(function, *args, **kwargs)
+        finally:
+            if org_id is not None:
+                _bound_threads.pop(threading.get_ident(), None)
+
+    return run

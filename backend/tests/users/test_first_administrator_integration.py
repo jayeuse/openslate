@@ -143,8 +143,8 @@ def test_two_bootstraps_that_start_together_reserve_one_administrator(
     original_exists = user_service._other_administrator_exists
     original_count = bootstrap._admin_assignment_count
 
-    def pause_first_under_the_lock(db: Session, excluded_user_id: UUID) -> bool:
-        found = original_exists(db, excluded_user_id)
+    def pause_first_under_the_lock(db: Session, excluded_user_id: UUID, org_id: UUID) -> bool:
+        found = original_exists(db, excluded_user_id, org_id)
         if not first_counted.is_set():
             first_counted.set()
             assert release_first.wait(WAIT)

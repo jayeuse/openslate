@@ -132,7 +132,8 @@ def test_baseline_isolates_application_roles_from_provider_ownership(integration
         _catalog(
             integration_owner_db,
             "SELECT count(*) FROM pg_catalog.pg_class WHERE relnamespace = 'public'::regnamespace "
-            "AND relkind = 'r' AND relrowsecurity AND relowner = 'openslate_owner'::regrole",
+            # RLS binds the application role only; test_organization_row_security owns the set.
+            "AND relkind = 'r' AND relforcerowsecurity AND relowner = 'openslate_owner'::regrole",
         ).scalar()
         == 0
     )

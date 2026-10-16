@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.manage.audit.models import AuditAction
 from app.systems.sandbox.records.models import Record
@@ -52,6 +53,7 @@ def test_postgres_constraints_reject_self_and_active_duplicates(
     savepoint = integration_db.begin_nested()
     integration_db.add(
         RelationshipEdge(
+            org_id=field.org_id,
             field_id=field.id,
             source_record_id=sources[0].id,
             target_record_id=sources[0].id,
@@ -65,6 +67,7 @@ def test_postgres_constraints_reject_self_and_active_duplicates(
     savepoint = integration_db.begin_nested()
     integration_db.add(
         RelationshipEdge(
+            org_id=field.org_id,
             field_id=field.id,
             source_record_id=sources[0].id,
             target_record_id=targets[0].id,
@@ -166,6 +169,8 @@ def test_assignment_rollback_removes_replacement_and_audit_mutations(
         owned_ids, with_edge=True
     )
     assert original is not None
+    # The graph is committed in its own organization; work in it like a request would.
+    scope_session(integration_db, target_module.org_id)
     new_target = Record(org_id=target_module.org_id, module_id=target_module.id, data={})
     integration_db.add(new_target)
     integration_db.flush()

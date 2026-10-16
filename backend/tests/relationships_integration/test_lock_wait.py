@@ -10,6 +10,7 @@ from uuid6 import uuid7
 from app.core.database.session import AuditSession
 from app.systems.sandbox.relationships.service import create_relationship
 from tests.conftest import guarded_create_engine as create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import wait_until_waiting
 from tests.relationships_integration.relationships_integration_support import (
     _seed_committed_graph,
@@ -61,10 +62,14 @@ def test_two_concurrent_link_writes_in_the_same_modules_both_succeed(
                 outcomes[name] = error
 
     first = threading.Thread(
-        target=write, args=("first", sources[0].id, targets[0].id), kwargs={"hold": True}
+        target=in_context(write),
+        args=("first", sources[0].id, targets[0].id),
+        kwargs={"hold": True},
     )
     second = threading.Thread(
-        target=write, args=("second", sources[1].id, targets[1].id), kwargs={"hold": False}
+        target=in_context(write),
+        args=("second", sources[1].id, targets[1].id),
+        kwargs={"hold": False},
     )
     observed_wait = False
     try:

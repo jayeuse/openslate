@@ -10,7 +10,6 @@ import pytest
 from sqlalchemy import bindparam, func, select, text
 from uuid6 import uuid7
 
-from app.core.database.organization_scope import worker_organization
 from app.core.database.session import AuditSession
 from app.systems.access.policy.models import GroupMember
 from app.systems.access.users.models import User, UserStatus
@@ -52,9 +51,7 @@ def scheduled_report(report_run_fixture):
         db.commit()
         schedule_id = schedule.id
     try:
-        # The test calls the worker directly, so bind its organization as the worker loop does.
-        with worker_organization(subject.org_id):
-            yield subject
+        yield subject
     finally:
         audited_ids = {schedule_id}
         with AuditSession(subject.owner_engine) as db:

@@ -30,6 +30,7 @@ from app.systems.sandbox.modules.models import Module
 from tests.conftest import _guard_integration_database, create_organization
 from tests.conftest import guarded_create_engine as create_engine
 from tests.lifecycle_integration.lifecycle_integration_support import delete_committed_scope
+from tests.organization_scope_support import in_context
 from tests.sandbox_designs.fixtures import create_document
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
@@ -218,7 +219,7 @@ def test_competing_lifecycle_closes_serialize_and_rollback_audit_atomically(
         outcomes_lock = Lock()
         threads = [
             Thread(
-                target=_run_lifecycle,
+                target=in_context(_run_lifecycle),
                 args=(
                     runtime_url,
                     fixture.department_id,
