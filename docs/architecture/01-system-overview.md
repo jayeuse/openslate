@@ -2,7 +2,7 @@
 
 > **Scope:** OpenSlate's self-hosted server contract, ownership boundaries, and implementation status.
 
-OpenSlate is a self-hosted web application installed separately for each client. The selected deployment topology is Docker Compose with Linux containers on Linux servers or Windows through Docker Desktop and WSL2. The checked-in Supabase Compose stack supplies PostgreSQL, Auth, Storage, and Studio. FastAPI remains the application API and authorization authority. It serves a statically exported Next.js frontend, uses SQLAlchemy for application data, and mediates private file access. The production Compose overlay adds Caddy. Production and Windows runtime acceptance remain pending.
+OpenSlate is a self-hosted web application installed separately for each client. One installation holds one or more organizations, and one account can belong to several of them. The selected deployment topology is Docker Compose with Linux containers on Linux servers or Windows through Docker Desktop and WSL2. The checked-in Supabase Compose stack supplies PostgreSQL, Auth, Storage, and Studio. FastAPI remains the application API and authorization authority. It serves a statically exported Next.js frontend, uses SQLAlchemy for application data, and mediates private file access. The production Compose overlay adds Caddy. Production and Windows runtime acceptance remain pending.
 
 ## Server runtime contract
 
@@ -13,17 +13,18 @@ OpenSlate is a self-hosted web application installed separately for each client.
 | Browser routes, assets, and 404s | FastAPI static-site delivery |
 | Business API and application authorization | FastAPI with synchronous SQLAlchemy and OpenSlate roles, groups, permissions, and domain policies |
 | Relational database | Supabase Database (PostgreSQL), with separate Supabase-owned and OpenSlate-owned schemas |
-| Application schema | Alembic using the owner connection; the active fresh-install root is `089c54b88aa6` |
+| Application schema | Alembic using the owner connection; the active fresh-install root is `8db89b6c6c35` |
 | Authentication | Supabase Auth verifies email/password and issues provider sessions and JWTs |
-| Application identity and sessions | FastAPI maps provider subjects to local users and keeps revocable `identity_sessions` |
-| Files | PostgreSQL file metadata; private Supabase Storage `openslate-ready` objects, mediated by FastAPI |
+| Application identity and sessions | FastAPI maps provider subjects to local users and keeps revocable `identity_sessions`; `memberships` give each user a role in each organization |
+| Organization context | The `X-Org` request header, else the session's active organization; FastAPI binds each transaction to that organization |
+| Files | PostgreSQL file metadata; private Supabase Storage buckets `openslate-ready` (organization files) and `openslate-avatars` (account avatars), mediated by FastAPI |
 | File-type validation | FastAPI allowlist and bounded parser subprocess before the Storage write |
 | Invalidation | Authenticated SSE using PostgreSQL `LISTEN`/`NOTIFY`; Supabase Realtime integration is future work |
 | Operator database UI | Supabase Studio, loopback-bound behind gateway Basic Auth |
 
 The browser does not write application rows or read private objects directly. FastAPI verifies provider JWTs against the configured issuer and JWKS, confirms provider subject/session liveness, resolves an explicitly bound OpenSlate user, and checks the application's session and current authorization state. The backend never derives application roles from provider metadata. Normal application mutations use `AuditSession`; Alembic and provider-managed Auth/Storage operations remain outside that application ORM audit boundary.
 
-The application runtime role has normal application-table privileges needed by FastAPI. Its provider-schema exception is deliberately narrow: an operator provisions `openslate_app` for read-only access to `auth.sessions.id` and `auth.sessions.user_id` through the `openslate_session_liveness` SELECT policy. It has no Auth mutation access. OpenSlate does not duplicate its roles, groups, or domain authorization model in PostgreSQL row policies. Provider APIs for Auth and Storage use server-only credentials, and provider Data API routes for application tables are blocked.
+The application runtime role has normal application-table privileges needed by FastAPI. Its provider-schema exception is deliberately narrow: an operator provisions `openslate_app` for read-only access to `auth.sessions.id` and `auth.sessions.user_id` through the `openslate_session_liveness` SELECT policy. It has no Auth mutation access. PostgreSQL row-level security on organization tables refuses rows of other organizations as a backstop to FastAPI's explicit filters. OpenSlate does not duplicate its roles, groups, or domain authorization model in PostgreSQL row policies. Provider APIs for Auth and Storage use server-only credentials, and provider Data API routes for application tables are blocked.
 
 ## Development boundary
 

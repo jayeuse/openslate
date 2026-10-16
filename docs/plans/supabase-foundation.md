@@ -308,7 +308,7 @@ Acceptance: a test with two organizations shows that an event in A never reaches
 2. Add the bucket `openslate-avatars` with keys `user/<user_id>/<uuid>` (D17). Avatars are account files, so a person keeps one avatar across organizations.
 3. Set `file_size_limit` and `allowed_mime_types` on each bucket in `provision_storage.py`. Add the new bucket to `provision_storage.py:17` and `reset/storage.py:17`.
 4. Set the upload limit to 10 MiB in validation, in the transfer middleware, and in the bucket limit (D18). Logos and avatars stay at 2 MiB. The global Storage limit stays at 50 MiB for later exports and backups.
-5. Serve avatar thumbnails at 64 and 256 pixels. FastAPI fetches them from the Storage image transformation endpoint and returns them with the existing cache headers (D19).
+5. Serve avatar thumbnails at 64 and 256 pixels. FastAPI fetches them from the Storage image transformation endpoint and returns them with the existing cache headers (D19). Superseded by the D19 amendment: FastAPI resizes with Pillow.
 6. Pending-upload quotas count per organization (`files/quota.py:27-42`).
 7. Keep `storage.objects` without policies for `anon` and `authenticated` (D17). This keeps any token that the shared JWKS accepts harmless against Storage (see S12).
 
@@ -417,7 +417,7 @@ S04 replaces the migration chain with one new root. After S04, each slice that c
 
 ## 7. Decisions
 
-Source values: **Owner** (answers of 2026-10-15), **Default** (proposed, stands unless edited), **Exploration** (changed by the 2026-10-15 code survey).
+Source values: **Owner** (answers of 2026-10-15), **Default** (proposed, stands unless edited), **Exploration** (changed by the 2026-10-15 code survey), **Amended** (changed during the run; the run record `.agent-runtime/supabase-foundation.md` has the reasons).
 
 | ID | Decision | Value | Source | Slice |
 |---|---|---|---|---|
@@ -431,15 +431,15 @@ Source values: **Owner** (answers of 2026-10-15), **Default** (proposed, stands 
 | D08 | Operator | `platform_operators` table; CLI only; no access to organization data | Owner | S04, S05 |
 | D09 | Cross-organization references | Composite `(org_id, id)` foreign keys between organization tables | Default | S04 |
 | D10 | Unique constraints per organization | `uq_departments_name_active`, `uq_groups_name_active_ci`, `uq_boards_company`, the sandbox document and binding uniques, `uq_sandbox_publications_actor_key` | Exploration | S04 |
-| D11 | RLS policy | `org_id = current_setting('openslate.org_id', true)::uuid`; no `FORCE` (the owner role runs migrations); missing setting returns no rows; development and test raise an error | Default | S06 |
-| D12 | Setting the organization on connections | One helper on every transaction start: `get_db`, 14 `AuditSession` sites, 4 raw connections; workers through `SECURITY DEFINER` claim functions | Exploration | S06 |
+| D11 | RLS policy | `org_id = nullif(current_setting('openslate.org_id', true), '')::uuid`; no `FORCE` (the owner role runs migrations); missing setting returns no rows. No error in development and test: `tests/migrations/test_organization_row_security.py` and the serial shard lane find a missing scope (migration `f5a100021193`) | Amended (S06) | S06 |
+| D12 | Setting the organization on connections | One session `after_begin` listener and one Engine `begin` listener (`organization_scope.py`). Workers loop over `active_organization_ids()` with `worker_organization()`, not `SECURITY DEFINER` claim functions; one organization's failure does not stop the others. Claim functions are Phase 3 cloud-scale work | Amended (S06, S08) | S06 |
 | D13 | Migration root | New single root replaces 20 revisions; documented exception in `migrations/AGENTS.md`; revision tests retired with consolidation evidence | Owner (resets allowed) | S04 |
-| D14 | Admin lock and last admin | Per organization | Default | S07 |
+| D14 | Admin lock and last admin | Per organization: advisory lock `pg_advisory_xact_lock(0x4F534144, hashtext(org_id))`; the last-admin count is per organization | Amended (S07) | S07 |
 | D15 | Mixed and per-user tables | `security_events.org_id` nullable for pre-organization events; avatars are account files; `backup-failed` notifications go to operators; lifecycle buckets keyed by organization and actor; identity buckets stay account-level | Exploration | S04, S08 |
 | D16 | SSE | One stream per tab bound to one organization; payload and viewer carry `org_id`; a switch reconnects | Default | S09 |
 | D17 | Buckets | `openslate-ready` with `org/<org_id>/<uuid>`; `openslate-avatars` with `user/<user_id>/<uuid>`; no `storage.objects` policies for `anon` or `authenticated` | Default | S10 |
-| D18 | Upload limit | 10 MiB in validation, middleware, and bucket limit; logos and avatars 2 MiB; global Storage limit 50 MiB | Owner (10 MB) | S10 |
-| D19 | Thumbnails | Storage image transformation at 64 and 256 pixels, fetched by FastAPI; Cloud needs a paid plan for transformations | Default | S10 |
+| D18 | Upload limit | 10 MiB in validation, middleware, and bucket limit; logos and avatars 2 MiB; global Storage limit 50 MiB. Done in S10 | Owner (10 MB) | S10 |
+| D19 | Thumbnails | FastAPI makes 64 and 256 pixel thumbnails with Pillow. Digest verification stays on the original bytes. No dependency on Storage image transformation, so the Cloud free plan works | Amended (S10) | S10 |
 | D20 | PostgREST | Remove; if storage does not start without it, keep it internal and blocked | Exploration | S01 |
 | D21 | Vault | Not in this phase: GoTrue reads SMTP from its environment, and no SQL consumer exists; keep Fernet for provider tokens | Exploration (changes the earlier default) | — |
 | D22 | Realtime service | Upstream definition at the D29 version; tenant seeded for self-hosting; gateway route `/realtime/v1/` | Default | S11 |
@@ -457,6 +457,22 @@ Source values: **Owner** (answers of 2026-10-15), **Default** (proposed, stands 
 | D34 | Audit placement | Organization actions in `audit_logs` with `org_id`; account actions in `security_events` | Default | S08 |
 | D35 | People visibility | Email and username unique for the install; a person sees only accounts that share the current organization; display name and avatar are account-level | Owner (one account per email) | S04, S07 |
 | D36 | Email templates per organization | Not in Phase 1: GoTrue fetches templates without organization context; Phase 3 decides | Exploration (changes the earlier default) | — |
+
+### 7.1 Owner decisions (2026-10-16)
+
+The owner answered the S07 checkpoint on 2026-10-16. The priority stays on-premises first, cloud second.
+
+1. **Anonymous IP gating.** Keep as is. The IP allow list gates organization entry only, not sign-in, token, refresh, recovery, or invitation completion.
+2. **Settings authority.** The installation owner (platform operator; on-premises, the first administrator) sets installation-wide password and session rules. The organization owner (`owner_user_id`) or the installation owner changes the organization's sensitive security settings. Other administrators do the rest.
+3. **Signed-out theme.** Follow the organization's theme: the browser's last organization (`/api/workspace/appearance?org=`), else the only organization, else Slate.
+4. **Backups.** Failure notices go to all administrators of the installation owner's organizations. Backup actions stay with administrators who are also the installation owner. Backup setup priority: database first, then server, then client.
+5. **Local recovery commands.** Add an option to choose the organization (S15).
+6. **Recovery of an expired guest account.** Keep it allowed. Disabled accounts stay refused.
+7. **Pending invitations.** One pending invitation per person. A second invitation gets a neutral refusal.
+8. **Worker scale.** Keep per-organization worker loops, and isolate each organization's failure now. Claim functions come later.
+9. **Explicit filters and RLS.** Keep RLS-led isolation, with explicit predicates where RLS cannot help. A test fails on joins through `memberships` without an organization.
+10. **Rows without an organization.** Keep the interim rule: an organization administrator sees such a row only when it concerns a person of that organization. Installation-wide rows stay hidden.
+11. **People in several organizations.** Allowed. Organization administrators disable or remove the membership only. Account-level actions belong to the account owner or the installation owner. Organization creation per account is limited by subscription in Phase 3 (cloud, free plan = 1); on-premises has no limit.
 
 ## 8. Possible bugs found during the survey
 

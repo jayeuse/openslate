@@ -19,8 +19,8 @@ A **Status** note appears only when the term is not fully implemented. Status wo
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
 | OpenSlate | "Slate" (planned name) | The current product name. A rename to Slate is planned; its timing is not decided. | Customer |
-| Organization | `WorkspaceProfile`, `/api/workspace`, `workspace_*` columns, Manage tab "Organization" | The customer and the one system it owns: its people, departments, records, and settings. One installation serves one organization. | Customer |
-| Installation | "Supabase Compose installation", "client", "deployment" | One self-hosted copy of OpenSlate with its own Compose project, credentials, and volumes. See [Supabase Compose installation](#infrastructure-and-identity). | Internal |
+| Organization | `organizations` table, `WorkspaceProfile`, `org_id`, `/api/workspace`, `workspace_*` columns, Manage tab "Organization" | The customer and the one system it owns: its people, departments, records, and settings. One installation holds one or more organizations, and each one sees only its own data. | Customer |
+| Installation | "Supabase Compose installation", "client", "deployment" | One self-hosted copy of OpenSlate with its own Compose project, credentials, and volumes. It holds one or more organizations. See [Supabase Compose installation](#infrastructure-and-identity). | Internal |
 | Workspace | `WorkspaceNavigationGroup`, sidebar group | One area in the sidebar: Sandbox, Boards, Access, OpenView, Manage, or Platform. OpenComms and Appearance are links below the groups. Do not use "workspace" for the whole organization in new writing. | Internal |
 | Section | `?section=`, `?view=`, `item`, `ViewTab` | One sub-page inside a workspace, for example Sandbox → Build. The URL key is `section` in most workspaces and `view` in Access and Manage. | Internal |
 | System actor | "runs as the workspace", `actor_label`, empty `performed_by` | A change that no person makes, for example a record trigger or a scheduled report. The audit entry has no user and names the source in `actor_label`. | Internal |
@@ -98,9 +98,13 @@ Access decides who can see and change what. Backend package: `app/systems/access
 
 | Term | Also appears as | Meaning | Copy |
 | --- | --- | --- | --- |
-| Person | `User`, `AccessUser`, "People" | One account in the organization. Status: pending, active, or disabled. | Customer |
+| Person | `User`, `AccessUser`, "People" | One account in the installation. A person can belong to several organizations, and sees only the people of the current organization. Status: pending, active, or disabled. | Customer |
+| Membership | `Membership`, `memberships` | The link between one person and one organization. It holds the account role, the status, the sponsor, and the guest end date. | Internal |
+| Current organization | `X-Org` header, `active_org_id`, `?org=` | The organization that a request, a browser tab, or an event stream works in. The tab keeps its choice; without one, the session's active organization applies. | Internal |
+| Organization owner | `owner_user_id`, `require_organization_owner` | The first administrator of the organization. Only this account or the installation owner changes the organization's security settings. | Internal |
+| Installation owner | `PlatformOperator`, `platform_operators`, "operator" | The account that owns the installation. It sets installation-wide password and session rules and runs backups. On-premises, it is the first administrator. It gets no organization data from this role. | Internal |
 | Person card | `PersonCardPopover`, `/api/users/{id}/card` | A read-only disclosure for a person identified by an authorized source, not a searchable directory. Guests see display name, job title and avatar only; authorized members/admins also receive contact details and biography. | Customer |
-| Account role | `UserRole`: `admin`, `member`, `guest`; "Administrator", "Member", "Guest" | The role of a person. An administrator manages everything. A guest has a sponsor and an end date, and can only read. | Customer |
+| Account role | `UserRole`: `admin`, `member`, `guest`; "Administrator", "Member", "Guest" | The role of a person in one organization, stored on the membership. An administrator manages everything in that organization only. A guest has a sponsor and an end date, and can only read. | Customer |
 | Group | `Group`, `GroupMember` | A named set of people. Groups get access levels on departments, modules, and project Boards. | Customer |
 | Access level | `AccessLevel`: `read`, `write`, `manage` | What a group can do on a department, module, or Board. `read` < `write` < `manage`. | Customer |
 | Group access row | `GroupAccess` | One access level for one group on one department, or on one module of it. The module row overrides the department row for that group. | Internal |
@@ -174,7 +178,7 @@ Shared services for every workspace. Backend package: `app/systems/platform/`. "
 | `MIGRATION_DATABASE_URL` | — | Owner connection used by Alembic for OpenSlate application-schema changes. | Internal |
 | `DATABASE_URL` | — | Constrained `openslate_runtime` connection used by FastAPI and application workers. | Internal |
 | Ready object | — | Immutable private Storage object in `openslate-ready`, written after file-type validation; FastAPI still authorizes each download. | Internal |
-| Supabase Compose installation | — | One self-hosted Supabase and OpenSlate deployment with its own Compose project, credentials, networks, and persistent volumes. It is per client; it is not a shared multi-tenant hosted service. | Internal |
+| Supabase Compose installation | — | One self-hosted Supabase and OpenSlate deployment with its own Compose project, credentials, networks, and persistent volumes. It is per client and can hold several organizations; it is not a hosted service. | Internal |
 | Supabase Storage | — | Provider-managed object API and persistent volume for OpenSlate's private file bytes. FastAPI, not the browser, uses its privileged credentials. | Internal |
 | Supabase Realtime | — | Optional provider change-stream service. **Status:** absent. It is not started; OpenSlate uses PostgreSQL invalidations over authenticated SSE. | Internal |
 | SSE invalidation | `/api/events`, `platform/events` | Authenticated opaque signal asking a client to refetch authorized application data through FastAPI. It does not include protected row snapshots. | Internal |

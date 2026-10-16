@@ -2,7 +2,7 @@
 
 FastAPI application data API: Python 3.12, synchronous SQLAlchemy 2 + Alembic, and Supabase Auth identity mapped to OpenSlate profiles and revocable application sessions. Supabase Database is PostgreSQL. Run commands from `backend/` (`uv run ...`); the project is not installed as a package.
 
-The deployment profile is one full stack per client (single tenant, micro–medium SMB, on-premise first). Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or tenant-scoped schemas without an explicit decision.
+The deployment profile is one full stack per client (micro–medium SMB, on-premise first, cloud second). One installation holds several organizations: shared tables with `org_id`, membership-based authorization in the bound organization, and RLS on `openslate.org_id` as a backstop (decision D01, `docs/plans/supabase-foundation.md`). Every organization query runs in a bound transaction (`app/core/database/organization_scope.py`); join `memberships` through `bound_membership_join()` or an explicit `org_id`; workers loop `active_organization_ids()` under `worker_organization()`. Keep the synchronous stack; do not introduce async SQLAlchemy, keyset pagination, or per-organization schemas without an explicit decision.
 
 ## Layout
 
