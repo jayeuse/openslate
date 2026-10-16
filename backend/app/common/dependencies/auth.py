@@ -79,9 +79,15 @@ def get_current_identity(
     request: Request,
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[Session, Depends(get_db)],
+    raw_org: Annotated[str | None, Header(
+        alias="X-Org",
+        description="Organization this request acts in (UUID). Without it, the session's "
+        "active organization applies.",
+    )] = None,
 ) -> CurrentIdentity:
     identity = get_account_identity(request, bearer, db)
-    raw_org = request.headers.get("X-Org")
+    # Direct callers (delivery rechecks) pass no header value; read it from the request.
+    raw_org = raw_org if raw_org is not None else request.headers.get("X-Org")
     try:
         org_id = UUID(raw_org) if raw_org is not None else None
     except ValueError as error:
