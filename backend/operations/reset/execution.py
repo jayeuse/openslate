@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
-from uuid6 import uuid7
-
-from app.systems.boards.department_boards import COMPANY_BOARD_NAME
-from app.systems.sandbox.designs.defaults import empty_document
-from app.systems.sandbox.designs.schemas import DOCUMENT_SCHEMA_VERSION
-from app.systems.sandbox.designs.service import canonical_document
 from operations.reset.backups import (
     delete_unclaimed_backup_queue,
     require_no_unresolved_backup,
@@ -30,8 +23,8 @@ from operations.reset.models import (
 from operations.reset.planning import (
     _expected_snapshot_payload,
     _read_alembic_head,
+    _read_operator,
     _read_profile,
-    _read_workspace,
     _single_value,
     build_reset_plan,
 )
@@ -57,32 +50,20 @@ def _rollback_safely(connection: Any) -> None:
         pass
 
 
-def _reset_sandbox_workspace(connection: Any) -> None:
-    """Restore the required Sandbox singleton without configured entities or versions."""
-    document = empty_document()
-    payload, content_hash, byte_count = canonical_document(document)
-    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+def _delete_application_rows(connection: Any) -> None:
+    """Delete every organization and all of its rows; nothing is recreated."""
+    # An organization's logo and a module's title field are restrictive references
+    # back into rows deleted later, so clear them before the dependency-ordered deletes.
     _execute(
         connection,
-        """UPDATE public.sandbox_documents
-              SET singleton_key = true, schema_version = %s, revision = 1,
-                  document = %s::jsonb, content_hash = %s, byte_count = %s,
-                  deleted_at = NULL, is_deleted = false, updated_at = now(),
-                  performed_by = NULL
-            WHERE singleton_key = true""",
-        (DOCUMENT_SCHEMA_VERSION, encoded, content_hash, byte_count),
+        "UPDATE public.organizations SET logo_file_id = NULL WHERE logo_file_id IS NOT NULL",
     )
-
-
-def _reset_company_board(connection: Any) -> None:
-    """Restore the one company Board after every Board row was deleted."""
-
     _execute(
         connection,
-        """INSERT INTO public.boards (id, scope, department_id, name, status)
-           VALUES (%s, 'company', NULL, %s, 'active')""",
-        (uuid7(), COMPANY_BOARD_NAME),
+        "UPDATE public.modules SET title_field_id = NULL WHERE title_field_id IS NOT NULL",
     )
+    for table_name in DELETE_ORDER:
+        _execute(connection, f"DELETE FROM public.{table_name}")
 
 
 def _validate_postconditions(
@@ -93,61 +74,24 @@ def _validate_postconditions(
 ) -> None:
     read_profile = read_profile_fn or _read_profile
     count_statements = dict(_COUNT_STATEMENTS)
+    if _single_value(connection, count_statements["organizations"]) != 0:
+        raise ResetError("An organization remained after the reset")
     for table_name in NON_PRESERVED_TABLES:
         if _single_value(connection, count_statements[table_name]) != 0:
             raise ResetError("The reset postcondition was not met")
-
-    if _single_value(connection, count_statements["users"]) != 1:
+    if (
+        _single_value(connection, count_statements["users"]) != 1
+        or _single_value(connection, count_statements["platform_operators"]) != 1
+    ):
         raise ResetError("The reset postcondition was not met")
-    if (
-        _single_value(connection, count_statements["sandbox_documents"]) != 1
-        or _single_value(connection, count_statements["sandbox_versions"]) != 0
-    ):
-        raise ResetError("The Sandbox reset postcondition was not met")
-    if (
-        _single_value(connection, count_statements["boards"]) != 1
-        or _single_value(
-            connection,
-            "SELECT count(*) FROM public.boards WHERE scope = 'company' AND status = 'active'",
-        )
-        != 1
-    ):
-        raise ResetError("The company Board reset postcondition was not met")
+    if _read_operator(connection, plan.preserved_admin_id) != plan.preserved_operator_id:
+        raise ResetError("The preserved installation operator changed")
 
     profile = read_profile(connection, plan.preserved_admin_id)
-    if (
-        stable_snapshot_payload(profile)
-        != _expected_snapshot_payload(plan.profile_snapshot, plan.preserved_admin_id)
-        or profile.role != "admin"
+    if stable_snapshot_payload(profile) != _expected_snapshot_payload(
+        plan.profile_snapshot, plan.preserved_admin_id
     ):
         raise ResetError("The preserved administrator profile changed")
-
-    workspace = _read_workspace(connection)
-    if (
-        workspace.id != plan.workspace_snapshot.id
-        or workspace.singleton_key is not True
-        or workspace.display_name != "OpenSlate"
-        or workspace.legal_name is not None
-        or workspace.description is not None
-        or workspace.contact_email is not None
-        or workspace.contact_phone is not None
-        or workspace.postal_address is not None
-        or workspace.logo_file_id is not None
-        or workspace.timezone != "UTC"
-        or workspace.locale != "en-US"
-        or workspace.currency != "PHP"
-        or workspace.week_start != "monday"
-        or workspace.business_hours != "09:00–18:00"
-        or workspace.mark != "RS"
-        or workspace.theme != "slate"
-        or workspace.revision != 1
-        or workspace.invitation_expiry_days != 7
-        or workspace.guest_duration_days != 30
-        or workspace.deleted_at is not None
-        or workspace.is_deleted is not False
-        or workspace.performed_by is not None
-    ):
-        raise ResetError("The workspace reset postcondition was not met")
 
     if _read_alembic_head(connection) != plan.alembic_head:
         raise ResetError("The database migration head changed")
@@ -242,33 +186,11 @@ def apply_reset(
         if locked_plan.impact_digest != plan.impact_digest:
             raise ResetError("The reset plan changed; run a fresh dry run and confirmation")
 
-        _execute(
-            connection,
-            """UPDATE public.workspace_profiles SET display_name = 'OpenSlate',
-               legal_name = NULL, description = NULL, contact_email = NULL,
-               contact_phone = NULL, postal_address = NULL,
-               logo_file_id = NULL, timezone = 'UTC', locale = 'en-US',
-               currency = 'PHP', week_start = 'monday', business_hours = '09:00–18:00', mark = 'RS',
-               theme = 'slate',
-               invitation_expiry_days = 7, guest_duration_days = 30, revision = 1,
-               performed_by = NULL WHERE id = %s""",
-            (locked_plan.workspace_snapshot.id,),
-        )
-        # Modules point at their title field while fields point back to the
-        # owning module. Break the restrictive title reference before deleting
-        # fields, then the module/field rows can be removed in dependency order.
-        _execute(
-            connection,
-            "UPDATE public.modules SET title_field_id = NULL WHERE title_field_id IS NOT NULL",
-        )
-        for table_name in DELETE_ORDER:
-            _execute(connection, f"DELETE FROM public.{table_name}")
-        _reset_sandbox_workspace(connection)
-        _reset_company_board(connection)
+        _delete_application_rows(connection)
         delete_unclaimed_backup_queue(connection, locked_plan.backup_snapshot.installation_id)
         _execute(
             connection,
-            "DELETE FROM public.users WHERE role = 'guest' AND id <> %s",
+            "DELETE FROM public.platform_operators WHERE user_id <> %s",
             (locked_plan.preserved_admin_id,),
         )
         _execute(

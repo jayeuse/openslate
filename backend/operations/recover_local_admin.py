@@ -22,7 +22,11 @@ from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
-from app.systems.access.identity.admin_recovery import LocalRecoveryError, recover_local_admin
+from app.systems.access.identity.admin_recovery import (
+    LocalRecoveryError,
+    OrganizationChoiceRequired,
+    recover_local_admin,
+)
 
 
 def is_elevated() -> bool:
@@ -31,9 +35,25 @@ def is_elevated() -> bool:
     return os.geteuid() == 0
 
 
+def add_organization_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--organization",
+        metavar="ID_OR_SLUG",
+        help="the organization the person administers; required when there are several",
+    )
+
+
+def organization_choice_message(refusal: str, error: OrganizationChoiceRequired) -> str:
+    return (
+        f"{refusal}: the account administers several organizations; rerun with "
+        f"--organization <id or slug> (one of: {', '.join(error.slugs)})"
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("user_id", type=UUID)
+    add_organization_argument(parser)
     args = parser.parse_args(argv)
     settings = get_settings()
     target = instance_target_for_process(settings.database_url, "openslate_runtime")
@@ -49,9 +69,17 @@ def main(argv: list[str] | None = None) -> None:
         )
         with AuditSession(get_engine()) as db:
             result = recover_local_admin(
-                db, args.user_id, local_invocation=True, elevated=is_elevated()
+                db,
+                args.user_id,
+                local_invocation=True,
+                elevated=is_elevated(),
+                organization=args.organization,
             )
     except Exception as error:
+        if isinstance(error, OrganizationChoiceRequired):
+            raise SystemExit(
+                organization_choice_message("Administrator recovery was refused", error)
+            ) from None
         if isinstance(error, LocalRecoveryError):
             raise SystemExit("Administrator recovery was refused") from None
         raise SystemExit("Administrator recovery failed") from None

@@ -238,7 +238,9 @@ uv run python operations/reset_application_data.py --execute
 
 The operation removes selected OpenSlate application records, associated
 Supabase Auth accounts, and private Storage objects while preserving the
-configured administrator. It reports partial cleanup failures for operator
+configured administrator and that account's installation operator row. It
+removes every organization and creates no new organization. Run
+`operations/create_organization.py` after the reset. It reports partial cleanup failures for operator
 recovery. It is not a database-volume reset, backup, rollback, or customer
 recovery mechanism. See [RESTORE.md](infra/supabase/RESTORE.md) for the
 support-operated restore procedure and its current acceptance gaps.

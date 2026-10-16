@@ -76,13 +76,8 @@ NON_PRESERVED_TABLES = tuple(
         "backup_export_operations",
         "backup_policies",
         "backup_runs",
-        "boards",
-        "memberships",
-        "organizations",
         "platform_operators",
         "platform_settings",
-        "sandbox_documents",
-        "sandbox_versions",
         "update_statuses",
         "users",
     }
@@ -107,6 +102,7 @@ DELETE_ORDER = (
     "record_triggers",
     "sandbox_publications",
     "sandbox_versions",
+    "sandbox_documents",
     "saved_views",
     "in_app_notifications",
     "report_schedules",
@@ -136,6 +132,8 @@ DELETE_ORDER = (
     "fields",
     "modules",
     "departments",
+    "memberships",
+    "organizations",
 )
 
 _RESET_ADVISORY_LOCK_KEY = 8_341_721
@@ -149,31 +147,31 @@ SELECT table_name FROM information_schema.tables
 _ALEMBIC_HEAD_STATEMENT = "SELECT version_num FROM public.alembic_version"
 _PROFILE_STATEMENT = """
 SELECT id, created_at, deleted_at, is_deleted, updated_at, performed_by,
-       email, supabase_user_id, username, status, role, display_name, job_title,
-       sponsor_user_id, expires_at, invitation_sent_at, invitation_accepted_at,
-       tokens_valid_after
+       email, supabase_user_id, username, status, display_name, job_title, phone, bio,
+       theme_preference, appearance, avatar_file_id, tokens_valid_after
   FROM public.users WHERE id = %s
 """
 _PROVIDER_SUBJECTS_STATEMENT = """
 SELECT id, supabase_user_id FROM public.users WHERE id <> %s ORDER BY id
 """
-_WORKSPACE_STATEMENT = """
-SELECT id, singleton_key, display_name, legal_name, description, contact_email,
-       contact_phone, postal_address, logo_file_id, timezone, locale, revision,
-       deleted_at, is_deleted, performed_by, invitation_expiry_days, guest_duration_days,
-       currency, week_start, business_hours, mark, theme
-  FROM public.workspace_profiles
+_OPERATOR_STATEMENT = """
+SELECT id FROM public.platform_operators WHERE user_id = %s AND is_deleted = false
 """
-_EFFECTIVE_ADMIN_PROFILES_STATEMENT = """
+_ORGANIZATIONS_STATEMENT = """
+SELECT to_jsonb(organization) FROM public.organizations AS organization ORDER BY id
+"""
+_EFFECTIVE_OPERATOR_PROFILES_STATEMENT = """
 SELECT profile.id FROM public.users AS profile
 WHERE profile.id <> %s AND profile.status = 'active' AND profile.is_deleted = false
-  AND profile.role = 'admin'
+  AND EXISTS (SELECT 1 FROM public.platform_operators AS operator
+               WHERE operator.user_id = profile.id AND operator.is_deleted = false)
 """
 _PROFILE_DELETE_COUNTS_STATEMENT = """
 SELECT count(*) FILTER (WHERE profile.id <> %s),
        count(*) FILTER (WHERE profile.id <> %s
           AND NOT (profile.status = 'active' AND profile.is_deleted = false)
-          AND profile.role = 'admin')
+          AND EXISTS (SELECT 1 FROM public.platform_operators AS operator
+                       WHERE operator.user_id = profile.id AND operator.is_deleted = false))
 FROM public.users AS profile
 """
 _LOCK_APPLICATION_STATEMENT = """
@@ -231,40 +229,14 @@ class ProfileSnapshot:
     supabase_user_id: UUID | None
     username: object
     status: object
-    role: object
     display_name: object
     job_title: object
-    sponsor_user_id: object
-    expires_at: object
-    invitation_sent_at: object
-    invitation_accepted_at: object
+    phone: object
+    bio: object
+    theme_preference: object
+    appearance: object
+    avatar_file_id: object
     tokens_valid_after: object
-
-
-@dataclass(frozen=True)
-class WorkspaceSnapshot:
-    id: UUID
-    singleton_key: object
-    display_name: object
-    legal_name: object
-    description: object
-    contact_email: object
-    contact_phone: object
-    postal_address: object
-    logo_file_id: object
-    timezone: object
-    locale: object
-    revision: object
-    deleted_at: object
-    is_deleted: object
-    performed_by: object
-    invitation_expiry_days: object
-    guest_duration_days: object
-    currency: object
-    week_start: object
-    business_hours: object
-    mark: object
-    theme: object
 
 
 def stable_snapshot_payload(snapshot: object) -> dict[str, object]:
@@ -298,13 +270,15 @@ class ResetPlan:
     sample_email: str
     counts: Mapping[str, int]
     profiles_to_delete: int
-    inactive_admin_profiles_to_delete: int
+    inactive_operator_profiles_to_delete: int
     impact_digest: str
     preserved_admin_id: UUID
     preserved_admin_provider_id: UUID
+    preserved_operator_id: UUID
     provider_subjects: tuple[tuple[UUID, UUID | None], ...]
     profile_snapshot: ProfileSnapshot
-    workspace_snapshot: WorkspaceSnapshot
+    # Every organization row the reset deletes, frozen so any change needs a fresh preview.
+    organization_snapshot: tuple[str, ...] = field(repr=False)
     storage_object_keys: tuple[str, ...]
     alembic_head: str
     backup_snapshot: BackupSnapshot

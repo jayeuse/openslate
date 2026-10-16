@@ -30,16 +30,14 @@ def _plan() -> SimpleNamespace:
         sample_email="admin@example.test",
         counts={},
         profiles_to_delete=0,
-        inactive_admin_profiles_to_delete=0,
+        inactive_operator_profiles_to_delete=0,
         preserved_admin_id=uuid4(),
         preserved_admin_provider_id=uuid4(),
+        preserved_operator_id=uuid4(),
         provider_subjects=((uuid4(), provider_id),),
         provider_account_ids=(provider_id,),
         profile_snapshot=SimpleNamespace(id=uuid4()),
-        credential_snapshot=SimpleNamespace(user_id=uuid4()),
-        workspace_snapshot=SimpleNamespace(
-            id=uuid4(), invitation_expiry_days=7, guest_duration_days=30
-        ),
+        organization_snapshot=('{"id":"org-a","invitation_expiry_days":7}',),
         storage_object_keys=("objects/aa/object",),
         alembic_head="head",
         backup_snapshot=BackupSnapshot("openslate-fixture", ()),
@@ -52,16 +50,33 @@ def _auth(plan: SimpleNamespace) -> Mock:
     return auth
 
 
-def test_reset_impact_digest_includes_the_invitation_settings() -> None:
+@pytest.mark.parametrize(
+    "organization_snapshot",
+    (
+        ('{"id":"org-a","invitation_expiry_days":14}',),
+        ('{"id":"org-a","invitation_expiry_days":7}', '{"id":"org-b"}'),
+        (),
+    ),
+    ids=("changed-setting", "added-organization", "no-organization"),
+)
+def test_reset_impact_digest_freezes_every_organization_it_deletes(
+    organization_snapshot,
+) -> None:
     plan = _plan()
     plan.impact_digest = reset_planning._impact_digest(plan)
 
     changed = SimpleNamespace(**vars(plan))
-    changed.workspace_snapshot = SimpleNamespace(
-        id=plan.workspace_snapshot.id, invitation_expiry_days=14, guest_duration_days=30
-    )
+    changed.organization_snapshot = organization_snapshot
 
     assert reset_planning._impact_digest(changed) != plan.impact_digest
+
+
+def test_reset_impact_digest_freezes_the_preserved_operator() -> None:
+    plan = _plan()
+    changed = SimpleNamespace(**vars(plan))
+    changed.preserved_operator_id = uuid4()
+
+    assert reset_planning._impact_digest(changed) != reset_planning._impact_digest(plan)
 
 
 def test_reset_impact_digest_freezes_provider_subject_mapping() -> None:
@@ -161,17 +176,26 @@ def test_database_commit_precedes_private_storage_cleanup(monkeypatch) -> None:
     assert statements.index("DELETE FROM public.sandbox_test_runs") < statements.index(
         "DELETE FROM public.sandbox_versions"
     )
-    assert any(statement.startswith("UPDATE public.sandbox_documents") for statement in statements)
+    assert statements.index("DELETE FROM public.sandbox_versions") < statements.index(
+        "DELETE FROM public.sandbox_documents"
+    )
+    assert statements.index(
+        "UPDATE public.organizations SET logo_file_id = NULL WHERE logo_file_id IS NOT NULL"
+    ) < statements.index("DELETE FROM public.files")
+    assert statements.index("DELETE FROM public.memberships") < statements.index(
+        "DELETE FROM public.organizations"
+    )
+    assert statements.index("DELETE FROM public.organizations") < statements.index(
+        "DELETE FROM public.users WHERE id <> %s"
+    )
+    assert statements.index(
+        "DELETE FROM public.platform_operators WHERE user_id <> %s"
+    ) < statements.index("DELETE FROM public.users WHERE id <> %s")
+    # Nothing is recreated: the operator creates organizations afterwards.
+    assert not any(statement.startswith("INSERT") for statement in statements)
     assert not any(
-        statement.startswith("INSERT INTO public.sandbox_versions") for statement in statements
+        statement.startswith("UPDATE public.sandbox_documents") for statement in statements
     )
-    company_board = next(
-        index
-        for index, statement in enumerate(statements)
-        if statement.startswith("INSERT INTO public.boards")
-    )
-    assert statements.index("DELETE FROM public.boards") < company_board
-    assert "'company'" in statements[company_board]
 
 
 def test_provider_accounts_are_deleted_before_application_profiles(monkeypatch) -> None:
@@ -275,7 +299,7 @@ def test_database_failure_after_provider_cleanup_reports_partial_reset(monkeypat
     monkeypatch.setattr(execution, "_begin_transaction", lambda _: None)
 
     def execute(_, statement, *_args):
-        if statement.startswith("UPDATE public.workspace_profiles"):
+        if statement == "DELETE FROM public.organizations":
             raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(execution, "_execute", execute)
@@ -347,9 +371,8 @@ def test_ambiguous_database_commit_does_not_claim_profiles_were_retained(monkeyp
     storage.delete_and_verify_empty.assert_not_called()
 
 
-@pytest.mark.parametrize("arguments", [[], ["--execute"]])
-def test_reset_reads_the_canonical_environment_but_refuses_before_effects_until_s15(
-    monkeypatch, tmp_path, arguments
+def test_reset_reads_the_canonical_root_environment_and_checks_its_target(
+    monkeypatch, tmp_path
 ) -> None:
     url = "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
     target = InstanceTarget(
@@ -391,15 +414,58 @@ def test_reset_reads_the_canonical_environment_but_refuses_before_effects_until_
     monkeypatch.setattr(reset, "_print_plan", lambda _plan: None)
     monkeypatch.setattr(reset, "assert_psycopg_target", Mock())
 
-    with pytest.raises(SystemExit, match="S15"):
-        reset.main(arguments)
+    reset.main([])
 
     assert seen_paths == [reset.DOTENV_PATH]
-    connect.assert_not_called()
-    storage_factory.assert_not_called()
-    auth_factory.assert_not_called()
-    assert connection.mock_calls == []
-    assert storage.mock_calls == []
+    reset.assert_psycopg_target.assert_called_once_with(
+        connection, target, expected_user="openslate_owner"
+    )
+    storage.delete_and_verify_empty.assert_not_called()
+    connection.close.assert_called_once()
+
+
+def test_reset_execute_without_a_tty_refuses_before_any_provider_effect(
+    monkeypatch, tmp_path
+) -> None:
+    values = {
+        "ENVIRONMENT": "development",
+        "MIGRATION_DATABASE_URL": (
+            "postgresql+psycopg://openslate_owner:secret@127.0.0.1:55432/postgres"
+        ),
+        "ADMIN_EMAIL": "admin@example.test",
+        "SUPABASE_URL": "http://127.0.0.1:58000",
+        "SUPABASE_SECRET_KEY": "fake-secret",
+        "BACKEND_BIND_HOST": "127.0.0.1",
+        "BACKEND_PORT": "8000",
+    }
+    target = InstanceTarget(
+        instance_id="openslate-supabase-a1b2c3d4",
+        host="127.0.0.1",
+        port=55432,
+        database="postgres",
+        attestation_path=tmp_path / "instance.json",
+    )
+    connection = Mock()
+    storage = Mock(list_object_keys=Mock(return_value=()))
+    auth = Mock(list_account_ids=Mock(return_value=()))
+    monkeypatch.setattr(reset, "environment_inputs", lambda _path: values)
+    monkeypatch.setattr(reset, "instance_target_for_process", lambda *_args: target)
+    monkeypatch.setattr(reset, "connect", Mock(return_value=connection))
+    monkeypatch.setattr(reset, "ResetStorage", Mock(return_value=storage))
+    monkeypatch.setattr(reset, "ResetAuth", Mock(return_value=auth))
+    monkeypatch.setattr(reset, "assert_provider_instance", Mock())
+    monkeypatch.setattr(reset, "assert_psycopg_target", Mock())
+    monkeypatch.setattr(reset, "build_reset_plan", lambda *_args, **_kwargs: _plan())
+    monkeypatch.setattr(reset, "_print_plan", lambda _plan: None)
+    monkeypatch.setattr(reset.sys, "stdin", SimpleNamespace(isatty=lambda: False))
+
+    with pytest.raises(SystemExit, match="requires a TTY"):
+        reset.main(["--execute"])
+
+    auth.require_present.assert_not_called()
+    auth.delete_and_verify_missing.assert_not_called()
+    storage.delete_and_verify_empty.assert_not_called()
+    connection.close.assert_called_once()
 
 
 def test_reset_refuses_unbound_provider_before_privileged_calls(monkeypatch) -> None:

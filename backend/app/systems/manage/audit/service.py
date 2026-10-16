@@ -364,10 +364,14 @@ SECURITY_EVENT_LIST_SPEC = ListQuerySpec(
 )
 
 
-def append_security_event(db: Session, payload: SecurityEventIngestRequest) -> SecurityEvent:
+def append_security_event(
+    db: Session, payload: SecurityEventIngestRequest, *, org_id: UUID | None = None
+) -> SecurityEvent:
+    """Add one security event; ``org_id`` records the organization it happened in."""
     context = get_current_request_context()
     event = SecurityEvent(
         id=uuid7(),
+        org_id=org_id,
         occurred_at=payload.occurred_at or utc_now(),
         event_type=payload.event_type,
         outcome=payload.outcome,
@@ -388,12 +392,14 @@ def append_security_event(db: Session, payload: SecurityEventIngestRequest) -> S
     return event
 
 
-def append_committed_security_event(payload: SecurityEventIngestRequest) -> None:
+def append_committed_security_event(
+    payload: SecurityEventIngestRequest, *, org_id: UUID | None = None
+) -> None:
     """Commit one security event through a session independent of the request transaction."""
 
     session = AuditSession(bind=get_engine())
     try:
-        append_security_event(session, payload)
+        append_security_event(session, payload, org_id=org_id)
         session.commit()
     except SQLAlchemyError as error:
         log_event(

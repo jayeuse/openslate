@@ -18,7 +18,8 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity.admin_recovery import (
     LocalRecoveryError,
-    sole_administered_membership,
+    OrganizationChoiceRequired,
+    administered_membership,
 )
 from app.systems.access.identity.mfa_observations import (
     commit_bound_observation,
@@ -60,16 +61,27 @@ class RecoveredWorkspaceSecurity:
 
 
 def recover_workspace_security(
-    db: Session, user_id: UUID, *, local_invocation: bool, elevated: bool
+    db: Session,
+    user_id: UUID,
+    *,
+    local_invocation: bool,
+    elevated: bool,
+    organization: UUID | str | None = None,
 ) -> RecoveredWorkspaceSecurity:
-    """Commit the local escape hatch before clearing bound provider factors."""
+    """Commit the local escape hatch before clearing bound provider factors.
+
+    It resets the MFA and network policy of ``organization`` (an id or slug), or of the
+    one organization the person administers when it is omitted.
+    """
 
     if not local_invocation or not elevated:
         raise LocalSecurityRecoveryError("Local elevated workspace recovery is required")
     operation_id = uuid7()
     commit_started = False
+    chosen: UUID | None = None
     try:
-        user = _administrator(db, user_id, lock=False)
+        user, org_id = _administrator(db, user_id, organization, lock=False)
+        chosen = org_id
         provider_id, email = user.supabase_user_id, user.email
         assert provider_id is not None
         # Release the read transaction before provider I/O; recheck under lock below.
@@ -82,9 +94,10 @@ def recover_workspace_security(
             or not provider_user.is_eligible(now=utc_now())
         ):
             raise LocalSecurityRecoveryError("Provider administrator does not match")
-        user = _administrator(db, user_id, lock=True)
+        # The organization chosen above stays the one checked and changed from here on.
+        user, _ = _administrator(db, user_id, org_id, lock=True)
         _same_binding(user, provider_id, email)
-        profile = _workspace(db, _administered_organization(db, user.id))
+        profile = _workspace(db, org_id)
         required = {role: mfa_role_required(profile, role) for role in ("admin", "member", "guest")}
         if any(required.values()) or profile.ip_allow_list:
             for affected in db.scalars(
@@ -108,11 +121,12 @@ def recover_workspace_security(
         append_security_event(
             db,
             _event(user_id, operation_id, SecurityEventOutcome.ATTEMPT, "local elevated recovery"),
+            org_id=org_id,
         )
         record_observation(db, user_id, provider_id, None, observation_started_at())
         commit_started = True
         db.commit()
-    except LocalSecurityRecoveryError:
+    except (LocalSecurityRecoveryError, OrganizationChoiceRequired):
         db.rollback()
         raise
     except (InvalidProviderCredentials, SupabaseAuthUnavailable, SQLAlchemyError):
@@ -123,6 +137,7 @@ def recover_workspace_security(
             "Local security reset could not be confirmed; rerun recovery",
             local_reset=None if commit_started else False,
             factors_cleared=False,
+            org_id=chosen,
         )
 
     factors_cleared: bool | None = None
@@ -134,9 +149,9 @@ def recover_workspace_security(
             factors_cleared = False
             raise LocalSecurityRecoveryError("Provider factors remain; rerun recovery")
         factors_cleared = True
-        user = _administrator(db, user_id, lock=True)
+        user, _ = _administrator(db, user_id, org_id, lock=True)
         _same_binding(user, provider_id, email)
-        profile = _workspace(db, _administered_organization(db, user.id))
+        profile = _workspace(db, org_id)
         if (
             any(mfa_role_required(profile, role) for role in ("admin", "member", "guest"))
             or profile.ip_allow_list
@@ -151,6 +166,7 @@ def recover_workspace_security(
             _event(
                 user_id, operation_id, SecurityEventOutcome.SUCCESS, "security recovery complete"
             ),
+            org_id=org_id,
         )
         db.commit()
     except (
@@ -170,33 +186,31 @@ def recover_workspace_security(
             "Local security reset committed; recovery is incomplete; rerun recovery",
             local_reset=True,
             factors_cleared=factors_cleared,
+            org_id=org_id,
         )
     return RecoveredWorkspaceSecurity(user_id)
 
 
-def _administrator(db: Session, user_id: UUID, *, lock: bool) -> User:
+def _administrator(
+    db: Session, user_id: UUID, organization: UUID | str | None, *, lock: bool
+) -> tuple[User, UUID]:
+    """The bound administrator and the organization recovery acts in, scoped to it."""
     query = select(User).where(User.id == user_id).execution_options(populate_existing=True)
     if lock:
         query = query.with_for_update(of=User)
     user = db.scalar(query)
+    membership = None if user is None else administered_membership(db, user.id, organization)
     if (
         user is None
         or not is_active_account(db, user, now=utc_now())
         or user.status != UserStatus.ACTIVE.value
-        or sole_administered_membership(db, user.id) is None
+        or membership is None
         or user.supabase_user_id is None
     ):
         raise LocalSecurityRecoveryError("Target is not an active bound administrator")
-    return user
-
-
-def _administered_organization(db: Session, user_id: UUID) -> UUID:
-    membership = sole_administered_membership(db, user_id)
-    if membership is None:
-        raise LocalSecurityRecoveryError("Target is not an active bound administrator")
     # Recovery writes in that organization, so bind the transaction to it.
     scope_session(db, membership.org_id)
-    return membership.org_id
+    return user, membership.org_id
 
 
 def _same_binding(user: User, provider_id: UUID, email: str) -> None:
@@ -236,10 +250,13 @@ def _failure(
     *,
     local_reset: bool | None,
     factors_cleared: bool | None,
+    org_id: UUID | None,
 ) -> NoReturn:
     outcome = SecurityEventOutcome.PARTIAL if local_reset is True else SecurityEventOutcome.FAILURE
     try:
-        append_committed_security_event(_event(user_id, operation_id, outcome, message))
+        append_committed_security_event(
+            _event(user_id, operation_id, outcome, message), org_id=org_id
+        )
     except SecurityEventPersistenceError:
         message += "; security event persistence also failed"
     raise LocalSecurityRecoveryError(

@@ -7,18 +7,27 @@ from uuid import uuid4
 
 import pytest
 from psycopg import connect
-from sqlalchemy import create_engine, func, inspect, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
-from app.systems.access.users.models import Membership, User
+from app.systems.access.users.models import PlatformOperator
 from app.systems.manage.backups.models import BackupRun
-from app.systems.manage.workspace.models import WorkspaceProfile
 from operations import reset_application_data as reset
 from operations.reset import execution
 from operations.reset.backups import read_backup_snapshot, validate_backup_preservation
-from tests.conftest import _guard_integration_database, create_member, create_organization
+from tests.conftest import (
+    _guard_integration_database,
+    create_member,
+    create_organization,
+    make_operator,
+)
 from tests.reset_application_data.execution_support import apply_confirmed
+from tests.reset_application_data.reset_integration_support import (
+    assert_only_the_operator_remains,
+    delete_second_organization,
+    insert_second_organization,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -34,32 +43,27 @@ def export_reset(request, monkeypatch, tmp_path):
     with Session(engine) as db:
         profile = create_organization(db)
         org_id = profile.id
-        saved_profile = {
-            column.key: getattr(profile, column.key)
-            for column in inspect(WorkspaceProfile).column_attrs
-        }
         now = db.scalar(select(func.clock_timestamp()))
         instance = db.scalar(select(func.current_setting("cluster_name")))
-        db.add_all(
-            [
-                create_member(db, profile,
-                    id=admin_id,
-                    email=f"export-reset-{admin_id}@example.test",
-                    username=f"er-{admin_id.hex}",
-                    role="admin",
-                    status="active",
-                    supabase_user_id=provider_id,
-                )[0],
-                create_member(db, profile,
-                    id=member_id,
-                    email=f"export-reset-{member_id}@example.test",
-                    username=f"er-{member_id.hex}",
-                    role="member",
-                    status="active",
-                )[0],
-            ]
+        admin, _ = create_member(db, profile,
+            id=admin_id,
+            email=f"export-reset-{admin_id}@example.test",
+            username=f"er-{admin_id.hex}",
+            role="admin",
+            status="active",
+            supabase_user_id=provider_id,
         )
-        db.flush()
+        create_member(db, profile,
+            id=member_id,
+            email=f"export-reset-{member_id}@example.test",
+            username=f"er-{member_id.hex}",
+            role="member",
+            status="active",
+        )
+        make_operator(db, admin)
+        operator_id = db.scalar(
+            select(PlatformOperator.id).where(PlatformOperator.user_id == admin_id)
+        )
         db.add(
             BackupRun(
                 id=source_id,
@@ -130,6 +134,9 @@ def export_reset(request, monkeypatch, tmp_path):
     artifact = tmp_path / f"{ids[1]}.tar"
     artifact.write_bytes(b"Owned untouched host artifact")
     database = connect(owner_url.replace("postgresql+psycopg://", "postgresql://", 1))
+    with database.cursor() as cursor:
+        second = insert_second_organization(cursor)
+    database.commit()
     storage, auth = Mock(), Mock()
     storage.list_object_keys.return_value = ()
     world = type(
@@ -140,6 +147,7 @@ def export_reset(request, monkeypatch, tmp_path):
             "engine": engine,
             "admin_id": admin_id,
             "member_id": member_id,
+            "operator_id": operator_id,
             "provider_id": provider_id,
             "ids": ids,
             "source_id": source_id,
@@ -153,30 +161,25 @@ def export_reset(request, monkeypatch, tmp_path):
     try:
         yield world
     finally:
+        # Each statement only removes rows this fixture created; after a reset most are
+        # gone already. One owner transaction keeps a failed test from leaking rows.
         database.rollback()
+        with database.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM public.backup_export_operations WHERE id = ANY(%s)", (ids,)
+            )
+            cursor.execute("DELETE FROM public.backup_runs WHERE id = %s", (source_id,))
+            cursor.execute(
+                "DELETE FROM public.platform_operators WHERE user_id = %s", (admin_id,)
+            )
+            cursor.execute("DELETE FROM public.memberships WHERE org_id = %s", (org_id,))
+            delete_second_organization(cursor, second)
+            cursor.execute(
+                "DELETE FROM public.users WHERE id = ANY(%s)", ([admin_id, member_id],)
+            )
+            cursor.execute("DELETE FROM public.organizations WHERE id = %s", (org_id,))
+        database.commit()
         database.close()
-        with Session(engine) as db:
-            for row in db.scalars(
-                select(BackupExportOperation).where(BackupExportOperation.id.in_(ids))
-            ):
-                db.delete(row)
-            db.flush()
-            source = db.get(BackupRun, source_id)
-            if source is not None:
-                db.delete(source)
-            profile = db.get(WorkspaceProfile, org_id)
-            for name, value in saved_profile.items():
-                setattr(profile, name, value)
-            for user in db.scalars(select(User).where(User.id.in_([admin_id, member_id]))):
-                for membership in db.scalars(
-                    select(Membership).where(Membership.user_id == user.id)
-                ):
-                    db.delete(membership)
-                db.flush()
-                db.delete(user)
-            db.flush()
-            db.delete(db.get(WorkspaceProfile, org_id))
-            db.commit()
         engine.dispose()
 
 
@@ -186,6 +189,7 @@ def test_reset_retains_export_history_and_artifact_but_clears_admission_and_curr
     world = export_reset
     plan = reset.build_reset_plan(world.database, world.email, storage_object_keys=())
     assert plan.counts["backup_export_operations"] >= 5
+    assert plan.counts["organizations"] == 2
     before = read_backup_snapshot(world.database)
     world.auth.list_account_ids.side_effect = (plan.provider_account_ids, ())
     apply_confirmed(
@@ -214,6 +218,9 @@ def test_reset_retains_export_history_and_artifact_but_clears_admission_and_curr
         assert db.scalar(select(func.count()).select_from(IdentitySession)) == 0
         assert db.scalar(select(func.count()).select_from(IdentityMfaObservation)) == 0
     assert world.artifact.read_bytes() == b"Owned untouched host artifact"
+    with world.database.cursor() as cursor:
+        assert_only_the_operator_remains(cursor, world.admin_id, world.operator_id)
+    world.database.rollback()
 
 
 def test_preparing_export_after_preview_blocks_before_any_provider_effect(export_reset):
@@ -276,13 +283,13 @@ def test_reset_failure_retains_export_state_and_refuses_restricted_source_before
     if failure == "provider":
         world.auth.delete_and_verify_missing.side_effect = RuntimeError("Owned provider boundary")
     else:
-        original = execution._reset_sandbox_workspace
+        original = execution._delete_application_rows
 
         def fail(connection):
             original(connection)
             raise RuntimeError("Owned pre-commit reset fault")
 
-        monkeypatch.setattr(execution, "_reset_sandbox_workspace", fail)
+        monkeypatch.setattr(execution, "_delete_application_rows", fail)
     with pytest.raises(reset.ResetError):
         apply_confirmed(
             world.database,
@@ -292,3 +299,9 @@ def test_reset_failure_retains_export_state_and_refuses_restricted_source_before
         )
     assert read_backup_snapshot(world.database) == snapshot
     assert world.artifact.read_bytes() == b"Owned untouched host artifact"
+    with world.database.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM public.organizations")
+        assert cursor.fetchone() == (2,)
+        cursor.execute("SELECT count(*) FROM public.users")
+        assert cursor.fetchone() == (3,)
+    world.database.rollback()

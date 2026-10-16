@@ -2,11 +2,18 @@
 
 A new PostgreSQL connection to the disposable stack costs tens of milliseconds, and every
 integration test used to open three: two identity checks and its rolled-back session. The
-shared engines keep connections open between tests instead. Each connection is reset with
-``DISCARD ALL`` when it returns to the pool, so the next test starts from the same session
-state as a new connection (no settings, temporary tables, prepared statements, advisory
-locks or LISTEN channels carry over). A test that must be the database's only consumer
-calls ``dispose_process_engines`` first.
+shared engines keep connections open between tests instead. Each connection is reset when
+it returns to the pool, so the next test starts from the same session state as a new
+connection (no settings, open cursors, temporary tables, advisory locks or LISTEN channels
+carry over). A test that must be the database's only consumer calls
+``dispose_process_engines`` first.
+
+The reset is ``DISCARD ALL`` without its ``DEALLOCATE ALL`` step. psycopg prepares a
+statement after a few executions and remembers its name on the client. It notices that a
+``DISCARD`` dropped those statements only the first time it sees that command text on a
+connection, so a repeated ``DISCARD ALL`` left names that the server no longer had and the
+next test failed with "prepared statement ... does not exist". The prepared statements
+belong to psycopg's cache and carry no session state, so they stay.
 """
 
 from __future__ import annotations
@@ -19,6 +26,17 @@ from sqlalchemy import Engine, create_engine, event
 _ENGINES: dict[str, Engine] = {}
 # Race tests create guarded engines from several threads at once.
 _ENGINES_LOCK = Lock()
+# ``DISCARD ALL`` minus ``DEALLOCATE ALL`` (see the module docstring), one statement each.
+_RESET_SESSION = (
+    "CLOSE ALL",
+    "SET SESSION AUTHORIZATION DEFAULT",
+    "RESET ALL",
+    "UNLISTEN *",
+    "SELECT pg_advisory_unlock_all()",
+    "DISCARD PLANS",
+    "DISCARD TEMP",
+    "DISCARD SEQUENCES",
+)
 
 
 def _discard_session_state(dbapi_connection, connection_record) -> None:
@@ -28,7 +46,8 @@ def _discard_session_state(dbapi_connection, connection_record) -> None:
         autocommit = dbapi_connection.autocommit
         dbapi_connection.autocommit = True
         try:
-            dbapi_connection.execute("DISCARD ALL")
+            for statement in _RESET_SESSION:
+                dbapi_connection.execute(statement, prepare=False)
         finally:
             dbapi_connection.autocommit = autocommit
     except Exception:

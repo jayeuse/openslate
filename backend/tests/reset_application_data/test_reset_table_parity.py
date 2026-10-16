@@ -10,10 +10,10 @@ def test_reset_tables_match_every_orm_table() -> None:
     assert set(reset_models.APPLICATION_TABLES) == orm_tables
     for table in reset_models.APPLICATION_TABLES:
         assert f"public.{table}" in reset_models._LOCK_APPLICATION_STATEMENT
-    assert set(reset_models.DELETE_ORDER) == set(reset_models.NON_PRESERVED_TABLES) | {
-        "boards",
-        "sandbox_versions",
-    }
+    # Every organization and all of its rows go; nothing is restored afterwards.
+    assert set(reset_models.DELETE_ORDER) == set(reset_models.NON_PRESERVED_TABLES)
+    assert len(reset_models.DELETE_ORDER) == len(set(reset_models.DELETE_ORDER))
+    assert reset_models.DELETE_ORDER[-1] == "organizations"
 
 
 def test_reset_deletes_saved_charts_after_widgets_and_before_their_sources() -> None:

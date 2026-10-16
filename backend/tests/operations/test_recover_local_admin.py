@@ -142,3 +142,43 @@ def test_security_console_reports_partial_outcome_without_private_diagnostics(se
     assert "provider_factors_cleared=unknown" in str(caught.value)
     assert "Rerun" in str(caught.value)
     assert "private" not in str(caught.value)
+
+
+def test_console_recovery_passes_the_named_organization(console, capsys):
+    user_id, recover = console
+    operation.main([str(user_id), "--organization", "harbor-clinic"])
+    assert recover.call_args.kwargs["organization"] == "harbor-clinic"
+    operation.main([str(user_id)])
+    assert recover.call_args.kwargs["organization"] is None
+
+
+def test_console_recovery_asks_for_the_organization_when_there_are_several(console, capsys):
+    from app.systems.access.identity.admin_recovery import OrganizationChoiceRequired
+
+    user_id, recover = console
+    recover.side_effect = OrganizationChoiceRequired(("harbor-clinic", "north-school"))
+    with pytest.raises(SystemExit) as caught:
+        operation.main([str(user_id)])
+    assert str(caught.value) == (
+        "Administrator recovery was refused: the account administers several organizations; "
+        "rerun with --organization <id or slug> (one of: harbor-clinic, north-school)"
+    )
+    assert not capsys.readouterr().out
+
+
+def test_security_console_passes_the_named_organization_and_asks_when_ambiguous(
+    security_console,
+):
+    from app.systems.access.identity.admin_recovery import OrganizationChoiceRequired
+
+    security_operation, user_id, recover, _ = security_console
+    security_operation.main([str(user_id), "--organization", "north-school"])
+    assert recover.call_args.kwargs["organization"] == "north-school"
+    recover.side_effect = OrganizationChoiceRequired(("harbor-clinic", "north-school"))
+    with pytest.raises(SystemExit) as caught:
+        security_operation.main([str(user_id)])
+    assert str(caught.value) == (
+        "Workspace security recovery was refused: the account administers several "
+        "organizations; rerun with --organization <id or slug> "
+        "(one of: harbor-clinic, north-school)"
+    )
