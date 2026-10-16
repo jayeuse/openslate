@@ -26,7 +26,7 @@ from app.systems.manage.workspace.schemas import WorkspaceUpdate
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.storage import get_storage
-from tests.conftest import create_member, create_organization, guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine, workspace_of
 from tests.organization_scope_support import scoped_override
 
 pytestmark = pytest.mark.integration
@@ -231,7 +231,7 @@ def test_logo_mutation_during_storage_read_prevents_stale_delivery(
                 if mutation == "archive":
                     service.archive(db, actor_id, file_id)
                 else:
-                    profile = db.scalar(select(WorkspaceProfile))
+                    profile = workspace_of(db, actor_id)
                     actor = db.scalar(select(User).where(User.id == actor_id))
                     update_workspace(
                         WorkspaceUpdate(revision=profile.revision, logo_file_id=None), actor, db

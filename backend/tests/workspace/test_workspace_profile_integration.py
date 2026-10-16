@@ -14,7 +14,7 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.conftest import create_member, membership_of
+from tests.conftest import create_member, membership_of, workspace_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -102,9 +102,9 @@ def _role(owner, actor_id, role):
         db.commit()
 
 
-def _audit_count(owner):
+def _audit_count(owner, actor_id):
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, actor_id)
         assert profile is not None
         return db.scalar(
             select(func.count()).select_from(AuditLog).where(AuditLog.entity_id == profile.id)
@@ -118,14 +118,14 @@ def test_guest_workspace_omits_exactly_contact_fields(profile_client):
     full_body = full.json()
     assert {key: full_body[key] for key in PROFILE_VALUES} == PROFILE_VALUES
     _role(owner, actor_id, "guest")
-    before_audits = _audit_count(owner)
+    before_audits = _audit_count(owner, actor_id)
     guest = client.get("/api/workspace")
     assert guest.status_code == 200
     body = guest.json()
     assert CONTACT_FIELDS.isdisjoint(body)
     assert body == {key: value for key, value in full_body.items() if key not in CONTACT_FIELDS}
     assert guest.headers["Cache-Control"] == "no-store"
-    assert _audit_count(owner) == before_audits
+    assert _audit_count(owner, actor_id) == before_audits
 
 
 @pytest.mark.parametrize("role", ["admin", "member"])
@@ -139,13 +139,13 @@ def test_full_workspace_retains_all_contact_keys(profile_client, role, contacts)
     elif contacts == "null":
         expected = {key: None for key in CONTACT_FIELDS}
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, actor_id)
         assert profile is not None
         for key, value in expected.items():
             setattr(profile, key, value)
         db.commit()
         revision = profile.revision
-    before_audits = _audit_count(owner)
+    before_audits = _audit_count(owner, actor_id)
     response = client.get("/api/workspace")
     assert response.status_code == 200
     body = response.json()
@@ -154,13 +154,13 @@ def test_full_workspace_retains_all_contact_keys(profile_client, role, contacts)
     assert body["legal_name"] == PROFILE_VALUES["legal_name"]
     assert body["description"] == PROFILE_VALUES["description"]
     assert body["revision"] == revision
-    assert _audit_count(owner) == before_audits
+    assert _audit_count(owner, actor_id) == before_audits
 
 
 def test_admin_profile_save_clear_and_omission_are_full_and_audited(profile_client):
     client, actor_id, owner = profile_client
     before = client.get("/api/workspace").json()
-    before_audits = _audit_count(owner)
+    before_audits = _audit_count(owner, actor_id)
     saved = client.patch(
         "/api/workspace",
         json={
@@ -184,9 +184,9 @@ def test_admin_profile_save_clear_and_omission_are_full_and_audited(profile_clie
     assert accepted["revision"] == before["revision"] + 1
     assert accepted["theme"] == before["theme"]
     assert client.get("/api/workspace").json() == accepted
-    assert _audit_count(owner) == before_audits + 1
+    assert _audit_count(owner, actor_id) == before_audits + 1
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, actor_id)
         audit = db.scalar(
             select(AuditLog)
             .where(AuditLog.entity_id == profile.id)

@@ -14,7 +14,7 @@ from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.conftest import create_member, membership_of
+from tests.conftest import create_member, membership_of, workspace_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -84,7 +84,7 @@ def appearance_workspace(fake_provider_account):
     finally:
         client.close()
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, local_id)
             assert profile is not None
             for field, value in original.items():
                 setattr(profile, field, value)
@@ -115,7 +115,7 @@ def test_admin_theme_save_is_audited_revision_guarded_and_public(appearance_work
     assert stale.status_code == 409
     assert client.get("/api/workspace").json() == after
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, actor_id)
         assert profile is not None and profile.theme == theme
         audit = db.scalar(
             select(AuditLog)

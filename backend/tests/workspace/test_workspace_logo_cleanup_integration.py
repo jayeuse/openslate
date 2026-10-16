@@ -20,6 +20,7 @@ from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable
 from app.systems.platform.files.storage import get_storage
 from tests.auth.session_policy_support import policy_world as policy_world
+from tests.conftest import workspace_of
 
 pytestmark = pytest.mark.integration
 
@@ -279,7 +280,7 @@ def test_admitted_cleanup_finishes_after_actor_role_loss_but_new_reconcile_refus
             membership.role = "guest"
             membership.sponsor_user_id = world.target_id
             membership.expires_at = world.clock + timedelta(days=1)
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, world.actor_id)
             profile.contact_email = "post-admission-private@example.test"
             db.commit()
 

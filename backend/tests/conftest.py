@@ -64,6 +64,13 @@ def membership_of(db: Session, user_id) -> Membership:
     return memberships[0]
 
 
+def workspace_of(db: Session, user_id) -> WorkspaceProfile:
+    """The organization of a single-organization fixture account."""
+    organization = db.get(WorkspaceProfile, membership_of(db, user_id).org_id)
+    assert organization is not None
+    return organization
+
+
 def create_member(
     db: Session | None, organization: WorkspaceProfile, role: str = UserRole.MEMBER.value,
     *, user: User | None = None, **values,

@@ -23,8 +23,8 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_user_cache import forget_provider_user
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
-from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.totp_support import totp
+from tests.conftest import workspace_of
 
 pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
@@ -159,7 +159,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
             assert db.scalar(event_count) == events_before
         assert browser.get("/api/auth/me").status_code == 200
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, local_id)
             profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
                 True
             )
@@ -178,7 +178,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         assert me.status_code == 200 and me.json()["current_organization"] is None
         assert me.json()["default_organization_blocked"] == "mfa_required"
         with Session(owner) as db:
-            org_id = db.scalar(select(WorkspaceProfile.id))
+            org_id = workspace_of(db, local_id).id
         for path in ("/api/auth/session", "/api/auth/me", "/api/boards"):
             denied = browser.get(path, headers={"X-Org": str(org_id)})
             assert denied.status_code == 403
@@ -189,7 +189,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         verification = f"/api/auth/mfa/factors/{factor_id}/verification"
         assert browser.post(verification, json={"code": totp(seed)}).status_code == 200
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, local_id)
             profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
                 False
             )

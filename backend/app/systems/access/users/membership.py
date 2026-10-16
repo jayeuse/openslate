@@ -25,10 +25,23 @@ def organization_required() -> HTTPException:
                                       "message": "An active organization membership is required"})
 
 
+def transaction_organization(db: Session) -> UUID | None:
+    """The organization the transaction is bound to, by any binding path.
+
+    Requests and workers record their organization in Python; any other binding
+    (an operator command, a test) is read from the transaction setting itself.
+    """
+
+    org_id = session_organization(db)
+    if org_id is None and isinstance(getattr(db, "info", None), dict):
+        org_id = db.scalar(select(bound_organization_column()))
+    return org_id
+
+
 def bound_organization(db: Session) -> UUID:
     """The organization this transaction is bound to; refuse when there is none."""
 
-    org_id = session_organization(db)
+    org_id = transaction_organization(db)
     if org_id is None:
         raise organization_required()
     return org_id
@@ -61,9 +74,12 @@ def remember_membership(db: Session, membership: Membership) -> None:
 def organization_membership(
     db: Session, user_id: UUID, *, fresh: bool = False
 ) -> Membership | None:
-    """The person's membership row in the bound organization, whatever its status."""
+    """The person's membership row in the bound organization, whatever its status.
 
-    org_id = session_organization(db)
+    A read refreshes the row; ``fresh`` also skips the membership the request cached.
+    """
+
+    org_id = transaction_organization(db)
     if org_id is None:
         return None
     cache = _cache(db)
@@ -73,7 +89,7 @@ def organization_membership(
     rows = db.scalars(select(Membership).where(
         Membership.org_id == org_id, Membership.user_id == user_id,
         Membership.is_deleted.is_(False),
-    ).execution_options(populate_existing=fresh).limit(1)).all()
+    ).execution_options(populate_existing=True).limit(1)).all()
     membership = rows[0] if rows else None
     if membership is not None:
         cache[(org_id, user_id)] = membership

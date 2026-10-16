@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.access.users.membership import bound_organization
 from app.systems.sandbox.designs.models import SandboxDocument as DocumentRow
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.designs.service import _parse_row_document, _store_document
@@ -19,7 +20,9 @@ from app.systems.sandbox.publications.rules import _field_key
 
 
 def document_row(db: Session, *, lock: bool = False) -> DocumentRow:
-    statement = select(DocumentRow).where(DocumentRow.singleton_key.is_(True))
+    statement = select(DocumentRow).where(
+        DocumentRow.singleton_key.is_(True), DocumentRow.org_id == bound_organization(db)
+    )
     if lock:
         statement = statement.with_for_update(nowait=True).execution_options(populate_existing=True)
     row = db.scalar(statement)

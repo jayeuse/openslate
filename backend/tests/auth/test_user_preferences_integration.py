@@ -18,7 +18,7 @@ from app.main import create_app
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.conftest import create_member, membership_of
+from tests.conftest import create_member, membership_of, workspace_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -330,11 +330,10 @@ def test_concurrent_sessions_preserve_disjoint_nested_updates(preferences_client
 def test_personal_regional_preferences_merge_and_do_not_change_workspace_semantics(
     preferences_client,
 ):
-    from app.systems.manage.workspace.models import WorkspaceProfile
 
     client, account, path = preferences_client
     with Session(account[4]) as db:
-        workspace = db.scalar(select(WorkspaceProfile))
+        workspace = workspace_of(db, account[3])
         before = (workspace.timezone, workspace.week_start, workspace.revision)
     values = {
         "timezone": "America/New_York",
@@ -355,7 +354,7 @@ def test_personal_regional_preferences_merge_and_do_not_change_workspace_semanti
     assert cleared.json()["appearance"] == {**DEFAULT_APPEARANCE, **values, "timezone": None}
     assert client.get(path).json() == cleared.json()
     with Session(account[4]) as db:
-        workspace = db.scalar(select(WorkspaceProfile))
+        workspace = workspace_of(db, account[3])
         assert (workspace.timezone, workspace.week_start, workspace.revision) == before
 
 

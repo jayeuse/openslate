@@ -30,13 +30,13 @@ pytest_plugins = ("tests.relationships_integration.relationship_http_support",)
 # Counts cover the route and its locks, audit and outbox rows; authentication is
 # overridden here (its single workspace-policy read is guarded in tests/auth).
 # Before the 2026-10 clean-up: GET 4, POST records 18, PATCH 15, POST link 19, PUT 24.
-# TEMPORARY: membership read until S05 get_current_membership; S07 restores the original budget
+# The membership read belongs to authentication (cached for the request), not the route.
 BUDGETS = {
-    "GET /api/records/{record_id}": 5,
-    "POST /api/records": 14,
-    "PATCH /api/records/{record_id}": 15,
-    "POST /api/relationships": 14,
-    "PUT /api/relationships/fields/{field_id}/sources/{source_record_id}": 16,
+    "GET /api/records/{record_id}": 4,
+    "POST /api/records": 13,
+    "PATCH /api/records/{record_id}": 14,
+    "POST /api/relationships": 13,
+    "PUT /api/relationships/fields/{field_id}/sources/{source_record_id}": 15,
 }
 
 
@@ -170,4 +170,6 @@ def test_record_and_link_routes_stay_within_their_statement_budgets(
         for route, statements in measured.items()
     )
     print(report)
+    assert not [statement for statements in measured.values() for statement in statements
+                if "FROM memberships" in statement], report
     assert {route: len(statements) for route, statements in measured.items()} == BUDGETS, report

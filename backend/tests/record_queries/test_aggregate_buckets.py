@@ -160,7 +160,7 @@ def test_longer_date_ranges_are_legal_when_they_have_366_buckets(
 
 
 def test_month_bucket_uses_workspace_date_not_session_timezone(query_db):
-    query_db.scalar(select(WorkspaceProfile)).timezone = "Asia/Manila"
+    query_db.get(WorkspaceProfile, organization(query_db).id).timezone = "Asia/Manila"
     query_db.connection().exec_driver_sql("SET LOCAL TIME ZONE 'America/New_York'")
     module, field, _ = setup_rows(
         query_db, "datetime", ["2026-05-31T15:59:59Z", "2026-05-31T16:00:00Z"]
@@ -203,7 +203,7 @@ def test_month_bucket_uses_workspace_date_not_session_timezone(query_db):
 def test_dst_transitions_stay_in_their_workspace_calendar_day(
     query_db, start, end, instants, counts
 ):
-    query_db.scalar(select(WorkspaceProfile)).timezone = "America/New_York"
+    query_db.get(WorkspaceProfile, organization(query_db).id).timezone = "America/New_York"
     module, field, _ = setup_rows(query_db, "datetime", instants)
     result = aggregate_records(
         query_db,

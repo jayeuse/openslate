@@ -15,7 +15,7 @@ from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
-from tests.conftest import membership_of
+from tests.conftest import membership_of, workspace_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -141,7 +141,7 @@ def test_workspace_security_saves_canonical_settings_with_audit_and_stale_protec
     public = client.get("/api/workspace").json()
     assert not (set(_FIELDS) - {"revision"}) & set(public)
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, local_id)
         assert profile is not None
         assert profile.performed_by == local_id
         audit = db.scalar(
@@ -237,7 +237,7 @@ def test_workspace_security_denies_demoted_admin_for_read_and_write(security_wor
         == 403
     )
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, local_id)
         assert profile is not None
         assert profile.revision == initial["revision"]
         platform = db.scalar(select(PlatformSettings))

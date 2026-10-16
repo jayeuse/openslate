@@ -27,7 +27,13 @@ from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.provider_jwt_support import signed_access
-from tests.conftest import create_member, create_organization, guarded_create_engine, membership_of
+from tests.conftest import (
+    create_member,
+    create_organization,
+    guarded_create_engine,
+    membership_of,
+    workspace_of,
+)
 
 POLICY_FIELDS = (
     "session_timeout_minutes",
@@ -100,7 +106,7 @@ class PolicyWorld:
 
     def policy(self, **values):
         with Session(self.owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, self.actor_id)
             platform = db.scalar(select(PlatformSettings))
             for name, value in values.items():
                 setattr(platform if name in PlatformSettings.__table__.columns else profile,
@@ -214,7 +220,7 @@ def policy_world(monkeypatch, shared_provider_account):
     target_id, target_provider_id = uuid4(), uuid4()
     target_email = f"target-{target_id}@example.test"
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, actor_id)
         platform = db.scalar(select(PlatformSettings))
         saved = {name: getattr(platform if name in PlatformSettings.__table__.columns else profile,
                                name) for name in POLICY_FIELDS}
@@ -404,7 +410,7 @@ def policy_world(monkeypatch, shared_provider_account):
             for row in db.scalars(select(Membership)):
                 if row.id in episodes:
                     row.mfa_required_since = episodes[row.id]
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, actor_id)
             platform = db.scalar(select(PlatformSettings))
             for name, value in saved.items():
                 setattr(platform if name in PlatformSettings.__table__.columns else profile,

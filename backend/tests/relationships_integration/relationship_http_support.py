@@ -22,7 +22,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.core.middleware.request_context import get_request_context
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from tests.conftest import (
     _assert_alembic_head,
@@ -288,8 +288,15 @@ class RelationshipHTTPFixture:
         )
 
     def _install_overrides(self, actor: User) -> None:
+        # Production authentication loads the membership; hand it over already loaded
+        # so the request's statements are the route's own.
+        with Session(self.owner_engine) as session:
+            membership = session.scalars(select(Membership).where(
+                Membership.user_id == actor.id, Membership.org_id == self.org_id,
+            )).one()
+            session.expunge(membership)
         self.app.dependency_overrides[get_current_user] = scoped_override(
-            lambda: actor, org_id=self.org_id
+            lambda: actor, membership=membership
         )
         self.app.dependency_overrides[get_db] = self._request_database
 
