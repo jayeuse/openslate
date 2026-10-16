@@ -154,7 +154,8 @@ def capture_report_snapshot(
     """
 
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
-        apply_connection_scope(connection, org_id)
+        if org_id is not None:
+            apply_connection_scope(connection, org_id)
         with Session(bind=connection) as db:
             actor = db.get(User, actor_id) if actor_id is not None else None
             if actor_id is not None and actor is None:

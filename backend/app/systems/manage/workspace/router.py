@@ -119,16 +119,20 @@ def get_workspace_appearance(
 ) -> WorkspaceAppearanceResponse:
     response.headers["Cache-Control"] = "no-store"
     try:
-        # Signed out there is no organization. An install with one organization shows
-        # its theme; otherwise the default theme (owner checkpoint after S07).
-        profiles = db.scalars(
-            select(WorkspaceProfile).where(WorkspaceProfile.is_deleted.is_(False)).limit(2)
-        ).all()
+        theme = _signed_out_theme(db)
     except SQLAlchemyError as error:
         db.rollback()
         raise _workspace_unavailable() from error
-    theme = profiles[0].theme if len(profiles) == 1 else "slate"
     return WorkspaceAppearanceResponse.model_validate({"theme": theme})
+
+
+def _signed_out_theme(db: Session) -> str:
+    # Signed out there is no organization. An install with one organization shows
+    # its theme; otherwise the default theme (owner checkpoint after S07).
+    profiles = db.scalars(
+        select(WorkspaceProfile).where(WorkspaceProfile.is_deleted.is_(False)).limit(2)
+    ).all()
+    return profiles[0].theme if len(profiles) == 1 else "slate"
 
 
 @router.get("", response_model=WorkspaceResponse | WorkspaceGuestResponse)

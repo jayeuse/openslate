@@ -90,6 +90,7 @@ class PolicyWorld:
     handles: list[str] = field(default_factory=list, repr=False)
     csrf: list[str] = field(default_factory=list, repr=False)
     bucket_ids: list[str] = field(default_factory=list, repr=False)
+    org_id: UUID | None = None
 
     def access(self, aal="aal1", slot=0, **extra):
         return signed_access(
@@ -106,7 +107,7 @@ class PolicyWorld:
 
     def policy(self, **values):
         with Session(self.owner) as db:
-            profile = workspace_of(db, self.actor_id)
+            profile = db.get(WorkspaceProfile, self.org_id)
             platform = db.scalar(select(PlatformSettings))
             for name, value in values.items():
                 setattr(platform if name in PlatformSettings.__table__.columns else profile,
@@ -192,10 +193,12 @@ def _local_account(email):
                 db.flush()
                 membership = db.scalar(select(Membership).where(Membership.user_id == local_id))
                 organization = db.get(WorkspaceProfile, membership.org_id)
-                db.connection().execute(
-                    text("DELETE FROM public.audit_logs WHERE org_id = :org_id"),
-                    {"org_id": organization.id},
-                )
+                for table in ("audit_logs", "in_app_notifications"):
+                    # Acceptance notices now belong to the invited organization.
+                    db.connection().execute(
+                        text(f"DELETE FROM public.{table} WHERE org_id = :org_id"),
+                        {"org_id": organization.id},
+                    )
                 db.delete(membership)
                 db.flush()
                 user = db.get(User, local_id)
@@ -221,6 +224,7 @@ def policy_world(monkeypatch, shared_provider_account):
     target_email = f"target-{target_id}@example.test"
     with Session(owner) as db:
         profile = workspace_of(db, actor_id)
+        org_id = profile.id
         platform = db.scalar(select(PlatformSettings))
         saved = {name: getattr(platform if name in PlatformSettings.__table__.columns else profile,
                                name) for name in POLICY_FIELDS}
@@ -261,6 +265,7 @@ def policy_world(monkeypatch, shared_provider_account):
         # Four sessions sign in below; the last two exist only at the provider.
         list(provider_sessions),
         datetime.now(UTC),
+        org_id=org_id,
     )
     try:
         jwk = ECAlgorithm.to_jwk(world.key.public_key(), as_dict=True)
@@ -410,7 +415,7 @@ def policy_world(monkeypatch, shared_provider_account):
             for row in db.scalars(select(Membership)):
                 if row.id in episodes:
                     row.mfa_required_since = episodes[row.id]
-            profile = workspace_of(db, actor_id)
+            profile = db.get(WorkspaceProfile, org_id)
             platform = db.scalar(select(PlatformSettings))
             for name, value in saved.items():
                 setattr(platform if name in PlatformSettings.__table__.columns else profile,

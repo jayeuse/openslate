@@ -130,7 +130,7 @@ def test_policy_rejects_invalid_partial_input_without_revision_change(policy_wor
     # and the unchanged revision.
     world = policy_world
     with Session(world.owner) as db:
-        revision = db.query(WorkspaceProfile).one().revision
+        revision = db.get(WorkspaceProfile, world.org_id).revision
     result = world.client.patch(
         "/api/workspace/security",
         headers=world.headers(),
@@ -138,7 +138,7 @@ def test_policy_rejects_invalid_partial_input_without_revision_change(policy_wor
     )
     assert result.status_code == 422
     with Session(world.owner) as db:
-        assert db.query(WorkspaceProfile).one().revision == revision
+        assert db.get(WorkspaceProfile, world.org_id).revision == revision
 
 
 @pytest.mark.parametrize(
@@ -163,7 +163,7 @@ def test_tighten_then_loosen_never_revives_an_unobserved_session(
         remote = db.get(IdentitySession, world.session_ids[0])
         remote.created_at = remote.refreshed_at = old
         remote.expires_at = world.clock + timedelta(minutes=60)
-        revision = db.query(WorkspaceProfile).one().revision
+        revision = db.get(WorkspaceProfile, world.org_id).revision
         db.commit()
     save = world.client.patch(
         "/api/workspace/security",
@@ -367,7 +367,7 @@ def test_all_role_requirement_requires_savers_live_verified_factor_before_any_wr
     )
     assert result.status_code == expected
     with Session(world.owner) as db:
-        profile = db.query(WorkspaceProfile).one()
+        profile = db.get(WorkspaceProfile, world.org_id)
         if expected != 200:
             assert profile.revision == before["revision"]
             assert (

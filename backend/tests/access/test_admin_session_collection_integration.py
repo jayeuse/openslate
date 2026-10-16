@@ -208,7 +208,9 @@ def test_concurrent_bulk_session_end_records_each_target_only_once(
 
     application.dependency_overrides[get_db] = database
     application.dependency_overrides[get_current_identity] = scoped_override(
-        lambda: CurrentIdentity(User(id=admin_id), current_id, False, False)
+        lambda: CurrentIdentity(
+            User(id=admin_id, status="active", is_deleted=False), current_id, False, False
+        )
     )
 
     def end_sessions(tag: str) -> int:

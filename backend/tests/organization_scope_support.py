@@ -19,7 +19,7 @@ from fastapi import Depends
 from sqlalchemy import Connection, Engine, event, select
 from sqlalchemy.orm import Session
 
-from app.core.database.organization_scope import scope_session
+from app.core.database.organization_scope import ORGANIZATION_SCOPE_KEY, scope_session
 from app.core.database.session import get_db
 from app.systems.access.users.membership import (
     current_membership,
@@ -104,6 +104,14 @@ def bind_test_organization(org_id: UUID) -> None:
     _bound_threads[threading.get_ident()] = org_id
 
 
+def scope_like_a_request(db: Session) -> None:
+    """Bind an unscoped test session to the organization this test thread created last."""
+
+    org_id = _bound_threads.get(threading.get_ident())
+    if org_id is not None and not isinstance(db.info.get(ORGANIZATION_SCOPE_KEY), UUID):
+        scope_session(db, org_id)
+
+
 def _apply_test_scope(connection: Connection) -> None:
     org_id = _bound_threads.get(threading.get_ident())
     if org_id is not None:
@@ -123,12 +131,16 @@ def in_context(function: Callable[..., Any]) -> Callable[..., Any]:
     org_id = _bound_threads.get(threading.get_ident())
 
     def run(*args: Any, **kwargs: Any) -> Any:
+        thread = threading.get_ident()
+        previous = _bound_threads.get(thread)
         if org_id is not None:
-            _bound_threads[threading.get_ident()] = org_id
+            _bound_threads[thread] = org_id
         try:
             return context.run(function, *args, **kwargs)
         finally:
-            if org_id is not None:
-                _bound_threads.pop(threading.get_ident(), None)
+            if previous is None:
+                _bound_threads.pop(thread, None)
+            else:
+                _bound_threads[thread] = previous
 
     return run

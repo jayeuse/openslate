@@ -16,6 +16,7 @@ from sqlalchemy import event, inspect, select, text
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.access.users.models import Membership, User
@@ -228,10 +229,12 @@ def test_logo_mutation_during_storage_read_prevents_stale_delivery(
             if key in self.deleted:
                 return None
             with AuditSession(engine) as db:
+                # The concurrent change is another request in the same organization.
+                profile = workspace_of(db, actor_id)
+                scope_session(db, profile.id)
                 if mutation == "archive":
                     service.archive(db, actor_id, file_id)
                 else:
-                    profile = workspace_of(db, actor_id)
                     actor = db.scalar(select(User).where(User.id == actor_id))
                     update_workspace(
                         WorkspaceUpdate(revision=profile.revision, logo_file_id=None), actor, db

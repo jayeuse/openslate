@@ -354,7 +354,8 @@ def aggregate_snapshot(
     The reader's module level is checked inside the same snapshot.
     """
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
-        apply_connection_scope(connection, org_id)
+        if org_id is not None:
+            apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:
@@ -371,7 +372,8 @@ def aggregate_snapshots(
 ) -> tuple[bytes, int]:
     """Materialize the ordered batch in one read snapshot with combined limits."""
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
-        apply_connection_scope(connection, org_id)
+        if org_id is not None:
+            apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:

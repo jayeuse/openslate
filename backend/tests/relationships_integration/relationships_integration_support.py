@@ -17,6 +17,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.conftest import guarded_create_engine as create_engine
+from tests.organization_scope_support import scope_like_a_request
 from tests.rbac.support import organization
 
 
@@ -110,6 +111,7 @@ def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
 
 
 def _set_request(session: Session, request_id: UUID) -> None:
+    scope_like_a_request(session)
     session.info[AUDIT_CONTEXT_KEY] = AuditContext(
         request_id=request_id,
         request_method="POST",

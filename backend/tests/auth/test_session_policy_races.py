@@ -22,7 +22,7 @@ pytestmark = pytest.mark.integration
 def test_locked_session_refuses_whole_policy_clamp_without_partial_commit(policy_world):
     world = policy_world
     with Session(world.owner) as db:
-        before = db.query(WorkspaceProfile).one()
+        before = db.get(WorkspaceProfile, world.org_id)
         revision = before.revision
         deadline = db.get(IdentitySession, world.session_ids[0]).expires_at
     with Session(world.owner) as blocker:
@@ -39,7 +39,7 @@ def test_locked_session_refuses_whole_policy_clamp_without_partial_commit(policy
         assert result.status_code == 503
         blocker.rollback()
     with Session(world.owner) as db:
-        profile = db.query(WorkspaceProfile).one()
+        profile = db.get(WorkspaceProfile, world.org_id)
         assert (
             profile.revision == revision
             and db.query(PlatformSettings).one().session_timeout_minutes == 60
@@ -50,7 +50,7 @@ def test_locked_session_refuses_whole_policy_clamp_without_partial_commit(policy
 def test_locked_user_refuses_entire_episode_change_without_revision_or_deadline_write(policy_world):
     world = policy_world
     with Session(world.owner) as db:
-        revision = db.query(WorkspaceProfile).one().revision
+        revision = db.get(WorkspaceProfile, world.org_id).revision
     with Session(world.owner) as blocker:
         blocker.scalar(
             select(Membership).where(Membership.user_id == world.target_id).with_for_update()
@@ -68,7 +68,7 @@ def test_locked_user_refuses_entire_episode_change_without_revision_or_deadline_
         assert result.status_code == 503
         blocker.rollback()
     with Session(world.owner) as db:
-        profile = db.query(WorkspaceProfile).one()
+        profile = db.get(WorkspaceProfile, world.org_id)
         assert profile.revision == revision and not profile.mfa_require_member
         assert db.query(PlatformSettings).one().session_timeout_minutes == 60
         assert membership_of(db, world.target_id).mfa_required_since is None
@@ -115,7 +115,7 @@ def test_all_role_save_rechecks_actor_after_unlocked_provider_evidence(
     )
     assert result.status_code == expected
     with Session(world.owner) as db:
-        profile = db.query(WorkspaceProfile).one()
+        profile = db.get(WorkspaceProfile, world.org_id)
         assert profile.revision == revision and not profile.mfa_require_admin
 
 
@@ -493,7 +493,7 @@ def test_console_recovery_refuses_locked_episode_before_reset_or_factor_effect(p
     world.policy(mfa_require_member=True)
     with Session(world.owner) as db:
         membership_of(db, world.target_id).mfa_required_since = world.clock
-        revision = db.query(WorkspaceProfile).one().revision
+        revision = db.get(WorkspaceProfile, world.org_id).revision
         db.commit()
     with Session(world.owner) as blocker:
         blocker.scalar(
@@ -504,7 +504,7 @@ def test_console_recovery_refuses_locked_episode_before_reset_or_factor_effect(p
                 recover_workspace_security(db, world.actor_id, local_invocation=True, elevated=True)
         blocker.rollback()
     with Session(world.owner) as db:
-        profile = db.query(WorkspaceProfile).one()
+        profile = db.get(WorkspaceProfile, world.org_id)
         assert profile.mfa_require_member and profile.revision == revision
         assert membership_of(db, world.target_id).mfa_required_since == world.clock
     assert not any("/factors" in path for _, path in world.calls)

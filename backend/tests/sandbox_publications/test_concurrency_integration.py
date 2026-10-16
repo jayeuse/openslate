@@ -40,6 +40,7 @@ from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.schemas import PublicationRequest
 from app.systems.sandbox.publications.tokens import issue_preview_token
 from tests.conftest import create_member
+from tests.organization_scope_support import in_context
 from tests.postgres_runtime import assert_runner_database_url
 from tests.race_support import WAIT, wait_until_blocked_by
 from tests.rbac.support import organization
@@ -237,7 +238,7 @@ def test_publication_waits_for_a_member_access_check_without_deadlock(
             # locks the department or module it changes.
             _lock_authority(member, member_id)
             member_pid = int(member.scalar(text("SELECT pg_backend_pid()")))
-            published = pool.submit(_publish_once, engine, prepared)
+            published = pool.submit(in_context(_publish_once), engine, prepared)
             wait_until_blocked_by(engine, member_pid)
             locked = member.scalar(
                 select(Module.id).where(Module.id == module_id).with_for_update(read=True)
@@ -468,8 +469,8 @@ def _race(
             return "ok", str(result.id)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        first_future = pool.submit(publish, first)
-        second_future = pool.submit(publish, second)
+        first_future = pool.submit(in_context(publish), first)
+        second_future = pool.submit(in_context(publish), second)
         return sorted([first_future.result(), second_future.result()])
 
 

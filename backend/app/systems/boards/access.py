@@ -17,7 +17,7 @@ change the posts and events of other users.
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, and_, false, or_, select, true
+from sqlalchemy import Select, and_, false, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -91,7 +91,7 @@ def visible_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     if membership is None:
         return false()
     if membership.role == UserRole.ADMIN.value:
-        return true()
+        return Board.org_id == bound_organization_column()
     memberships = (
         select(GroupMember.group_id)
         .join(Group, Group.id == GroupMember.group_id)
@@ -107,14 +107,15 @@ def visible_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     project_rows = select(BoardGroup.board_id).where(
         BoardGroup.group_id.in_(memberships), BoardGroup.is_deleted.is_(False)
     )
-    return or_(
+    # RLS is the backstop; the clause names the bound organization itself.
+    return and_(Board.org_id == bound_organization_column(), or_(
         Board.scope == BoardScope.COMPANY.value,
         and_(
             Board.scope == BoardScope.DEPARTMENT.value,
             Board.department_id.in_(department_rows),
         ),
         and_(Board.scope == BoardScope.PROJECT.value, Board.id.in_(project_rows)),
-    )
+    ))
 
 
 def readable_board_ids(db: Session, user: User) -> frozenset[UUID] | None:
@@ -145,7 +146,11 @@ def managed_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     role = membership.role
     if role == UserRole.GUEST.value:
         return false()
-    live = and_(Board.is_deleted.is_(False), Board.deleted_at.is_(None))
+    live = and_(
+        Board.org_id == bound_organization_column(),
+        Board.is_deleted.is_(False),
+        Board.deleted_at.is_(None),
+    )
     if role == UserRole.ADMIN.value:
         return live
     departments = effective_levels(db, user).managed_department_ids() or frozenset()

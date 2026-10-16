@@ -7,6 +7,7 @@ from starlette.requests import Request
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import CurrentIdentity
+from app.core.database.organization_scope import scope_session
 from app.systems.manage.workspace.models import PlatformSettings
 from app.systems.manage.workspace.security_router import (
     get_workspace_security,
@@ -34,6 +35,7 @@ def test_platform_security_change_refused_with_multiple_organizations(integratio
     org = create_organization(db)
     user, _membership = create_member(db, org, "admin")
     create_organization(db)
+    scope_session(db, org.id)  # the second organization exists; the admin acts in the first
     platform = db.scalars(select(PlatformSettings)).one()
     prior = platform.session_timeout_minutes
     with pytest.raises(HTTPException) as refusal:

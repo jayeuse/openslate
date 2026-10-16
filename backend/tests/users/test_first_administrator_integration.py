@@ -30,7 +30,7 @@ import app.systems.access.users.service as user_service
 from app.core.config import get_settings
 from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -107,6 +107,10 @@ def empty_installation(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine
                     if invited:
                         invited_ids = select(User.id).where(User.email.in_(invited))
                         db.execute(delete(Membership).where(Membership.user_id.in_(invited_ids)))
+                        # Bootstrap also records its administrator as a platform operator.
+                        db.execute(
+                            delete(PlatformOperator).where(PlatformOperator.user_id.in_(invited_ids))
+                        )
                         db.execute(delete(User).where(User.email.in_(invited)))
                     if org_id is not None:
                         db.execute(delete(AuditLog).where(AuditLog.org_id == org_id))

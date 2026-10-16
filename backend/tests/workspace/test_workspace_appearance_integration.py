@@ -192,7 +192,7 @@ def test_public_appearance_failure_is_generic_no_store(monkeypatch, failure):
             raise router._workspace_unavailable()
         raise SQLAlchemyError("Sensitive database diagnostics must stay private")
 
-    monkeypatch.setattr(router, "_workspace", unavailable)
+    monkeypatch.setattr(router, "_signed_out_theme", unavailable)
     client = _client()
     try:
         response = client.get("/api/workspace/appearance")

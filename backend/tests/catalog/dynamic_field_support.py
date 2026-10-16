@@ -22,6 +22,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.conftest import _guard_integration_database, create_member
 from tests.conftest import guarded_create_engine as create_engine
+from tests.organization_scope_support import scope_like_a_request
 from tests.rbac.support import organization
 from tests.sandbox_designs.fixtures import create_document
 
@@ -37,6 +38,7 @@ pytestmark = [
 
 @dataclass(frozen=True)
 class CommittedModule:
+    org_id: UUID
     department_id: UUID
     module_id: UUID
     fields: dict[str, UUID]
@@ -65,6 +67,7 @@ def _database_url() -> str:
 
 
 def _set_request(db: Session, request_id: UUID, path: str = "/api/test") -> None:
+    scope_like_a_request(db)
     db.info[AUDIT_CONTEXT_KEY] = AuditContext(
         request_id=request_id,
         request_method="POST",
@@ -211,6 +214,7 @@ def _seed_committed_module(
                 )
                 db.commit()
                 return CommittedModule(
+                    org_id=org.id,
                     department_id=department.id,
                     module_id=module.id,
                     fields={field.name: field.id for field in field_rows},

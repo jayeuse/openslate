@@ -229,10 +229,13 @@ def test_my_access_hides_invisible_boards(
     assert board_client(db, None, router).get(path).status_code == 401
     missing = board_client(db, outsider, router).get(f"/api/boards/{uuid7()}/my-access")
     assert missing.status_code == 404
-    for actor in (outsider, inactive):
-        hidden = board_client(db, actor, router).get(path)
-        assert hidden.status_code == 404
-        assert hidden.json() == missing.json() == {"detail": "Board not found"}
+    hidden = board_client(db, outsider, router).get(path)
+    assert hidden.status_code == 404
+    assert hidden.json() == missing.json() == {"detail": "Board not found"}
+    # A disabled account is refused before any route runs, as authentication refuses it.
+    refused = board_client(db, inactive, router).get(path)
+    assert refused.status_code == 403
+    assert refused.json()["detail"]["code"] == "organization_required"
 
 
 def test_my_access_keeps_archived_board_readable_but_hides_soft_deleted_board(

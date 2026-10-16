@@ -12,6 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
+from app.core.database.organization_scope import apply_connection_scope
 from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.access.users.models import Membership
@@ -283,6 +284,8 @@ def test_registered_close_rejects_plan_drift_after_provider_success(
 
     def verify() -> UUID:
         with client.engine.begin() as connection:
+            # The drift is another writer in the same organization.
+            apply_connection_scope(connection, client.org_id)
             connection.execute(
                 text("UPDATE public.modules SET module_name = :name WHERE id = :id"),
                 {"name": "Assets changed", "id": module_id},

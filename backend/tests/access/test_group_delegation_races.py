@@ -88,7 +88,7 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
             manager=manager,
             member=member,
             manager_group=_group(db, inventory.id, AccessLevel.MANAGE, manager),
-            target=in_context(_group)(db, inventory.id, AccessLevel.READ, member),
+            target=_group(db, inventory.id, AccessLevel.READ, member),
             outsider=add_race_user(db, organization, "race", UserRole.MEMBER.value),
         )
         db.commit()

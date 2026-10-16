@@ -269,7 +269,8 @@ def export_snapshot(
     engine: Engine, payload: ExportRequest, *, reader_id: UUID, org_id: UUID | None
 ) -> tuple[bytes, int, str]:
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
-        apply_connection_scope(connection, org_id)
+        if org_id is not None:
+            apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:

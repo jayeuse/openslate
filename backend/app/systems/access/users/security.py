@@ -33,8 +33,11 @@ from app.systems.access.identity.mfa_observations import (
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.coordination import advance_token_cutoff
-from app.systems.access.users.eligibility import is_active_account
-from app.systems.access.users.membership import bound_organization, require_current_membership
+from app.systems.access.users.membership import (
+    bound_organization,
+    current_membership,
+    require_current_membership,
+)
 from app.systems.access.users.models import User
 from app.systems.access.users.schemas import (
     UserMfaResetResponse,
@@ -177,7 +180,8 @@ def checkpoint(
                 "security_binding_changed",
                 "This person's sign-in identity changed. Reload before continuing.",
             )
-        eligible = is_active_account(db, target)
+        # Eligible means an eligible member of this organization, not just an active account.
+        eligible = current_membership(db, target) is not None
         if mutation and not eligible:
             raise refusal(
                 409, "security_target_ineligible", "This person is not eligible for this action."
