@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.core.config import get_instance_settings, get_settings
+from app.systems.access.users.membership import transaction_organization
 from app.systems.manage.backups.models import (
     BackupExportOperation,
     BackupPolicy,
@@ -64,11 +65,9 @@ def lock_policy(db: Session, instance: str, *, now: datetime | None = None) -> B
         select(BackupPolicy).with_for_update().execution_options(populate_existing=True)
     )
     if policy is None:
-        # TEMPORARY: interim single-organization rule, see S07 checkpoint
-        timezones = db.scalars(select(WorkspaceProfile.timezone).limit(2)).all()
         policy = BackupPolicy(
             installation_id=instance,
-            timezone=timezones[0] if len(timezones) == 1 else "UTC",
+            timezone=_owner_timezone(db),
             schedule="disabled",
             retention_days=30,
             revision=1,
@@ -76,6 +75,17 @@ def lock_policy(db: Session, instance: str, *, now: datetime | None = None) -> B
         db.add(policy)
         db.flush()
     return policy
+
+
+def _owner_timezone(db: Session) -> str:
+    """The installation owner configures backups inside their organization; use its timezone."""
+
+    org_id = transaction_organization(db)
+    timezone = (
+        db.scalar(select(WorkspaceProfile.timezone).where(WorkspaceProfile.id == org_id))
+        if org_id is not None else None
+    )
+    return timezone or "UTC"
 
 
 def future_due(schedule: str, timezone: str, now: datetime) -> datetime | None:
@@ -96,13 +106,11 @@ def policy_response(
 ) -> BackupPolicyResponse:
     policy = db.scalar(select(BackupPolicy))
     if policy is None:
-        # TEMPORARY: interim single-organization rule, see S07 checkpoint
-        timezones = db.scalars(select(WorkspaceProfile.timezone).limit(2)).all()
         return BackupPolicyResponse(
             schedule="disabled",
             retention_days=30,
             revision=1,
-            timezone=timezones[0] if len(timezones) == 1 else "UTC",
+            timezone=_owner_timezone(db),
             next_due_at=None,
             adopted=True,
         )

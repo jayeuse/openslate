@@ -26,7 +26,7 @@ from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.scope import effective_levels, includes, rank
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.membership import current_membership
+from app.systems.access.users.membership import bound_membership_join, current_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.boards.models import Board, BoardGroup, BoardScope
 
@@ -180,7 +180,7 @@ def managed_board_clause(db: Session, user: User) -> ColumnElement[bool]:
 
 def _active_accounts() -> Select[tuple[UUID]]:
     timestamp = utc_now()
-    return select(User.id).join(Membership, Membership.user_id == User.id).where(
+    return select(User.id).join(Membership, bound_membership_join()).where(
         User.status == UserStatus.ACTIVE.value,
         User.is_deleted.is_(False),
         User.deleted_at.is_(None),

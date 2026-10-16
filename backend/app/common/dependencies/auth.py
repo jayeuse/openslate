@@ -27,6 +27,7 @@ from app.systems.access.identity.provider_user_cache import recent_provider_user
 from app.systems.access.users.eligibility import is_active_account, is_active_membership
 from app.systems.access.users.membership import (
     bound_organization,
+    is_platform_operator,
     organization_membership,
     organization_required,
     remember_membership,
@@ -338,6 +339,17 @@ def require_fresh_exact_admin(
     ):
         raise _forbidden(db)
     return actor
+
+
+def require_platform_operator(db: Session, user_id: UUID) -> None:
+    """Installation-wide settings and backups belong to the installation owner."""
+
+    if not is_platform_operator(db, user_id):
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
+            "code": "operator_required",
+            "message": "Only the installation owner can change this setting",
+        })
 
 
 def require_admin(

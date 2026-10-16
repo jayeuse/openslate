@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -20,12 +21,14 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
-from app.systems.access.identity.mfa import MFARequired
+from app.systems.access.identity.mfa import MFARequired, requires_mfa
 from app.systems.access.identity.provider_sessions import resolve_provider_session
+from app.systems.access.identity.provider_user_cache import recent_provider_user
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import allowed_module_ids
 from app.systems.access.users.membership import current_membership
 from app.systems.boards.access import readable_board_ids
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
 from app.systems.platform.events.hub import (
     EventHub,
@@ -94,11 +97,14 @@ class BoundedSSEStreamingResponse(StreamingResponse):
 class EventPrincipal:
     access_token: str
     client_ip: str | None = None
+    # The organization the stream asked for; None means the session's active organization.
+    org_id: UUID | None = None
 
 
 def get_event_principal(
     request: Request,
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    org: UUID | None = None,
 ) -> EventPrincipal:
     cookie_token = request.cookies.get("openslate_access")
     bearer_token = bearer.credentials if bearer is not None else None
@@ -125,7 +131,7 @@ def get_event_principal(
         raise _unauthorized() from error
     except SupabaseAuthUnavailable as error:
         raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
-    return EventPrincipal(raw_token, request.client.host if request.client else None)
+    return EventPrincipal(raw_token, request.client.host if request.client else None, org)
 
 
 @router.get("")
@@ -245,10 +251,13 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
             if resolved is None:
                 return None
             user, identity_session = resolved
-            # Interim until S09 binds each stream to the organization it opened in: the
-            # re-check follows the session's saved organization, not an X-Org override.
-            org_id = identity_session.active_org_id
+            # The stream stays bound to the organization it opened in (D16); every
+            # re-check enters that organization again with its MFA and network rules.
+            org_id = principal.org_id or identity_session.active_org_id
             if org_id is None:
+                return None
+            organization = db.get(WorkspaceProfile, org_id)
+            if organization is None or organization.is_deleted:
                 return None
             if not ip_allowed(load_workspace_policy(db, org_id=org_id), principal.client_ip):
                 raise HTTPException(
@@ -262,11 +271,22 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
             membership = current_membership(db, user)
             if membership is None:
                 return None
+            provider_id = user.supabase_user_id
+            provider_user = (
+                (recent_provider_user(provider_id) or client.get_admin_user(provider_id))
+                if provider_id is not None else None
+            )
+            if provider_user is None or (
+                requires_mfa(organization, membership, provider_user)
+                and claims.assurance_level != "aal2"
+            ):
+                return None
             return EventViewer(
                 user_id=user.id,
                 role=membership.role,
                 module_ids=allowed_module_ids(db, user, AccessLevel.READ),
                 board_ids=readable_board_ids(db, user),
+                org_id=org_id,
             )
     except MFARequired as error:
         raise HTTPException(

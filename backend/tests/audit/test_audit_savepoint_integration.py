@@ -48,7 +48,9 @@ def test_savepoint_release_waits_for_outer_commit_and_rollback_keeps_prior_succe
             db.flush()
     assert published == []
     db.commit()
-    assert published == [InvalidationEvent("departments", all_authenticated=True)]
+    assert published == [
+        InvalidationEvent("departments", all_authenticated=True, org_id=org.id)
+    ]
     assert REALTIME_INVALIDATION_KEY not in db.info
 
 

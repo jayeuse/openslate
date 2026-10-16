@@ -28,14 +28,14 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from jwt.algorithms import ECAlgorithm
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.integrations.supabase_auth import SupabaseAuthClient, get_supabase_auth_client
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import Membership, User, UserStatus
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserStatus
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.provider_jwt_support import signed_access
@@ -334,6 +334,9 @@ def owned_account(
                 status=UserStatus.ACTIVE.value,
                 role="member",
             )
+            if organization_id is None:
+                # The account that creates the organization owns the installation (on-prem).
+                db.add(PlatformOperator(user_id=user.id))
             db.commit()
             local_id = user.id
         yield email, password, provider_id, local_id, owner
@@ -352,12 +355,14 @@ def owned_account(
                 membership = db.scalar(select(Membership).where(Membership.user_id == local_id))
                 organization = db.get(WorkspaceProfile, membership.org_id)
                 if organization_id is None:
-                    db.connection().execute(
-                        text("DELETE FROM public.audit_logs WHERE org_id = :org_id"),
-                        {"org_id": organization.id},
-                    )
+                    for table in ("audit_logs", "security_events"):
+                        db.connection().execute(
+                            text(f"DELETE FROM public.{table} WHERE org_id = :org_id"),
+                            {"org_id": organization.id},
+                        )
                 db.delete(membership)
                 db.flush()
+                db.execute(delete(PlatformOperator).where(PlatformOperator.user_id == local_id))
                 user = db.get(User, local_id)
                 if user is not None:
                     db.delete(user)

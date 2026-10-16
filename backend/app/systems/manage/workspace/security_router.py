@@ -4,12 +4,16 @@ from ipaddress import ip_address
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies import get_current_user, require_fresh_exact_admin
+from app.common.dependencies import (
+    get_current_user,
+    require_fresh_exact_admin,
+    require_platform_operator,
+)
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
 from app.core.base_model import utc_now
 from app.core.database import get_db
@@ -67,8 +71,6 @@ def get_workspace_security(
     require_fresh_exact_admin(db, actor.id)
     response.headers["Cache-Control"] = "no-store"
     try:
-        if db.scalar(select(func.count()).select_from(WorkspaceProfile)) != 1:
-            raise HTTPException(409, detail="Installation policy requires one organization")
         profile = load_workspace_policy(db, org_id=bound_organization(db))
         platform = load_platform_policy(db)
         return WorkspaceSecurityResponse.model_validate({
@@ -136,10 +138,9 @@ def update_workspace_security(
     actor = require_fresh_exact_admin(db, actor_id)
     try:
         changed = payload.model_fields_set - {"revision"}
-        if changed & _PLATFORM_FIELDS and (
-            db.scalar(select(func.count()).select_from(WorkspaceProfile)) != 1
-        ):
-            raise HTTPException(409, detail="Installation policy requires one organization")
+        if changed & _PLATFORM_FIELDS:
+            # Installation-wide fields reach every organization: the installation owner sets them.
+            require_platform_operator(db, actor_id)
         claims = _factor_evidence(db, actor, payload, request)
         actor = require_fresh_exact_admin(db, actor_id)
         profile = db.scalar(

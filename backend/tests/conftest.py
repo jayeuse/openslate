@@ -18,7 +18,7 @@ from app.core.database import model_registry  # noqa: F401
 from app.core.database.organization_scope import scope_session, worker_organization
 from app.core.database.session import AuditSession
 from app.systems.access.identity.provider_user_cache import clear_provider_users
-from app.systems.access.users.models import Membership, User, UserRole
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.config_support import settings_environment
@@ -69,6 +69,13 @@ def workspace_of(db: Session, user_id) -> WorkspaceProfile:
     organization = db.get(WorkspaceProfile, membership_of(db, user_id).org_id)
     assert organization is not None
     return organization
+
+
+def make_operator(db: Session, user: User) -> User:
+    """Make the account an installation owner (platform operator) in this test."""
+    db.add(PlatformOperator(user_id=user.id))
+    db.flush()
+    return user
 
 
 def create_member(

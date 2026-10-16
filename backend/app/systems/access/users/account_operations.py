@@ -28,11 +28,13 @@ from app.systems.access.users.coordination import (
     forbidden,
     lock_user,
     organization_member,
-    refuse_shared_account,
+    refuse_account_details,
+    shares_another_organization,
     unavailable,
     validate_identity_profile,
 )
 from app.systems.access.users.eligibility import is_established_user
+from app.systems.access.users.membership import is_platform_operator
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import UserResponse, UserUpdate
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -217,8 +219,11 @@ def update_user(
     )
     user = lock_user(db, user_id)
     membership = organization_member(db, user)
-    if payload.model_fields_set & {"username", "status", "display_name", "job_title"}:
-        refuse_shared_account(db, user)
+    if shares_another_organization(db, user) and not is_platform_operator(db, actor_id):
+        if payload.model_fields_set & {"username", "display_name", "job_title"}:
+            refuse_account_details(db)
+        if payload.status is not None:
+            return _change_membership_status(db, user, membership, payload, actor_id)
     target_id = user.id
     if user.is_deleted:
         raise conflict("User is deleted")
@@ -282,6 +287,60 @@ def update_user(
     commit(db, "Username unavailable")
     return UserResponse(**{key: getattr(user if key in User.__table__.columns else membership, key)
                            for key in UserResponse.model_fields})
+
+
+def _change_membership_status(
+    db: Session, user: User, membership: Membership, payload: UserUpdate, actor_id: UUID
+) -> UserResponse:
+    """Disable or re-enable the person in this organization only (shared accounts)."""
+
+    if payload.status == UserStatus.ACTIVE and not is_established_user(membership):
+        raise conflict("Unaccepted invitations require verified acceptance")
+    if payload.status == UserStatus.DISABLED and membership.status == UserStatus.PENDING.value:
+        raise conflict("Pending invitations cannot be disabled")
+    destination_status = payload.status.value if payload.status is not None else membership.status
+    ensure_projected_admin_remains(
+        db, user, membership,
+        destination_role=membership.role,
+        destination_status=destination_status,
+    )
+    before = snapshot_access(db, (user,))
+    membership.status = destination_status
+    membership.performed_by = actor_id
+    notify_access_changes(db, before)
+    commit(db, "Unable to update membership")
+    return _membership_view(user, membership)
+
+
+def _remove_membership(
+    db: Session, user: User, membership: Membership, actor_id: UUID
+) -> Response:
+    """Remove the person from this organization only (shared accounts)."""
+
+    if user.id == actor_id:
+        raise forbidden("You cannot remove yourself")
+    ensure_projected_admin_remains(
+        db, user, membership,
+        destination_role=membership.role,
+        destination_status=membership.status,
+        destination_deleted=True,
+    )
+    before = snapshot_access(db, (user,))
+    membership.is_deleted = True
+    membership.deleted_at = datetime.now(UTC)
+    membership.performed_by = actor_id
+    notify_access_changes(db, before)
+    commit(db, "Unable to remove membership")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _membership_view(user: User, membership: Membership) -> UserResponse:
+    """The person as this organization sees them: the membership's status wins."""
+
+    values = {key: getattr(user if key in User.__table__.columns else membership, key)
+              for key in UserResponse.model_fields}
+    values["status"] = membership.status
+    return UserResponse(**values)
 
 
 def _activate_user(
@@ -398,7 +457,8 @@ def delete_user(
     actor_id = admin.id
     user = lock_user(db, user_id)
     membership = organization_member(db, user)
-    refuse_shared_account(db, user)
+    if shares_another_organization(db, user) and not is_platform_operator(db, actor_id):
+        return _remove_membership(db, user, membership, actor_id)
     target_id = user.id
     if user.is_deleted:
         raise conflict("User is already deleted")
@@ -456,7 +516,6 @@ def restore_user(
     actor_id = admin.id
     user = lock_user(db, user_id)
     membership = organization_member(db, user)
-    refuse_shared_account(db, user)
     target_id = user.id
     if not user.is_deleted:
         raise conflict("User is not deleted")

@@ -35,7 +35,11 @@ from app.systems.access.users.eligibility import (
     established_user_clause,
     is_established_user,
 )
-from app.systems.access.users.membership import current_membership, organization_membership
+from app.systems.access.users.membership import (
+    bound_membership_join,
+    current_membership,
+    organization_membership,
+)
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.sandbox.modules.models import Module
 
@@ -420,7 +424,7 @@ def _readers(access_target: ColumnElement[bool], now: datetime | None) -> Select
             access_target,
         )
     )
-    return select(User.id).join(Membership, Membership.user_id == User.id).where(
+    return select(User.id).join(Membership, bound_membership_join()).where(
         _active_account_clause(now),
         or_(Membership.role == UserRole.ADMIN.value, User.id.in_(group_readers)),
     )

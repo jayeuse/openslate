@@ -101,9 +101,12 @@ def test_admin_theme_save_is_audited_revision_guarded_and_public(appearance_work
     assert after["theme"] == theme
     assert after["revision"] == before["revision"] + 1
     assert client.get("/api/workspace").json() == after
+    with Session(owner) as db:
+        org_id = workspace_of(db, actor_id).id
     anonymous = _client()
     try:
-        public = anonymous.get("/api/workspace/appearance")
+        # The sign-in page asks for the browser's last organization (owner decision 3).
+        public = anonymous.get("/api/workspace/appearance", params={"org": str(org_id)})
         assert public.status_code == 200
         assert public.json() == {"theme": theme}
         assert public.headers["Cache-Control"] == "no-store"
@@ -187,7 +190,7 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
 def test_public_appearance_failure_is_generic_no_store(monkeypatch, failure):
     from app.systems.manage.workspace import router
 
-    def unavailable(_db):
+    def unavailable(_db, _org=None):
         if failure == "missing":
             raise router._workspace_unavailable()
         raise SQLAlchemyError("Sensitive database diagnostics must stay private")

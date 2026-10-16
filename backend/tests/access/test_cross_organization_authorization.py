@@ -127,17 +127,22 @@ def test_account_rows_are_visible_only_for_people_of_the_bound_organization(
     assert hidden_audits.status_code == 200 and hidden_audits.json()["items"] == []
 
 
-def test_account_changes_refuse_a_person_who_belongs_to_another_organization(
+def test_an_organization_admin_acts_on_the_membership_of_a_shared_person(
     two_organizations: tuple[Session, User, WorkspaceProfile, WorkspaceProfile],
 ) -> None:
+    """Owner decision 11: membership changes only; the account stays for other organizations."""
     db, actor, home, visited = two_organizations
-    shared, _ = create_member(db, home, "member")
-    create_member(db, visited, "admin", user=shared)
+    shared, home_membership = create_member(db, home, "member")
+    _, visited_membership = create_member(db, visited, "admin", user=shared)
     db.commit()
     with _client(db, actor, home) as client:
+        renamed = client.patch(f"/api/users/{shared.id}", json={"username": "renamed-shared"})
         disabled = client.patch(f"/api/users/{shared.id}", json={"status": "disabled"})
-        deleted = client.delete(f"/api/users/{shared.id}")
-    assert disabled.status_code == 409, disabled.text
-    assert deleted.status_code == 409, deleted.text
+        removed = client.delete(f"/api/users/{shared.id}")
+    assert renamed.status_code == 409, renamed.text
+    assert disabled.status_code == 200 and disabled.json()["status"] == "disabled", disabled.text
+    assert removed.status_code == 204, removed.text
     db.expire_all()
     assert shared.status == "active" and shared.is_deleted is False
+    assert home_membership.is_deleted is True
+    assert visited_membership.status == "active" and visited_membership.is_deleted is False

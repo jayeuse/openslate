@@ -39,7 +39,8 @@ async def _exercise_postgres_invalidation() -> None:
     hub = EventHub()
     subscriber = await hub.subscribe(
         EventViewer(
-            user_id="event-integration-user", role="member", module_ids=frozenset({READABLE_MODULE})
+            user_id="event-integration-user", role="member",
+            module_ids=frozenset({READABLE_MODULE}), org_id=organization_id,
         )
     )
     listener = PostgresInvalidationListener(hub)

@@ -32,13 +32,17 @@ from app.systems.access.identity.mfa_observations import (
 )
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_user_sessions
-from app.systems.access.users.coordination import advance_token_cutoff
+from app.systems.access.users.coordination import (
+    advance_token_cutoff,
+    shares_another_organization,
+)
 from app.systems.access.users.membership import (
     bound_organization,
     current_membership,
+    is_platform_operator,
     require_current_membership,
 )
-from app.systems.access.users.models import Membership, User
+from app.systems.access.users.models import User
 from app.systems.access.users.schemas import (
     UserMfaResetResponse,
     UserRecoveryResponse,
@@ -186,11 +190,11 @@ def checkpoint(
             raise refusal(
                 409, "security_target_ineligible", "This person is not eligible for this action."
             )
-        if mutation and db.scalar(select(Membership.id).where(
-            Membership.user_id == target.id, Membership.org_id != bound_organization(db),
-            Membership.is_deleted.is_(False),
-        ).limit(1)) is not None:
-            # TEMPORARY (owner checkpoint after S07): account effects reach every organization.
+        if (
+            mutation and shares_another_organization(db, target)
+            and not is_platform_operator(db, admin.id)
+        ):
+            # A security reset reaches every organization of the person (owner decision).
             raise refusal(
                 409, "security_target_shared", "This person also belongs to another organization."
             )

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.main import create_app
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.platform.scheduling.models import InAppNotification
-from tests.conftest import membership_of
+from tests.conftest import make_operator, membership_of
 from tests.platform_scheduling.support import assert_notice_hidden, notification_client
 from tests.rbac.support import _client, add_user
 
@@ -20,7 +20,7 @@ NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
 
 
 def _queue(db: Session, name: str = "Boundary backup"):
-    actor = add_user(db, role=UserRole.ADMIN)
+    actor = make_operator(db, add_user(db, role=UserRole.ADMIN))
     response = _client(create_app(), actor, db).post(
         "/api/backups", json={"name": name}, headers={"Idempotency-Key": uuid4().hex}
     )
@@ -167,14 +167,16 @@ def test_foreign_history_is_not_claimed_and_inherited_policy_requires_adoption(
 
 @pytest.mark.parametrize(
     ("organization_count", "expected_timezone"),
-    [(0, "UTC"), (1, "Asia/Manila"), (2, "UTC")],
+    [(0, "UTC"), (1, "Asia/Manila"), (2, "Asia/Manila")],
 )
-def test_backup_timezone_initializes_from_only_a_sole_organization(
+def test_backup_timezone_initializes_from_the_owners_organization(
     integration_db: Session, organization_count: int, expected_timezone: str,
 ) -> None:
     from app.systems.manage.backups import service
     from tests.conftest import create_organization
 
+    # The owner configures backups inside their organization (the bound one); with
+    # none bound the policy starts in UTC.
     for _ in range(organization_count):
         create_organization(integration_db, timezone="Asia/Manila")
     instance = _identity(integration_db)
@@ -412,8 +414,8 @@ def test_reconciled_backup_failure_notifies_authoritative_audience_atomically(
     db = integration_db
     run = _queue(db)
     requester = db.get(User, run.requester_id)
-    fallback = add_user(db, role=UserRole.ADMIN)
-    excluded = add_user(db, role=UserRole.ADMIN, status=UserStatus.DISABLED)
+    fallback = make_operator(db, add_user(db, role=UserRole.ADMIN))
+    excluded = make_operator(db, add_user(db, role=UserRole.ADMIN, status=UserStatus.DISABLED))
     current = _after_database_now(db)
     if audience == "scheduled":
         run.provenance, run.requester_id, run.idempotency_hash = "scheduled", None, None

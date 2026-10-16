@@ -200,6 +200,12 @@ def invite_user(
             )) is not None
         ):
             raise InvitationConflict("Email or username is already in use")
+        if existing is not None and db.scalar(select(Membership.id).where(
+            Membership.user_id == existing.id, Membership.status == UserStatus.PENDING.value,
+            Membership.is_deleted.is_(False),
+        ).limit(1)) is not None:
+            # One pending invitation per person; the message does not reveal the other one.
+            raise InvitationConflict("This person cannot be invited right now")
         if bootstrap:
             _lock_administrator_changes(db, org_id)
             if role is UserRole.ADMIN and _other_administrator_exists(db, UUID(int=0), org_id):

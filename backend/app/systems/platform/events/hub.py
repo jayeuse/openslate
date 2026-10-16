@@ -55,6 +55,8 @@ class EventViewer:
     role: str | None
     module_ids: frozenset[UUID] | None
     board_ids: frozenset[UUID] | None = frozenset()
+    # The organization the stream is bound to; events of other organizations never reach it.
+    org_id: UUID | None = None
 
 
 @dataclass(slots=True)
@@ -194,6 +196,8 @@ def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> b
     viewer = subscription.viewer
     if viewer.role is None:
         return False
+    if event.org_id is not None and event.org_id != viewer.org_id:
+        return False
     if event.entity == PRIVATE_NOTIFICATION_ENTITY:
         return event.recipient_id is not None and subscription.user_id == event.recipient_id
     if event.entity in BOARD_SCOPED_ENTITIES:
@@ -212,8 +216,9 @@ def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> b
 def _access_signature(viewer: EventViewer) -> tuple[str, ...]:
     if viewer.role is None:
         return ()
+    organization = f"org:{viewer.org_id}"
     if viewer.role == "admin":
-        return (viewer.role,)
+        return (organization, viewer.role)
     modules = (
         ("module:*",)
         if viewer.module_ids is None
@@ -224,7 +229,7 @@ def _access_signature(viewer: EventViewer) -> tuple[str, ...]:
         if viewer.board_ids is None
         else tuple(f"board:{board_id}" for board_id in sorted(viewer.board_ids))
     )
-    return (viewer.role, *modules, *boards)
+    return (organization, viewer.role, *modules, *boards)
 
 
 class PostgresInvalidationListener:

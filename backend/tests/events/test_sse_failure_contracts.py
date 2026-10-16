@@ -317,7 +317,7 @@ def test_hub_denies_missing_and_non_admin_roles_but_releases_one_of_many_streams
 
         assert no_role.access_signature == ()
         assert not hub.can_receive(no_role, records_event)
-        assert administrator.access_signature == ("admin",)
+        assert administrator.access_signature == ("org:None", "admin")
         assert hub.can_receive(administrator, admin_event)
         assert not hub.can_receive(first_member, admin_event)
         assert not hub.can_receive(first_member, unclassified_event)

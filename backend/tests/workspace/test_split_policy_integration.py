@@ -30,7 +30,7 @@ def test_security_read_preserves_combined_policy_response(integration_owner_db):
     assert response.session_timeout_minutes == platform.session_timeout_minutes
 
 
-def test_platform_security_change_refused_with_multiple_organizations(integration_owner_db):
+def test_platform_security_change_requires_the_installation_owner(integration_owner_db):
     db = integration_owner_db
     org = create_organization(db)
     user, _membership = create_member(db, org, "admin")
@@ -44,6 +44,8 @@ def test_platform_security_change_refused_with_multiple_organizations(integratio
             Request({"type": "http", "method": "PATCH", "path": "/api/workspace/security"}),
             CurrentIdentity(user, uuid7(), False, False), user, db, Response(),
         )
-    assert refusal.value.status_code == 409
+    # Installation-wide fields belong to the installation owner, not an organization admin.
+    assert refusal.value.status_code == 403
+    assert refusal.value.detail["code"] == "operator_required"
     assert platform.session_timeout_minutes == prior
     assert not db.dirty

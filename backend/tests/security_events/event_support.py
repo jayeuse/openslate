@@ -38,6 +38,11 @@ class EventWorld:
     operation_id: UUID = field(default_factory=uuid4)
     clock: datetime = field(default_factory=lambda: datetime.now(UTC))
 
+    @property
+    def org_id(self) -> UUID:
+        with Session(self.owner) as db:
+            return membership_of(db, self.actor_id).org_id
+
     def policy(self, **values):
         with Session(self.owner) as db:
             profile = db.get(WorkspaceProfile, membership_of(db, self.actor_id).org_id)
@@ -113,11 +118,13 @@ def event_world(fake_provider_account):
             db.commit()
 
 
-def append_committed(*, identity=None, **values):
+def append_committed(*, identity=None, org_id=None, **values):
     with AuditSession(bind=get_engine()) as db:
         row = append_security_event(db, SecurityEventIngestRequest(**values))
         if identity is not None:
             row.id = identity
+        # An event recorded inside an organization belongs to it.
+        row.org_id = org_id
         identity = row.id
         db.commit()
         return identity

@@ -68,6 +68,9 @@ class InvalidationEvent:
     all_authenticated: bool = False
     recipient_id: UUID | None = None
     board_id: UUID | None = None
+    # The organization the change happened in. It routes the event only inside
+    # PostgreSQL NOTIFY and is never sent to a browser.
+    org_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if self.entity == "charts" and (self.entity_id is not None or self.all_authenticated):
@@ -126,6 +129,8 @@ class InvalidationEvent:
         payload = self.to_payload()
         if self.recipient_id is not None:
             payload["recipient_id"] = str(self.recipient_id)
+        if self.org_id is not None:
+            payload["org_id"] = str(self.org_id)
         return payload
 
     def to_transport_json(self) -> str:
@@ -139,6 +144,7 @@ def event_for_entity(
     recipient_id: UUID | None = None,
     module_id: UUID | None = None,
     board_id: UUID | None = None,
+    org_id: UUID | None = None,
 ) -> InvalidationEvent | None:
     """Classify an audited table without exposing rows or audit snapshots.
 
@@ -148,13 +154,16 @@ def event_for_entity(
     if entity == "dashboard_widgets":
         entity = "dashboards"
     if entity in BOARD_SCOPED_ENTITIES:
-        return InvalidationEvent(entity=entity, board_id=board_id) if board_id is not None else None
+        return (
+            InvalidationEvent(entity=entity, board_id=board_id, org_id=org_id)
+            if board_id is not None else None
+        )
     if entity in _PRIVATE_INVALIDATION_ENTITIES:
         return None
     if entity == PRIVATE_NOTIFICATION_ENTITY:
         if recipient_id is None:
             return None
-        return InvalidationEvent(entity=entity, recipient_id=recipient_id)
+        return InvalidationEvent(entity=entity, recipient_id=recipient_id, org_id=org_id)
     scoped = entity in MODULE_SCOPED_ENTITIES
     return InvalidationEvent(
         entity=entity,
@@ -162,6 +171,7 @@ def event_for_entity(
         module_id=module_id if scoped else None,
         administrators_only=entity in _ADMINISTRATOR_ENTITIES or (scoped and module_id is None),
         all_authenticated=entity in _ALL_AUTHENTICATED_ENTITIES,
+        org_id=org_id,
     )
 
 
@@ -183,13 +193,16 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
         "module_id",
         "recipient_id",
         "board_id",
+        "org_id",
     }:
         raise ValueError("invalid invalidation payload")
+    payload = dict(payload)
     entity = payload.get("entity")
     entity_id = payload.get("entity_id")
     module_id = payload.get("module_id")
     recipient_id = payload.get("recipient_id")
     board_id = payload.get("board_id")
+    org_id = payload.pop("org_id", None)
     if not isinstance(entity, str) or not _ENTITY_PATTERN.fullmatch(entity):
         raise ValueError("invalid invalidation payload")
     if entity in BOARD_SCOPED_ENTITIES and set(payload) != {"entity", "board_id"}:
@@ -203,6 +216,7 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
         parsed_module_id = UUID(module_id) if isinstance(module_id, str) else None
         parsed_recipient_id = UUID(recipient_id) if isinstance(recipient_id, str) else None
         parsed_board_id = UUID(board_id) if isinstance(board_id, str) else None
+        parsed_org_id = UUID(org_id) if isinstance(org_id, str) else None
     except ValueError as error:
         raise ValueError("invalid invalidation payload") from error
     if entity_id is not None and parsed_id is None:
@@ -212,6 +226,8 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
     if recipient_id is not None and parsed_recipient_id is None:
         raise ValueError("invalid invalidation payload")
     if board_id is not None and parsed_board_id is None:
+        raise ValueError("invalid invalidation payload")
+    if org_id is not None and parsed_org_id is None:
         raise ValueError("invalid invalidation payload")
     if entity in _ENTITY_ONLY_ENTITIES and parsed_id is not None:
         raise ValueError("invalid invalidation payload")
@@ -227,4 +243,5 @@ def parse_invalidation_payload(payload: object) -> InvalidationEvent:
         all_authenticated=entity in _ALL_AUTHENTICATED_ENTITIES,
         recipient_id=parsed_recipient_id,
         board_id=parsed_board_id,
+        org_id=parsed_org_id,
     )

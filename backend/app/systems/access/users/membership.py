@@ -15,7 +15,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.database.organization_scope import bound_organization_column, session_organization
 from app.systems.access.users.eligibility import is_active_account, is_active_membership
-from app.systems.access.users.models import Membership, User
+from app.systems.access.users.models import Membership, PlatformOperator, User
 
 _CACHE_KEY = "openslate.memberships"
 
@@ -132,3 +132,11 @@ def eligible_memberships(db: Session, user_id: UUID) -> list[Membership]:
         established_user_clause(),
         (Membership.expires_at.is_(None) | (Membership.expires_at > utc_now())),
     ).order_by(Membership.org_id)).all())
+
+
+def is_platform_operator(db: Session, user_id: UUID) -> bool:
+    """Whether the person owns the installation (installation-wide settings, backups)."""
+
+    return db.scalar(
+        select(PlatformOperator.id).where(PlatformOperator.user_id == user_id).limit(1)
+    ) is not None

@@ -234,6 +234,7 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             recipient_id=getattr(change.instance, "recipient_id", None),
             module_id=_event_module_id(change.instance, edge_modules),
             board_id=change.board.id if isinstance(change.board, Board) else change.board,
+            org_id=org_id,
         )
         if invalidation is not None:
             invalidations.append(invalidation)

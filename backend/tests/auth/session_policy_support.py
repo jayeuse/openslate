@@ -12,7 +12,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 from jwt.algorithms import ECAlgorithm
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -22,7 +22,7 @@ from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 from app.systems.access.identity.rate_limits import login_fingerprint, rate_limit_fingerprint
-from app.systems.access.users.models import Membership, User, UserStatus
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
@@ -176,6 +176,8 @@ def _local_account(email):
                 status=UserStatus.ACTIVE.value,
                 role="member",
             )
+            # The journey's account owns the installation (on-prem first admin).
+            db.add(PlatformOperator(user_id=user.id))
             db.commit()
             local_id = user.id
         yield local_id, owner
@@ -201,6 +203,7 @@ def _local_account(email):
                     )
                 db.delete(membership)
                 db.flush()
+                db.execute(delete(PlatformOperator).where(PlatformOperator.user_id == local_id))
                 user = db.get(User, local_id)
                 if user is not None:
                     db.delete(user)

@@ -171,6 +171,9 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
     seeded_request_id = uuid7()
     for row in seeded_logs:
         row.request_id = seeded_request_id
+        # History recorded inside this organization (owner decision 10 keeps rows without
+        # an organization hidden unless they concern its own people).
+        row.org_id = row.org_id or organization(integration_db).id
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(seeded_logs)
     integration_db.flush()

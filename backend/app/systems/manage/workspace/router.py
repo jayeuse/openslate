@@ -116,23 +116,29 @@ def _ready_logo(
 def get_workspace_appearance(
     response: Response,
     db: Annotated[Session, Depends(get_db)],
+    org: UUID | None = None,
 ) -> WorkspaceAppearanceResponse:
     response.headers["Cache-Control"] = "no-store"
     try:
-        theme = _signed_out_theme(db)
+        theme = _signed_out_theme(db, org)
     except SQLAlchemyError as error:
         db.rollback()
         raise _workspace_unavailable() from error
     return WorkspaceAppearanceResponse.model_validate({"theme": theme})
 
 
-def _signed_out_theme(db: Session) -> str:
-    # Signed out there is no organization. An install with one organization shows
-    # its theme; otherwise the default theme (owner checkpoint after S07).
-    profiles = db.scalars(
-        select(WorkspaceProfile).where(WorkspaceProfile.is_deleted.is_(False)).limit(2)
-    ).all()
-    return profiles[0].theme if len(profiles) == 1 else "slate"
+def _signed_out_theme(db: Session, org: UUID | None = None) -> str:
+    """The sign-in page theme: the browser's last organization, else the only one.
+
+    Only the theme is returned, so naming an organization reveals nothing else.
+    """
+    statement = select(WorkspaceProfile.theme).where(WorkspaceProfile.is_deleted.is_(False))
+    if org is not None:
+        remembered = db.scalar(statement.where(WorkspaceProfile.id == org))
+        if remembered is not None:
+            return remembered
+    themes = db.scalars(statement.limit(2)).all()
+    return themes[0] if len(themes) == 1 else "slate"
 
 
 @router.get("", response_model=WorkspaceResponse | WorkspaceGuestResponse)

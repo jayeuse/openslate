@@ -19,7 +19,7 @@ from app.systems.manage.backups.schemas import InspectCommand
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from operations.backup_state import coordinated_session, execute
 from operations.reset.models import _RESET_ADVISORY_LOCK_KEY
-from tests.conftest import guarded_create_engine
+from tests.conftest import guarded_create_engine, make_operator
 from tests.race_support import backend_pid, join, start, wait_until_blocked_by
 from tests.rbac.support import _client, add_user, organization
 
@@ -72,7 +72,7 @@ def test_concurrent_lost_response_replay_commits_only_one_request() -> None:
     try:
         with AuditSession(engine, expire_on_commit=False) as db:
             created_policy = db.scalar(select(BackupPolicy.id)) is None
-            actor = add_user(db, role=UserRole.ADMIN)
+            actor = make_operator(db, add_user(db, role=UserRole.ADMIN))
             org_id = organization(db).id
             db.commit()
         gate, key = Barrier(3), uuid4().hex
@@ -115,6 +115,9 @@ def test_concurrent_lost_response_replay_commits_only_one_request() -> None:
                     Membership.user_id == actor.id
                 )):
                     db.delete(membership)
+                db.connection().execute(
+                    text("DELETE FROM platform_operators WHERE user_id = :id"), {"id": actor.id}
+                )
                 db.flush()
                 db.delete(db.get(type(actor), actor.id))
                 db.flush()
@@ -136,7 +139,7 @@ def test_reset_lock_claim_commit_exact_reconciliation_and_rollback() -> None:
     try:
         with AuditSession(engine, expire_on_commit=False) as db:
             created_policy = db.scalar(select(BackupPolicy.id)) is None
-            actor = add_user(db, role=UserRole.ADMIN)
+            actor = make_operator(db, add_user(db, role=UserRole.ADMIN))
             org_id = organization(db).id
             run = service.queue_manual(db, instance, actor.id, "Coordinated", uuid4().hex)
             db.commit()
@@ -233,6 +236,9 @@ def test_reset_lock_claim_commit_exact_reconciliation_and_rollback() -> None:
                     Membership.user_id == actor.id
                 )):
                     db.delete(membership)
+                db.connection().execute(
+                    text("DELETE FROM platform_operators WHERE user_id = :id"), {"id": actor.id}
+                )
                 db.flush()
                 db.delete(db.get(type(actor), actor.id))
                 db.flush()

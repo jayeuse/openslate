@@ -38,6 +38,7 @@ def test_conjunctive_filters_count_page_and_historical_person_boundaries(event_w
                 subject_id=subject,
                 occurred_at=start + timedelta(hours=offset),
                 identity=UUID(int=tie_base + (2 if index == 1 else 1)) if index in [1, 2] else None,
+                org_id=world.org_id,
             )
         )
     params = {

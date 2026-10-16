@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -28,7 +29,7 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
     client = Mock()
     claims = SimpleNamespace(user_id="provider", session_id="session")
     client.verify_access_token.return_value = claims
-    user = SimpleNamespace(id="local-user", role="admin")
+    user = SimpleNamespace(id="local-user", role="admin", supabase_user_id=uuid4())
     membership = Membership(user_id=user.id, role="admin")
     db.dirty = set()
     db.scalars.return_value.all.return_value = [membership]
@@ -46,6 +47,9 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
         raising=False,
     )
     monkeypatch.setattr(events_router, "current_membership", lambda *_args: membership)
+    db.get.return_value = WorkspaceProfile(is_deleted=False)
+    monkeypatch.setattr(events_router, "recent_provider_user", lambda _id: object())
+    monkeypatch.setattr(events_router, "requires_mfa", lambda *_args: False)
     monkeypatch.setattr(events_router, "get_engine", lambda: object())
 
     @contextmanager
@@ -55,7 +59,8 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
     monkeypatch.setattr(events_router, "AuditSession", session)
 
     viewer = events_router._reauthorize_in_database(events_router.EventPrincipal("access"))
-    assert viewer == events_router.EventViewer(
+    assert viewer is not None and viewer.org_id is not None
+    assert replace(viewer, org_id=None) == events_router.EventViewer(
         user_id="local-user", role="admin", module_ids=None, board_ids=None
     )
     client.verify_access_token.assert_called_once_with("access")
@@ -89,6 +94,7 @@ def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypat
     )
     db = Mock(spec=Session)
     db.dirty = set()
+    db.get.return_value = WorkspaceProfile(is_deleted=False, ip_allow_list=[])
     db.scalars.return_value.all.return_value = [membership]
     db.scalar.side_effect = lambda query: (
         session if query.column_descriptions[0]["entity"] is IdentitySession else user
@@ -118,7 +124,7 @@ def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypat
 
     monkeypatch.setattr(events_router, "AuditSession", database)
     token = signed_access(key, user_id=str(provider_id), session_id=str(provider_session))
-    principal = SimpleNamespace(access_token=token, client_ip="203.0.113.8")
+    principal = SimpleNamespace(access_token=token, client_ip="203.0.113.8", org_id=None)
     with pytest.raises(HTTPException) as caught:
         events_router._reauthorize_in_database(principal)
     assert caught.value.status_code == 403
@@ -133,7 +139,7 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
         valid_principal = events_router.EventPrincipal("valid-token")
 
         module_id, board_id = uuid4(), uuid4()
-        account = SimpleNamespace(id=uuid4(), role="member")
+        account = SimpleNamespace(id=uuid4(), role="member", supabase_user_id=uuid4())
         expected = events_router.EventViewer(
             user_id=account.id,
             role="member",
@@ -165,7 +171,9 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
             def __exit__(self, *_args: object) -> None:
                 exited.append(database)
 
-        database = SimpleNamespace(dirty=set(), scalars=lambda _query: SimpleNamespace(
+        database = SimpleNamespace(dirty=set(), get=lambda *_args: WorkspaceProfile(
+            is_deleted=False
+        ), scalars=lambda _query: SimpleNamespace(
             all=lambda: [Membership(user_id=account.id, role="member")]
         ))
 
@@ -196,6 +204,8 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
             events_router, "current_membership",
             lambda *_args: Membership(user_id=account.id, role="member"),
         )
+        monkeypatch.setattr(events_router, "recent_provider_user", lambda _id: object())
+        monkeypatch.setattr(events_router, "requires_mfa", lambda *_args: False)
         monkeypatch.setattr(
             events_router, "load_workspace_policy",
             lambda _db, **_kwargs: WorkspaceProfile(ip_allow_list=[]),
@@ -203,7 +213,9 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
 
         assert await events_router.reauthorize_event_principal(invalid_principal) is None
         assert entered == exited == []
-        assert await events_router.reauthorize_event_principal(valid_principal) == expected
+        viewer = await events_router.reauthorize_event_principal(valid_principal)
+        assert viewer is not None and viewer.org_id is not None
+        assert replace(viewer, org_id=None) == expected
         assert entered == ["engine"]
         assert exited == [database]
 
