@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.core.observability import log_event
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import effective_levels
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import require_current_membership
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit import listeners as _listeners  # noqa: F401
 from app.systems.manage.audit.export import encode_audit_csv
@@ -62,7 +62,7 @@ def _require_audit_list_visibility(
     db: Session,
     department_id: UUID | None,
 ) -> None:
-    if sole_active_membership(db, user.id).role != UserRole.ADMIN.value and (
+    if require_current_membership(db, user).role != UserRole.ADMIN.value and (
         department_id is None
         or effective_levels(db, user).department_level(department_id) != AccessLevel.MANAGE
     ):

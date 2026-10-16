@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog
+from tests.conftest import membership_of
 from tests.rbac.support import _client, add_department, add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
@@ -103,7 +103,7 @@ def test_option_search_preserves_department_scope_and_inactive_name_redaction(
     if actor_state == "disabled":
         inactive_actor.status = UserStatus.DISABLED.value
     else:
-        sole_active_membership(db, inactive_actor.id).invitation_sent_at = inactive_actor.created_at
+        membership_of(db, inactive_actor.id).invitation_sent_at = inactive_actor.created_at
     _seed(
         db,
         [

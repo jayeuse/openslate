@@ -29,13 +29,10 @@ class PasswordPolicyViolation(ValueError):
     """A candidate password does not meet the workspace's safe public requirement."""
 
 
-def load_workspace_policy(db: Session, *, org_id: UUID | None = None) -> WorkspaceProfile:
-    """Read current persisted policy without committing or admitting fallback defaults."""
+def load_workspace_policy(db: Session, *, org_id: UUID) -> WorkspaceProfile:
+    """Read one organization's persisted policy without committing or fallback defaults."""
     try:
-        statement = (
-            select(WorkspaceProfile).where(WorkspaceProfile.id == org_id)
-            if org_id is not None else select(WorkspaceProfile)
-        )
+        statement = select(WorkspaceProfile).where(WorkspaceProfile.id == org_id)
         profiles = db.scalars(
             statement
             .execution_options(populate_existing=True)

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.users.eligibility import established_user_clause, is_established_user
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization, organization_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 
 
@@ -65,6 +65,15 @@ def get_user(db: Session, user_id: UUID) -> User:
     return user
 
 
+def organization_member(db: Session, user: User) -> Membership:
+    """The person's membership in the bound organization; others are not found here."""
+    membership = organization_membership(db, user.id, fresh=True)
+    if membership is None:
+        db.rollback()
+        raise not_found("User")
+    return membership
+
+
 def lock_user(db: Session, user_id: UUID) -> User:
     try:
         user = db.scalar(
@@ -100,6 +109,8 @@ def active_admin_count(db: Session, *, durable: bool = False) -> int:
                 .where(
                     User.is_deleted.is_(False),
                     User.status == UserStatus.ACTIVE.value,
+                    # The last-administrator rule holds in each organization.
+                    Membership.org_id == bound_organization(db),
                     Membership.role == UserRole.ADMIN.value,
                     Membership.status == UserStatus.ACTIVE.value,
                     Membership.is_deleted.is_(False),
@@ -204,9 +215,10 @@ def validate_identity_profile(
         or sponsor.status != UserStatus.ACTIVE.value
     ):
         raise ProfileValidationError("Guest sponsor is not an active member or administrator")
-    membership = sole_active_membership(db, sponsor.id)
+    membership = organization_membership(db, sponsor.id)
     if (
-        membership.role == UserRole.GUEST.value
+        membership is None
+        or membership.role == UserRole.GUEST.value
         or not is_identity_eligible(sponsor, membership, now=utc_now())
     ):
         raise ProfileValidationError("Guest sponsor is not an active member or administrator")

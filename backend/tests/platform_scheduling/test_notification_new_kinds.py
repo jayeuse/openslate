@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy import select
 from uuid6 import uuid7
 
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkState
+from tests.conftest import membership_of
 from tests.platform_scheduling.support import (
     assert_notice_hidden,
     notification_client,
@@ -85,7 +85,7 @@ def test_invalid_current_source_or_archived_notice_is_hidden_before_all_read_bou
 ):
     db = integration_owner_db
     owner, report, _grant, _module, _department = report_work_subject(db)
-    sole_active_membership(db, owner.id).role = "admin"
+    membership_of(db, owner.id).role = "admin"
     work = None
     subject_id = uuid7()
     if kind == "report-run-failed":

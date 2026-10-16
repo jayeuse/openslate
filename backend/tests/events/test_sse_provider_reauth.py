@@ -11,6 +11,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from uuid6 import uuid7
 
 import app.systems.platform.events.router as events_router
 from app.core.integrations.supabase_auth import InvalidProviderToken
@@ -35,14 +36,16 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
     monkeypatch.setattr(events_router, "allowed_module_ids", lambda *_args: None)
     monkeypatch.setattr(events_router, "readable_board_ids", lambda *_args: None, raising=False)
     monkeypatch.setattr(
-        events_router, "load_workspace_policy", lambda _db: WorkspaceProfile(ip_allow_list=[])
+        events_router, "load_workspace_policy",
+        lambda _db, **_kwargs: WorkspaceProfile(ip_allow_list=[]),
     )
     monkeypatch.setattr(
         events_router,
         "resolve_provider_session",
-        lambda *_args: (user, object()),
+        lambda *_args: (user, SimpleNamespace(active_org_id=uuid7())),
         raising=False,
     )
+    monkeypatch.setattr(events_router, "current_membership", lambda *_args: membership)
     monkeypatch.setattr(events_router, "get_engine", lambda: object())
 
     @contextmanager
@@ -77,6 +80,7 @@ def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypat
     session = IdentitySession(
         id=uuid4(),
         user_id=local_id,
+        active_org_id=uuid4(),
         provider_user_id=provider_id,
         provider_session_id=provider_session,
         created_at=datetime.now(UTC),
@@ -97,11 +101,13 @@ def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypat
         mfa_grace_days=0,
         ip_allow_list=[] if denial == "mfa_required" else ["10.0.0.0/8"],
     )
-    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db: profile)
+    monkeypatch.setattr(provider_sessions, "load_workspace_policy", lambda _db, **_kwargs: profile)
     monkeypatch.setattr(provider_sessions, "load_platform_policy", lambda _db: PlatformSettings(
         session_timeout_minutes=60, session_absolute_lifetime_minutes=None,
     ))
-    monkeypatch.setattr(events_router, "load_workspace_policy", lambda _db: profile, raising=False)
+    monkeypatch.setattr(
+        events_router, "load_workspace_policy", lambda _db, **_kwargs: profile, raising=False
+    )
     monkeypatch.setattr(events_router, "get_supabase_auth_client", lambda: provider)
     monkeypatch.setattr(events_router, "allowed_module_ids", lambda *_args: None)
     monkeypatch.setattr(events_router, "get_engine", lambda: object())
@@ -169,7 +175,7 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
             assert db is database
             assert verified_claims is claims
             assert client is provider
-            return account, object()
+            return account, SimpleNamespace(active_org_id=uuid7())
 
         def readable_modules(db: object, user: object, level: object) -> frozenset[object]:
             assert db is database
@@ -187,7 +193,12 @@ def test_reauthorization_checks_claims_then_uses_a_short_lived_database_session(
         monkeypatch.setattr(events_router, "AuditSession", Session)
         monkeypatch.setattr(events_router, "resolve_provider_session", resolve_provider_session)
         monkeypatch.setattr(
-            events_router, "load_workspace_policy", lambda _db: WorkspaceProfile(ip_allow_list=[])
+            events_router, "current_membership",
+            lambda *_args: Membership(user_id=account.id, role="member"),
+        )
+        monkeypatch.setattr(
+            events_router, "load_workspace_policy",
+            lambda _db, **_kwargs: WorkspaceProfile(ip_allow_list=[]),
         )
 
         assert await events_router.reauthorize_event_principal(invalid_principal) is None

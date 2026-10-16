@@ -17,8 +17,9 @@ from contextvars import ContextVar
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, Engine, event, text
+from sqlalchemy import Connection, Engine, event, literal_column, text
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 ORGANIZATION_SCOPE_KEY = "openslate.org_id"
 _SET_SCOPE = text("SELECT set_config('openslate.org_id', :org_id, true)")
@@ -33,6 +34,16 @@ def apply_connection_scope(connection: Connection, org_id: UUID | None) -> None:
     connection.execute(_SET_SCOPE, {"org_id": "" if org_id is None else str(org_id)})
 
 
+def bound_organization_column() -> ColumnElement[UUID]:
+    """SQL value of the transaction's organization; NULL (matching nothing) when unbound.
+
+    Use it to keep tables without row-level security, such as ``memberships``,
+    inside the bound organization in the same statement.
+    """
+
+    return literal_column("nullif(current_setting('openslate.org_id', true), '')::uuid")
+
+
 def current_worker_organization() -> UUID | None:
     """The organization the current worker pass is bound to, if any."""
 
@@ -42,13 +53,16 @@ def current_worker_organization() -> UUID | None:
 def session_organization(session: Session) -> UUID | None:
     """The organization this session's transactions are bound to, if any."""
 
-    org_id = session.info.get(ORGANIZATION_SCOPE_KEY)
+    info = getattr(session, "info", None)
+    org_id = info.get(ORGANIZATION_SCOPE_KEY) if isinstance(info, dict) else None
     return org_id if isinstance(org_id, UUID) else _worker_organization.get()
 
 
 def scope_session(session: Session, org_id: UUID | None) -> None:
     """Bind the session's current and later transactions to one organization."""
 
+    if not isinstance(getattr(session, "info", None), dict):
+        return  # a test double without a database connection
     session.info[ORGANIZATION_SCOPE_KEY] = org_id
     if session.in_transaction():
         apply_connection_scope(session.connection(), org_id)

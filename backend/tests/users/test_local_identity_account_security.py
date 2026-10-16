@@ -94,8 +94,8 @@ def test_pending_user_cannot_be_enabled_or_disabled_by_administrator() -> None:
         db = Mock(spec=Session)
         db.scalar.side_effect = [admin, pending]
         db.dirty = set()
-        db.scalars.return_value.all.return_value = [admin_membership]
-        db.scalars.return_value.one.return_value = membership
+        # The administrator's membership, then the target's in the same organization.
+        db.scalars.return_value.all.side_effect = [[admin_membership], [membership]]
         with pytest.raises(HTTPException) as error:
             account_operations.update_user(pending.id, UserUpdate(status=requested), admin, db)
         assert error.value.status_code == 409

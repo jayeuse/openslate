@@ -27,11 +27,11 @@ from app.systems.access.users.coordination import (
     ensure_projected_admin_remains,
     forbidden,
     lock_user,
+    organization_member,
     unavailable,
     validate_identity_profile,
 )
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import UserResponse, UserUpdate
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -215,9 +215,7 @@ def update_user(
         _lock_membership_groups(db, user_id) if payload.role == UserRole.ADMIN else {}
     )
     user = lock_user(db, user_id)
-    membership = db.scalars(select(Membership).filter_by(
-        user_id=user.id, status="pending", is_deleted=False,
-    )).one() if user.status == "pending" else sole_active_membership(db, user.id)
+    membership = organization_member(db, user)
     target_id = user.id
     if user.is_deleted:
         raise conflict("User is deleted")
@@ -396,9 +394,7 @@ def delete_user(
     admin = require_fresh_exact_admin(db, admin.id, serialize_admin_changes=True)
     actor_id = admin.id
     user = lock_user(db, user_id)
-    membership = db.scalars(select(Membership).filter_by(
-        user_id=user.id, status="pending", is_deleted=False,
-    )).one() if user.status == "pending" else sole_active_membership(db, user.id)
+    membership = organization_member(db, user)
     target_id = user.id
     if user.is_deleted:
         raise conflict("User is already deleted")
@@ -455,7 +451,7 @@ def restore_user(
     admin = require_fresh_exact_admin(db, admin.id)
     actor_id = admin.id
     user = lock_user(db, user_id)
-    membership = sole_active_membership(db, user.id)
+    membership = organization_member(db, user)
     target_id = user.id
     if not user.is_deleted:
         raise conflict("User is not deleted")

@@ -8,11 +8,11 @@ from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel, GroupAccess
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.validation import ValidatedContent
 from app.systems.sandbox.records.models import Record
+from tests.conftest import membership_of
 from tests.files.test_workspace_policy_integration import _client, _png, _Store
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
@@ -195,7 +195,7 @@ def test_inactive_library_accounts_cannot_read_or_reserve(guarded_db, state):
     if state in {"disabled", "pending"}:
         actor.status = state
     elif state == "expired":
-        sole_active_membership(db, actor.id).expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        membership_of(db, actor.id).expires_at = datetime.now(UTC) - timedelta(seconds=1)
     else:
         actor.is_deleted = True
     db.commit()

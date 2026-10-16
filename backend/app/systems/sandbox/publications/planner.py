@@ -8,6 +8,7 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.systems.access.users.membership import bound_organization
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.schemas import DesignField, SandboxDocument
@@ -288,7 +289,8 @@ def publication_plan(db: Session, document: SandboxDocument) -> PublicationPlan:
     profile = db.scalars(
         select(WorkspaceProfile)
         .join(SandboxDocumentRow, SandboxDocumentRow.org_id == WorkspaceProfile.id)
-        .where(SandboxDocumentRow.singleton_key.is_(True))
+        .where(SandboxDocumentRow.singleton_key.is_(True),
+               WorkspaceProfile.id == bound_organization(db))
     ).one_or_none()
     if profile is None:
         blockers.append(

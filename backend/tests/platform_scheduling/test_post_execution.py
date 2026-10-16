@@ -7,7 +7,6 @@ from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.models import BoardGroup
 from app.systems.boards.post_models import BoardPostRevision
@@ -24,7 +23,7 @@ from app.systems.platform.scheduling.post_execution import (
 from app.systems.platform.scheduling.service import WorkClaim, claim_due_work
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 from tests.platform_scheduling.support import POST_DUE as NOW
 from tests.platform_scheduling.support import post_work_subject
 from tests.rbac.support import organization
@@ -164,7 +163,7 @@ def test_current_source_or_actor_denial_cancels_without_publication(integration_
         actor.status = UserStatus.DISABLED.value
     elif change == "write_revoked":
         sponsor = _other_user(db, role)
-        membership = sole_active_membership(db, actor.id)
+        membership = membership_of(db, actor.id)
         membership.role = "guest"
         membership.sponsor_user_id = sponsor.id
         membership.expires_at = datetime.now(UTC) + timedelta(days=30)

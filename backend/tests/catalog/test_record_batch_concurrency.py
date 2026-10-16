@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.sandbox.fields.models import FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
@@ -20,7 +19,7 @@ from tests.catalog.dynamic_field_support import (
     _seed_committed_record,
     _set_request,
 )
-from tests.conftest import guarded_create_engine
+from tests.conftest import guarded_create_engine, membership_of
 
 pytestmark = pytest.mark.integration
 pytest_plugins = ("tests.catalog.dynamic_field_support", "tests.auth.session_policy_support")
@@ -62,7 +61,7 @@ def test_batch_refreshes_revision_after_the_same_module_record_lock_order(
 
     world = policy_world
     with Session(world.owner) as db:
-        org_id = sole_active_membership(db, world.actor_id).org_id
+        org_id = membership_of(db, world.actor_id).org_id
     module = _seed_committed_module(
         owned_ids,
         org_id=org_id,

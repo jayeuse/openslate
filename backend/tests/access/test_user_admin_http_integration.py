@@ -14,12 +14,11 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel, Group
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.audit.models import AuditLog, SecurityEventOutcome
 from tests.access.user_admin_support import UserAdminWorld, add_session
 from tests.access.user_admin_support import world as world
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -30,7 +29,7 @@ def _etag(group: Group) -> str:
 
 
 def _user_role_audit(db: Session, user: User) -> list[AuditLog]:
-    membership = sole_active_membership(db, user.id)
+    membership = membership_of(db, user.id)
     rows = db.scalars(
         select(AuditLog)
         .where(
@@ -69,7 +68,7 @@ def test_administrator_promotes_and_demotes_a_member_with_an_audit_record(
     assert demoted.status_code == 200, demoted.text
     assert demoted.json()["role"] == "member"
     world.db.refresh(world.member)
-    assert sole_active_membership(world.db, world.member.id).role == UserRole.MEMBER.value
+    assert membership_of(world.db, world.member.id).role == UserRole.MEMBER.value
     audited = _user_role_audit(world.db, world.member)
     assert [(row.before or {}).get("role") for row in audited] == ["member", "admin"]
     assert [(row.after or {}).get("role") for row in audited] == ["admin", "member"]
@@ -184,7 +183,7 @@ def test_member_is_refused_every_user_administration_route(world: UserAdminWorld
     }
     world.db.refresh(target)
     world.db.refresh(target_session)
-    assert (sole_active_membership(world.db, target.id).role, target.status, target.is_deleted) == (
+    assert (membership_of(world.db, target.id).role, target.status, target.is_deleted) == (
         UserRole.MEMBER.value,
         UserStatus.ACTIVE.value,
         False,
@@ -253,7 +252,7 @@ def test_unusable_administrators_do_not_keep_the_last_usable_one(world: UserAdmi
     assert demoted.status_code == 409
     assert demoted.json() == {"detail": "Cannot remove the last active admin"}
     world.db.refresh(world.admin)
-    assert sole_active_membership(world.db, world.admin.id).role == UserRole.ADMIN.value
+    assert membership_of(world.db, world.admin.id).role == UserRole.ADMIN.value
 
 
 def test_a_temporary_administrator_does_not_keep_the_last_durable_one(

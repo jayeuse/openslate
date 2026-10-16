@@ -13,6 +13,7 @@ from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.eligibility import established_user_clause
+from app.systems.access.users.membership import bound_membership_join
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.boards.activity_schemas import (
     BoardActivityKind,
@@ -80,7 +81,7 @@ def _active_actor_labels(db: Session, rows: list[AuditLog]) -> dict[UUID, str]:
         return {}
     actors = db.execute(
         select(User.id, User.username)
-        .join(Membership, Membership.user_id == User.id)
+        .join(Membership, bound_membership_join())
         .where(
             User.id.in_(actor_ids),
             User.status == UserStatus.ACTIVE.value,

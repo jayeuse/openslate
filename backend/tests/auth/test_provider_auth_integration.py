@@ -19,11 +19,10 @@ from app.core.integrations.supabase_auth import SupabaseAuthUnavailable, get_sup
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_user_cache import forget_provider_user
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.conftest import create_member, create_organization
+from tests.conftest import create_member, create_organization, membership_of
 
 pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
@@ -101,7 +100,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
     email, password, provider_id, local_id, owner = provider_account
     settings = get_settings()
     with Session(owner) as db:
-        membership = sole_active_membership(db, local_id)
+        membership = membership_of(db, local_id)
         organization = db.get(WorkspaceProfile, membership.org_id)
         other, _other_membership = create_member(db, organization,
             email=f"theme-other-{uuid4().hex}@example.test",
@@ -159,7 +158,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             assert before_user is not None
             # Only safe profile values; credential/token fields are never asserted or logged.
             account = (
-                sole_active_membership(db, before_user.id).role,
+                membership_of(db, before_user.id).role,
                 before_user.status,
                 before_user.email,
                 before_user.tokens_valid_after,
@@ -189,7 +188,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             assert user.theme_preference == "dark"
             assert other.theme_preference == "system"
             assert (
-                sole_active_membership(db, user.id).role,
+                membership_of(db, user.id).role,
                 user.status, user.email, user.tokens_valid_after,
             ) == account
             assert (
@@ -236,7 +235,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
         with Session(owner) as db:
             user = db.get(User, local_id)
             if user is not None:
-                membership = sole_active_membership(db, user.id)
+                membership = membership_of(db, user.id)
                 membership.role, membership.sponsor_user_id, membership.expires_at = (
                     "member", None, None,
                 )

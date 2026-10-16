@@ -10,7 +10,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.base_model import BaseModel
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.boards.attachment_models import BoardAttachment
 from app.systems.boards.event_models import BoardEvent
@@ -29,6 +28,7 @@ from app.systems.sandbox.lifecycle.exceptions import (
 from app.systems.sandbox.records.models import Record
 from tests.boards.support import client, project_board
 from tests.boards.test_permanent_delete import _actor
+from tests.conftest import membership_of
 from tests.reports.test_report_routes import _module, _recipe
 
 pytestmark = pytest.mark.integration
@@ -202,7 +202,7 @@ def test_report_event_rechecks_after_password_without_deleting(
             else:
                 target.archived = False
         elif change == "downgrade":
-            sole_active_membership(db, actor.id).role = "member"
+            membership_of(db, actor.id).role = "member"
         else:
             monkeypatch.setattr(
                 settings_path, lambda: SimpleNamespace(lifecycle_purge_enabled=False)

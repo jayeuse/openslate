@@ -5,7 +5,8 @@ from uuid import UUID
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, literal, select
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,12 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import resolve_provider_session, validate_csrf
 from app.systems.access.identity.provider_user_cache import recent_provider_user
 from app.systems.access.users.eligibility import is_active_account, is_active_membership
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import (
+    bound_organization,
+    organization_required,
+    remember_membership,
+    require_current_membership,
+)
 from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import DefaultOrganizationBlocked
 from app.systems.manage.audit.context import set_audit_actor
@@ -38,7 +44,7 @@ from app.systems.manage.workspace.security_policy import (
 
 _bearer = HTTPBearer(auto_error=False)
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-# One transaction-scoped advisory lock orders administrator membership changes.
+# One transaction-scoped advisory lock per organization orders administrator changes.
 # Administrator actions hold it shared; changes that can remove an administrator
 # hold it exclusively, so the last-administrator count cannot race.
 ADMINISTRATOR_CHANGE_LOCK = 0x4F53_4144  # "OSAD"
@@ -197,11 +203,6 @@ def get_account_user(identity: Annotated[CurrentIdentity, Depends(get_account_id
     return identity.user
 
 
-def organization_required() -> HTTPException:
-    return HTTPException(403, detail={"code": "organization_required",
-                                      "message": "An active organization membership is required"})
-
-
 def resolve_membership(
     request: Request, db: Session, identity: CurrentIdentity, org_id: UUID,
 ) -> Membership:
@@ -233,6 +234,7 @@ def resolve_membership(
         })
     require_allowed_source(request, db, org, person_id=identity.user.id)
     scope_session(db, org_id)
+    remember_membership(db, membership)
     return membership
 
 
@@ -289,11 +291,21 @@ def _forbidden(db: Session) -> HTTPException:
     return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
-def lock_administrator_changes(db: Session, *, exclusive: bool) -> None:
-    """Take the transaction-scoped administrator membership lock."""
+def lock_administrator_changes(
+    db: Session, *, exclusive: bool, org_id: UUID | None = None
+) -> None:
+    """Take the transaction-scoped administrator lock of one organization.
 
+    Organizations change administrators independently; the lock and the
+    last-administrator counts are per organization (the bound one by default).
+    """
+
+    organization = org_id or bound_organization(db)
     lock = func.pg_advisory_xact_lock if exclusive else func.pg_advisory_xact_lock_shared
-    db.execute(select(lock(ADMINISTRATOR_CHANGE_LOCK)))
+    db.execute(select(lock(
+        sql_cast(literal(ADMINISTRATOR_CHANGE_LOCK), Integer),
+        func.hashtext(str(organization)),
+    )))
 
 
 def require_fresh_exact_admin(
@@ -315,7 +327,7 @@ def require_fresh_exact_admin(
     if (
         not isinstance(actor, User)
         or not is_active_account(db, actor)
-        or sole_active_membership(db, actor.id).role != UserRole.ADMIN.value
+        or require_current_membership(db, actor).role != UserRole.ADMIN.value
     ):
         raise _forbidden(db)
     return actor
@@ -331,7 +343,7 @@ def require_admin(
     Department managers change group members through ``policy/delegation.py`` instead.
     """
 
-    if sole_active_membership(db, user.id).role != UserRole.ADMIN.value:
+    if require_current_membership(db, user).role != UserRole.ADMIN.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return user
 
@@ -342,6 +354,6 @@ def require_non_guest(
 ) -> User:
     """Allow administrators and members. A guest is limited to reading."""
 
-    if sole_active_membership(db, user.id).role == UserRole.GUEST.value:
+    if require_current_membership(db, user).role == UserRole.GUEST.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return user

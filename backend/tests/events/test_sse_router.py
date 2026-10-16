@@ -217,7 +217,8 @@ def test_unbound_provider_identity_cannot_open_event_stream(
     monkeypatch.setattr(events_router, "AuditSession", session)
     monkeypatch.setattr(events_router, "resolve_provider_session", resolve_provider_session)
     monkeypatch.setattr(
-        events_router, "load_workspace_policy", lambda _db: WorkspaceProfile(ip_allow_list=[])
+        events_router, "load_workspace_policy",
+        lambda _db, **_kwargs: WorkspaceProfile(ip_allow_list=[]),
     )
 
     application = FastAPI()

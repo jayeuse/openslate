@@ -30,7 +30,7 @@ from app.systems.access.users.coordination import (
     validate_identity_profile,
 )
 from app.systems.access.users.invitation_provider import prepare_invitation_user
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -41,7 +41,6 @@ from app.systems.manage.audit.service import (
     append_security_event,
 )
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.manage.workspace.security_policy import load_workspace_policy
 
 
 def _security_event(
@@ -90,11 +89,11 @@ def _record_invitation_failure(
         pass
 
 
-def _lock_administrator_changes(db: Session) -> None:
-    """Order this change after any administrator change in flight."""
+def _lock_administrator_changes(db: Session, org_id: UUID | None = None) -> None:
+    """Order this change after any administrator change in flight in the organization."""
 
     try:
-        lock_administrator_changes(db, exclusive=True)
+        lock_administrator_changes(db, exclusive=True, org_id=org_id)
     except SQLAlchemyError as error:
         raise InvitationError("Unable to lock administrator membership") from error
 
@@ -171,8 +170,8 @@ def invite_user(
     try:
         if actor_id is not None:
             require_fresh_exact_admin(db, actor_id)
-        org_id = (sole_active_membership(db, actor_id).org_id if actor_id is not None
-                  else org_id or load_workspace_policy(db).id)
+        org_id = (bound_organization(db) if actor_id is not None
+                  else org_id or bound_organization(db))
         role = UserRole(payload.role)
         expires_at = payload.expires_at
         if role is UserRole.GUEST and expires_at is None:
@@ -202,7 +201,7 @@ def invite_user(
         ):
             raise InvitationConflict("Email or username is already in use")
         if bootstrap:
-            _lock_administrator_changes(db)
+            _lock_administrator_changes(db, org_id)
             if role is UserRole.ADMIN and _other_administrator_exists(db, UUID(int=0), org_id):
                 raise InvitationError("An administrator reservation already exists")
         user = existing or User(
@@ -293,7 +292,7 @@ def revoke_invitation(db: Session, user_id: UUID, *, actor_id: UUID) -> None:
         profile = _lock_profile(db, user_id)
         membership = db.scalars(select(Membership).where(
             Membership.user_id == user_id, Membership.status == "pending",
-            Membership.org_id == sole_active_membership(db, actor_id).org_id,
+            Membership.org_id == bound_organization(db),
             Membership.is_deleted.is_(False),
         ).with_for_update()).one_or_none()
         if profile is None or profile.is_deleted:
@@ -349,7 +348,7 @@ def resend_invitation(
         profile = _lock_profile(db, user_id)
         membership = db.scalars(select(Membership).where(
             Membership.user_id == user_id, Membership.status == "pending",
-            Membership.org_id == sole_active_membership(db, actor_id).org_id,
+            Membership.org_id == bound_organization(db),
             Membership.is_deleted.is_(False),
         ).with_for_update()).one_or_none()
         if (
@@ -418,8 +417,8 @@ def reconcile_invitation(
         if actor_id is not None:
             require_fresh_exact_admin(db, actor_id)
         profile = _lock_profile(db, user_id)
-        org_id = (sole_active_membership(db, actor_id).org_id if actor_id is not None
-                  else org_id or load_workspace_policy(db).id)
+        org_id = (bound_organization(db) if actor_id is not None
+                  else org_id or bound_organization(db))
         membership = db.scalars(select(Membership).where(
             Membership.user_id == user_id, Membership.org_id == org_id,
             Membership.status == "pending", Membership.is_deleted.is_(False),
@@ -434,7 +433,7 @@ def reconcile_invitation(
         ):
             raise InvitationError("Invitation is not pending")
         if bootstrap:
-            _lock_administrator_changes(db)
+            _lock_administrator_changes(db, org_id)
             if membership.role != UserRole.ADMIN.value or _other_administrator_exists(
                 db, profile.id, org_id
             ):

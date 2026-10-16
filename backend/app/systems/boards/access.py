@@ -1,6 +1,7 @@
 """The level of a user on a Board, from the Board scope and the access function.
 
-1. An inactive account has no level. An administrator manages every Board.
+1. A user without an eligible membership in the bound organization has no level.
+   An administrator manages every Board.
 2. Every active account reads the company Board; only administrators post on it.
 3. A department Board follows the department: the level of the department row,
    or ``read`` when the user reads only some modules of the department. The same
@@ -21,10 +22,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.scope import effective_levels, includes, rank
-from app.systems.access.users.eligibility import established_user_clause, is_active_account
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.eligibility import established_user_clause
+from app.systems.access.users.membership import current_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.boards.models import Board, BoardGroup, BoardScope
 
@@ -57,9 +59,10 @@ def project_level(db: Session, user: User, board_id: UUID) -> AccessLevel | None
 def board_level(db: Session, user: User, board: Board) -> AccessLevel | None:
     """Return the user's level on the Board, or None when the user cannot read it."""
 
-    if not is_active_account(db, user) or board.is_deleted or board.deleted_at is not None:
+    membership = current_membership(db, user)
+    if membership is None or board.is_deleted or board.deleted_at is not None:
         return None
-    role = sole_active_membership(db, user.id).role
+    role = membership.role
     if role == UserRole.ADMIN.value:
         return AccessLevel.MANAGE
     if board.scope == BoardScope.COMPANY.value:
@@ -84,9 +87,10 @@ def has_level(db: Session, user: User, board: Board, required: AccessLevel) -> b
 def visible_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     """SQL form of ``board_level(...) is not None`` over each ``boards`` row."""
 
-    if not is_active_account(db, user):
+    membership = current_membership(db, user)
+    if membership is None:
         return false()
-    if sole_active_membership(db, user.id).role == UserRole.ADMIN.value:
+    if membership.role == UserRole.ADMIN.value:
         return true()
     memberships = (
         select(GroupMember.group_id)
@@ -116,9 +120,10 @@ def visible_board_clause(db: Session, user: User) -> ColumnElement[bool]:
 def readable_board_ids(db: Session, user: User) -> frozenset[UUID] | None:
     """Snapshot live readable Boards; None denotes an active administrator."""
 
-    if not is_active_account(db, user):
+    membership = current_membership(db, user)
+    if membership is None:
         return frozenset()
-    if sole_active_membership(db, user.id).role == UserRole.ADMIN.value:
+    if membership.role == UserRole.ADMIN.value:
         return None
     return frozenset(
         db.scalars(
@@ -134,9 +139,10 @@ def readable_board_ids(db: Session, user: User) -> frozenset[UUID] | None:
 def managed_board_clause(db: Session, user: User) -> ColumnElement[bool]:
     """SQL form of ``board_level(...) == manage`` without one query per Board."""
 
-    if not is_active_account(db, user):
+    membership = current_membership(db, user)
+    if membership is None:
         return false()
-    role = sole_active_membership(db, user.id).role
+    role = membership.role
     if role == UserRole.GUEST.value:
         return false()
     live = and_(Board.is_deleted.is_(False), Board.deleted_at.is_(None))
@@ -173,6 +179,7 @@ def _active_accounts() -> Select[tuple[UUID]]:
         User.status == UserStatus.ACTIVE.value,
         User.is_deleted.is_(False),
         User.deleted_at.is_(None),
+        Membership.org_id == bound_organization_column(),
         Membership.status == UserStatus.ACTIVE.value,
         Membership.is_deleted.is_(False),
         or_(Membership.expires_at.is_(None), Membership.expires_at > timestamp),

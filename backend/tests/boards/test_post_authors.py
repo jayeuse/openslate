@@ -6,14 +6,13 @@ import pytest
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.models import Board
 from app.systems.boards.post_author_router import router
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from tests.boards.support import client as board_client
 from tests.boards.support import grant, member, writable_board
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -130,7 +129,7 @@ def test_inactive_deleted_or_unestablished_authors_are_not_choices(
     disabled.status = UserStatus.DISABLED.value
     deleted.is_deleted = True
     deleted.deleted_at = datetime.now(UTC)
-    sole_active_membership(db, unestablished.id).invitation_sent_at = datetime.now(UTC)
+    membership_of(db, unestablished.id).invitation_sent_at = datetime.now(UTC)
     db.commit()
 
     response = board_client(db, viewer, router).get(f"/api/boards/{board.id}/post-authors")
@@ -305,11 +304,11 @@ def test_author_ids_intersect_visible_eligible_authors_before_search_and_paging(
             status="archived" if state == "archived" else "published",
             expires_at=past if state == "expired-post" else None,
         )
-    sole_active_membership(db, unavailable["expired-user"].id).expires_at = past
+    membership_of(db, unavailable["expired-user"].id).expires_at = past
     unavailable["disabled"].status = UserStatus.DISABLED.value
     unavailable["deleted"].is_deleted = True
     unavailable["deleted"].deleted_at = datetime.now(UTC)
-    sole_active_membership(db, unavailable["unestablished"].id).invitation_sent_at = datetime.now(
+    membership_of(db, unavailable["unestablished"].id).invitation_sent_at = datetime.now(
         UTC,
     )
     db.commit()

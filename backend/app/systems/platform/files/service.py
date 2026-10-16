@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies import require_fresh_exact_admin
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import (
+    bound_organization,
+    require_current_membership,
+)
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -138,7 +141,7 @@ def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
         authorize(db, user, "user_avatar", write=True)
     file = File(
         org_id=(None if payload.purpose == "user_avatar"
-                else sole_active_membership(db, user.id).org_id),
+                else bound_organization(db)),
         **payload.model_dump(), creator_id=user.id, object_key=uuid4().hex, state="awaiting_upload"
     )
     db.add(file)
@@ -157,7 +160,7 @@ def reserve_board(
     authorize_board_file(db, fresh_user(db, user.id), board_id, write=True, lock=True)
     require_capacity(db, "board_attachment", payload.expected_size)
     file = File(
-        org_id=sole_active_membership(db, user.id).org_id,
+        org_id=bound_organization(db),
         purpose="board_attachment",
         board_id=board_id,
         record_id=None,
@@ -340,6 +343,7 @@ def reconcile(
     if candidate.purpose == "workspace_logo":
         profile = db.scalar(
             select(WorkspaceProfile)
+            .where(WorkspaceProfile.id == bound_organization(db))
             .with_for_update(nowait=True)
             .execution_options(populate_existing=True)
         )
@@ -388,7 +392,7 @@ def reconcile(
         if token is None:
             raise error("upload_unresolved", "Upload outcome remains unresolved")
         file = _current(db, file_id, token, "uploading")
-        if sole_active_membership(db, fresh_user(db, actor_id).id).role != UserRole.ADMIN.value:
+        if require_current_membership(db, fresh_user(db, actor_id)).role != UserRole.ADMIN.value:
             raise error("forbidden", "Forbidden", 403)
         _finish_ready(file)
         db.commit()

@@ -19,7 +19,7 @@ from app.systems.access.policy.schemas import (
     GroupCreate,
     GroupUpdate,
 )
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_membership_join, bound_organization
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
@@ -144,7 +144,7 @@ def _active_users(db: Session, user_ids: tuple[UUID, ...]) -> set[UUID]:
         return set()
     rows = db.scalars(
         select(User)
-        .join(Membership, Membership.user_id == User.id)
+        .join(Membership, bound_membership_join())
         .where(
             User.id.in_(user_ids),
             User.is_deleted.is_(False),
@@ -164,7 +164,7 @@ def _pending_users(db: Session, user_ids: set[UUID]) -> set[UUID]:
         return set()
     rows = db.scalars(
         select(User)
-        .join(Membership, Membership.user_id == User.id)
+        .join(Membership, bound_membership_join())
         .where(
             User.id.in_(user_ids),
             User.is_deleted.is_(False),
@@ -183,7 +183,7 @@ def _refuse_administrators(db: Session, user_ids: set[UUID]) -> None:
     if user_ids and db.scalar(
         select(func.count())
         .select_from(User)
-        .join(Membership, Membership.user_id == User.id)
+        .join(Membership, bound_membership_join())
         .where(User.id.in_(user_ids), Membership.role == UserRole.ADMIN.value)
     ):
         raise conflict("Administrators have access everywhere and are not group members")
@@ -233,7 +233,7 @@ def replace_group_members(
 
 def create_group(db: Session, payload: GroupCreate, actor_id: UUID) -> Group:
     try:
-        row = Group(org_id=sole_active_membership(db, actor_id).org_id,
+        row = Group(org_id=bound_organization(db),
                     name=payload.name, description=payload.description, performed_by=actor_id)
         db.add(row)
         db.flush()

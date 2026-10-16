@@ -23,20 +23,19 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import HTTPException
 from sqlalchemy import Select, and_, exists, false, or_, select, true
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.users.eligibility import (
     established_user_clause,
-    is_active_account,
     is_established_user,
 )
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import current_membership, organization_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.sandbox.modules.models import Module
 
@@ -169,11 +168,10 @@ def _resolve(
 ) -> _Resolution:
     """Rule 2 and the reads; :func:`_fold_access` applies the other rules."""
 
-    # The temporary read-only bridge does not flush; resolve current transaction state first.
+    # Resolve current transaction state first; the membership read may be cached.
     db.flush()
-    try:
-        membership = membership or sole_active_membership(db, user.id)
-    except HTTPException:
+    membership = membership or organization_membership(db, user.id)
+    if membership is None:
         return _Resolution(NO_ACCESS)
     if (membership.user_id != user.id or membership.status != "active"
             or user.status != UserStatus.ACTIVE.value or not is_established_user(membership)
@@ -396,6 +394,7 @@ def _active_account_clause(now: datetime | None) -> ColumnElement[bool]:
     return and_(
         User.status == UserStatus.ACTIVE.value,
         User.is_deleted.is_(False),
+        Membership.org_id == bound_organization_column(),
         Membership.status == UserStatus.ACTIVE.value,
         Membership.is_deleted.is_(False),
         or_(Membership.expires_at.is_(None), Membership.expires_at > timestamp),
@@ -480,9 +479,10 @@ def department_reader_clause(db: Session, user: User, department_id: Any) -> Col
     every department, and a member or guest needs a live group row there.
     """
 
-    if not is_active_account(db, user):
+    membership = current_membership(db, user)
+    if membership is None:
         return false()
-    if sole_active_membership(db, user.id).role == UserRole.ADMIN.value:
+    if membership.role == UserRole.ADMIN.value:
         return true()
     return exists(
         select(GroupAccess.id)

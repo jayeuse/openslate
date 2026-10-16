@@ -16,12 +16,12 @@ from uuid6 import uuid7
 
 from app.core.database import get_db
 from app.core.database.session import AuditSession
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.openview.reports.models import ReportRunEligibleUser
 from app.systems.platform.scheduling.execution import execute_due_report_runs
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork
 from app.systems.platform.scheduling.notification_router import router as notification_router
+from tests.conftest import membership_of
 from tests.platform_scheduling.test_execution import NOW
 from tests.reports.test_report_run_routes import _RunFixture
 
@@ -35,7 +35,7 @@ def test_expired_identity_is_not_captured_for_new_report_run(
     fixture = report_run_fixture
     outsider_id = fixture.outsider_id
     with Session(fixture.owner_engine) as db:
-        outsider = sole_active_membership(db, outsider_id)
+        outsider = membership_of(db, outsider_id)
         assert outsider is not None
         outsider.expires_at = datetime.now(UTC) - timedelta(minutes=1)
         db.commit()

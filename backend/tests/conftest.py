@@ -8,14 +8,14 @@ from secrets import token_urlsafe
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.config import instance as _instance_module
 from app.core.config import provider_instance as _provider_instance_module
 from app.core.database import model_registry  # noqa: F401
-from app.core.database.organization_scope import scope_session
+from app.core.database.organization_scope import scope_session, worker_organization
 from app.core.database.session import AuditSession
 from app.systems.access.identity.provider_user_cache import clear_provider_users
 from app.systems.access.users.models import Membership, User, UserRole
@@ -23,7 +23,11 @@ from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.config_support import settings_environment
 from tests.database_pool import pooled_engine
-from tests.organization_scope_support import bind_test_organization, organization_bindings
+from tests.organization_scope_support import (
+    UNIT_ORGANIZATION_ID,
+    bind_test_organization,
+    organization_bindings,
+)
 from tests.postgres_runtime import assert_runner_database_url
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
@@ -49,6 +53,15 @@ def create_organization(db: Session, **values) -> WorkspaceProfile:
     # request handlers run in TestClient threads and still bind their own organization.
     bind_test_organization(identity)
     return organization
+
+
+def membership_of(db: Session, user_id) -> Membership:
+    """The only live membership of a single-organization fixture account."""
+    memberships = db.scalars(select(Membership).where(
+        Membership.user_id == user_id, Membership.is_deleted.is_(False),
+    ).limit(2)).all()
+    assert len(memberships) == 1, "fixture account must belong to exactly one organization"
+    return memberships[0]
 
 
 def create_member(
@@ -180,7 +193,12 @@ def _guard_for_test(request, database_url: str) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _bound_test_organizations():
+def _bound_test_organizations(request):
+    if request.node.get_closest_marker("integration") is None:
+        # A unit test acts in one organization, as a bound request would.
+        with organization_bindings(), worker_organization(UNIT_ORGANIZATION_ID):
+            yield
+        return
     with organization_bindings():
         yield
 

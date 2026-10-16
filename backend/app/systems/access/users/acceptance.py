@@ -11,7 +11,6 @@ from app.common.normalization import normalize_email
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import scope_session
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.access.users.service import (
     _lock_administrator_changes,
@@ -94,8 +93,14 @@ def accept_verified_invitation(
         db.rollback()
         record_invitation_acceptance_failure(operation_id, user_id, "verified email is invalid")
         raise InvitationError("Verified email does not match invitation") from error
+    # Lock the invited organization's administrator changes before the profile row.
+    invited_org = db.scalar(select(Membership.org_id).where(
+        Membership.user_id == user_id, Membership.status == "pending",
+        Membership.is_deleted.is_(False),
+    ).limit(1))
     try:
-        _lock_administrator_changes(db)
+        if invited_org is not None:
+            _lock_administrator_changes(db, invited_org)
         profile = _lock_profile(db, user_id)
     except InvitationError as error:
         db.rollback()
@@ -109,29 +114,38 @@ def accept_verified_invitation(
             operation_id, user_id, "verified email does not match invitation"
         )
         raise InvitationError("Verified email does not match invitation")
-    memberships = db.scalars(select(Membership).where(
+    pending = db.scalars(select(Membership).where(
         Membership.user_id == user_id, Membership.status == "pending",
         Membership.is_deleted.is_(False),
-    ).with_for_update()).all() if profile.status == "pending" else [
-        sole_active_membership(db, user_id)
-    ]
-    if len(memberships) != 1:
+    ).with_for_update()).all()
+    if not pending and profile.status == UserStatus.ACTIVE.value:
+        # A replayed acceptance succeeds without effect once an invitation was accepted.
+        accepted = db.scalar(select(Membership.id).where(
+            Membership.user_id == user_id, Membership.status == "active",
+            Membership.is_deleted.is_(False), Membership.invitation_accepted_at.is_not(None),
+        ).limit(1))
+        if accepted is not None:
+            db.rollback()
+            _security_event(
+                event_type="user.invitation_acceptance",
+                outcome=SecurityEventOutcome.SUCCESS,
+                operation_id=operation_id,
+                actor_id=user_id,
+                subject_id=user_id,
+            )
+            return profile
+    # One pending invitation at a time; choosing among several waits for S13.
+    if len(pending) != 1:
         db.rollback()
         raise InvitationError("Invitation is not pending")
-    membership = memberships[0]
+    membership = pending[0]
     # Acceptance is anonymous; the invited membership names the organization it writes in.
     scope_session(db, membership.org_id)
-    if profile.status == UserStatus.ACTIVE.value and membership.invitation_accepted_at is not None:
-        db.rollback()
-        _security_event(
-            event_type="user.invitation_acceptance",
-            outcome=SecurityEventOutcome.SUCCESS,
-            operation_id=operation_id,
-            actor_id=user_id,
-            subject_id=user_id,
-        )
-        return profile
-    if profile.status != UserStatus.PENDING.value or membership.invitation_sent_at is None:
+    # An existing account accepts another organization's invitation as itself.
+    if (
+        profile.status not in (UserStatus.PENDING.value, UserStatus.ACTIVE.value)
+        or membership.invitation_sent_at is None
+    ):
         db.rollback()
         record_invitation_acceptance_failure(operation_id, user_id, "invitation is not pending")
         raise InvitationError("Invitation is not pending")

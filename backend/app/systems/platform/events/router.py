@@ -24,7 +24,7 @@ from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.provider_sessions import resolve_provider_session
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import allowed_module_ids
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import current_membership
 from app.systems.boards.access import readable_board_ids
 from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
 from app.systems.platform.events.hub import (
@@ -241,7 +241,16 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
         raise HTTPException(status_code=503, detail="Event authorization unavailable") from error
     try:
         with AuditSession(get_engine()) as db:
-            if not ip_allowed(load_workspace_policy(db), principal.client_ip):
+            resolved = resolve_provider_session(db, claims, client)
+            if resolved is None:
+                return None
+            user, identity_session = resolved
+            # Interim until S09 binds each stream to the organization it opened in: the
+            # re-check follows the session's saved organization, not an X-Org override.
+            org_id = identity_session.active_org_id
+            if org_id is None:
+                return None
+            if not ip_allowed(load_workspace_policy(db, org_id=org_id), principal.client_ip):
                 raise HTTPException(
                     status_code=403,
                     detail={
@@ -249,13 +258,10 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
                         "message": "Access from this address is not allowed",
                     },
                 )
-            resolved = resolve_provider_session(db, claims, client)
-            if resolved is None:
+            scope_session(db, org_id)
+            membership = current_membership(db, user)
+            if membership is None:
                 return None
-            user = resolved[0]
-            membership = sole_active_membership(db, user.id)
-            # Interim until S09 binds each stream to an organization.
-            scope_session(db, membership.org_id)
             return EventViewer(
                 user_id=user.id,
                 role=membership.role,

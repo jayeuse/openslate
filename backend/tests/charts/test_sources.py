@@ -9,11 +9,11 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from tests.charts.chart_route_support import chart_world as chart_world
+from tests.conftest import membership_of
 from tests.rbac.support import make_group_access, make_user
 
 pytestmark = pytest.mark.integration
@@ -197,7 +197,7 @@ def test_stale_cached_admin_identity_cannot_write_after_role_demotion(chart_worl
     identifier = actor.id
     # Keep the source readable so demotion exercises the unchanged write-denial contract.
     make_group_access(world.db, [actor], world.module.department, world.module, level="read")
-    sole_active_membership(world.db, identifier).role = "member"
+    membership_of(world.db, identifier).role = "member"
     world.db.commit()
     stale, _membership = make_user("cached-chart-admin", role="admin")
     stale.id = identifier

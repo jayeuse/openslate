@@ -17,7 +17,7 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.boards.access import board_level, visible_board_clause
 from app.systems.boards.models import Board, BoardScope, BoardStatus
@@ -169,7 +169,7 @@ def create_board(
     """Administrators create project Boards; company and department Boards are fixed."""
 
     board = Board(
-        org_id=sole_active_membership(db, user.id).org_id,
+        org_id=bound_organization(db),
         scope=BoardScope.PROJECT.value,
         name=payload.name,
         description=payload.description,

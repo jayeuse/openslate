@@ -26,7 +26,7 @@ from app.core.database.session import AuditSession, get_engine
 from app.core.middleware.request_context import get_current_request_context
 from app.core.observability import log_event
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_membership_join, require_current_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.audit.models import (
     AuditAction,
@@ -112,7 +112,7 @@ def readable_audit_entries(db: Session, reader: User) -> ColumnElement[bool]:
 
 
 def _reader_conditions(db: Session, reader: User | None) -> list[ColumnElement[bool]]:
-    if reader is None or sole_active_membership(db, reader.id).role == UserRole.ADMIN.value:
+    if reader is None or require_current_membership(db, reader).role == UserRole.ADMIN.value:
         return []
     return [readable_audit_entries(db, reader)]
 
@@ -202,7 +202,7 @@ def active_actor_names(db: Session, performed_by_ids: Iterable[UUID | None]) -> 
         return {}
     actors = db.execute(
         select(User.id, User.display_name, User.username)
-        .join(Membership, Membership.user_id == User.id).where(
+        .join(Membership, bound_membership_join()).where(
             User.id.in_(actor_ids),
             User.status == UserStatus.ACTIVE.value,
             User.is_deleted.is_(False),
@@ -262,7 +262,7 @@ def list_audit_log_options(
     actor_conditions = [recent_actor_rows.c.actor_rank == 1]
     if pattern is not None:
         current_name_matches = exists(
-            select(User.id).join(Membership, Membership.user_id == User.id).where(
+            select(User.id).join(Membership, bound_membership_join()).where(
                 User.id == recent_actor_rows.c.performed_by,
                 User.status == UserStatus.ACTIVE.value,
                 User.is_deleted.is_(False),

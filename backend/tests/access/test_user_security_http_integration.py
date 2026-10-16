@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from tests.access.user_security_support import open_security_world
+from tests.conftest import membership_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -49,7 +49,7 @@ def test_live_status_requires_real_auth_and_reports_current_enrollment(world):
 def test_status_requires_current_actor_authority(world, field, value, expected):
     with Session(world.owner) as db:
         actor = db.get(User, world.actor_id)
-        setattr(sole_active_membership(db, actor.id) if field == "role" else actor,
+        setattr(membership_of(db, actor.id) if field == "role" else actor,
                 field, datetime.now(UTC) + value if isinstance(value, timedelta) else value)
         db.commit()
     response = world.client.get(
@@ -65,7 +65,7 @@ def test_bound_inactive_status_is_readable_but_not_action_eligible(world, state)
     with Session(world.owner) as db:
         target = db.get(User, world.target_id)
         if state == "expired":
-            sole_active_membership(db, target.id).expires_at = datetime.now(UTC) - timedelta(days=1)
+            membership_of(db, target.id).expires_at = datetime.now(UTC) - timedelta(days=1)
         else:
             target.status = state
         db.commit()
@@ -140,7 +140,7 @@ def test_status_discards_provider_facts_after_authority_or_binding_changes(world
             changed.append(True)
             with Session(world.owner) as db:
                 if change == "role":
-                    sole_active_membership(db, world.actor_id).role = "member"
+                    membership_of(db, world.actor_id).role = "member"
                 elif change == "session":
                     db.get(IdentitySession, world.session_id).revoked_at = datetime.now(UTC)
                 else:

@@ -9,13 +9,12 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserStatus
 from app.systems.boards.access_preview_router import router
 from app.systems.boards.models import Board
 from tests.boards.support import board_group, project_board
 from tests.boards.support import client as board_client
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -179,7 +178,7 @@ def test_expired_active_identity_is_hidden_from_preview_and_chooser(
     db = integration_owner_db
     manager, board = _board_for_manager(db)
     expired = _user(db, username="choice_expired")
-    sole_active_membership(db, expired.id).expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    membership_of(db, expired.id).expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db.flush()
     client = board_client(db, manager, router)
 

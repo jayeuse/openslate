@@ -183,9 +183,8 @@ def _actor_session(existing: User | None = None, groups: tuple = ()) -> tuple[Mo
     reads: list[User | None] = [admin, existing]
     db.scalar.side_effect = lambda _statement: reads.pop(0) if reads else _added(db, User)[0]
     db.dirty = set()
-    db.scalars.return_value.all.side_effect = [
-        [membership], [membership], list(groups)
-    ]
+    # The administrator's membership, then the active groups; the organization is bound.
+    db.scalars.return_value.all.side_effect = [[membership], list(groups)]
     db.get.return_value = None
 
     def assign_identity() -> None:

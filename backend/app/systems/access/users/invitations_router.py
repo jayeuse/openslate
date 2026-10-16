@@ -14,7 +14,7 @@ from app.systems.access.users.coordination import (
     InvitationError,
     InvitationNotFound,
 )
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User
 from app.systems.access.users.schemas import UserResponse
 from app.systems.access.users.service import reconcile_invitation, revoke_invitation
@@ -59,7 +59,7 @@ def reconcile_invite(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Unable to reconcile invitation",
         ) from error
-    org_id = sole_active_membership(db, admin.id).org_id
+    org_id = bound_organization(db)
     membership = db.scalars(select(Membership).filter_by(user_id=profile.id, org_id=org_id)).one()
     return UserResponse(**{key: getattr(
         profile if key in User.__table__.columns else membership, key

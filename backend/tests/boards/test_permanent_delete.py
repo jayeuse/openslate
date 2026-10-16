@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import Group
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.event_models import BoardEvent
@@ -32,7 +31,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from tests.boards.provider_accounts import create_password_account
 from tests.boards.support import client as board_client
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -421,11 +420,11 @@ def test_board_purge_rechecks_fresh_admin_after_password_step_up(
     path = f"/api/boards/{board.id}/purge"
     token = board_client(db, admin, lifecycle_router.router).post(f"{path}/preview").json()["token"]
     actor_id = admin.id
-    assert sole_active_membership(db, admin.id).role == "admin"
+    assert membership_of(db, admin.id).role == "admin"
     db.expunge(admin)
     fresh_actor = db.get(User, actor_id)
     assert fresh_actor is not None
-    sole_active_membership(db, fresh_actor.id).role = "member"
+    membership_of(db, fresh_actor.id).role = "member"
     db.commit()
 
     denied = board_client(db, admin, lifecycle_router.router).post(

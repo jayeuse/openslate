@@ -93,7 +93,6 @@ def test_some_active_and_some_durable_administrator_always_remains(
 ) -> None:
     _admin_counts(monkeypatch, active, durable)
     user, membership = local_user(role)
-    monkeypatch.setattr(coordination, "sole_active_membership", lambda *_: membership)
     arguments = {
         "destination_role": membership.role,
         "destination_status": UserStatus.ACTIVE.value,

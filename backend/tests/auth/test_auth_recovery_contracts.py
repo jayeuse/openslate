@@ -65,8 +65,9 @@ def _action(monkeypatch, db, *, pending=False):
     monkeypatch.setattr(auth_router, "get_supabase_auth_client", lambda: client)
     # The profile lock reads ``user``; the administrator lock is one statement on the mock.
     db.dirty = set()
+    # Acceptance first reads the invited organization (a Membership column).
     rows = {User: user, WorkspaceProfile: WorkspaceProfile(id=membership.org_id),
-            SecurityEvent: None}
+            SecurityEvent: None, Membership: membership.org_id}
     db.scalar.side_effect = lambda query: rows[query.column_descriptions[0]["entity"]]
     db.scalars.side_effect = lambda query: (
         Mock(all=lambda: [membership])

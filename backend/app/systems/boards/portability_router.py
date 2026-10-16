@@ -23,7 +23,7 @@ from app.systems.access.policy.checks import (
     require_module_access,
 )
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardScope, BoardStatus, BoardWidget
 from app.systems.boards.portability import (
@@ -446,7 +446,7 @@ def import_board_configuration(
             bundle = parse_portable_board(raw)
             actor = require_fresh_exact_admin(db, actor.id)
             board = _create_project_board(db, resolve_portable_board(db, bundle),
-                                          sole_active_membership(db, actor.id).org_id)
+                                          bound_organization(db))
         except PortabilityError as error:
             raise _http_error(error) from error
     response.headers["Location"] = f"/api/boards/{board.id}"
@@ -463,7 +463,7 @@ def duplicate_board(
         try:
             bundle, resolved = _bundle_from_board(db, board_id, actor, identity, mutation=True)
             resolved.board.name = f"{bundle.configuration.name[:193]} (copy)"
-            board = _create_project_board(db, resolved, sole_active_membership(db, actor.id).org_id)
+            board = _create_project_board(db, resolved, bound_organization(db))
         except PortabilityError as error:
             raise _http_error(error) from error
     response.headers["Location"] = f"/api/boards/{board.id}"

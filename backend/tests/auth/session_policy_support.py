@@ -22,13 +22,12 @@ from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
 from app.systems.access.identity.rate_limits import login_fingerprint, rate_limit_fingerprint
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.provider_jwt_support import signed_access
-from tests.conftest import create_member, create_organization, guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine, membership_of
 
 POLICY_FIELDS = (
     "session_timeout_minutes",
@@ -221,7 +220,7 @@ def policy_world(monkeypatch, shared_provider_account):
                                name) for name in POLICY_FIELDS}
         episodes = {row.id: row.mfa_required_since for row in db.scalars(select(Membership))}
         actor = db.get(User, actor_id)
-        sole_active_membership(db, actor_id).role = "admin"
+        membership_of(db, actor_id).role = "admin"
         actor.supabase_user_id = provider_id
         create_member(db, profile,
                 id=target_id,
@@ -411,7 +410,7 @@ def policy_world(monkeypatch, shared_provider_account):
                 setattr(platform if name in PlatformSettings.__table__.columns else profile,
                         name, value)
             actor = db.get(User, actor_id)
-            membership = sole_active_membership(db, actor_id)
+            membership = membership_of(db, actor_id)
             membership.role, actor.tokens_valid_after = "member", None
             membership.sponsor_user_id, membership.expires_at = None, None
             for row in db.scalars(select(Membership).where(Membership.user_id == target_id)):

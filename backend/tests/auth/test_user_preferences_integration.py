@@ -15,11 +15,10 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.database.session import AuditSession
 from app.main import create_app
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -233,7 +232,7 @@ def test_same_theme_uses_fresh_locked_value_after_authentication(
 ):
     _, _, provider_id, local_id, owner = fake_provider_account
     with Session(owner) as db:
-        membership = sole_active_membership(db, local_id)
+        membership = membership_of(db, local_id)
         sponsor, _sponsor_membership = create_member(
             db, db.get(WorkspaceProfile, membership.org_id),
             email=f"theme-sponsor-{uuid4().hex}@example.test",
@@ -285,7 +284,7 @@ def test_same_theme_uses_fresh_locked_value_after_authentication(
         with Session(owner) as db:
             user = db.get(User, local_id)
             if user is not None:
-                membership = sole_active_membership(db, user.id)
+                membership = membership_of(db, user.id)
                 membership.role, membership.sponsor_user_id, membership.expires_at = (
                     "member", None, None,
                 )

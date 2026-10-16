@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.access.policy.scope import EffectiveAccess, effective_levels
 from app.systems.access.users.eligibility import is_active_account
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.platform.scheduling.models import InAppNotification, NotificationKind
 
@@ -65,7 +65,7 @@ def notify_access_changes(db: Session, before: AccessSnapshot | None) -> None:
             continue
         db.add(
             InAppNotification(
-                org_id=sole_active_membership(db, user.id).org_id,
+                org_id=bound_organization(db),
                 recipient_id=user.id,
                 kind=NotificationKind.ACCESS_CHANGED,
                 subject_type="user",

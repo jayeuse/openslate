@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
+from tests.conftest import membership_of
 from tests.files.test_library_routes import library_file
 from tests.files.test_workspace_policy_integration import _client, _Store
 from tests.rbac.support import add_department, add_user, make_group_access
@@ -69,7 +69,7 @@ def test_library_list_preserves_its_envelope_scopes_creators_and_counts_confirme
 def test_library_creator_labels_omit_ineligible_accounts(guarded_db, actor, ineligible):
     db = guarded_db
     creator = add_user(db)
-    membership = sole_active_membership(db, creator.id)
+    membership = membership_of(db, creator.id)
     department = add_department(db)
     library_file(db, creator, department)
     if ineligible == "pending":

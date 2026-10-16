@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.charts.models import Chart
 from app.systems.platform.scheduling.notification_creation import notify_sandbox_publication
@@ -272,7 +272,7 @@ def _apply_departments(
         row = db.get(Department, binding.department_id) if binding is not None else None
         if row is None:
             row = Department(
-                org_id=sole_active_membership(db, actor_id).org_id,
+                org_id=bound_organization(db),
                 department_name=desired.name,
                 is_deleted=desired.closed,
                 deleted_at=datetime.now(UTC) if desired.closed else None,
@@ -492,7 +492,7 @@ def _validate_schemas(db: Session, modules: dict[str, Module]) -> None:
 
 
 def _bind(db: Session, kind: str, sandbox_id: str, actor_id: UUID, **target: UUID) -> None:
-    db.add(SandboxBinding(org_id=sole_active_membership(db, actor_id).org_id,
+    db.add(SandboxBinding(org_id=bound_organization(db),
                           kind=kind, sandbox_id=sandbox_id, performed_by=actor_id, **target))
 
 

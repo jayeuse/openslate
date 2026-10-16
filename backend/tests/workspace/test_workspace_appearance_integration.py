@@ -11,11 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.main import create_app
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -61,7 +60,7 @@ def appearance_workspace(fake_provider_account):
         user = db.get(User, local_id)
         assert user is not None
         user.supabase_user_id = provider_id
-        membership = sole_active_membership(db, local_id)
+        membership = membership_of(db, local_id)
         membership.role = "admin"
         profile = db.get(WorkspaceProfile, membership.org_id)
         assert profile is not None
@@ -142,10 +141,10 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
     with Session(owner) as db:
         user = db.get(User, actor_id)
         assert user is not None
-        membership = sole_active_membership(db, actor_id)
+        membership = membership_of(db, actor_id)
         if role == "guest":
             sponsor, _membership = create_member(db, db.get(WorkspaceProfile,
-                sole_active_membership(db, actor_id).org_id),
+                membership_of(db, actor_id).org_id),
                 email=f"appearance-sponsor-{uuid4().hex}@example.test",
                 username=f"appearance-sponsor-{uuid4().hex[:12]}",
                 status="active",
@@ -171,14 +170,14 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
             with Session(owner) as db:
                 user = db.get(User, actor_id)
                 assert user is not None
-                membership = sole_active_membership(db, actor_id)
+                membership = membership_of(db, actor_id)
                 membership.role = "admin"
                 membership.sponsor_user_id = None
                 membership.expires_at = None
                 db.flush()
                 sponsor = db.get(User, sponsor_id)
                 assert sponsor is not None
-                db.delete(sole_active_membership(db, sponsor_id))
+                db.delete(membership_of(db, sponsor_id))
                 db.flush()
                 db.delete(sponsor)
                 db.commit()

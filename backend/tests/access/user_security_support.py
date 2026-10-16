@@ -18,12 +18,11 @@ from app.core.config import get_settings
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.provider_jwt_support import signed_access
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 
 
 @dataclass
@@ -77,7 +76,7 @@ def open_security_world(fake_provider_account, monkeypatch):
     with Session(owner) as db:
         actor = db.get(User, actor_id)
         actor.supabase_user_id = provider_id
-        membership = sole_active_membership(db, actor_id)
+        membership = membership_of(db, actor_id)
         membership.role = "admin"
         target, _target_membership = create_member(
             db, db.get(WorkspaceProfile, membership.org_id),

@@ -15,9 +15,8 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.policy.scope import allowed_module_ids, effective_levels, level_for
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, UserRole, UserStatus
-from tests.conftest import create_member, create_organization
+from tests.conftest import create_member, create_organization, membership_of
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -112,9 +111,9 @@ def test_inactive_accounts_get_nothing(integration_db: Session, state: str) -> N
     )
     if state == "pending":
         user.status = UserStatus.PENDING.value
-        sole_active_membership(integration_db, user.id).invitation_sent_at = utc_now()
+        membership_of(integration_db, user.id).invitation_sent_at = utc_now()
     if state == "expired":
-        sole_active_membership(integration_db, user.id).expires_at = (
+        membership_of(integration_db, user.id).expires_at = (
             datetime.now(UTC) - timedelta(minutes=1)
         )
     if state == "deleted":
@@ -161,7 +160,7 @@ def test_resolution_sees_access_removed_in_the_same_transaction(
     department = add_department(integration_db)
     module = add_module(integration_db, department)
     grant = make_group_access(integration_db, [member], department, level=READ)
-    membership = sole_active_membership(integration_db, member.id)
+    membership = membership_of(integration_db, member.id)
     assert effective_levels(integration_db, member).module_ids(READ) == frozenset({module.id})
 
     if removed == "access":
@@ -204,7 +203,7 @@ def test_resolution_refuses_absent_ambiguous_or_stale_authority(integration_owne
 def test_resolution_flushes_pending_changes_without_discarding_them(integration_owner_db, entity):
     db = integration_owner_db
     user = add_user(db)
-    membership = sole_active_membership(db, user.id)
+    membership = membership_of(db, user.id)
     department = add_department(db)
     module = add_module(db, department)
     make_group_access(db, [user], department, level=READ)

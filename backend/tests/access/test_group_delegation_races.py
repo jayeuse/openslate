@@ -24,14 +24,13 @@ import app.systems.access.users.service as user_service
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
 from app.systems.access.users.coordination import InvitationConflict
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.access.access_race_support import add_race_user, group_etag_of, run_action
-from tests.conftest import create_organization, guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine, membership_of
 from tests.organization_scope_support import in_context
 from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 
@@ -319,7 +318,7 @@ def test_a_user_promoted_between_the_two_administrator_checks_is_not_added(
             with Session(engine) as db:
                 outsider = db.get(User, data.outsider)
                 assert outsider is not None
-                sole_active_membership(db, outsider.id).role = UserRole.ADMIN.value
+                membership_of(db, outsider.id).role = UserRole.ADMIN.value
                 db.commit()
             release_manager.set()
             assert manager.result(timeout=WAIT) == 409

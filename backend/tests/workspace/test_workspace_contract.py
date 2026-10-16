@@ -78,7 +78,9 @@ class _Session:
 def _client(
     monkeypatch: pytest.MonkeyPatch,
     database: _Session,
-    actor: object = type("Actor", (), {"id": uuid7(), "role": "admin"})(),
+    actor: object = type(
+        "Actor", (), {"id": uuid7(), "role": "admin", "status": "active", "is_deleted": False}
+    )(),
 ) -> TestClient:
     from app.common.dependencies import get_current_user
     from app.core.database import get_db
@@ -86,7 +88,9 @@ def _client(
 
     workspace_router = _router_module()
     database.dirty = set()
-    database.membership = Membership(user_id=actor.id, role="admin")
+    database.membership = Membership(
+        user_id=actor.id, role=getattr(actor, "role", "admin"), status="active", is_deleted=False
+    )
     application = create_app()
     monkeypatch.setattr(workspace_router, "lock_quota", lambda _db: None)
     monkeypatch.setattr(database, "flush", lambda: None, raising=False)

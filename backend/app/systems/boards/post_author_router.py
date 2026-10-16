@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.eligibility import established_user_clause
+from app.systems.access.users.membership import bound_membership_join
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.boards.post_listing import display_join
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
@@ -97,7 +98,7 @@ def list_post_authors(
     statement = (
         select(User)
         .join(visible_author_ids, visible_author_ids.c.author_id == User.id)
-        .join(Membership, Membership.user_id == User.id)
+        .join(Membership, bound_membership_join())
         .where(
             User.status == UserStatus.ACTIVE.value,
             Membership.status == UserStatus.ACTIVE.value,

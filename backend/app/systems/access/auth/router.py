@@ -79,7 +79,7 @@ from app.systems.access.users.acceptance import (
 )
 from app.systems.access.users.account_operations import router as account_operations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationError
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User
 from app.systems.access.users.router import router as users_router
 from app.systems.access.users.schemas import (
@@ -277,7 +277,7 @@ def invite(
         ) from error
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to create invitation") from error
-    org_id = sole_active_membership(db, admin.id).org_id
+    org_id = bound_organization(db)
     membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
     return invitation_response(user, membership)
 
@@ -293,7 +293,7 @@ def resend_invite(
         user = resend_invitation(db, user_id, actor_id=admin.id)
     except InvitationError as error:
         raise HTTPException(status_code=409, detail="Unable to resend invitation") from error
-    org_id = sole_active_membership(db, admin.id).org_id
+    org_id = bound_organization(db)
     membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
     return invitation_response(user, membership)
 

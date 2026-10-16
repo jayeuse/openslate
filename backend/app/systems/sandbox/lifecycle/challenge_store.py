@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleActorBlocked,
     LifecycleChallengeBindingMismatch,
@@ -410,7 +410,7 @@ def _refresh_failure_bucket(
     )
     if bucket is None:
         bucket = LifecycleRateLimitBucket(
-            org_id=sole_active_membership(db, actor_id).org_id,
+            org_id=bound_organization(db),
             actor_id=actor_id,
             attempt_count=0,
             window_started_at=timestamp,

@@ -8,7 +8,6 @@ from sqlalchemy import event, select
 from sqlalchemy.exc import IntegrityError
 from uuid6 import uuid7
 
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.designs.models import SandboxVersion
@@ -22,6 +21,7 @@ from app.systems.sandbox.designs.service import (
 from app.systems.sandbox.publications.executor import PublicationError
 from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
+from tests.conftest import membership_of
 from tests.platform_scheduling.support import notification_client as _client
 from tests.rbac.support import add_user, organization
 from tests.sandbox_designs.fixtures import create_document
@@ -115,13 +115,13 @@ def test_fresh_publications_notify_eligible_admins_once_with_atomic_rollback(
     assert not any("sandbox_versions.snapshot" in query for query in sql)
     assert client.post("/api/notifications/read-all").json() == {"updated_count": 2}
     notice_id = next(n.id for n in notices if n.recipient_id == other.id)
-    sole_active_membership(db, other.id).role = UserRole.MEMBER.value
+    membership_of(db, other.id).role = UserRole.MEMBER.value
     db.commit()
     assert client.get("/api/notifications").json()["items"] == []
     assert client.get("/api/notifications/unread-count").json() == {"unread_count": 0}
     assert client.post("/api/notifications/read-all").json() == {"updated_count": 0}
     assert client.post(f"/api/notifications/{notice_id}/read").status_code == 404
-    sole_active_membership(db, other.id).role = UserRole.ADMIN.value
+    membership_of(db, other.id).role = UserRole.ADMIN.value
     version = db.get(SandboxVersion, result.version.id)
     version.is_deleted = True
     db.commit()

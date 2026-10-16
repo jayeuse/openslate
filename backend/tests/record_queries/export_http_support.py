@@ -19,7 +19,6 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -28,6 +27,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.conftest import membership_of
 from tests.fake_provider_support import fake_provider as fake_provider
 from tests.fake_provider_support import fake_provider_account as fake_provider_account
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
@@ -78,7 +78,7 @@ class ExportWorld:
 
     def role(self, role: str) -> None:
         with Session(self.owner) as db:
-            actor = sole_active_membership(db, self.actor_id)
+            actor = membership_of(db, self.actor_id)
             assert actor is not None
             if role == "guest":
                 db.info["rbac_organization"] = db.get(WorkspaceProfile, actor.org_id)
@@ -108,7 +108,7 @@ def export_world(fake_provider_account) -> Iterator[ExportWorld]:
         actor = db.get(User, actor_id)
         assert actor is not None
         db.info["rbac_organization"] = db.get(
-            WorkspaceProfile, sole_active_membership(db, actor_id).org_id
+            WorkspaceProfile, membership_of(db, actor_id).org_id
         )
         actor.supabase_user_id = provider_id
         actor.display_name = "Export reader"
@@ -201,10 +201,10 @@ def export_world(fake_provider_account) -> Iterator[ExportWorld]:
             )
         if world is not None and world.sponsor_id is not None:
             with Session(owner) as db:
-                actor = sole_active_membership(db, actor_id)
+                actor = membership_of(db, actor_id)
                 actor.role, actor.sponsor_user_id, actor.expires_at = "member", None, None
                 db.flush()
-                db.delete(sole_active_membership(db, world.sponsor_id))
+                db.delete(membership_of(db, world.sponsor_id))
                 db.flush()
                 db.delete(db.get(User, world.sponsor_id))
                 db.commit()

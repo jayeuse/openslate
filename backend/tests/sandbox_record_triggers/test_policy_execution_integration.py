@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.record_triggers.execution import (
@@ -30,6 +29,7 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import RecordValidationError
 from app.systems.sandbox.records.router import create_record, update_record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
+from tests.conftest import membership_of
 from tests.rbac.support import add_user, make_group_access
 from tests.record_versions import record_version
 from tests.sandbox_record_triggers.support import option_id, publish_trigger
@@ -79,9 +79,9 @@ def _remove_publisher_access(db: Session, actor: User, change: str) -> None:
     if change == "disabled":
         actor.status = UserStatus.DISABLED.value
     elif change == "expired":
-        sole_active_membership(db, actor.id).expires_at = utc_now() - timedelta(seconds=1)
+        membership_of(db, actor.id).expires_at = utc_now() - timedelta(seconds=1)
     elif change == "demoted":
-        sole_active_membership(db, actor.id).role = UserRole.MEMBER.value
+        membership_of(db, actor.id).role = UserRole.MEMBER.value
     else:
         raise AssertionError(change)
 

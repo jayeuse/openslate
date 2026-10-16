@@ -21,7 +21,12 @@ from sqlalchemy.orm import Session
 
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import get_db
-from app.systems.access.users.models import Membership
+from app.systems.access.users.membership import (
+    current_membership,
+    organization_required,
+    remember_membership,
+)
+from app.systems.access.users.models import Membership, User
 
 
 def actor_organization(db: Session, user_id: UUID) -> UUID | None:
@@ -39,18 +44,42 @@ def actor_organization(db: Session, user_id: UUID) -> UUID | None:
 
 
 def scoped_override(
-    original: Callable[..., Any], *, org_id: UUID | None = None
+    original: Callable[..., Any],
+    *,
+    org_id: UUID | None = None,
+    membership: Membership | None = None,
 ) -> Callable[..., Any]:
-    """Wrap a current-user or current-identity override so the request is scoped."""
+    """Wrap a current-user or current-identity override like the real dependency.
+
+    The request is bound to the actor's organization (or ``org_id``), and an actor
+    without an eligible membership there is refused with ``organization_required``,
+    as production refuses it. ``membership`` supplies an already loaded, detached
+    membership so statement-budget tests do not count the authentication read.
+    """
 
     # Defaults, not Annotated: string annotations cannot resolve the closure's ``original``.
     def dependency(db: Session = Depends(get_db), value: Any = Depends(original)) -> Any:  # noqa: B008
-        user_id = getattr(getattr(value, "user", value), "id", None)
-        if isinstance(db, Session) and isinstance(user_id, UUID):
-            scope_session(db, org_id or actor_organization(db, user_id))
+        user = getattr(value, "user", value)
+        user_id = getattr(user, "id", None)
+        # Mocked sessions (``Mock(spec=Session)``) have no real info and no database.
+        real = isinstance(db, Session) and isinstance(db.info, dict)
+        if not real or not isinstance(user_id, UUID):
+            return value
+        if membership is not None:
+            merged = db.merge(membership, load=False)
+            scope_session(db, merged.org_id)
+            remember_membership(db, merged)
+            return value
+        scope_session(db, org_id or actor_organization(db, user_id))
+        if isinstance(user, User) and current_membership(db, user) is None:
+            raise organization_required()
         return value
 
     return dependency
+
+
+# Unit tests run without a database; their sessions are bound to this organization.
+UNIT_ORGANIZATION_ID = UUID("01a14400-0000-7000-8000-00000000c0de")
 
 
 # The organization a test created applies to raw connections on the test's own threads.

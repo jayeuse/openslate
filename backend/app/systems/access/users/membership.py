@@ -1,12 +1,105 @@
-"""The bounded S04 bridge until organization-aware authorization replaces it."""
+"""Memberships of the organization bound to the current transaction.
 
+Every request and worker transaction is bound to one organization (see
+``app.core.database.organization_scope``). Authorization reads the actor's
+membership in that organization; a membership elsewhere grants nothing here.
+"""
+
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, select
+from sqlalchemy.orm import Session, object_session
+from sqlalchemy.sql.elements import ColumnElement
 
-from app.systems.access.users.models import Membership
+from app.core.database.organization_scope import bound_organization_column, session_organization
+from app.systems.access.users.eligibility import is_active_account, is_active_membership
+from app.systems.access.users.models import Membership, User
+
+_CACHE_KEY = "openslate.memberships"
+
+
+def organization_required() -> HTTPException:
+    return HTTPException(403, detail={"code": "organization_required",
+                                      "message": "An active organization membership is required"})
+
+
+def bound_organization(db: Session) -> UUID:
+    """The organization this transaction is bound to; refuse when there is none."""
+
+    org_id = session_organization(db)
+    if org_id is None:
+        raise organization_required()
+    return org_id
+
+
+def bound_membership_join() -> ColumnElement[bool]:
+    """Join a person to their membership in the bound organization only.
+
+    ``memberships`` has no row-level security, so every join through it names the
+    organization; without one, people of other organizations would match.
+    """
+
+    return and_(Membership.user_id == User.id, Membership.org_id == bound_organization_column())
+
+
+def _cache(db: Session) -> dict[tuple[UUID, UUID], Membership]:
+    info = getattr(db, "info", None)
+    if not isinstance(info, dict):
+        return {}
+    cache: dict[tuple[UUID, UUID], Membership] = info.setdefault(_CACHE_KEY, {})
+    return cache
+
+
+def remember_membership(db: Session, membership: Membership) -> None:
+    """Reuse a membership the request already loaded and checked."""
+
+    _cache(db)[(membership.org_id, membership.user_id)] = membership
+
+
+def organization_membership(
+    db: Session, user_id: UUID, *, fresh: bool = False
+) -> Membership | None:
+    """The person's membership row in the bound organization, whatever its status."""
+
+    org_id = session_organization(db)
+    if org_id is None:
+        return None
+    cache = _cache(db)
+    cached = cache.get((org_id, user_id))
+    if cached is not None and not fresh and object_session(cached) is db:
+        return cached
+    rows = db.scalars(select(Membership).where(
+        Membership.org_id == org_id, Membership.user_id == user_id,
+        Membership.is_deleted.is_(False),
+    ).execution_options(populate_existing=fresh).limit(1)).all()
+    membership = rows[0] if rows else None
+    if membership is not None:
+        cache[(org_id, user_id)] = membership
+    return membership
+
+
+def current_membership(
+    db: Session, user: User, *, now: datetime | None = None
+) -> Membership | None:
+    """The person's membership in the bound organization when it can act now."""
+
+    if not is_active_account(db, user, now=now):
+        return None
+    membership = organization_membership(db, user.id)
+    if membership is None or not is_active_membership(user, membership, now=now):
+        return None
+    return membership
+
+
+def require_current_membership(
+    db: Session, user: User, *, now: datetime | None = None
+) -> Membership:
+    membership = current_membership(db, user, now=now)
+    if membership is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return membership
 
 
 def eligible_memberships(db: Session, user_id: UUID) -> list[Membership]:
@@ -23,19 +116,3 @@ def eligible_memberships(db: Session, user_id: UUID) -> list[Membership]:
         established_user_clause(),
         (Membership.expires_at.is_(None) | (Membership.expires_at > utc_now())),
     ).order_by(Membership.org_id)).all())
-
-
-# TEMPORARY: removed in S07
-def sole_active_membership(db: Session, user_id: UUID) -> Membership:
-    """Refuse authority unless exactly one active membership can be established."""
-    pending = any(isinstance(row, Membership) and row.user_id == user_id for row in db.dirty)
-    memberships = db.scalars(
-        select(Membership).where(
-            Membership.user_id == user_id,
-            Membership.status == "active",
-            Membership.is_deleted.is_(False),
-        ).execution_options(populate_existing=not pending, autoflush=False).limit(2)
-    ).all()
-    if len(memberships) == 1:
-        return memberships[0]
-    raise HTTPException(status_code=403, detail="Forbidden")

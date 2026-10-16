@@ -16,8 +16,7 @@ from app.core.integrations.supabase_auth import (
 )
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.eligibility import is_active_account
-from app.systems.access.users.membership import sole_active_membership
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import (
@@ -25,6 +24,19 @@ from app.systems.manage.audit.service import (
     append_committed_security_event,
     append_security_event,
 )
+
+
+# TEMPORARY (S15): local recovery runs outside any organization, so it acts on the one
+# organization the person administers and refuses when there is none or several.
+# S15 replaces this rule with recovery for people who administer several organizations.
+def sole_administered_membership(db: Session, user_id: UUID) -> Membership | None:
+    memberships = db.scalars(select(Membership).where(
+        Membership.user_id == user_id, Membership.role == UserRole.ADMIN.value,
+        Membership.status == UserStatus.ACTIVE.value, Membership.is_deleted.is_(False),
+    ).limit(2)).all()
+    if len(memberships) != 1 or memberships[0].role != UserRole.ADMIN.value:
+        return None
+    return memberships[0]
 
 
 class LocalRecoveryError(RuntimeError):
@@ -57,7 +69,7 @@ def recover_local_admin(
         user is None
         or not is_active_account(db, user, now=timestamp)
         or user.status != UserStatus.ACTIVE.value
-        or sole_active_membership(db, user.id).role != UserRole.ADMIN.value
+        or sole_administered_membership(db, user.id) is None
         or user.supabase_user_id is None
     ):
         db.rollback()

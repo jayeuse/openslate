@@ -7,12 +7,12 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.boards.activity_router import router
 from app.systems.boards.models import BoardWidget
 from app.systems.manage.audit.context import set_audit_actor
 from tests.boards.support import board_group, client, member, project_board
+from tests.conftest import membership_of
 from tests.rbac.support import add_department, add_module
 
 pytestmark = pytest.mark.integration
@@ -112,7 +112,7 @@ def test_board_activity_hides_the_labels_of_inactive_actors(
     if actor_state == "disabled":
         author.status = "disabled"
     else:
-        sole_active_membership(db, author.id).invitation_sent_at = author.created_at
+        membership_of(db, author.id).invitation_sent_at = author.created_at
     db.commit()
 
     result = client(db, viewer, router).get(f"/api/boards/{board.id}/activity").json()

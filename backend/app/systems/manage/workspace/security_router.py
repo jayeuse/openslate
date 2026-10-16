@@ -20,7 +20,7 @@ from app.core.integrations.supabase_auth import (
     get_supabase_auth_client,
 )
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
@@ -69,7 +69,7 @@ def get_workspace_security(
     try:
         if db.scalar(select(func.count()).select_from(WorkspaceProfile)) != 1:
             raise HTTPException(409, detail="Installation policy requires one organization")
-        profile = load_workspace_policy(db)
+        profile = load_workspace_policy(db, org_id=bound_organization(db))
         platform = load_platform_policy(db)
         return WorkspaceSecurityResponse.model_validate({
             field: getattr(platform if field in _PLATFORM_FIELDS else profile, field)
@@ -86,7 +86,7 @@ def _factor_evidence(
     payload: WorkspaceSecurityUpdate,
     request: Request,
 ) -> ProviderAccessIdentity | None:
-    profile = load_workspace_policy(db, org_id=sole_active_membership(db, actor.id).org_id)
+    profile = load_workspace_policy(db, org_id=bound_organization(db))
     if not all(
         getattr(payload, f"mfa_require_{role}")
         if f"mfa_require_{role}" in payload.model_fields_set
@@ -144,7 +144,7 @@ def update_workspace_security(
         actor = require_fresh_exact_admin(db, actor_id)
         profile = db.scalar(
             select(WorkspaceProfile)
-            .where(WorkspaceProfile.id == sole_active_membership(db, actor.id).org_id)
+            .where(WorkspaceProfile.id == bound_organization(db))
             .execution_options(populate_existing=True)
             .with_for_update()
         )

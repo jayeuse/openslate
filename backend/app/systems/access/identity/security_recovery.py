@@ -10,12 +10,16 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import scope_session
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     SupabaseAuthUnavailable,
     get_supabase_auth_client,
 )
-from app.systems.access.identity.admin_recovery import LocalRecoveryError
+from app.systems.access.identity.admin_recovery import (
+    LocalRecoveryError,
+    sole_administered_membership,
+)
 from app.systems.access.identity.mfa_observations import (
     commit_bound_observation,
     observation_started_at,
@@ -23,8 +27,7 @@ from app.systems.access.identity.mfa_observations import (
 )
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.eligibility import established_user_clause, is_active_account
-from app.systems.access.users.membership import sole_active_membership
-from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import (
@@ -81,7 +84,7 @@ def recover_workspace_security(
             raise LocalSecurityRecoveryError("Provider administrator does not match")
         user = _administrator(db, user_id, lock=True)
         _same_binding(user, provider_id, email)
-        profile = _workspace(db, sole_active_membership(db, user.id).org_id)
+        profile = _workspace(db, _administered_organization(db, user.id))
         required = {role: mfa_role_required(profile, role) for role in ("admin", "member", "guest")}
         if any(required.values()) or profile.ip_allow_list:
             for affected in db.scalars(
@@ -133,7 +136,7 @@ def recover_workspace_security(
         factors_cleared = True
         user = _administrator(db, user_id, lock=True)
         _same_binding(user, provider_id, email)
-        profile = _workspace(db, sole_active_membership(db, user.id).org_id)
+        profile = _workspace(db, _administered_organization(db, user.id))
         if (
             any(mfa_role_required(profile, role) for role in ("admin", "member", "guest"))
             or profile.ip_allow_list
@@ -180,11 +183,20 @@ def _administrator(db: Session, user_id: UUID, *, lock: bool) -> User:
         user is None
         or not is_active_account(db, user, now=utc_now())
         or user.status != UserStatus.ACTIVE.value
-        or sole_active_membership(db, user.id).role != UserRole.ADMIN.value
+        or sole_administered_membership(db, user.id) is None
         or user.supabase_user_id is None
     ):
         raise LocalSecurityRecoveryError("Target is not an active bound administrator")
     return user
+
+
+def _administered_organization(db: Session, user_id: UUID) -> UUID:
+    membership = sole_administered_membership(db, user_id)
+    if membership is None:
+        raise LocalSecurityRecoveryError("Target is not an active bound administrator")
+    # Recovery writes in that organization, so bind the transaction to it.
+    scope_session(db, membership.org_id)
+    return membership.org_id
 
 
 def _same_binding(user: User, provider_id: UUID, email: str) -> None:

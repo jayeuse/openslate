@@ -7,10 +7,10 @@ from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.router import router as users_router
 from app.systems.sandbox.modules.models import Module
 from tests.access.group_delegation_support import world as world
+from tests.conftest import membership_of
 from tests.rbac.support import add_module, add_user
 
 pytestmark = pytest.mark.integration
@@ -190,7 +190,7 @@ def test_admin_ids_resolve_requested_deleted_people_and_preserve_list_state(pagi
 
 def test_candidate_ids_keep_the_manager_boundary_and_report_recorded_expiry(paging_world):
     world = paging_world
-    guest = sole_active_membership(world.db, world.guest.id)
+    guest = membership_of(world.db, world.guest.id)
     guest.expires_at = datetime.now(UTC) - timedelta(days=1)
     world.plain.is_deleted = True
     world.plain.deleted_at = datetime.now(UTC)

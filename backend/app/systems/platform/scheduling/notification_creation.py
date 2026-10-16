@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.access.users.eligibility import is_active_account
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.manage.backups.models import BackupRun
 from app.systems.platform.scheduling.models import InAppNotification, NotificationKind
@@ -43,7 +43,7 @@ def notify_invitation_accepted(db: Session, accepted: User, inviter_id: UUID | N
     for recipient_id in _admin_recipient_ids(db, inviter_id):
         db.add(
             InAppNotification(
-                org_id=sole_active_membership(db, accepted.id).org_id,
+                org_id=bound_organization(db),
                 recipient_id=recipient_id,
                 kind=NotificationKind.INVITATION_ACCEPTED,
                 subject_type="user",

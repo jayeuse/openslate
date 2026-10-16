@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
@@ -20,6 +19,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.conftest import membership_of
 from tests.rbac.support import (
     _client,
     add_department,
@@ -250,7 +250,7 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
     deleted_actor.is_deleted = True
     deleted_actor.deleted_at = datetime.now(UTC)
     unestablished_actor = add_user(integration_db, f"audit-unestablished-{token}")
-    sole_active_membership(integration_db, unestablished_actor.id).invitation_sent_at = (
+    membership_of(integration_db, unestablished_actor.id).invitation_sent_at = (
         datetime.now(UTC)
     )
     removed_actor = add_user(integration_db, f"audit-removed-{token}")
@@ -283,7 +283,7 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(rows)
     integration_db.flush()
-    integration_db.delete(sole_active_membership(integration_db, removed_actor.id))
+    integration_db.delete(membership_of(integration_db, removed_actor.id))
     integration_db.flush()
     integration_db.delete(removed_actor)
     integration_db.flush()

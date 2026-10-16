@@ -11,11 +11,10 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.test_provider_email_integration import _email_action
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
 pytestmark = pytest.mark.integration
@@ -41,7 +40,7 @@ def test_reconcile_binds_existing_marked_provider_user_and_delivers_invitation(
             admin = db.get(User, admin_id)
             assert admin is not None
             admin.supabase_user_id = admin_provider_id
-            membership = sole_active_membership(db, admin.id)
+            membership = membership_of(db, admin.id)
             membership.role = "admin"
             pending, _pending_membership = create_member(
                 db, db.get(WorkspaceProfile, membership.org_id),

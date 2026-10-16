@@ -38,7 +38,10 @@ from app.systems.access.users.directory import (
     directory_summary,
 )
 from app.systems.access.users.directory import UserSortField as UserSortField
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import (
+    bound_organization,
+    require_current_membership,
+)
 from app.systems.access.users.models import Membership, User
 from app.systems.access.users.person_visibility import visible_person
 from app.systems.access.users.schemas import (
@@ -80,7 +83,7 @@ def list_users(
     response: Response,
 ) -> UserListResponse:
     response.headers["Cache-Control"] = "no-store"
-    return directory_list(db, params, utc_now(), org_id=sole_active_membership(db, _.id).org_id)
+    return directory_list(db, params, utc_now(), org_id=bound_organization(db))
 
 
 @router.get("/summary", response_model=UserSummaryResponse)
@@ -92,7 +95,7 @@ def user_summary(
 ) -> UserSummaryResponse:
     response.headers["Cache-Control"] = "no-store"
     return directory_summary(
-        db, utc_now(), params.inactive_days, org_id=sole_active_membership(db, _.id).org_id
+        db, utc_now(), params.inactive_days, org_id=bound_organization(db)
     )
 
 
@@ -106,7 +109,7 @@ def get_user(
     if user.is_deleted:
         raise not_found("User")
     membership = db.scalars(select(Membership).where(
-        Membership.user_id == user.id, Membership.org_id == sole_active_membership(db, _.id).org_id
+        Membership.user_id == user.id, Membership.org_id == bound_organization(db)
     )).one()
     return UserResponse(**{key: getattr(
         user if key in User.__table__.columns else membership, key
@@ -145,7 +148,7 @@ def get_person_card(
         "job_title": target.job_title,
         "avatar_url": f"/api/users/{user_id}/avatar" if target.avatar_file_id else None,
     }
-    if sole_active_membership(db, actor.id).role == "guest":
+    if require_current_membership(db, actor).role == "guest":
         return PersonCardPublicResponse.model_validate(public)
     return PersonCardResponse.model_validate(
         {**public, "email": target.email, "phone": target.phone, "bio": target.bio}
@@ -218,7 +221,7 @@ def get_user_access(
         raise not_found("User")
     access, entries = explain_access(db, user)
     membership = db.scalars(select(Membership).where(
-        Membership.user_id == user.id, Membership.org_id == sole_active_membership(db, _.id).org_id
+        Membership.user_id == user.id, Membership.org_id == bound_organization(db)
     )).one()
     return UserAccessResponse.model_validate(
         {
@@ -265,7 +268,7 @@ def create_user(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Unable to send invitation",
         ) from error
-    org_id = sole_active_membership(db, admin.id).org_id
+    org_id = bound_organization(db)
     membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
     return invitation_response(user, membership)
 

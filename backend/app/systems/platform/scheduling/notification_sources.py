@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import require_current_membership
 from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.manage.backups.models import BackupRun
 from app.systems.openview.reports.models import Report
@@ -25,7 +25,7 @@ from app.systems.sandbox.records.models import Record
 
 
 def additional_notification_ids(db: Session, user: User) -> Select[tuple[UUID]]:
-    role = sole_active_membership(db, user.id).role
+    role = require_current_membership(db, user).role
     failed_report = (
         select(InAppNotification.id)
         .join(ScheduledWork, ScheduledWork.id == InAppNotification.work_id)

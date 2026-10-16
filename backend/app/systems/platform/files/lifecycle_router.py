@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.access import error, load, require_unlinked
@@ -52,6 +53,7 @@ def purge_impact(
     # Workspace mutations lock profile before file; use that same order.
     profile = db.scalar(
         select(WorkspaceProfile)
+        .where(WorkspaceProfile.id == bound_organization(db))
         .with_for_update(nowait=True)
         .execution_options(populate_existing=True)
     )

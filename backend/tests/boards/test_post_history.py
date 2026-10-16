@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import UserRole
 from app.systems.boards.post_author_router import router as author_router
 from app.systems.boards.post_manage_state_router import router as manage_state_router
@@ -17,6 +16,7 @@ from app.systems.boards.post_revision_router import router as revision_router
 from app.systems.boards.post_router import router as post_router
 from app.systems.platform.scheduling.models import InAppNotification, ScheduledWork, WorkKind
 from tests.boards.support import client, grant, member, project_board
+from tests.conftest import membership_of
 from tests.rbac.support import add_user
 
 pytestmark = pytest.mark.integration
@@ -215,7 +215,7 @@ def test_the_author_filter_lists_only_active_unexpired_authors(
             )
         )
     disabled.status = "disabled"
-    sole_active_membership(db, expiring.id).expires_at = now - timedelta(minutes=1)
+    membership_of(db, expiring.id).expires_at = now - timedelta(minutes=1)
     db.flush()
 
     response = client(db, reader, *ROUTERS).get(f"/api/boards/{board.id}/post-authors")

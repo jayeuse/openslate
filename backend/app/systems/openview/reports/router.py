@@ -30,7 +30,7 @@ from app.systems.access.policy.checks import (
     require_module_access,
 )
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.openview.reports.eligibility import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
@@ -166,7 +166,7 @@ def create_report(
     require_module_access(db, user, payload.module_id, AccessLevel.MANAGE)
     validate_report_recipe(db, payload.module_id, payload.recipe, reader=user)
     report = Report(
-        org_id=sole_active_membership(db, user.id).org_id,
+        org_id=bound_organization(db),
         module_id=payload.module_id,
         name=payload.name,
         subtitle=payload.subtitle,

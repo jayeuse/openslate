@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_fresh_exact_admin
 from app.core.database import get_db
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization, require_current_membership
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.schemas import (
@@ -77,7 +77,7 @@ def _workspace(
     shared_lock: bool = False,
     nowait: bool = False,
 ) -> WorkspaceProfile:
-    statement = select(WorkspaceProfile).limit(2)
+    statement = select(WorkspaceProfile).where(WorkspaceProfile.id == bound_organization(db))
     if lock:
         statement = statement.with_for_update(read=shared_lock, nowait=nowait)
     profiles = db.scalars(statement.execution_options(populate_existing=True)).all()
@@ -119,11 +119,16 @@ def get_workspace_appearance(
 ) -> WorkspaceAppearanceResponse:
     response.headers["Cache-Control"] = "no-store"
     try:
-        profile = _workspace(db)
+        # Signed out there is no organization. An install with one organization shows
+        # its theme; otherwise the default theme (owner checkpoint after S07).
+        profiles = db.scalars(
+            select(WorkspaceProfile).where(WorkspaceProfile.is_deleted.is_(False)).limit(2)
+        ).all()
     except SQLAlchemyError as error:
         db.rollback()
         raise _workspace_unavailable() from error
-    return WorkspaceAppearanceResponse.model_validate({"theme": profile.theme})
+    theme = profiles[0].theme if len(profiles) == 1 else "slate"
+    return WorkspaceAppearanceResponse.model_validate({"theme": theme})
 
 
 @router.get("", response_model=WorkspaceResponse | WorkspaceGuestResponse)
@@ -132,7 +137,7 @@ def get_workspace(
     db: Annotated[Session, Depends(get_db)],
 ) -> WorkspaceResponse | WorkspaceGuestResponse:
     profile = _workspace(db)
-    if sole_active_membership(db, actor.id).role == "guest":
+    if require_current_membership(db, actor).role == "guest":
         return WorkspaceGuestResponse.model_validate(profile)
     return WorkspaceResponse.model_validate(profile)
 

@@ -16,7 +16,7 @@ from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import module_reader_statement
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_membership_join, require_current_membership
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.boards.access import managed_board_clause, visible_board_clause
 from app.systems.boards.event_models import BoardEvent
@@ -243,7 +243,7 @@ def _records(db: Session, actor: User) -> Subquery:
 
 
 def _people(db: Session, actor: User) -> Subquery:
-    administrator = sole_active_membership(db, actor.id).role == UserRole.ADMIN.value
+    administrator = require_current_membership(db, actor).role == UserRole.ADMIN.value
     title = func.coalesce(func.nullif(User.display_name, ""), User.username)
     statement = select(
         User.id.label("id"),
@@ -253,7 +253,7 @@ def _people(db: Session, actor: User) -> Subquery:
         literal(None).label("board_id"),
         literal(administrator).label("can_open"),
         func.concat_ws(" ", User.display_name, User.username).label("search_text"),
-    ).join(Membership, Membership.user_id == User.id).where(
+    ).join(Membership, bound_membership_join()).where(
         User.status == UserStatus.ACTIVE.value,
         Membership.status == UserStatus.ACTIVE.value,
         established_user_clause(),

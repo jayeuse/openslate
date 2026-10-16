@@ -9,12 +9,12 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel, GroupMember
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from tests.boards.support import department_board, grant, project_board
+from tests.conftest import membership_of
 from tests.rbac.support import add_department, add_module, add_user, make_group_access, make_user
 from tests.search.support import client as _client
 from tests.search.support import ids as _ids
@@ -237,7 +237,7 @@ def test_people_are_active_established_readers_of_readable_live_modules_only(
     inactive = add_user(db, status="disabled")
     inactive.display_name = "Indigo person"
     unaccepted = add_user(db)
-    sole_active_membership(db, unaccepted.id).invitation_sent_at = datetime.now(UTC)
+    membership_of(db, unaccepted.id).invitation_sent_at = datetime.now(UTC)
     unaccepted.display_name = "Indigo person"
     expired = add_user(db, role=UserRole.GUEST, expires_at=datetime.now(UTC) - timedelta(days=1))
     expired.display_name = "Indigo person"

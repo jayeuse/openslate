@@ -34,7 +34,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.coordination import advance_token_cutoff
 from app.systems.access.users.eligibility import is_active_account
-from app.systems.access.users.membership import sole_active_membership
+from app.systems.access.users.membership import bound_organization, require_current_membership
 from app.systems.access.users.models import User
 from app.systems.access.users.schemas import (
     UserMfaResetResponse,
@@ -151,7 +151,8 @@ def checkpoint(
                     401, "security_identity_changed", "Your session must be verified again."
                 )
             if requires_mfa(
-                load_workspace_policy(db), sole_active_membership(db, admin.id), observed
+                load_workspace_policy(db, org_id=bound_organization(db)),
+                require_current_membership(db, admin), observed
             ) and (
                 actor.claims.assurance_level != "aal2"
                 or not any(

@@ -11,4 +11,4 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 def local_identity_security_events(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(user_service, "_security_event", lambda **_kwargs: None)
     organization = WorkspaceProfile(id=uuid7())
-    monkeypatch.setattr(user_service, "load_workspace_policy", lambda _db: organization)
+    monkeypatch.setattr(user_service, "bound_organization", lambda _db: organization.id)

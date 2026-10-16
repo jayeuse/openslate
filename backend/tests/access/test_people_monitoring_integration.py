@@ -11,11 +11,10 @@ from sqlalchemy.orm import Session
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users import router as users_router
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
-from tests.conftest import create_member
+from tests.conftest import create_member, membership_of
 
 pytest_plugins = ("tests.security_events.event_support",)
 pytestmark = pytest.mark.integration
@@ -28,7 +27,7 @@ def directory_world(event_world, monkeypatch):
     marker = f"directory-{uuid4().hex}"
     people = {}
     with Session(world.owner) as db:
-        organization = db.get(WorkspaceProfile, sole_active_membership(db, world.actor_id).org_id)
+        organization = db.get(WorkspaceProfile, membership_of(db, world.actor_id).org_id)
         for key in (
             "active",
             "pending",
@@ -437,7 +436,7 @@ def test_recorded_history_days_reject_noninteger_and_out_of_range_queries(direct
 def test_recorded_history_endpoints_retain_exact_admin_admission(directory_world):
     world = directory_world.world
     with Session(world.owner) as db:
-        sole_active_membership(db, world.actor_id).role = "member"
+        membership_of(db, world.actor_id).role = "member"
         db.commit()
     try:
         for path in ("/api/users", "/api/users/summary"):
@@ -450,5 +449,5 @@ def test_recorded_history_endpoints_retain_exact_admin_admission(directory_world
             assert response.status_code == 403
     finally:
         with Session(world.owner) as db:
-            sole_active_membership(db, world.actor_id).role = "admin"
+            membership_of(db, world.actor_id).role = "admin"
             db.commit()

@@ -11,11 +11,11 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.membership import sole_active_membership
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
+from tests.conftest import membership_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -48,7 +48,7 @@ def security_workspace(fake_provider_account):
         user = db.get(User, local_id)
         assert user is not None
         user.supabase_user_id = provider_id
-        membership = sole_active_membership(db, local_id)
+        membership = membership_of(db, local_id)
         membership.role = "admin"
         profile = db.get(WorkspaceProfile, membership.org_id)
         platform = db.scalar(select(PlatformSettings))
@@ -88,7 +88,7 @@ def security_workspace(fake_provider_account):
     finally:
         client.close()
         with Session(owner) as db:
-            profile = db.get(WorkspaceProfile, sole_active_membership(db, local_id).org_id)
+            profile = db.get(WorkspaceProfile, membership_of(db, local_id).org_id)
             platform = db.scalar(select(PlatformSettings))
             assert profile is not None
             for field, value in original.items():
@@ -222,7 +222,7 @@ def test_workspace_security_denies_demoted_admin_for_read_and_write(security_wor
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None
-        sole_active_membership(db, local_id).role = "member"
+        membership_of(db, local_id).role = "member"
         db.commit()
     assert client.get("/api/workspace/security").status_code == 403
     assert client.get("/api/workspace/security/caller-ip").status_code == 403
