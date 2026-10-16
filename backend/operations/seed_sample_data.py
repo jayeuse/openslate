@@ -9,12 +9,12 @@ import argparse
 import getpass
 import secrets
 import sys
-from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -47,11 +47,19 @@ from operations.reset_application_data import (
     required_storage_environment,
     validate_local_database_url,
 )
-from operations.sample.blueprint import SampleDataset
-from operations.sample.episodes import plan_sessions
 from operations.sample.failures import safe_operator_message
-from operations.sample.history import plan_history
+from operations.sample.organization import (
+    create_sample_organization,
+    organization_storage_objects,
+    organization_usage,
+    pack_email_domains,
+    pack_provider_accounts,
+    sample_slug,
+)
+from operations.sample.packs.interface import OrganizationPack
 from operations.sample.packs.registry import default_pack, get_pack, pack_keys
+from operations.sample.plan_summary import build_plan_summary as build_plan_summary
+from operations.sample.plan_summary import print_plan as _print_plan
 from operations.sample.scenario import build_dataset
 
 
@@ -68,42 +76,6 @@ def _anchor_date(value: str) -> date:
         return date.fromisoformat(value)
     except ValueError:
         raise argparse.ArgumentTypeError("anchor date must use YYYY-MM-DD") from None
-
-
-def build_plan_summary(dataset: SampleDataset) -> dict[str, Any]:
-    """Return the deterministic catalogue counts shown before population."""
-    from operations.sample.phases.expectations import phase_plan_summary
-
-    return {
-        **phase_plan_summary(dataset),
-        "profile": dataset.profile,
-        "seed": dataset.seed,
-        "anchor_date": dataset.anchor_date.isoformat(),
-        "department_count": len(dataset.department_ids),
-        "module_count": len(dataset.module_ids),
-        "relationship_definition_count": len(dataset.relationship_ids),
-        "automation_count": len(dataset.trigger_ids),
-        "test_vector_count": len(dataset.test_vectors),
-        "operational_records": sum(dataset.module_counts.values()),
-        "relationship_edges": len(dataset.edges),
-        "module_counts": dict(dataset.module_counts),
-        "supporting_counts": dict(dataset.organization.content.supporting_counts),
-        "session_count": len(plan_sessions(dataset)),
-        "writes_by_person": _writes_by_person(dataset),
-        "planned_rejections": len(dataset.organization.rejections.activity_cases)
-        + len(dataset.organization.rejections.closing_cases),
-    }
-
-
-def _writes_by_person(dataset: SampleDataset) -> dict[str, int]:
-    """Planned creates, links by their actual writers, and history updates."""
-    creators = {record.logical_id: record.creator_key for record in dataset.records}
-    writes = Counter(creators.values())
-    writes.update(edge.creator_key or creators[edge.target_record_id] for edge in dataset.edges)
-    writes.update(
-        step.updater_key for history in plan_history(dataset).values() for step in history.steps
-    )
-    return dict(sorted(writes.items()))
 
 
 def _required(values: Mapping[str, str], name: str) -> str:
@@ -283,7 +255,10 @@ def _docker_environment(container: Mapping[str, Any]) -> dict[str, str]:
     return values
 
 
-def _local_preflight() -> tuple[dict[str, Any], str, str]:
+def _local_preflight(
+    pack: OrganizationPack | None = None,
+) -> tuple[dict[str, Any], str, str]:
+    """Check the owned instance; with a pack, count only that pack's organization and people."""
     values, target, admin_email, api_url, _origin, _timeout = _environment_values()
     identity = instance_identity_for_process(values)
     if identity is None:
@@ -301,68 +276,34 @@ def _local_preflight() -> tuple[dict[str, Any], str, str]:
         storage = ResetStorage(provider_url, provider_secret, timeout)
         object_keys = storage.list_object_keys()
         reset_plan = build_reset_plan(connection, admin_email, storage_object_keys=object_keys)
+        slug = sample_slug(pack.identity.key) if pack is not None else None
+        usage = (
+            organization_usage(connection, slug, reset_plan.preserved_admin_id) if slug else None
+        )
         connection.rollback()
-    provider_accounts = ResetAuth(provider_url, provider_secret, timeout).list_account_ids(
-        reset_plan.preserved_admin_provider_id, admin_email
+    if usage is not None and not usage.administered:
+        raise SampleOperationError("The pack organization is not run by the configured admin")
+    provider_accounts = pack_provider_accounts(
+        ResetAuth(provider_url, provider_secret, timeout),
+        reset_plan.preserved_admin_provider_id,
+        admin_email,
+        pack_email_domains(pack) if pack is not None else frozenset(),
     )
+    organization_id = usage.organization_id if usage is not None else None
     report = {
         "instance": target.instance_id,
         "alembic_head": reset_plan.alembic_head,
         "admin_eligible": True,
         "admin_id": str(reset_plan.preserved_admin_id),
         "database_rows": sum(reset_plan.counts.values()),
-        "storage_objects": len(object_keys),
-        "provider_accounts": len(provider_accounts),
+        "organization_slug": slug,
+        "organization_id": str(organization_id) if organization_id is not None else None,
+        "organization_members": usage.other_members if usage is not None else 0,
+        "organization_records": usage.records if usage is not None else 0,
+        "storage_objects": organization_storage_objects(object_keys, organization_id),
+        "provider_accounts": provider_accounts,
     }
     return report, api_url, mailpit_url
-
-
-def _print_plan(dataset: SampleDataset, preflight: Mapping[str, Any], mailpit_url: str) -> None:
-    summary = build_plan_summary(dataset)
-    print(dataset.organization.blueprint.plan_heading)
-    print(f"local_instance={preflight['instance']}")
-    print(f"schema_head={preflight['alembic_head']}")
-    print(f"administrator_eligible={str(preflight['admin_eligible']).lower()}")
-    print(f"private_storage_objects={preflight['storage_objects']}")
-    print(f"non_admin_provider_accounts={preflight['provider_accounts']}")
-    print(f"mailpit_ready=true ({mailpit_url})")
-    print(
-        f"profile={summary['profile']} seed={summary['seed']} anchor_date={summary['anchor_date']}"
-    )
-    print(
-        "structure: "
-        f"{summary['department_count']} departments, {summary['module_count']} modules, "
-        f"{summary['relationship_definition_count']} relationship definitions, "
-        f"{summary['automation_count']} automations, {summary['test_vector_count']} Sandbox tests"
-    )
-    print(f"operational_records={summary['operational_records']}")
-    print("records_by_module:")
-    for key, count in summary["module_counts"].items():
-        print(f"  {key}={count}")
-    print(f"record_relationship_edges={summary['relationship_edges']}")
-    print(f"work_sessions={summary['session_count']}")
-    print(f"planned_rejections={summary['planned_rejections']}")
-    print(f"lifecycle_and_admin_actions={summary['phase_counts']['total']}")
-    print(f"lifecycle_and_admin_refusals={summary['phase_counts']['refusals']}")
-    print("writes_by_person:")
-    for key, count in summary["writes_by_person"].items():
-        print(f"  {key}={count}")
-    print("fixed_supporting_data:")
-    for key, count in summary["supporting_counts"].items():
-        print(f"  {key}={count}")
-    print(
-        "prerequisites: empty/reset application baseline; matching admin credentials; "
-        "invitations delivered only to owned Mailpit"
-    )
-    print(
-        "exclusions: OpenComms; custom roles; "
-        "service identities/metadata; access rules/defaults; "
-        "saved chart preferences; direct database writes; provider-admin user creation"
-    )
-    print(
-        "No application data was changed. Population rechecks the complete API baseline "
-        "before its first write."
-    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -399,24 +340,31 @@ def main(
             args.seed = secrets.randbits(64)
         if args.command in {"plan", "populate"} and args.anchor_date is None:
             args.anchor_date = _today_for_organization(args.organization)
-        report, api_url, mailpit_url = _local_preflight()
+        pack = get_pack(args.organization) if args.command != "verify" else None
+        report, api_url, mailpit_url = _local_preflight(pack)
         if args.command == "plan":
             dataset = build_dataset(
                 args.profile,
                 args.seed,
                 args.anchor_date,
-                organization=get_pack(args.organization),
+                organization=pack,
                 host_acceptance=host_control is not None,
             )
             _print_plan(dataset, report, mailpit_url)
             return 0
+        if args.command == "populate" and (
+            report.get("organization_members") or report.get("organization_records")
+        ):
+            raise SampleOperationError(
+                "The pack organization already holds sample data; reset before population"
+            )
         if args.command == "populate" and report.get("storage_objects") != 0:
             raise SampleOperationError(
-                "Private storage contains objects; clear the baseline before population"
+                "Private storage holds the pack organization's objects; reset before population"
             )
         if args.command == "populate" and report.get("provider_accounts") != 0:
             raise SampleOperationError(
-                "Provider accounts remain; clear the baseline before population"
+                "Provider accounts of this pack remain; reset before population"
             )
         from operations.sample.population.run import (
             SamplePopulationReport,
@@ -425,7 +373,7 @@ def main(
         )
         from operations.sample.verification.run import SampleVerificationReport, verify_sample_data
 
-        _values, _target, admin_email, _url, origin, _timeout = _environment_values()
+        values, target, admin_email, _url, origin, _timeout = _environment_values()
         password = (
             read_admin_password(args.admin_password_file, admin_email)
             if args.admin_password_file
@@ -438,10 +386,14 @@ def main(
                     args.profile,
                     args.seed,
                     args.anchor_date,
-                    organization=get_pack(args.organization),
+                    organization=pack,
                     host_acceptance=host_control is not None,
                 )
                 _print_plan(dataset, report, mailpit_url)
+                assert pack is not None
+                organization_id = report.get("organization_id") or str(
+                    create_sample_organization(values, target, pack, UUID(str(report["admin_id"])))
+                )
                 result = populate_sample_data(
                     api_url=api_url,
                     origin=origin,
@@ -453,9 +405,10 @@ def main(
                     profile=args.profile,
                     seed=args.seed,
                     anchor_date=args.anchor_date,
-                    organization=get_pack(args.organization),
+                    organization=pack,
                     mfa_observer=mfa_observer,
                     host_control=host_control,
+                    organization_id=organization_id,
                 )
             else:
                 result = verify_sample_data(
@@ -470,6 +423,9 @@ def main(
             del password
         print(f"status={result.status}")
         print(f"run_directory={result.run_directory}")
+        for key in ("isolation_organizations", "isolation_refusals"):
+            if key in result.observed:
+                print(f"{key}={result.observed[key]}")
         for issue in result.issues:
             print(f"incomplete: {issue}")
         return 0 if result.status == "complete" else 1

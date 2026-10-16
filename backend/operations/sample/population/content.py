@@ -142,7 +142,7 @@ def assert_empty_content(admin: SampleClient, boards: list[Mapping[str, Any]]) -
     if (
         len(current) != 1
         or current[0].get("scope") != "company"
-        or current[0].get("name") != "Company"
+        or current[0].get("name") != "Company Board"
         or current[0].get("status") != "active"
         or len(boards) != 1
         or boards[0].get("id") != current[0].get("id")

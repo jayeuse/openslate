@@ -293,8 +293,13 @@ def _callback_population(tmp_path, monkeypatch, *, entry, supplied=True, fail_ob
         monkeypatch.setattr(
             command,
             "_local_preflight",
-            lambda: (
-                {"admin_id": _id("admin"), "storage_objects": 0, "provider_accounts": 0},
+            lambda *_args: (
+                {
+                    "admin_id": _id("admin"),
+                    "organization_id": _id("organization"),
+                    "storage_objects": 0,
+                    "provider_accounts": 0,
+                },
                 "https://api.example.test",
                 "https://mail.example.test",
             ),

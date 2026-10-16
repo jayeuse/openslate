@@ -499,3 +499,43 @@ def test_a_busy_relationship_write_is_reported_as_busy_without_a_retry(tmp_path:
             client.request("POST", "/api/relationships", json_body={})
     assert raised.value.failure_code == "relationship_busy"
     assert attempts == ["/api/relationships"]
+
+
+def test_an_organization_bound_client_sends_its_organization_on_every_request(
+    tmp_path: Path,
+) -> None:
+    organization = "0190a000-0000-7000-8000-0000000000aa"
+    seen: list[tuple[str, str | None, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, request.headers.get("x-org"), request.url.params.get("org")))
+        if request.url.path == "/api/auth/login":
+            return _login_response()
+        if request.url.path == "/api/events":
+            return httpx.Response(
+                200, stream=httpx.ByteStream(b"event: resync\ndata: {}\n\n"),
+                headers={"Content-Type": "text/event-stream"},
+            )
+        return httpx.Response(200, json={})
+
+    transport = httpx.MockTransport(handler)
+    with SampleClient(BASE_URL, ORIGIN, tmp_path / "requests.jsonl", organization,
+                      transport=transport) as client:
+        client.login(EMAIL, PASSWORD)
+        client.request("GET", "/api/records")
+        client.request("POST", "/api/records", json_body={"name": "record"})
+        client.check_event_stream()
+        with pytest.raises(SampleAuthenticationError):
+            client.request(
+                "GET", "/api/records", headers={"X-Org": "0190a000-0000-7000-8000-0000000000bb"}
+            )
+    with _client(tmp_path, transport) as unbound:
+        unbound.request("GET", "/api/records")
+
+    assert seen == [
+        ("/api/auth/login", organization, None),
+        ("/api/records", organization, None),
+        ("/api/records", organization, None),
+        ("/api/events", organization, organization),
+        ("/api/records", None, None),
+    ]

@@ -80,7 +80,7 @@ def assert_pristine_baseline(client: SampleClient, *, admin_id: str) -> dict[str
     if (
         len(boards) != 1
         or boards[0].get("scope") != "company"
-        or boards[0].get("name") != "Company"
+        or boards[0].get("name") != "Company Board"
         or boards[0].get("status") != "active"
     ):
         raise SampleVerificationError("The baseline must contain only the built-in Company Board")

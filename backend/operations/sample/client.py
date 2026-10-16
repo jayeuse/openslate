@@ -24,7 +24,8 @@ from operations.sample.verification.route_coverage import route_template
 _SAFE_METHODS = frozenset({"GET"})
 _ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 _UNSAFE_METHODS = _ALLOWED_METHODS - _SAFE_METHODS
-_SESSION_HEADERS = frozenset({"authorization", "cookie", "origin", "x-csrf-token"})
+# The client owns the organization header: a request cannot switch organizations.
+_SESSION_HEADERS = frozenset({"authorization", "cookie", "origin", "x-csrf-token", "x-org"})
 _LOGIN_PATH = "/api/auth/login"
 _REFRESH_PATH = "/api/auth/refresh"
 _INVITATION_PATH = "/api/auth/invitations/complete"
@@ -126,13 +127,18 @@ def _request_id(response: httpx.Response) -> str | None:
 
 
 class SampleClient:
-    """A per-actor browser-cookie client for authenticated OpenSlate API calls."""
+    """A per-actor browser-cookie client for authenticated OpenSlate API calls.
+
+    With an organization ID, every request acts in that organization (``X-Org``),
+    as the browser does; without one, the server uses the session's organization.
+    """
 
     def __init__(
         self,
         base_url: str,
         origin: str,
         journal_path: Path,
+        organization_id: str | UUID | None = None,
         *,
         timeout: float = 20.0,
         transport: httpx.BaseTransport | None = None,
@@ -141,15 +147,23 @@ class SampleClient:
         self._origin = _origin(origin)
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Sample API timeout must be a positive finite number")
+        self._organization_id = (
+            str(UUID(str(organization_id))) if organization_id is not None else None
+        )
         self._journal_path = Path(journal_path)
         self._last_auth_at: float | None = None
+        organization = {"X-Org": self._organization_id} if self._organization_id else {}
         self._client = httpx.Client(
             base_url=f"{api_origin}/",
-            headers={"Accept": "application/json", "Origin": self._origin},
+            headers={"Accept": "application/json", "Origin": self._origin, **organization},
             timeout=timeout,
             follow_redirects=False,
             transport=transport,
         )
+
+    @property
+    def organization_id(self) -> str | None:
+        return self._organization_id
 
     def login(self, email: str, password: str) -> httpx.Response:
         self._last_auth_at = None
@@ -186,7 +200,9 @@ class SampleClient:
         )
 
     def check_event_stream(self) -> dict[str, object]:
-        return check_event_stream(self._client, self._origin, self._append_event)
+        return check_event_stream(
+            self._client, self._origin, self._append_event, self.organization_id
+        )
 
     def request_email_change(self, email: str, current_password: str) -> httpx.Response:
         return self.request(

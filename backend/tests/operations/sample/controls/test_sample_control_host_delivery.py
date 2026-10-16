@@ -185,7 +185,7 @@ def host_journey(host_dataset, topology_runtime, tmp_path, monkeypatch):
             assert c.login(wire.users[key]["email"], PASSWORD).status_code == 200
         wire.owner_sessions = {sid for sid, user in wire.sessions.items() if user == OWNER_ID}
         monkeypatch.setattr(
-            delivery, "https_client", lambda _: client(runtime.origin), raising=False
+            delivery, "https_client", lambda *_: client(runtime.origin), raising=False
         )
 
         # Cryptographic/native boundary outcomes are explicitly fake here. The

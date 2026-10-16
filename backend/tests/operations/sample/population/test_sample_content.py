@@ -61,7 +61,7 @@ def test_empty_guard_pages_archived_posts_and_rejects_partial_baseline(
         "id": BOARD_ID,
         "scope": "company",
         "department_id": None,
-        "name": "Company",
+        "name": "Company Board",
         "description": None,
         "status": "active",
         "revision": 1,

@@ -71,12 +71,13 @@ def run_population(
     manifest: dict[str, Any],
     mfa_observer: Callable[..., object] | None = None,
     host_control: Callable[..., object] | None = None,
+    organization_id: str | None = None,
 ) -> dict[str, int]:
     """Perform the sample workflow sequentially and persist only safe evidence."""
     journal = run_directory / "requests.jsonl"
     clients: dict[str, SampleClient] = {}
     try:
-        admin = SampleClient(api_url, origin, journal)
+        admin = SampleClient(api_url, origin, journal, organization_id)
         clients["admin"] = admin
         _login(admin, admin_email, admin_password, expected_id=expected_admin_id)
         manifest["stage"] = "baseline"
@@ -141,6 +142,7 @@ def run_population(
             origin,
             run_directory / "credentials.json",
             organization=dataset.organization,
+            organization_id=organization_id,
         )
         people = {
             key: {
@@ -167,7 +169,7 @@ def run_population(
         _write_manifest(run_directory, manifest)
 
         for actor_key, credential in people_result.actors.items():
-            client = SampleClient(api_url, origin, journal)
+            client = SampleClient(api_url, origin, journal, organization_id)
             clients[actor_key] = client
             _login(
                 client,
@@ -185,7 +187,7 @@ def run_population(
         by_logical = {record.logical_id: record for record in dataset.records}
 
         def new_client() -> SampleClient:
-            extra = SampleClient(api_url, origin, journal)
+            extra = SampleClient(api_url, origin, journal, organization_id)
             clients[f"rejection-session-{len(clients)}"] = extra
             return extra
 

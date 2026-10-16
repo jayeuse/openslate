@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 from operations.sample.client import SampleClient
 from operations.sample.controls.verification import configuration_mappings, verify_controls
@@ -29,6 +30,7 @@ from operations.sample.verification.core import (
     verify_records_and_relationships,
 )
 from operations.sample.verification.history import verify_history
+from operations.sample.verification.isolation import roster_logins, verify_isolation
 from operations.sample.verification.rejections import verify_rejections
 from operations.sample.verification.route_coverage import verify_route_coverage
 
@@ -88,6 +90,13 @@ def read_run_manifest(directory: Path, expected_admin_id: str) -> dict[str, Any]
         )
     ):
         raise SampleVerificationError("Run manifest is incomplete or invalid")
+    organization_id = value.get("organization_id")
+    try:
+        # Runs before one organization per pack have none; the session's one applies.
+        if organization_id is not None and str(UUID(organization_id)) != organization_id:
+            raise ValueError
+    except (TypeError, ValueError, AttributeError):
+        raise SampleVerificationError("Run organization is invalid") from None
     _manifest_plan(value)
     read_phase_plan(value)
     return value
@@ -221,7 +230,9 @@ def verify_sample_data(
     )
     observed: dict[str, int] = {}
     issues: list[str] = []
-    with SampleClient(api_url, origin, run_directory / "verification-requests.jsonl") as client:
+    organization_id = manifest.get("organization_id")
+    journal = run_directory / "verification-requests.jsonl"
+    with SampleClient(api_url, origin, journal, organization_id) as client:
         if client.login(admin_email, admin_password).status_code != 200:
             raise SampleVerificationError("Verification administrator login failed")
         try:
@@ -264,6 +275,23 @@ def verify_sample_data(
             )
             observed.update(people_counts)
             issues.extend(people_issues)
+            final_people = _people(
+                final_people_pack(dataset.organization, read_phase_plan(manifest))
+            )
+            isolation_counts, isolation_issues = verify_isolation(
+                client,
+                organization_id=organization_id,
+                api_url=api_url,
+                origin=origin,
+                journal=journal,
+                admin_login=(admin_email, admin_password),
+                member_logins=roster_logins(
+                    run_directory / "credentials.json",
+                    (p.key for p in final_people if p.role == "member" and p.status == "active"),
+                ),
+            )
+            observed.update(isolation_counts)
+            issues.extend(isolation_issues)
             configuration_maps = manifest["mappings"]
             if "control_plan" in manifest:
                 control_counts, control_issues = verify_controls(
