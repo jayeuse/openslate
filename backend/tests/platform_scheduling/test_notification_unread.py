@@ -25,6 +25,7 @@ from app.systems.platform.scheduling.models import InAppNotification, ScheduledW
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
+from tests.organization_scope_support import scoped_override
 from tests.platform_scheduling.support import (
     notification_actor,
     notification_client,
@@ -65,7 +66,7 @@ def _request(engine, actor_id, method, path):
             return db.get(User, actor_id)
 
     app.dependency_overrides[get_db] = database
-    app.dependency_overrides[get_current_user] = actor
+    app.dependency_overrides[get_current_user] = scoped_override(actor)
     with TestClient(app) as client:
         return client.request(method, path)
 

@@ -15,6 +15,7 @@ from app.systems.openview.views.router import router as views_router
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxBinding
 from app.systems.sandbox.records.router import router as records_router
+from tests.organization_scope_support import scoped_override
 from tests.sandbox_publications.support import bound_field, bound_module, publish_structure
 
 pytestmark = pytest.mark.integration
@@ -26,7 +27,7 @@ def published(integration_owner_db: Session) -> Iterator[tuple[User, TestClient]
     app = FastAPI()
     app.include_router(records_router, prefix="/api")
     app.include_router(views_router, prefix="/api")
-    app.dependency_overrides[get_current_user] = lambda: publisher
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: publisher)
     app.dependency_overrides[get_db] = lambda: integration_owner_db
     with TestClient(app) as client:
         yield publisher, client

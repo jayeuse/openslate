@@ -36,8 +36,10 @@ def test_run_started_before_permanent_report_delete_cannot_save_after_it(
     module = importlib.import_module("app.systems.openview.reports.router")
     capture = module.capture_report_snapshot
 
-    def delete_after_snapshot(engine: Engine, report_id: UUID, actor_id: UUID | None):
-        snapshot = capture(engine, report_id, actor_id)
+    def delete_after_snapshot(
+        engine: Engine, report_id: UUID, actor_id: UUID | None, *, org_id: UUID | None
+    ):
+        snapshot = capture(engine, report_id, actor_id, org_id=org_id)
         archived = fixture.client.delete(f"{report_path}?revision=1", headers=fixture.headers())
         assert archived.status_code == 204, archived.text
         preview = fixture.client.post(f"{report_path}/purge/preview", headers=fixture.headers())

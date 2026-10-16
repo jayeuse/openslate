@@ -17,6 +17,7 @@ from app.systems.access.users.models import User, UserRole
 from app.systems.boards.department_boards import sync_department_board
 from app.systems.boards.models import Board, BoardGroup, BoardScope
 from app.systems.sandbox.departments.models import Department
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_user, make_group_access, organization
 
 
@@ -28,7 +29,7 @@ def client(db: Session, actor: User | None, *routers: APIRouter) -> TestClient:
         app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
     if actor is not None:
-        app.dependency_overrides[get_current_user] = lambda: actor
+        app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     return TestClient(app)
 
 

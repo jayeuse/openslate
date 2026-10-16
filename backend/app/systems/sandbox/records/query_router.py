@@ -13,6 +13,7 @@ from app.common.dependencies import (
 )
 from app.common.listing.schemas import StandardListResponse
 from app.core.database import get_db
+from app.core.database.organization_scope import session_organization
 from app.systems.access.policy.checks import require_fresh_module_access
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
@@ -89,7 +90,9 @@ def aggregate_snapshot_route(
     # module read level inside it. Recheck the exact session and the level after it.
     db.rollback()
     try:
-        content, bucket_count = aggregate_snapshot(engine, payload, reader_id=actor_id)
+        content, bucket_count = aggregate_snapshot(
+            engine, payload, reader_id=actor_id, org_id=session_organization(db)
+        )
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(503, detail="Unable to create aggregate snapshot") from error
@@ -140,7 +143,9 @@ def aggregate_snapshots_route(
     engine = bind if isinstance(bind, Engine) else bind.engine
     db.rollback()
     try:
-        content, bucket_count = aggregate_snapshots(engine, payload, reader_id=actor_id)
+        content, bucket_count = aggregate_snapshots(
+            engine, payload, reader_id=actor_id, org_id=session_organization(db)
+        )
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(503, detail="Unable to create aggregate snapshots") from error
@@ -208,7 +213,9 @@ def export(payload: ExportRequest, actor: Reader, identity: Identity, db: Databa
     engine = bind if isinstance(bind, Engine) else bind.engine
     db.rollback()
     try:
-        content, count, filename = export_snapshot(engine, payload, reader_id=actor_id)
+        content, count, filename = export_snapshot(
+            engine, payload, reader_id=actor_id, org_id=session_organization(db)
+        )
     except (SQLAlchemyError, OSError) as error:
         db.rollback()
         raise HTTPException(503, detail="Unable to create export") from error

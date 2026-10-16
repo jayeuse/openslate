@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.main import create_app
 from app.systems.access.users.models import Membership, User, UserRole
+from tests.organization_scope_support import scoped_override
 
 from .support import _make_event, _payload_values, _SecurityEventDatabase, _user
 
@@ -41,7 +42,7 @@ def _configure_api(
     if user is not None:
         account, membership = user
         database.membership = membership
-        application.dependency_overrides[get_current_user] = lambda: account
+        application.dependency_overrides[get_current_user] = scoped_override(lambda: account)
     if database is not None:
         application.dependency_overrides[get_db] = lambda: database
     return TestClient(application)

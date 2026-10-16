@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.database import organization_scope
 from app.core.middleware.request_context import get_request_context
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 
@@ -19,6 +20,9 @@ class AuditSession(Session):
         from app.systems.manage.audit import listeners as _audit_listeners  # noqa: F401
 
         super().__init__(*args, **kwargs)
+
+
+organization_scope.register(AuditSession)
 
 
 @lru_cache

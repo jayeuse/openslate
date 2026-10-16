@@ -16,6 +16,7 @@ from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
 from tests.catalog.test_record_import_integration import _World
 from tests.catalog.test_record_import_integration import world as world
+from tests.organization_scope_support import scoped_override
 
 
 @pytest.fixture
@@ -32,8 +33,8 @@ def batch_world(world: _World) -> Iterator[_World]:
         world.db.flush()
         sessions[actor.id] = session.id
     world.db.commit()
-    world.client.app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
-        world.actor[0], sessions[world.actor[0].id], False, False
+    world.client.app.dependency_overrides[get_current_identity] = scoped_override(
+        lambda: CurrentIdentity(world.actor[0], sessions[world.actor[0].id], False, False)
     )
     try:
         yield world

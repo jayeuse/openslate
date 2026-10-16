@@ -17,6 +17,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.sandbox.departments.models import Department
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access, organization
 
 
@@ -92,7 +93,7 @@ def world(integration_owner_db: Session) -> Iterator[DelegationWorld]:
     app = FastAPI()
     app.include_router(access_policy_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor[0])
     with TestClient(app) as client:
         yield DelegationWorld(
             db=db,

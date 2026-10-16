@@ -31,6 +31,7 @@ from tests.boards.support import grant, project_board
 from tests.charts.chart_route_support import ChartWorld
 from tests.conftest import _assert_alembic_head, guarded_create_engine
 from tests.live_session_support import with_live_session
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 from tests.route_app_support import route_app
 from tests.sandbox_designs.fixtures import create_document
@@ -120,7 +121,7 @@ class ReferenceRaceWorld:
             return CurrentIdentity(actor, self.sessions[key], False, False)
 
         self.app.dependency_overrides[get_db] = database
-        self.app.dependency_overrides[get_current_identity] = identity
+        self.app.dependency_overrides[get_current_identity] = scoped_override(identity)
         with self.client("admin") as client:
             for name in ("First", "Second"):
                 response = client.post(

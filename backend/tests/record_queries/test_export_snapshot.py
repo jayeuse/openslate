@@ -17,6 +17,7 @@ from app.systems.sandbox.records import export as exporter
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import ExportRequest
 from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, organization
 from tests.record_queries.support import request_for, setup_rows
 
@@ -74,7 +75,9 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         },
     )
     try:
-        first, count, _ = exporter.export_snapshot(engine, payload, reader_id=actor_id)
+        first, count, _ = exporter.export_snapshot(
+            engine, payload, reader_id=actor_id, org_id=org_id
+        )
         assert count == 1
         assert list(csv.reader(io.StringIO(first.decode()))) == [
             ["Record ID", "Status", "Assignee"],
@@ -85,7 +88,9 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
             assert field is not None
             field.config = {"options": [{"id": option_id, "label": "Awaiting review"}]}
             writer.commit()
-        renamed, count, _ = exporter.export_snapshot(engine, payload, reader_id=actor_id)
+        renamed, count, _ = exporter.export_snapshot(
+            engine, payload, reader_id=actor_id, org_id=org_id
+        )
         assert count == 1
         assert list(csv.reader(io.StringIO(renamed.decode())))[1] == [
             str(record_id),
@@ -143,7 +148,9 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
 
     monkeypatch.setattr(exporter, "encode_csv", update_after_snapshot_started)
     try:
-        content, count, _ = exporter.export_snapshot(engine, payload, reader_id=reader_id)
+        content, count, _ = exporter.export_snapshot(
+            engine, payload, reader_id=reader_id, org_id=org_id
+        )
         parsed = list(csv.reader(io.StringIO(content.decode())))
         assert count == 2
         assert [row[1] for row in parsed[1:]] == ["original", "second"]
@@ -226,9 +233,9 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
         with AuditSession(engine) as db:
             yield db
 
-    app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
+    app.dependency_overrides[get_current_identity] = scoped_override(lambda: CurrentIdentity(
         actor, session_id, False, False
-    )
+    ))
     app.dependency_overrides[get_db] = database
     try:
         with TestClient(app) as client:

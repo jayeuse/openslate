@@ -24,6 +24,7 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.access.user_admin_support import UserAdminWorld, add_session
 from tests.access.user_admin_support import world as world
 from tests.conftest import create_member, create_organization, guarded_create_engine
+from tests.organization_scope_support import scoped_override
 from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
@@ -46,8 +47,8 @@ def test_cross_user_session_collection_pages_and_filters_the_same_public_client_
     tablet.user_agent = "Mozilla/5.0 (iPad) Version/17.0 Safari/605.1.15"
     world.db.commit()
     client = world.client(world.admin)
-    client.app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
-        world.actor[0], current.id, False, False
+    client.app.dependency_overrides[get_current_identity] = scoped_override(
+        lambda: CurrentIdentity(world.actor[0], current.id, False, False)
     )
     pages = [client.get(f"/api/auth/admin-sessions?limit=1&offset={offset}") for offset in range(3)]
     assert all(response.status_code == 200 for response in pages)
@@ -102,8 +103,8 @@ def test_bulk_session_end_rolls_back_then_preserves_current_and_records_events_o
     revoked.revoked_at = timestamp - timedelta(seconds=1)
     world.db.commit()
     client = world.client(world.admin)
-    client.app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
-        world.actor[0], current.id, False, False
+    client.app.dependency_overrides[get_current_identity] = scoped_override(
+        lambda: CurrentIdentity(world.actor[0], current.id, False, False)
     )
     original_append = sessions_router.append_security_event
 
@@ -206,8 +207,8 @@ def test_concurrent_bulk_session_end_records_each_target_only_once(
             yield db
 
     application.dependency_overrides[get_db] = database
-    application.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
-        User(id=admin_id), current_id, False, False
+    application.dependency_overrides[get_current_identity] = scoped_override(
+        lambda: CurrentIdentity(User(id=admin_id), current_id, False, False)
     )
 
     def end_sessions(tag: str) -> int:

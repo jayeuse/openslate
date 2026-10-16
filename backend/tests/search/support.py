@@ -13,6 +13,7 @@ from app.systems.access.users.models import User
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module
 
 
@@ -20,7 +21,7 @@ def client(db: Session | Mock, actor: User | None) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_db] = lambda: db
     if actor is not None:
-        app.dependency_overrides[get_current_user] = lambda: actor
+        app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     return TestClient(app, base_url=get_settings().public_origin)
 
 

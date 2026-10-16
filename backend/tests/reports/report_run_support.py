@@ -33,6 +33,7 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_router import router as record_query_router
 from tests.conftest import _guard_integration_database, create_member, guarded_create_engine
 from tests.fake_provider_support import install_fake_provider, real_session_pool
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
@@ -53,6 +54,7 @@ class _RunFixture:
     module_id: UUID
     note_field_id: UUID
     first_record_id: UUID
+    org_id: UUID
 
     def headers(self, token: str | None = None, *, key: UUID | None = None) -> dict[str, str]:
         values = {"Authorization": f"Bearer {token or self.owner_token}"}
@@ -269,6 +271,7 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
                 module_id=module_id,
                 note_field_id=note_id,
                 first_record_id=record_ids[0],
+                org_id=org_id,
             )
     finally:
         resources.close()
@@ -366,7 +369,7 @@ def report_route_client(db: Session, user: User) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: user)
     return TestClient(app)
 
 

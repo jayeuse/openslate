@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import apply_connection_scope
 from app.systems.access.policy.checks import module_hidden
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -265,9 +266,10 @@ def export_context(
 
 
 def export_snapshot(
-    engine: Engine, payload: ExportRequest, *, reader_id: UUID
+    engine: Engine, payload: ExportRequest, *, reader_id: UUID, org_id: UUID | None
 ) -> tuple[bytes, int, str]:
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+        apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:

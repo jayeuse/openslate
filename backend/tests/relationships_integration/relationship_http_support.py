@@ -31,6 +31,7 @@ from tests.conftest import (
     create_organization,
 )
 from tests.conftest import guarded_create_engine as create_engine
+from tests.organization_scope_support import scoped_override
 from tests.route_app_support import route_app
 
 
@@ -287,7 +288,9 @@ class RelationshipHTTPFixture:
         )
 
     def _install_overrides(self, actor: User) -> None:
-        self.app.dependency_overrides[get_current_user] = lambda: actor
+        self.app.dependency_overrides[get_current_user] = scoped_override(
+            lambda: actor, org_id=self.org_id
+        )
         self.app.dependency_overrides[get_db] = self._request_database
 
     def _request_database(self, request: Request) -> Iterator[Session]:

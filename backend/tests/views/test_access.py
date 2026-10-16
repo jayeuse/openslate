@@ -18,6 +18,7 @@ from app.systems.openview.views.router import (
 from app.systems.openview.views.schemas import ViewCreate, ViewUpdate
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.records.query_schemas import QueryDefinition
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_user, make_group_access
 from tests.record_queries.support import setup_rows
 
@@ -94,7 +95,7 @@ def test_guest_with_module_read_cannot_create_a_view(query_db):
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: query_db
-    app.dependency_overrides[get_current_user] = lambda: guest
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: guest)
 
     response = TestClient(app).post(
         "/api/views",

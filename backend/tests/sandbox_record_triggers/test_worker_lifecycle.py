@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+import pytest
 from fastapi import FastAPI
 from uuid6 import uuid7
 
@@ -16,6 +17,15 @@ from app.systems.sandbox.record_triggers.runner import (
     _trigger_matches,
 )
 from app.systems.sandbox.record_triggers.worker import TriggerWorker
+
+
+@pytest.fixture(autouse=True)
+def _one_organization(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests poll one organization without a database to list them."""
+    if request.node.get_closest_marker("integration") is None:
+        organization = uuid7()
+        target = "app.systems.sandbox.record_triggers.worker.active_organization_ids"
+        monkeypatch.setattr(target, lambda _engine: [organization])
 
 
 def test_test_environment_never_starts_a_background_worker() -> None:

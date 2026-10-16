@@ -11,6 +11,7 @@ from sqlalchemy import Date, Engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.database.organization_scope import apply_connection_scope
 from app.systems.access.policy.checks import module_hidden
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -346,13 +347,14 @@ def aggregate_snapshot_records(
 
 
 def aggregate_snapshot(
-    engine: Engine, payload: AggregateSnapshotQuery, *, reader_id: UUID
+    engine: Engine, payload: AggregateSnapshotQuery, *, reader_id: UUID, org_id: UUID | None
 ) -> tuple[bytes, int]:
     """Materialize a complete JSON result inside one independent read snapshot.
 
     The reader's module level is checked inside the same snapshot.
     """
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+        apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:
@@ -365,10 +367,11 @@ def aggregate_snapshot(
 
 
 def aggregate_snapshots(
-    engine: Engine, payload: AggregateSnapshotsRequest, *, reader_id: UUID
+    engine: Engine, payload: AggregateSnapshotsRequest, *, reader_id: UUID, org_id: UUID | None
 ) -> tuple[bytes, int]:
     """Materialize the ordered batch in one read snapshot with combined limits."""
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+        apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:

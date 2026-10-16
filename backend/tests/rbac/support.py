@@ -25,6 +25,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import create_member, create_organization
+from tests.organization_scope_support import scoped_override
 
 
 def organization(db: Session) -> WorkspaceProfile:
@@ -248,6 +249,6 @@ def _client(
                 if query.column_descriptions[0]["entity"] is Membership
                 else original(query) if callable(original) else result
             )
-    application.dependency_overrides[get_current_user] = lambda: user
+    application.dependency_overrides[get_current_user] = scoped_override(lambda: user)
     application.dependency_overrides[get_db] = lambda: database
     return TestClient(application)

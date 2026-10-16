@@ -45,7 +45,9 @@ def _statements(engine: Any) -> Iterator[list[str]]:
     executed: list[str] = []
 
     def record(_connection: object, _cursor: object, statement: str, *_args: object) -> None:
-        executed.append(" ".join(statement.split())[:160])
+        # Binding the transaction to its organization is infrastructure, not route work.
+        if "set_config('openslate.org_id'" not in statement:
+            executed.append(" ".join(statement.split())[:160])
 
     event.listen(engine, "before_cursor_execute", record)
     try:

@@ -43,6 +43,7 @@ from app.systems.sandbox.record_triggers.runner import execute_claim
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.conftest import create_organization, guarded_create_engine
+from tests.organization_scope_support import scoped_override
 from tests.sandbox_designs.fixtures import create_document
 from tests.sandbox_record_triggers.support import publish_trigger
 
@@ -125,7 +126,7 @@ class HistoryApi:
 def history_api(integration_db: Session, monkeypatch: pytest.MonkeyPatch) -> Generator[HistoryApi]:
     actor, module, fields, definition = publish_trigger(integration_db)
     app = create_app()
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     app.dependency_overrides[get_db] = lambda: integration_db
     monkeypatch.setattr(
         "app.systems.sandbox.lifecycle.router.get_settings",

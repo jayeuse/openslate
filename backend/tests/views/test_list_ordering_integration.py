@@ -11,6 +11,7 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.router import router
+from tests.organization_scope_support import scoped_override
 from tests.record_queries.support import route_actor, setup_rows
 
 pytestmark = pytest.mark.integration
@@ -23,7 +24,7 @@ def view_list(query_db):
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: query_db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     with TestClient(app) as client:
         yield SimpleNamespace(db=query_db, module=module, client=client)
     app.dependency_overrides.clear()

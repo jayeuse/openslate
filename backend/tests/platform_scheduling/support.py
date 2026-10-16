@@ -34,6 +34,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.boards.support import board_group, client
 from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import (
     capability_actor,
     grant_capability_actors,
@@ -211,7 +212,7 @@ def notification_client(db: Session, actor: User | None) -> TestClient:
     app.include_router(notification_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
     if actor is not None:
-        app.dependency_overrides[get_current_user] = lambda: actor
+        app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     return TestClient(app)
 
 

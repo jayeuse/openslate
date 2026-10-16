@@ -23,6 +23,7 @@ from app.common.dependencies import (
 )
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
+from app.core.database.organization_scope import session_organization
 from app.systems.access.policy.checks import (
     module_filter,
     require_fresh_module_access,
@@ -302,7 +303,9 @@ def create_report_run(
     bind = db.get_bind()
     engine = bind if isinstance(bind, Engine) else bind.engine
     db.rollback()
-    snapshot = capture_report_snapshot(engine, report_id, actor_id)
+    snapshot = capture_report_snapshot(
+        engine, report_id, actor_id, org_id=session_organization(db)
+    )
 
     # Report writes lock the recipe before access rows; keep the same order
     # when finalizing a run so a concurrent edit cannot invert the lock graph.

@@ -37,6 +37,7 @@ from app.systems.sandbox.records.query_schemas import (
     GroupedAggregateSnapshotQuery,
 )
 from tests.conftest import create_member, create_organization
+from tests.organization_scope_support import scoped_override
 
 
 def test_aggregate_snapshot_requires_authentication() -> None:
@@ -84,6 +85,7 @@ class _SnapshotFixture:
     date_field_id: UUID
     record_ids: list[UUID]
     department_id: UUID
+    org_id: UUID
     select_ids: dict[str, str]
 
     def grouped_payload(self) -> dict[str, object]:
@@ -217,6 +219,7 @@ def snapshot_fixture(integration_owner_db: Session) -> Generator[_SnapshotFixtur
         date_field_id=date_field_id,
         record_ids=record_ids,
         department_id=department_id,
+        org_id=org_id,
         select_ids=select_ids,
     )
     try:
@@ -265,9 +268,9 @@ def _post_snapshot(
     path: str = "/api/records/aggregate-snapshot",
 ) -> httpx.Response:
     application = create_app()
-    application.dependency_overrides[get_current_user] = lambda: fixture.actor
-    application.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
-        fixture.actor, fixture.session_id, False, False
+    application.dependency_overrides[get_current_user] = scoped_override(lambda: fixture.actor)
+    application.dependency_overrides[get_current_identity] = scoped_override(
+        lambda: CurrentIdentity(fixture.actor, fixture.session_id, False, False)
     )
 
     def database() -> Generator[Session, None, None]:
@@ -385,6 +388,7 @@ def test_date_series_snapshot_returns_the_full_explicit_window(
         snapshot_fixture.engine,
         DateSeriesAggregateQuery.model_validate(payload),
         reader_id=snapshot_fixture.actor.id,
+        org_id=snapshot_fixture.org_id,
     )
     assert count == 366
     response = _post_snapshot(snapshot_fixture, payload)
@@ -448,6 +452,7 @@ def test_snapshot_uses_one_repeatable_read_snapshot_during_concurrent_record_cha
         snapshot_fixture.engine,
         GroupedAggregateSnapshotQuery.model_validate(snapshot_fixture.grouped_payload()),
         reader_id=snapshot_fixture.actor.id,
+        org_id=snapshot_fixture.org_id,
     )
 
     assert response[1] == 2
@@ -484,9 +489,9 @@ def test_snapshot_rechecks_live_module_access_and_session_before_release(
     original = query_router.aggregate_snapshot
 
     def revoke_after_snapshot(
-        engine: Engine, payload: AggregateSnapshotQuery, *, reader_id: UUID
+        engine: Engine, payload: AggregateSnapshotQuery, *, reader_id: UUID, org_id: UUID | None
     ) -> tuple[bytes, int]:
-        result = original(engine, payload, reader_id=reader_id)
+        result = original(engine, payload, reader_id=reader_id, org_id=org_id)
         with Session(engine) as writer:
             if revoke == "module_access":
                 writer.execute(

@@ -27,6 +27,7 @@ from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.storage import get_storage
 from tests.conftest import create_member, create_organization, guarded_create_engine
+from tests.organization_scope_support import scoped_override
 
 pytestmark = pytest.mark.integration
 
@@ -142,7 +143,7 @@ def client_for(engine, actor_id, storage):
         return db.scalar(select(User).where(User.id == actor_id))
 
     app.dependency_overrides[get_db] = database
-    app.dependency_overrides[get_current_user] = actor
+    app.dependency_overrides[get_current_user] = scoped_override(actor)
     app.dependency_overrides[get_storage] = lambda: storage
     return TestClient(app)
 

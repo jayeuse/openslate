@@ -23,6 +23,7 @@ from app.systems.platform.files.storage import get_storage
 from tests.boards.support import client as board_client
 from tests.boards.test_permanent_delete import _actor, _enabled
 from tests.files.test_integration import Store
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -132,7 +133,7 @@ def test_unlinked_board_file_admin_can_preview_and_confirm_purge(
     app = FastAPI()
     app.include_router(board_file_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: admin
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: admin)
     app.dependency_overrides[get_storage] = lambda: Store(db)
 
     @app.middleware("http")

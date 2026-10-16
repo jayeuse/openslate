@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.config.development import browser_origin_is_permitted
 from app.core.database import get_db
+from app.core.database.organization_scope import scope_session
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     InvalidProviderToken,
@@ -231,6 +232,7 @@ def resolve_membership(
             "code": "mfa_required", "message": "Complete multi-factor authentication to continue",
         })
     require_allowed_source(request, db, org, person_id=identity.user.id)
+    scope_session(db, org_id)
     return membership
 
 

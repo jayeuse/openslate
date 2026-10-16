@@ -16,6 +16,7 @@ from app.systems.platform.files.providers import (
 )
 from app.systems.platform.files.schemas import FileCreate
 from tests.files.conftest import library_department
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -208,7 +209,7 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
 
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     app.dependency_overrides[get_storage] = lambda: storage
     monkeypatch.setattr(delivery, "append_committed_security_event", lambda event: None)
     with TestClient(app) as client:

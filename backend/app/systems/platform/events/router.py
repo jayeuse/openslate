@@ -13,6 +13,7 @@ from starlette.types import Send
 
 from app.core.config import get_settings
 from app.core.config.development import browser_origin_is_permitted
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession, get_engine
 from app.core.integrations.supabase_auth import (
     InvalidProviderToken,
@@ -252,9 +253,12 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
             if resolved is None:
                 return None
             user = resolved[0]
+            membership = sole_active_membership(db, user.id)
+            # Interim until S09 binds each stream to an organization.
+            scope_session(db, membership.org_id)
             return EventViewer(
                 user_id=user.id,
-                role=sole_active_membership(db, user.id).role,
+                role=membership.role,
                 module_ids=allowed_module_ids(db, user, AccessLevel.READ),
                 board_ids=readable_board_ids(db, user),
             )

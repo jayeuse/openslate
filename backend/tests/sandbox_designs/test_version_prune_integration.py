@@ -26,6 +26,7 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.models import SandboxDocument, SandboxVersion
 from app.systems.sandbox.designs.service import _append_version, create_version, read_document
 from tests.conftest import create_member, guarded_create_engine
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_user, organization
 from tests.route_app_support import route_app
 from tests.sandbox_designs.fixtures import create_document
@@ -66,7 +67,7 @@ def prune_world():
 
     app = route_app()
     app.dependency_overrides[get_db] = database
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     try:
         with TestClient(app) as client:
             yield {
@@ -265,7 +266,7 @@ def test_prune_remains_administrator_only(prune_world, role):
         db.commit()
         db.refresh(denied)
         db.expunge(denied)
-    prune_world["app"].dependency_overrides[get_current_user] = lambda: denied
+    prune_world["app"].dependency_overrides[get_current_user] = scoped_override(lambda: denied)
     try:
         response = prune_world["client"].post(
             "/api/sandbox/versions/prune", json={"expectedRevision": revision}

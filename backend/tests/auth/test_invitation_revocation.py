@@ -27,6 +27,7 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.test_provider_email_integration import _email_action
 from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
 
@@ -48,7 +49,7 @@ def _client(db: Session, identity: CurrentIdentity | None = None) -> TestClient:
     app.include_router(access_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
     if identity is not None:
-        app.dependency_overrides[get_current_identity] = lambda: identity
+        app.dependency_overrides[get_current_identity] = scoped_override(lambda: identity)
     return TestClient(app)
 
 

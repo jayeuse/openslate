@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.database.organization_scope import worker_organization
 from app.core.database.session import AuditSession
 from app.main import create_app
 from app.systems.access.policy.models import Group, GroupMember
@@ -82,8 +83,11 @@ def test_main_app_bearer_reminder_reaches_readers_and_inbox_rechecks_the_board(
             shown = client.get(f"{path}/{event_id}", headers=outsider)
             assert shown.json()["reminders"] == ["1d"]
 
-            execute_due_reminders(subject.runtime_engine, now=start - timedelta(days=3))
-            delivered = execute_due_reminders(subject.runtime_engine, now=start - timedelta(days=1))
+            with worker_organization(org_id):
+                execute_due_reminders(subject.runtime_engine, now=start - timedelta(days=3))
+                delivered = execute_due_reminders(
+                    subject.runtime_engine, now=start - timedelta(days=1)
+                )
             assert len(delivered) >= 2
             inbox = client.get("/api/notifications", headers=outsider)
             assert inbox.status_code == 200, inbox.text

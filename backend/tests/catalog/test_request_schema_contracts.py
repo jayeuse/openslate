@@ -21,6 +21,7 @@ from app.systems.access.users.schemas import (
 )
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
 from tests.catalog.auth_support import override_catalog_authorization
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import make_user
 from tests.route_app_support import route_app
 
@@ -32,7 +33,7 @@ _PATH_ID = "0190a000-0000-7000-8000-000000000001"
 def client() -> TestClient:
     application = route_app()
     actor, membership = make_user("schema-admin")
-    application.dependency_overrides[get_current_user] = lambda: actor
+    application.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     override_catalog_authorization(application)
     database = Mock()
     database.dirty = set()

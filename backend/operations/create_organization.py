@@ -19,6 +19,7 @@ from app.core.config.environment import environment_inputs
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession, get_engine
 from app.core.integrations.supabase_auth import ProviderUser, get_supabase_auth_client
 from app.systems.access.identity.mfa_observations import initialize_observation
@@ -78,6 +79,7 @@ def provision(
         org = WorkspaceProfile(display_name=name.strip(), slug=slug, timezone="UTC", locale="en-US")
         db.add(org)
         db.flush()
+        scope_session(db, org.id)
         document, digest, size = canonical_document(Document(
             kind="openslate-sandbox", schema_version=4, design=DesignDocument(),
         ))

@@ -146,8 +146,8 @@ def test_export_rechecks_exact_authority_after_generation(
     original = query_router.export_snapshot
     completed = []
 
-    def revoke_after_snapshot(engine, payload, *, reader_id: UUID):
-        result = original(engine, payload, reader_id=reader_id)
+    def revoke_after_snapshot(engine, payload, *, reader_id: UUID, org_id: UUID | None):
+        result = original(engine, payload, reader_id=reader_id, org_id=org_id)
         with Session(export_world.owner) as db:
             if lost == "module_access":
                 db.get(GroupAccess, export_world.grant_id).is_deleted = True

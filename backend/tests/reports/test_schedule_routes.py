@@ -34,6 +34,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
@@ -94,7 +95,7 @@ def _client(db: Session, user: User) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: user)
     return TestClient(app)
 
 
@@ -381,7 +382,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
         app = FastAPI()
         app.include_router(router, prefix="/api")
         app.dependency_overrides[get_db] = request_db
-        app.dependency_overrides[get_current_user] = request_user
+        app.dependency_overrides[get_current_user] = scoped_override(request_user)
         path = f"/api/reports/{ids['report']}/schedule"
         attempted = Event()
         original_report = schedule_router._report

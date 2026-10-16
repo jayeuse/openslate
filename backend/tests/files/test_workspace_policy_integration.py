@@ -22,6 +22,7 @@ from app.systems.platform.files.storage import get_storage
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
@@ -99,7 +100,7 @@ def _client(db, actor: User, storage: _Store) -> TestClient:
 
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     app.dependency_overrides[get_storage] = lambda: storage
     return TestClient(app)
 

@@ -30,6 +30,7 @@ from app.systems.sandbox.records.query_router import router as query_router
 from app.systems.sandbox.records.router import router as records_router
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from app.systems.sandbox.relationships.router import router as relationships_router
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -120,7 +121,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     for router in (records_router, query_router, relationships_router, audit_router):
         app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor[0])
     with TestClient(app) as client:
         yield _World(
             db=db,

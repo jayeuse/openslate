@@ -14,6 +14,7 @@ from sqlalchemy import Engine, select
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import current_worker_organization
 from app.core.database.session import AuditSession
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, get_audit_context
 from app.systems.openview.reports.eligibility import capture_run_eligible_users
@@ -177,7 +178,9 @@ def execute_report_claim(
         return _finalize_claim(engine, claim, None, now=now)
 
     try:
-        snapshot = capture_report_snapshot(engine, report_id, None)
+        snapshot = capture_report_snapshot(
+            engine, report_id, None, org_id=current_worker_organization()
+        )
         return _finalize_claim(engine, claim, snapshot, now=now)
     except Exception:
         # This is the worker process boundary. A failed capture or final write

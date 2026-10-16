@@ -24,6 +24,7 @@ from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -216,7 +217,7 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
             app = FastAPI()
             app.include_router(access_router, prefix="/api")
             app.dependency_overrides[get_db] = lambda: db
-            app.dependency_overrides[get_current_user] = lambda: actor
+            app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
             with TestClient(app) as client:
                 response = client.put(
                     f"/api/access/groups/{group_id}/members",

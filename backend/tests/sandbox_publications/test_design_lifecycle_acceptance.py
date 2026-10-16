@@ -37,6 +37,7 @@ from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.rules import _field_key
 from app.systems.sandbox.records.models import Record
 from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import organization
 from tests.sandbox_publications.support import bound_field, bound_module, publish_structure
 
@@ -84,7 +85,7 @@ def api(integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch) -> Itera
                 return user.id
 
         monkeypatch.setattr(publication_router, "ProviderPasswordGrantClient", PasswordGrant)
-        app.dependency_overrides[get_current_identity] = state.current
+        app.dependency_overrides[get_current_identity] = scoped_override(state.current)
         app.dependency_overrides[get_db] = lambda: integration_owner_db
         yield state
     app.dependency_overrides.clear()

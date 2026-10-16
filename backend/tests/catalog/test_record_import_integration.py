@@ -24,6 +24,7 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.record_triggers.models import RecordTriggerEvent
 from app.systems.sandbox.records.models import Record
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -120,7 +121,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     app.include_router(application.router)
     actor = [admin]
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor[0])
     client = TestClient(app)
     try:
         yield _World(

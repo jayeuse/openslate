@@ -27,6 +27,7 @@ from tests.lifecycle_integration.lifecycle_integration_support import (
     delete_committed_scope,
     password_boundary,
 )
+from tests.organization_scope_support import scoped_override
 from tests.sandbox_designs.fixtures import create_document
 
 CONFIRMATION_PASSWORD = token_urlsafe(32)
@@ -62,7 +63,7 @@ class LifecycleApiClient:
             request_path=path,
         )
         self.active_database = database
-        self.app.dependency_overrides[get_current_user] = lambda: self.actor
+        self.app.dependency_overrides[get_current_user] = scoped_override(lambda: self.actor)
         self.app.dependency_overrides[get_db] = lambda: database
         try:
             return self.client.request(method, path, json=payload)

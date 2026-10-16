@@ -31,6 +31,7 @@ from app.systems.platform.files.storage import get_storage
 from tests.boards.support import board_group
 from tests.conftest import create_member
 from tests.files.test_integration import Store
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -42,7 +43,7 @@ def _client(db, actor, store) -> TestClient:
     app.include_router(content_router, prefix="/api")
     app.include_router(generic_file_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     app.dependency_overrides[get_storage] = lambda: store
 
     @app.middleware("http")

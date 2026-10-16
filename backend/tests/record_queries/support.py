@@ -25,6 +25,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import RecordQuery
 from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import organization
 from tests.route_app_support import route_app
 
@@ -63,7 +64,7 @@ def route_client(db: Session, actor: User, **options: object) -> Iterator[TestCl
     """A client of the complete application whose requests use *db* as *actor*."""
 
     application = route_app()
-    application.dependency_overrides[get_current_user] = lambda: actor
+    application.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     application.dependency_overrides[get_db] = lambda: db
     with TestClient(application, **options) as client:
         yield client

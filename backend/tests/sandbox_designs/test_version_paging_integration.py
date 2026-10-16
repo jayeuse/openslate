@@ -8,6 +8,7 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.service import _append_version, read_document
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_user, organization
 from tests.route_app_support import route_app
 from tests.sandbox_designs.fixtures import create_document
@@ -47,7 +48,7 @@ def version_page(integration_owner_db):
     db.commit()
     app = route_app()
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor[0])
     try:
         with TestClient(app) as client:
             yield client, actor, versions

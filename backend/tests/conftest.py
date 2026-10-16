@@ -15,6 +15,7 @@ from uuid6 import uuid7
 from app.core.config import instance as _instance_module
 from app.core.config import provider_instance as _provider_instance_module
 from app.core.database import model_registry  # noqa: F401
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.identity.provider_user_cache import clear_provider_users
 from app.systems.access.users.models import Membership, User, UserRole
@@ -41,6 +42,8 @@ def create_organization(db: Session, **values) -> WorkspaceProfile:
     )
     organization = db.get(WorkspaceProfile, identity)
     assert organization is not None
+    # Like the operator command, bind the session to the organization it just created.
+    scope_session(db, identity)
     return organization
 
 

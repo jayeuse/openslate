@@ -25,6 +25,7 @@ from app.systems.platform.scheduling.models import (
 )
 from tests.boards.provider_accounts import create_password_account
 from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -147,7 +148,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     app = FastAPI()
     app.include_router(lifecycle_router.router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     client = TestClient(app)
     path = f"/api/boards/{board.id}/purge"
     preview = client.post(f"{path}/preview")

@@ -19,6 +19,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
+from tests.organization_scope_support import scoped_override
 from tests.users.user_support import local_user
 
 
@@ -47,7 +48,7 @@ def _application(db: Session, identity: CurrentIdentity):
     application = FastAPI()
     application.include_router(router, prefix="/api")
     application.dependency_overrides[get_db] = lambda: db
-    application.dependency_overrides[get_current_identity] = lambda: identity
+    application.dependency_overrides[get_current_identity] = scoped_override(lambda: identity)
     return application
 
 

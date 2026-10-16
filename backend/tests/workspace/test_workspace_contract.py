@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.systems.access.users.models import Membership
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.models import File
+from tests.organization_scope_support import scoped_override
 
 
 def _router_module() -> ModuleType:
@@ -90,7 +91,7 @@ def _client(
     monkeypatch.setattr(workspace_router, "lock_quota", lambda _db: None)
     monkeypatch.setattr(database, "flush", lambda: None, raising=False)
     application.dependency_overrides[get_db] = lambda: database
-    application.dependency_overrides[get_current_user] = lambda: actor
+    application.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     monkeypatch.setattr(
         workspace_router,
         "require_fresh_exact_admin",

@@ -8,8 +8,10 @@ from datetime import datetime
 from uuid import UUID
 
 from app.core.config import Settings
+from app.core.database.organization_scope import worker_organization
 from app.core.database.session import get_engine
 from app.core.observability import log_event
+from app.systems.manage.workspace.organizations import active_organization_ids
 from app.systems.platform.scheduling.execution import execute_due_report_runs
 from app.systems.platform.scheduling.post_execution import (
     execute_due_post_publications,
@@ -99,7 +101,10 @@ class ReportSchedulingWorker:
 
     def _poll_reports(self, *, now: datetime | None) -> list[UUID]:
         try:
-            completed = execute_due_report_runs(get_engine(), now=now)
+            completed = []
+            for org_id in active_organization_ids(get_engine()):
+                with worker_organization(org_id):
+                    completed.extend(execute_due_report_runs(get_engine(), now=now))
         except Exception:
             self._retry_seconds = min(self._retry_seconds * 2, _MAX_RETRY_SECONDS)
             if not self._failure_reported:
@@ -116,7 +121,9 @@ class ReportSchedulingWorker:
 
     def _poll_posts(self, *, now: datetime | None) -> None:
         try:
-            execute_due_post_publications(get_engine(), now=now)
+            for org_id in active_organization_ids(get_engine()):
+                with worker_organization(org_id):
+                    execute_due_post_publications(get_engine(), now=now)
         except Exception:
             self._post_retry_seconds = min(self._post_retry_seconds * 2, _MAX_RETRY_SECONDS)
             if not self._post_failure_reported:
@@ -132,7 +139,9 @@ class ReportSchedulingWorker:
 
     def _poll_reminders(self, *, now: datetime | None) -> None:
         try:
-            execute_due_reminders(get_engine(), now=now)
+            for org_id in active_organization_ids(get_engine()):
+                with worker_organization(org_id):
+                    execute_due_reminders(get_engine(), now=now)
         except Exception:
             self._reminder_retry_seconds = min(self._reminder_retry_seconds * 2, _MAX_RETRY_SECONDS)
             if not self._reminder_failure_reported:

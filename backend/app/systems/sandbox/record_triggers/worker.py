@@ -5,8 +5,10 @@ from __future__ import annotations
 import threading
 
 from app.core.config import Settings
+from app.core.database.organization_scope import worker_organization
 from app.core.database.session import AuditSession, get_engine
 from app.core.observability import log_event
+from app.systems.manage.workspace.organizations import active_organization_ids
 from app.systems.sandbox.record_triggers.execution import (
     ClaimedTriggerEvent,
     claim_due_events,
@@ -59,6 +61,20 @@ class TriggerWorker:
         return True
 
     def run_once(self) -> int:
+        try:
+            organizations = active_organization_ids(get_engine())
+        except Exception as error:
+            self._claim_failed(error)
+            return 0
+        processed = 0
+        for org_id in organizations:
+            with worker_organization(org_id):
+                processed += self._run_organization()
+            if self._stop.is_set():
+                break
+        return processed
+
+    def _run_organization(self) -> int:
         claims = self._enqueue_and_claim()
         for index, claim in enumerate(claims):
             if self._stop.is_set():
@@ -86,13 +102,16 @@ class TriggerWorker:
                 self._claim_retry_seconds = 1
                 return claims
         except Exception as error:
-            self._claim_retry_seconds = min(self._claim_retry_seconds * 2, 60)
-            log_event(
-                "operational_attention",
-                reason_code=f"sandbox_trigger_claim_failed_{type(error).__name__.lower()}",
-                upstream="sandbox-triggers",
-            )
+            self._claim_failed(error)
             return []
+
+    def _claim_failed(self, error: Exception) -> None:
+        self._claim_retry_seconds = min(self._claim_retry_seconds * 2, 60)
+        log_event(
+            "operational_attention",
+            reason_code=f"sandbox_trigger_claim_failed_{type(error).__name__.lower()}",
+            upstream="sandbox-triggers",
+        )
 
     def _release(self, claims: list[ClaimedTriggerEvent]) -> None:
         try:
