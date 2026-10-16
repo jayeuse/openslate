@@ -89,11 +89,18 @@ def provision(
         db.add(Board(org_id=org.id, scope="company", name="Company Board"))
         if user is not None:
             db.add(Membership(org_id=org.id, user_id=user.id, role="admin", status="active"))
+            org.owner_user_id = user.id
             db.commit()
         else:
             assert invitation is not None
             invite_user(db, invitation.model_copy(update={"role": UserRole.ADMIN}),
                         bootstrap=True, org_id=org.id)
+            # The first administrator owns the organization.
+            scope_session(db, org.id)
+            owner = db.scalar(select(User.id).where(User.email == invitation.email))
+            org = db.get(WorkspaceProfile, org.id, populate_existing=True) or org
+            org.owner_user_id = owner
+            db.commit()
         db.refresh(org)
         return org
     except SQLAlchemyError as error:

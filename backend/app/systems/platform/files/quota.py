@@ -1,15 +1,18 @@
 """Serialize pending-upload admission without blocking cleanup of existing inventory."""
 
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
+from app.core.database.organization_scope import bound_organization_column
 from app.systems.platform.files.access import error
 from app.systems.platform.files.models import File
 
 PENDING_UPLOAD_COUNT = 100
-PENDING_UPLOAD_BYTES = 1024 * 1024 * 1024
+# 100 uploads of at most 10 MiB (D18) never reach 1 GiB; 512 MiB keeps both caps live.
+PENDING_UPLOAD_BYTES = 512 * 1024 * 1024
 LOGO_CHARGE = 2 * 1024 * 1024
 RESERVATION_TTL = timedelta(hours=24)
 # Stable application advisory-lock namespace for file admission.
@@ -23,7 +26,9 @@ def lock_quota(db: Session) -> None:
         raise error("file_quota_busy", "File admission is busy; retry shortly", 503)
 
 
-def require_capacity(db: Session, purpose: str, expected_size: int) -> None:
+def require_capacity(
+    db: Session, purpose: str, expected_size: int, *, creator_id: UUID
+) -> None:
     count, size = db.execute(
         select(
             func.count(File.id),
@@ -36,7 +41,14 @@ def require_capacity(db: Session, purpose: str, expected_size: int) -> None:
                 ),
                 0,
             ),
-        ).where(File.state.in_(("awaiting_upload", "uploading")))
+        ).where(
+            File.state.in_(("awaiting_upload", "uploading")),
+            # Pending capacity is counted per organization. Avatars are account files,
+            # so each account has its own avatar budget and cannot exhaust another's.
+            and_(File.org_id.is_(None), File.creator_id == creator_id)
+            if purpose == "user_avatar"
+            else File.org_id == bound_organization_column(),
+        )
     ).one()
     charge = LOGO_CHARGE if purpose in {"workspace_logo", "user_avatar"} else expected_size
     if count >= PENDING_UPLOAD_COUNT or size + charge > PENDING_UPLOAD_BYTES:

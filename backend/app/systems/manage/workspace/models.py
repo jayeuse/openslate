@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    ForeignKey,
     ForeignKeyConstraint,
     Integer,
     String,
@@ -72,6 +73,10 @@ class WorkspaceProfile(BaseModel):
     )
 
     slug: Mapped[str] = mapped_column(String(200), nullable=False)
+    # The account that created the organization; it alone changes sensitive security.
+    owner_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     legal_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

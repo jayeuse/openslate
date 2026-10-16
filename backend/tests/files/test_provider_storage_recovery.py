@@ -13,7 +13,7 @@ from app.core.config import Settings, get_settings
 from app.core.config.provider_instance import assert_provider_instance
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable
-from app.systems.platform.files.supabase_storage import SupabaseStorage
+from app.systems.platform.files.supabase_storage import SupabaseStorage, bucket_for
 from tests.conftest import _guard_integration_database
 from tests.files.test_workspace_policy_integration import _actor_with_record, _client, _png
 
@@ -74,23 +74,31 @@ def live_provider_storage() -> Iterator[tuple[Settings, SupabaseStorage, httpx.C
         client.close()
 
 
-@pytest.fixture
+# Organization files and account avatars live in their own private buckets (D17).
+@pytest.fixture(params=["org", "user"])
 def stored_object(
-    live_provider_storage,
+    live_provider_storage, request
 ) -> Iterator[tuple[Settings, SupabaseStorage, httpx.Client, str, bytes]]:
     settings, storage, client = live_provider_storage
-    key = uuid4().hex
+    key = f"{request.param}/{uuid4()}/{uuid4().hex}"
     content = b"storage-recovery-" + uuid4().bytes
     try:
-        storage.upload(key, content, _MEDIA_TYPE)
+        # The avatar bucket accepts PNG and JPEG only (D17).
+        storage.upload(key, content, "image/png" if request.param == "user" else _MEDIA_TYPE)
         yield settings, storage, client, key, content
     finally:
         storage.delete(key)
 
 
-def test_upload_lands_in_the_private_ready_bucket(stored_object) -> None:
+def test_upload_lands_in_its_private_bucket(stored_object) -> None:
     _settings, storage, _client, key, content = stored_object
     assert storage.download(key) == content
+
+
+def test_avatar_bucket_refuses_other_media_types(live_provider_storage) -> None:
+    _settings, storage, _client = live_provider_storage
+    with pytest.raises(ProviderUnavailable):
+        storage.upload(f"user/{uuid4()}/{uuid4().hex}", b"%PDF-1.7", "application/pdf")
 
 
 def test_fastapi_file_roundtrip_reaches_real_private_storage(guarded_db, live_provider_storage):
@@ -131,7 +139,7 @@ def test_fastapi_file_roundtrip_reaches_real_private_storage(guarded_db, live_pr
 def test_delete_retries_after_a_failed_provider_delete(stored_object) -> None:
     settings, storage, _client, key, content = stored_object
 
-    injected = FailOneStorageDelete(_READY, key)
+    injected = FailOneStorageDelete(bucket_for(key), key)
     failing_storage, client = _new_storage(settings, injected)
     try:
         with pytest.raises(ProviderUnavailable):

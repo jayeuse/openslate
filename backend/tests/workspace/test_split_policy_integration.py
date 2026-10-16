@@ -34,8 +34,10 @@ def test_platform_security_change_requires_the_installation_owner(integration_ow
     db = integration_owner_db
     org = create_organization(db)
     user, _membership = create_member(db, org, "admin")
+    org.owner_user_id = user.id  # the organization owner, but not the installation owner
     create_organization(db)
     scope_session(db, org.id)  # the second organization exists; the admin acts in the first
+    db.flush()
     platform = db.scalars(select(PlatformSettings)).one()
     prior = platform.session_timeout_minutes
     with pytest.raises(HTTPException) as refusal:
@@ -49,3 +51,21 @@ def test_platform_security_change_requires_the_installation_owner(integration_ow
     assert refusal.value.detail["code"] == "operator_required"
     assert platform.session_timeout_minutes == prior
     assert not db.dirty
+
+
+def test_organization_security_change_requires_the_organization_owner(integration_owner_db):
+    db = integration_owner_db
+    org = create_organization(db)
+    owner, _ = create_member(db, org, "admin")
+    admin, _ = create_member(db, org, "admin")
+    org.owner_user_id = owner.id
+    db.flush()
+    with pytest.raises(HTTPException) as refusal:
+        update_workspace_security(
+            WorkspaceSecurityUpdate(revision=org.revision, mfa_require_member=True),
+            Request({"type": "http", "method": "PATCH", "path": "/api/workspace/security"}),
+            CurrentIdentity(admin, uuid7(), False, False), admin, db, Response(),
+        )
+    # Another administrator does the rest, but sensitive security belongs to the owner.
+    assert refusal.value.status_code == 403
+    assert refusal.value.detail["code"] == "owner_required"

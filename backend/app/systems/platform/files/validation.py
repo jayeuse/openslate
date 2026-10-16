@@ -15,7 +15,7 @@ from pypdf.errors import PdfReadError
 if TYPE_CHECKING:
     from fastapi import HTTPException
 
-MAX_BYTES = 25 * 1024 * 1024
+MAX_BYTES = 10 * 1024 * 1024  # D18: 10 MiB uploads
 LOGO_BYTES = 2 * 1024 * 1024
 MIME = {
     ".pdf": "application/pdf",

@@ -54,10 +54,10 @@ class File(BaseModel):
             name="ck_files_state",
         ),
         CheckConstraint(
-            "expected_size > 0 AND expected_size <= 26214400", name="ck_files_expected_size"
+            "expected_size > 0 AND expected_size <= 10485760", name="ck_files_expected_size"
         ),
         CheckConstraint(
-            "actual_size IS NULL OR (actual_size > 0 AND actual_size <= 26214400)",
+            "actual_size IS NULL OR (actual_size > 0 AND actual_size <= 10485760)",
             name="ck_files_actual_size",
         ),
         CheckConstraint(

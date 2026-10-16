@@ -39,7 +39,7 @@ def inventory(db, actor, *, count, size=1, state="awaiting_upload"):
             creator_id=actor.id,
             filename="file.pdf",
             expected_size=size,
-            object_key=uuid4().hex,
+            object_key=f"org/{organization(db).id}/{uuid4().hex}",
             state=state,
             is_deleted=True,
         )
@@ -96,45 +96,30 @@ def test_rejected_rows_do_not_use_pending_upload_capacity(guarded_db, actor):
     assert caught.value.detail["code"] == "file_uploads_full"
 
 
-def test_gibibyte_boundary_uses_declared_bytes_and_logo_canonical_charge(guarded_db, actor):
+def test_byte_boundary_uses_declared_bytes_and_logo_canonical_charge(guarded_db, actor):
     db = guarded_db
-    inventory(db, actor, count=40, size=25 * MIB)
-    service.reserve(
-        db,
-        actor,
-        FileCreate(
+
+    def document(name, size):
+        return FileCreate(
             purpose="library_document",
             department_id=library_department(db),
-            filename="remaining.pdf",
-            expected_size=23 * MIB,
-        ),
-    )
+            filename=name,
+            expected_size=size,
+        )
+
+    # 50 pending uploads of 10 MiB, then 11 MiB more: 1 MiB below the 512 MiB cap.
+    inventory(db, actor, count=50, size=10 * MIB)
+    service.reserve(db, actor, document("remaining.pdf", 10 * MIB))
+    service.reserve(db, actor, document("remaining-2.pdf", MIB))
     with pytest.raises(HTTPException):
+        # A logo charges its canonical 2 MiB, not its declared byte.
         service.reserve(
             db, actor, FileCreate(purpose="workspace_logo", filename="tiny.png", expected_size=1)
         )
     db.rollback()
-    service.reserve(
-        db,
-        actor,
-        FileCreate(
-            purpose="library_document",
-            department_id=library_department(db),
-            filename="last.pdf",
-            expected_size=MIB,
-        ),
-    )
+    service.reserve(db, actor, document("last.pdf", MIB))
     with pytest.raises(HTTPException) as caught:
-        service.reserve(
-            db,
-            actor,
-            FileCreate(
-                purpose="library_document",
-                department_id=library_department(db),
-                filename="excess.pdf",
-                expected_size=1,
-            ),
-        )
+        service.reserve(db, actor, document("excess.pdf", 1))
     assert caught.value.detail["code"] == "file_uploads_full"
 
 
@@ -218,9 +203,9 @@ def test_reserve_expires_stale_reservations_and_keeps_the_quota_lock(guarded_db,
     checks = []
     require_capacity = service.require_capacity
 
-    def checked(db, purpose, expected_size):
+    def checked(db, purpose, expected_size, *, creator_id):
         checks.append(_holds_quota_lock(db))
-        require_capacity(db, purpose, expected_size)
+        require_capacity(db, purpose, expected_size, creator_id=creator_id)
 
     monkeypatch.setattr(service, "require_capacity", checked)
     created = None

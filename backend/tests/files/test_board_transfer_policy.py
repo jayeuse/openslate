@@ -22,7 +22,7 @@ def test_board_file_upload_and_contextual_download_receive_transfer_leases() -> 
     )
     reconcile = file_transfer_policy(f"/api/boards/{board}/files/{file}/reconcile", "POST")
     purge = file_transfer_policy(f"/api/boards/{board}/files/{file}/purge", "POST")
-    assert upload is not None and upload.request_bytes == 25 * 1024 * 1024
+    assert upload is not None and upload.request_bytes == 10 * 1024 * 1024
     assert event_download is not None and event_download.deadline_seconds == 120
     assert notice_download is not None and notice_download.deadline_seconds == 120
     assert reconcile is not None and purge is not None
@@ -41,7 +41,7 @@ def test_board_file_and_post_routes_are_mounted() -> None:
     [
         pytest.param("/api/workspace/logo", "GET", FileTransferPolicy(MIB, 120), id="logo"),
         pytest.param(
-            f"/api/files/{FILE}/content", "PUT", FileTransferPolicy(25 * MIB, 120), id="upload"
+            f"/api/files/{FILE}/content", "PUT", FileTransferPolicy(10 * MIB, 120), id="upload"
         ),
         pytest.param(
             f"/api/files/{FILE}/content", "GET", FileTransferPolicy(MIB, 120), id="download"
@@ -63,6 +63,6 @@ def test_board_file_and_post_routes_are_mounted() -> None:
 def test_each_known_file_request_gets_its_body_limit_and_deadline(
     path: str, method: str, policy: FileTransferPolicy | None
 ) -> None:
-    """Uploads take the 25 MiB file limit; every other file request keeps 1 MiB; all get 120 s."""
+    """Uploads take the 10 MiB file limit; every other file request keeps 1 MiB; all get 120 s."""
 
     assert file_transfer_policy(path, method) == policy

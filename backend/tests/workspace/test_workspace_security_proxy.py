@@ -72,6 +72,8 @@ def test_workspace_security_resolves_caddy_peer_and_refuses_forged_lockout(
         assert user is not None and profile is not None
         user.supabase_user_id = provider_id
         membership.role = "admin"
+        # The organization owner changes its IP allow list (owner decision 2).
+        profile.owner_user_id = local_id
         original = {
             field: getattr(profile, field)
             for field in (

@@ -258,6 +258,9 @@ def directory_list(
                     "mfa_observed_at": metadata[item.id]["mfa_observed_at"],
                     "last_sign_in_at": metadata[item.id]["last_sign_in_at"],
                     "last_active_at": metadata[item.id]["last_active_at"],
+                    "avatar_url": (
+                        f"/api/users/{item.id}/avatar" if item.avatar_file_id else None
+                    ),
                 }
             )
             for item in result.items

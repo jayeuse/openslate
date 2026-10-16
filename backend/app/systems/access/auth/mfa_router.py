@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -131,11 +131,13 @@ def status(
     response: Response,
     identity: Annotated[CurrentIdentity, Depends(get_mfa_identity)],
     db: Annotated[Session, Depends(get_db)],
+    x_org: Annotated[UUID | None, Header()] = None,
 ) -> dict[str, object]:
     response.headers["Cache-Control"] = "no-store"
     try:
         return mfa.mfa_status(
-            db, identity.user, _access(request, identity), get_supabase_auth_client()
+            db, identity.user, _access(request, identity), get_supabase_auth_client(),
+            org_id=x_org,
         )
     except _ERRORS as error:
         db.rollback()

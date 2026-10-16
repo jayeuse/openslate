@@ -21,7 +21,7 @@ from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.auth.cookies import clear_browser_session
 from app.systems.access.policy.scope import explain_access
-from app.systems.access.users.avatar_delivery import deliver_avatar
+from app.systems.access.users.avatar_delivery import ThumbnailSize, deliver_avatar
 from app.systems.access.users.coordination import (
     InvitationConflict,
     InvitationError,
@@ -162,8 +162,9 @@ def get_person_avatar(
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage)],
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    size: Annotated[ThumbnailSize | None, Query()] = None,
 ) -> Response:
-    return deliver_avatar(request, db, identity, user_id, storage, bearer)
+    return deliver_avatar(request, db, identity, user_id, storage, bearer, size)
 
 
 @router.patch("/{user_id}/preferences", response_model=UserPreferencesResponse)

@@ -352,6 +352,21 @@ def require_platform_operator(db: Session, user_id: UUID) -> None:
         })
 
 
+def require_organization_owner(db: Session, user_id: UUID) -> None:
+    """Sensitive organization security belongs to its owner (or the installation owner)."""
+
+    organization = db.get(WorkspaceProfile, bound_organization(db))
+    if organization is not None and organization.owner_user_id == user_id:
+        return
+    if is_platform_operator(db, user_id):
+        return
+    db.rollback()
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
+        "code": "owner_required",
+        "message": "Only the organization owner can change this setting",
+    })
+
+
 def require_admin(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],

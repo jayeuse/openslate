@@ -75,7 +75,8 @@ def requires_mfa(
 
 
 def mfa_status(
-    db: Session, user: User, access_token: str, client: SupabaseAuthClient
+    db: Session, user: User, access_token: str, client: SupabaseAuthClient,
+    *, org_id: UUID | None = None,
 ) -> dict[str, object]:
     claims = client.verify_access_token(access_token)
     if claims.user_id != user.supabase_user_id:
@@ -104,7 +105,9 @@ def mfa_status(
         or (user.tokens_valid_after is not None and claims.issued_at < user.tokens_valid_after)
     ):
         raise InvalidCredentials("Invalid credentials")
-    policy, membership = _session_requirement(db, session) if session else (None, None)
+    policy, membership = (
+        _session_requirement(db, session, org_id) if session else (None, None)
+    )
     policy_required = bool(policy and membership and mfa_role_required(policy, membership.role))
     since = membership.mfa_required_since if policy_required and membership else None
     result = {
@@ -254,10 +257,12 @@ def verify_factor(
 
 
 def _session_requirement(
-    db: Session, session: IdentitySession,
+    db: Session, session: IdentitySession, org_id: UUID | None = None,
 ) -> tuple[WorkspaceProfile | None, Membership | None]:
+    # The organization the client is entering (X-Org), else the session's saved one.
+    target = org_id or session.active_org_id
     membership = next((row for row in eligible_memberships(db, session.user_id)
-                       if row.org_id == session.active_org_id), None)
+                       if row.org_id == target), None)
     policy = load_workspace_policy(db, org_id=membership.org_id) if membership else None
     return policy, membership
 

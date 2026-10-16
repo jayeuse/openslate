@@ -9,7 +9,9 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.main import create_app
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.conftest import make_operator, membership_of
 from tests.platform_scheduling.support import assert_notice_hidden, notification_client
@@ -416,6 +418,8 @@ def test_reconciled_backup_failure_notifies_authoritative_audience_atomically(
     requester = db.get(User, run.requester_id)
     fallback = make_operator(db, add_user(db, role=UserRole.ADMIN))
     excluded = make_operator(db, add_user(db, role=UserRole.ADMIN, status=UserStatus.DISABLED))
+    # Backups cover the installation: its owner's organization hears about them.
+    db.get(WorkspaceProfile, bound_organization(db)).owner_user_id = fallback.id
     current = _after_database_now(db)
     if audience == "scheduled":
         run.provenance, run.requester_id, run.idempotency_hash = "scheduled", None, None

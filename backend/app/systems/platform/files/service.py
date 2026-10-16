@@ -134,19 +134,26 @@ def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
         record_id=payload.record_id,
         department_id=payload.department_id,
     )
-    require_capacity(db, payload.purpose, payload.expected_size)
+    require_capacity(db, payload.purpose, payload.expected_size, creator_id=user.id)
     parent(db, payload.record_id, active=True, lock=True, department_id=payload.department_id)
     if payload.purpose == "user_avatar":
         db.refresh(user, with_for_update={"nowait": True})
         authorize(db, user, "user_avatar", write=True)
+    org_id = None if payload.purpose == "user_avatar" else bound_organization(db)
     file = File(
-        org_id=(None if payload.purpose == "user_avatar"
-                else bound_organization(db)),
-        **payload.model_dump(), creator_id=user.id, object_key=uuid4().hex, state="awaiting_upload"
+        org_id=org_id,
+        **payload.model_dump(), creator_id=user.id,
+        object_key=object_key(org_id=org_id, user_id=user.id), state="awaiting_upload",
     )
     db.add(file)
     db.commit()
     return FileResponse.model_validate(file)
+
+
+def object_key(*, org_id: UUID | None, user_id: UUID) -> str:
+    """Storage key: ``org/<org_id>/…`` for organization files, ``user/<user_id>/…`` avatars."""
+
+    return f"org/{org_id}/{uuid4().hex}" if org_id is not None else f"user/{user_id}/{uuid4().hex}"
 
 
 def reserve_board(
@@ -158,7 +165,7 @@ def reserve_board(
     expire_unused_reservations(db, datetime.now(UTC))
     lock_quota(db)
     authorize_board_file(db, fresh_user(db, user.id), board_id, write=True, lock=True)
-    require_capacity(db, "board_attachment", payload.expected_size)
+    require_capacity(db, "board_attachment", payload.expected_size, creator_id=user.id)
     file = File(
         org_id=bound_organization(db),
         purpose="board_attachment",
@@ -167,7 +174,7 @@ def reserve_board(
         creator_id=user.id,
         filename=payload.filename,
         expected_size=payload.expected_size,
-        object_key=uuid4().hex,
+        object_key=object_key(org_id=bound_organization(db), user_id=user.id),
         state="awaiting_upload",
     )
     db.add(file)

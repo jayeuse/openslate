@@ -125,7 +125,8 @@ def native_avatar(world, *, owner_id=None, bind=False, purpose="user_avatar", or
             actual_size=len(content),
             media_type="image/png",
             digest=sha256(content).hexdigest(),
-            object_key=uuid4().hex,
+            object_key=f"user/{owner_id}/{uuid4().hex}" if org_id is None
+            else f"org/{org_id}/{uuid4().hex}",
             state="ready",
         )
         db.add(file)

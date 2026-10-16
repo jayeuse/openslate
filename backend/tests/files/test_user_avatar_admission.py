@@ -119,6 +119,7 @@ def test_avatar_pending_quota_charges_canonical_image_budget(avatar_world):
         org_id = db.scalars(
             select(Membership.org_id).where(Membership.user_id == world.actor_id)
         ).one()
+        # Pending organization files never consume an account's avatar budget.
         db.add(
             File(
                 org_id=org_id,
@@ -126,29 +127,29 @@ def test_avatar_pending_quota_charges_canonical_image_budget(avatar_world):
                 creator_id=world.actor_id,
                 filename="logo.png",
                 expected_size=1,
-                object_key=uuid4().hex,
+                object_key=f"org/{org_id}/{uuid4().hex}",
                 state="awaiting_upload",
             )
         )
-        # Two actual pending images consume two canonical budgets, not two bytes.
-        pending = File(
-            org_id=org_id,
-            purpose="workspace_logo",
-            creator_id=world.actor_id,
-            filename="last.png",
-            expected_size=1,
-            object_key=uuid4().hex,
-            state="awaiting_upload",
-        )
-        db.add(pending)
+        # Two pending avatars of this account consume two canonical budgets, not two bytes.
+        for name in ("first.png", "last.png"):
+            db.add(File(
+                org_id=None,
+                purpose="user_avatar",
+                creator_id=world.actor_id,
+                filename=name,
+                expected_size=1,
+                object_key=f"user/{world.actor_id}/{uuid4().hex}",
+                state="awaiting_upload",
+            ))
         db.commit()
         lock_quota(db)
-        require_capacity(db, "user_avatar", 1)
+        require_capacity(db, "user_avatar", 1, creator_id=world.actor_id)
         # A reduced capacity boundary exposes the avatar charge without crossing the
         # separate 100-reservation count cap. The SQL occupancy and charge are real.
         from unittest.mock import patch
 
         with patch("app.systems.platform.files.quota.PENDING_UPLOAD_BYTES", 4 * 1024 * 1024):
             with pytest.raises(HTTPException) as refused:
-                require_capacity(db, "user_avatar", 1)
+                require_capacity(db, "user_avatar", 1, creator_id=world.actor_id)
         assert refused.value.detail["code"] == "file_uploads_full"

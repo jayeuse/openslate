@@ -13,7 +13,7 @@ from app.common.dependencies.auth import CurrentIdentity
 from app.core.base_model import utc_now
 from app.systems.access.policy.checks import require_live_session
 from app.systems.access.policy.scope import effective_levels
-from app.systems.access.users.membership import eligible_memberships
+from app.systems.access.users.membership import eligible_memberships, is_platform_operator
 from app.systems.access.users.models import Membership, User
 from app.systems.access.users.schemas import (
     AccountResponse,
@@ -67,10 +67,15 @@ def self_profile_response(
             "memberships": [summary(row) for row in eligible_memberships(db, user.id)],
             "pending_invitations": pending,
             "current_organization": (
-                {**summary(membership), "access": entries} if membership else None
+                {
+                    **summary(membership), "access": entries,
+                    "owner": organizations[membership.org_id].owner_user_id == user.id,
+                }
+                if membership else None
             ),
             "default_organization_blocked": default_organization_blocked,
             "role": membership.role if membership else None,
+            "operator": is_platform_operator(db, user.id),
             "sponsor_user_id": membership.sponsor_user_id if membership else None,
             "expires_at": membership.expires_at if membership else None,
             "invitation_sent_at": membership.invitation_sent_at if membership else None,

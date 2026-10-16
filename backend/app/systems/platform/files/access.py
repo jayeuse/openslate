@@ -10,7 +10,7 @@ from app.systems.access.policy.checks import module_level
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes, level_for
 from app.systems.access.users.eligibility import is_active_account
-from app.systems.access.users.membership import current_membership
+from app.systems.access.users.membership import bound_organization, current_membership
 from app.systems.access.users.models import User, UserRole
 from app.systems.boards.access import board_level
 from app.systems.boards.attachment_models import (
@@ -245,7 +245,8 @@ def load(
     shared_lock: bool = False,
 ) -> File:
     file = db.get(File, file_id)
-    if file is None:
+    # RLS hides other organizations' rows; this also covers an identity-map hit.
+    if file is None or (file.org_id is not None and file.org_id != bound_organization(db)):
         raise error("file_not_found", "File not found", 404)
     if lock and file.purpose == "user_avatar":
         # Profile bindings serialize on the creator User before any File lock.

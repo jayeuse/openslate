@@ -13,6 +13,7 @@ def _storage_api(*, public_bucket: str | None = None):
     buckets = {
         "openslate-ready": {"folder/orphan", "folder/deep/unlinked"}
         | {f"root-{index:03d}" for index in range(101)},
+        "openslate-avatars": {"user/account/avatar"},
     }
     deleted: list[tuple[str, tuple[str, ...]]] = []
 
@@ -58,12 +59,13 @@ def test_storage_reset_lists_every_private_object_across_pages_and_nested_paths(
 
     keys = storage.list_object_keys()
 
-    assert len(keys) == 103
+    assert len(keys) == 104
+    assert "openslate-avatars/user/account/avatar" in keys
     assert "openslate-ready/folder/deep/unlinked" in keys
     assert "openslate-ready/folder/orphan" in keys
     assert "openslate-ready/root-100" in keys
     storage.delete_and_verify_empty(keys)
-    assert buckets == {"openslate-ready": set()}
+    assert buckets == {"openslate-ready": set(), "openslate-avatars": set()}
     assert {bucket for bucket, _ in deleted} == set(buckets)
     assert storage.list_object_keys() == ()
 

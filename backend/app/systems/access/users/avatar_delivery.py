@@ -1,9 +1,12 @@
 """Current authenticated avatar binding checked around unlocked private Storage I/O."""
 
+from enum import IntEnum
+from io import BytesIO
 from uuid import UUID
 
 from fastapi import Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
+from PIL import Image, ImageOps
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -37,6 +40,25 @@ def _bound_avatar(db: Session, identity: CurrentIdentity, target_id: UUID) -> Fi
     return ready_avatar(file, target_id)
 
 
+class ThumbnailSize(IntEnum):
+    SMALL = 64
+    LARGE = 256
+
+
+def thumbnail(content: bytes, media_type: str, size: int) -> bytes:
+    """A square cover crop of validated avatar bytes (D19: FastAPI resizes)."""
+
+    with Image.open(BytesIO(content)) as image:
+        image.draft("RGB", (size, size))
+        fitted = ImageOps.fit(ImageOps.exif_transpose(image), (size, size))
+        output = BytesIO()
+        if media_type == "image/png":
+            fitted.convert("RGBA").save(output, format="PNG", optimize=True)
+        else:
+            fitted.convert("RGB").save(output, format="JPEG", quality=85)
+        return output.getvalue()
+
+
 def deliver_avatar(
     request: Request,
     db: Session,
@@ -44,6 +66,7 @@ def deliver_avatar(
     target_id: UUID,
     storage: StorageBackend,
     bearer: HTTPAuthorizationCredentials | None,
+    thumbnail_size: ThumbnailSize | None = None,
 ) -> Response:
     with transfer_slot():
         try:
@@ -60,6 +83,8 @@ def deliver_avatar(
         except SQLAlchemyError as exc:
             db.rollback()
             raise error("avatar_unavailable", "Avatar is unavailable", 503) from exc
+        if thumbnail_size is not None:
+            content = thumbnail(content, media_type, thumbnail_size)
         return Response(
             content,
             media_type=media_type,

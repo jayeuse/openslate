@@ -9,13 +9,22 @@ import httpx
 from app.systems.platform.files.providers import ProviderRejected, ProviderUnavailable
 from app.systems.platform.files.validation import MAX_BYTES
 
-_KEY = re.compile(r"[0-9a-f]{32}\Z")
+# Organization files live under their organization; avatars are account files (D17).
+_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_KEY = re.compile(rf"(org|user)/{_UUID}/[0-9a-f]{{32}}\Z")
 _READY = "openslate-ready"
+_AVATARS = "openslate-avatars"
+
+
+def bucket_for(key: str) -> str:
+    return _AVATARS if key.startswith("user/") else _READY
+
+
 _ERROR_LIMIT = 4096
 
 
 class SupabaseStorage:
-    """Opaque immutable keys in one private, preprovisioned Supabase bucket."""
+    """Opaque immutable keys in private, preprovisioned Supabase buckets."""
 
     def __init__(
         self,
@@ -125,7 +134,7 @@ class SupabaseStorage:
         if len(content) > MAX_BYTES:
             raise ProviderRejected("Storage object exceeds the configured limit")
         status, body = self._request(
-            "POST", f"object/{_READY}/{key}", content=content, media_type=media_type
+            "POST", f"object/{bucket_for(key)}/{key}", content=content, media_type=media_type
         )
         if self._is_conflict(status, body):
             raise ProviderRejected("An immutable storage object already exists")
@@ -134,7 +143,7 @@ class SupabaseStorage:
     def download(self, key: str) -> bytes | None:
         self._validate_key(key)
         status, body = self._request(
-            "GET", f"object/authenticated/{_READY}/{key}", object_read=True
+            "GET", f"object/authenticated/{bucket_for(key)}/{key}", object_read=True
         )
         if self._is_missing(status, body):
             return None
@@ -143,7 +152,7 @@ class SupabaseStorage:
 
     def delete(self, key: str) -> None:
         self._validate_key(key)
-        status, body = self._request("DELETE", f"object/{_READY}/{key}")
+        status, body = self._request("DELETE", f"object/{bucket_for(key)}/{key}")
         if not self._is_missing(status, body):
             self._require_success(status)
         if self.download(key) is not None:

@@ -12,6 +12,7 @@ from uuid6 import uuid7
 from app.common.dependencies import (
     get_current_user,
     require_fresh_exact_admin,
+    require_organization_owner,
     require_platform_operator,
 )
 from app.common.dependencies.auth import CurrentIdentity, get_current_identity
@@ -138,6 +139,8 @@ def update_workspace_security(
     actor = require_fresh_exact_admin(db, actor_id)
     try:
         changed = payload.model_fields_set - {"revision"}
+        # Security is the owner's; other administrators read it (owner decision 2026-10-16).
+        require_organization_owner(db, actor_id)
         if changed & _PLATFORM_FIELDS:
             # Installation-wide fields reach every organization: the installation owner sets them.
             require_platform_operator(db, actor_id)

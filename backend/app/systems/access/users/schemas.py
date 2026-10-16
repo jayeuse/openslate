@@ -42,6 +42,7 @@ class DirectoryRowResponse(UserResponse):
     mfa_observed_at: datetime | None
     last_sign_in_at: datetime | None
     last_active_at: datetime | None
+    avatar_url: str | None = None
 
 
 class UserListResponse(StandardListResponse[DirectoryRowResponse]):
@@ -96,6 +97,8 @@ class OrganizationMembershipResponse(BaseModel):
 
 class CurrentOrganizationResponse(OrganizationMembershipResponse):
     access: list[AccessEntryResponse]
+    # The organization owner changes its sensitive security; other admins do the rest.
+    owner: bool = False
 
 
 class PendingInvitationResponse(OrganizationMembershipResponse):
@@ -125,6 +128,8 @@ class AuthMeResponse(AccountResponse):
     default_organization_blocked: DefaultOrganizationBlocked | None
     role: UserRole | None
     access: list[AccessEntryResponse]
+    # The installation owner (on-prem) changes installation-wide sign-in and session policy.
+    operator: bool = False
     sponsor_user_id: UUID | None = None
     expires_at: datetime | None = None
     invitation_sent_at: datetime | None = None
