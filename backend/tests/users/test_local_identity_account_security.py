@@ -19,6 +19,12 @@ from app.systems.access.users.schemas import UserUpdate
 from app.systems.manage.workspace.models import PlatformSettings
 from tests.users.user_support import local_user
 
+
+@pytest.fixture(autouse=True)
+def _single_organization_accounts(monkeypatch):
+    """These mock-database cases cover one organization; shared accounts have their own tests."""
+    monkeypatch.setattr(account_operations, "shares_another_organization", lambda db, user: False)
+
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
 
 

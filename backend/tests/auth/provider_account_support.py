@@ -74,10 +74,12 @@ def provider_account():
                     db.flush()
                     membership = db.scalar(select(Membership).where(Membership.user_id == local_id))
                     organization = db.get(WorkspaceProfile, membership.org_id)
-                    db.connection().execute(
-                        text("DELETE FROM public.audit_logs WHERE org_id = :org_id"),
-                        {"org_id": organization.id},
-                    )
+                    # Recovery and admin actions record security events in the organization.
+                    for table in ("audit_logs", "security_events"):
+                        db.connection().execute(
+                            text(f"DELETE FROM public.{table} WHERE org_id = :org_id"),
+                            {"org_id": organization.id},
+                        )
                     db.delete(membership)
                     db.flush()
                     user = db.get(User, local_id)
