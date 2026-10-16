@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, MailOpen } from "lucide-react";
+import { Check, ChevronsUpDown, LoaderCircle, MailOpen } from "lucide-react";
 
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import {
@@ -45,6 +45,8 @@ type OrganizationMenuProps = {
   onAccepted?: () => void;
   /** The phone drawer header sets the name at body size. */
   compact?: boolean;
+  /** The collapsed sidebar shows an icon-only trigger. */
+  iconOnly?: boolean;
 };
 
 /**
@@ -58,6 +60,7 @@ export function OrganizationMenu({
   onSwitchOrganization,
   onAccepted,
   compact = false,
+  iconOnly = false,
 }: OrganizationMenuProps) {
   const router = useRouter();
   const requestNavigation = useWorkspaceNavigationRequest();
@@ -97,24 +100,39 @@ export function OrganizationMenu({
         render={
           <button
             type="button"
-            aria-label={`Organization: ${name}`}
-            disabled={suspended}
-            className="hover:bg-sidebar-accent focus-visible:outline-ring flex min-h-11 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-2"
+            aria-label={
+              switching ? `Switching from ${name}` : `Organization: ${name}`
+            }
+            aria-busy={switching || undefined}
+            disabled={suspended || switching}
+            className={cn(
+              "hover:bg-sidebar-accent focus-visible:outline-ring flex min-h-11 items-center gap-1.5 rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-wait",
+              iconOnly ? "min-w-11 justify-center" : "min-w-0 flex-1 px-1.5",
+            )}
           />
         }
       >
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate font-semibold",
-            compact ? "text-base" : "text-lg tracking-tight",
-          )}
-        >
-          {name}
-        </span>
-        <ChevronsUpDown
-          aria-hidden="true"
-          className="text-sidebar-muted size-4 shrink-0"
-        />
+        {iconOnly ? null : (
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate font-semibold",
+              compact ? "text-base" : "text-lg tracking-tight",
+            )}
+          >
+            {switching ? "Switching…" : name}
+          </span>
+        )}
+        {switching ? (
+          <LoaderCircle
+            aria-hidden="true"
+            className="text-sidebar-muted size-4 shrink-0 animate-spin motion-reduce:animate-none"
+          />
+        ) : (
+          <ChevronsUpDown
+            aria-hidden="true"
+            className="text-sidebar-muted size-4 shrink-0"
+          />
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
@@ -125,15 +143,29 @@ export function OrganizationMenu({
           <DropdownMenuLabel className="text-muted-foreground px-2 py-1.5 text-xs font-medium">
             Organizations
           </DropdownMenuLabel>
-          {memberships.length === 0 ? (
+          {identity.isPending ? (
             <p
               className="text-muted-foreground px-2 py-2 text-sm"
               role="status"
             >
-              {identity.isError
-                ? "Organizations could not be loaded."
-                : "Loading organizations…"}
+              Loading organizations…
             </p>
+          ) : memberships.length === 0 ? (
+            <>
+              <p
+                className="text-muted-foreground px-2 py-2 text-sm"
+                role="status"
+              >
+                Organizations could not be loaded.
+              </p>
+              <DropdownMenuItem
+                className="min-h-11"
+                closeOnClick={false}
+                onClick={() => void identity.refetch()}
+              >
+                Try again
+              </DropdownMenuItem>
+            </>
           ) : null}
           {memberships.map((organization) => {
             const selected = organization.orgId === organizationId;

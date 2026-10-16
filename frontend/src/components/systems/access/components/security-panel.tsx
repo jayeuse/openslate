@@ -545,11 +545,13 @@ export function SecurityPolicyForm({
     label: string,
     minimum: number,
     maximum: number,
-    disabled = false,
   ) {
     const error = errors[key];
+    // Only the enrollment grace belongs to the organization; the rest are installation-wide.
+    const disabled =
+      key === "mfaGrace" ? !editable.organization : !editable.installation;
     return (
-      <Field data-invalid={Boolean(error)}>
+      <Field data-invalid={Boolean(error)} disabled={disabled}>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
         <Input
           id={id}
@@ -583,197 +585,8 @@ export function SecurityPolicyForm({
         <Alert role="note">
           Only the organization owner can change these settings.
         </Alert>
-      ) : !editable.installation ? (
-        <Alert role="note">
-          Password, session, retention, and sign-in attempt rules apply to the
-          whole installation. Only the installation owner can change them.
-        </Alert>
       ) : null}
       <div className="grid gap-4 sm:grid-cols-2">
-        <fieldset
-          disabled={!editable.installation}
-          className="min-w-0 space-y-3 sm:col-span-2"
-          aria-describedby="password-rules-description"
-        >
-          <legend className="text-sm font-medium">Password requirements</legend>
-          <div className="grid min-w-0 gap-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-start">
-            <Field data-invalid={Boolean(errors.minimumLength)}>
-              <FieldLabel htmlFor="password-minimum">
-                Minimum password length
-              </FieldLabel>
-              <Input
-                id="password-minimum"
-                type="number"
-                inputMode="numeric"
-                min={12}
-                max={128}
-                step={1}
-                className={`min-h-11 ${hideNumberSpinners}`}
-                value={current.minimumLength}
-                aria-invalid={Boolean(errors.minimumLength)}
-                aria-describedby={
-                  errors.minimumLength
-                    ? "password-minimum-error password-rules-description"
-                    : "password-rules-description"
-                }
-                onChange={(event) =>
-                  changeSetting("minimumLength", event.target.value)
-                }
-              />
-              <FieldError id="password-minimum-error">
-                {errors.minimumLength}
-              </FieldError>
-            </Field>
-            <div className="min-w-0 space-y-1">
-              <Field>
-                <FieldLabel
-                  htmlFor="password-mixed-case"
-                  className="flex min-h-11 items-center gap-3 font-normal"
-                >
-                  <Checkbox
-                    id="password-mixed-case"
-                    disabled={!editable.installation}
-                    checked={current.requireMixedCase}
-                    onCheckedChange={(value) =>
-                      changeSetting("requireMixedCase", value)
-                    }
-                  />
-                  <span>Require uppercase and lowercase letters</span>
-                </FieldLabel>
-              </Field>
-              <Field>
-                <FieldLabel
-                  htmlFor="password-number"
-                  className="flex min-h-11 items-center gap-3 font-normal"
-                >
-                  <Checkbox
-                    id="password-number"
-                    disabled={!editable.installation}
-                    checked={current.requireNumber}
-                    onCheckedChange={(value) =>
-                      changeSetting("requireNumber", value)
-                    }
-                  />
-                  <span>Require a number</span>
-                </FieldLabel>
-              </Field>
-            </div>
-          </div>
-          <p
-            id="password-rules-description"
-            className="text-muted-foreground text-sm"
-          >
-            Use 12–128 characters. Common passwords are rejected. These rules
-            apply when a password is next set or changed; existing passwords
-            stay unchanged.
-          </p>
-        </fieldset>
-        <fieldset
-          disabled={!editable.installation}
-          className="min-w-0 space-y-3 sm:col-span-2"
-        >
-          <legend className="text-sm font-medium">Session limits</legend>
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="min-w-0 sm:col-span-2 lg:col-span-1">
-              <SettingSelect
-                id="session-timeout"
-                label="Session timeout"
-                value={current.timeout}
-                error={errors.timeout}
-                options={["15 minutes", "30 minutes", "60 minutes", "8 hours"]}
-                onChange={(value) =>
-                  changeSetting(
-                    "timeout",
-                    value as SecuritySettingsFormFields["timeout"],
-                  )
-                }
-              />
-            </div>
-            <div className="min-w-0 space-y-3">
-              <SettingSelect
-                id="session-absolute-mode"
-                label="Total session lifetime"
-                value={current.absoluteLifetime === "Off" ? "Off" : "Limited"}
-                options={["Off", "Limited"]}
-                onChange={(value) =>
-                  changeSetting(
-                    "absoluteLifetime",
-                    value === "Off" ? "Off" : "",
-                  )
-                }
-              />
-              {current.absoluteLifetime !== "Off" &&
-                numberField(
-                  "absoluteLifetime",
-                  "session-absolute-minutes",
-                  "Lifetime (minutes)",
-                  1,
-                  43200,
-                )}
-              <p className="text-muted-foreground text-sm">
-                Limit the total time from sign-in, even while the session stays
-                active.
-              </p>
-            </div>
-            <div className="min-w-0 space-y-3">
-              <SettingSelect
-                id="session-cap-mode"
-                label="Concurrent session limit"
-                value={current.concurrentLimit === "Off" ? "Off" : "Limited"}
-                options={["Off", "Limited"]}
-                onChange={(value) =>
-                  changeSetting("concurrentLimit", value === "Off" ? "Off" : "")
-                }
-              />
-              {current.concurrentLimit !== "Off" &&
-                numberField(
-                  "concurrentLimit",
-                  "session-cap",
-                  "Maximum sessions",
-                  1,
-                  100,
-                )}
-              <p className="text-muted-foreground text-sm">
-                Applies when sign-in completes.
-              </p>
-            </div>
-          </div>
-        </fieldset>
-        <fieldset
-          disabled={!editable.installation}
-          className="min-w-0 space-y-3 sm:col-span-2"
-          aria-describedby={
-            retentionShortened ? "security-retention-description" : undefined
-          }
-        >
-          <legend className="text-sm font-medium">Retention</legend>
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-            {numberField(
-              "sessionRetention",
-              "session-retention-days",
-              "Session retention (days)",
-              1,
-              3650,
-            )}
-            {numberField(
-              "eventRetention",
-              "security-event-retention-days",
-              "Security event retention (days)",
-              1,
-              3650,
-            )}
-          </div>
-          {retentionShortened ? (
-            <Alert
-              id="security-retention-description"
-              variant="warning"
-              role="note"
-            >
-              Shortening a period can make older sessions or security events
-              eligible for deletion at the next cleanup.
-            </Alert>
-          ) : null}
-        </fieldset>
         <fieldset
           className="min-w-0 space-y-3 sm:col-span-2"
           aria-describedby="mfa-policy-description"
@@ -794,7 +607,7 @@ export function SecurityPolicyForm({
                 ["requireMfaGuest", "guests"],
               ] as const
             ).map(([key, role]) => (
-              <Field key={key}>
+              <Field key={key} disabled={!editable.organization}>
                 <FieldLabel
                   htmlFor={`mfa-${role}`}
                   className="flex min-h-11 items-center gap-3 font-normal"
@@ -817,7 +630,6 @@ export function SecurityPolicyForm({
               "Enrollment grace (days)",
               0,
               30,
-              !editable.organization,
             )}
             <Button
               type="button"
@@ -831,43 +643,6 @@ export function SecurityPolicyForm({
           <p className="text-muted-foreground text-sm">
             Newly required accounts can enroll during the grace period. Zero
             days requires enrollment immediately.
-          </p>
-        </fieldset>
-        <fieldset
-          disabled={!editable.installation}
-          className="min-w-0 space-y-3 sm:col-span-2"
-          aria-describedby="login-policy-description"
-        >
-          <legend className="text-sm font-medium">Sign-in attempts</legend>
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {numberField(
-              "loginThreshold",
-              "login-threshold",
-              "Failed attempts before lockout",
-              1,
-              100,
-            )}
-            {numberField(
-              "loginWindow",
-              "login-window",
-              "Attempt window (minutes)",
-              1,
-              1440,
-            )}
-            {numberField(
-              "loginCooldown",
-              "login-cooldown",
-              "Lockout duration (minutes)",
-              1,
-              1440,
-            )}
-          </div>
-          <p
-            id="login-policy-description"
-            className="text-muted-foreground text-sm"
-          >
-            Too many failed attempts within the window temporarily block further
-            attempts. Existing lockouts keep their remaining time.
           </p>
         </fieldset>
         <fieldset
@@ -934,7 +709,10 @@ export function SecurityPolicyForm({
               {errors.ips}
             </p>
           ) : null}
-          <Field data-invalid={Boolean(errors.ipEntry)}>
+          <Field
+            data-invalid={Boolean(errors.ipEntry)}
+            disabled={!editable.organization}
+          >
             <FieldLabel htmlFor="ip-entry">IP address or CIDR</FieldLabel>
             <div className="flex min-w-0 flex-wrap gap-2">
               <Input
@@ -976,6 +754,242 @@ export function SecurityPolicyForm({
               {addressNotice}
             </p>
           ) : null}
+        </fieldset>
+        <div className="min-w-0 space-y-3 border-t pt-4 sm:col-span-2">
+          <h3 className="text-sm font-semibold">Installation-wide rules</h3>
+          {editable.organization && !editable.installation ? (
+            <Alert role="note">
+              These rules apply to every organization in this installation. Only
+              the installation owner can change them.
+            </Alert>
+          ) : null}
+        </div>
+        <fieldset
+          disabled={!editable.installation}
+          className="min-w-0 space-y-3 sm:col-span-2"
+          aria-describedby="password-rules-description"
+        >
+          <legend className="text-sm font-medium">Password requirements</legend>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-start">
+            <Field
+              data-invalid={Boolean(errors.minimumLength)}
+              disabled={!editable.installation}
+            >
+              <FieldLabel htmlFor="password-minimum">
+                Minimum password length
+              </FieldLabel>
+              <Input
+                id="password-minimum"
+                type="number"
+                inputMode="numeric"
+                min={12}
+                max={128}
+                step={1}
+                className={`min-h-11 ${hideNumberSpinners}`}
+                value={current.minimumLength}
+                aria-invalid={Boolean(errors.minimumLength)}
+                aria-describedby={
+                  errors.minimumLength
+                    ? "password-minimum-error password-rules-description"
+                    : "password-rules-description"
+                }
+                onChange={(event) =>
+                  changeSetting("minimumLength", event.target.value)
+                }
+              />
+              <FieldError id="password-minimum-error">
+                {errors.minimumLength}
+              </FieldError>
+            </Field>
+            <div className="min-w-0 space-y-1">
+              <Field disabled={!editable.installation}>
+                <FieldLabel
+                  htmlFor="password-mixed-case"
+                  className="flex min-h-11 items-center gap-3 font-normal"
+                >
+                  <Checkbox
+                    id="password-mixed-case"
+                    disabled={!editable.installation}
+                    checked={current.requireMixedCase}
+                    onCheckedChange={(value) =>
+                      changeSetting("requireMixedCase", value)
+                    }
+                  />
+                  <span>Require uppercase and lowercase letters</span>
+                </FieldLabel>
+              </Field>
+              <Field disabled={!editable.installation}>
+                <FieldLabel
+                  htmlFor="password-number"
+                  className="flex min-h-11 items-center gap-3 font-normal"
+                >
+                  <Checkbox
+                    id="password-number"
+                    disabled={!editable.installation}
+                    checked={current.requireNumber}
+                    onCheckedChange={(value) =>
+                      changeSetting("requireNumber", value)
+                    }
+                  />
+                  <span>Require a number</span>
+                </FieldLabel>
+              </Field>
+            </div>
+          </div>
+          <p
+            id="password-rules-description"
+            className="text-muted-foreground text-sm"
+          >
+            Use 12–128 characters. Common passwords are rejected. These rules
+            apply when a password is next set or changed; existing passwords
+            stay unchanged.
+          </p>
+        </fieldset>
+        <fieldset
+          disabled={!editable.installation}
+          className="min-w-0 space-y-3 sm:col-span-2"
+        >
+          <legend className="text-sm font-medium">Session limits</legend>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+              <SettingSelect
+                disabled={!editable.installation}
+                id="session-timeout"
+                label="Session timeout"
+                value={current.timeout}
+                error={errors.timeout}
+                options={["15 minutes", "30 minutes", "60 minutes", "8 hours"]}
+                onChange={(value) =>
+                  changeSetting(
+                    "timeout",
+                    value as SecuritySettingsFormFields["timeout"],
+                  )
+                }
+              />
+            </div>
+            <div className="min-w-0 space-y-3">
+              <SettingSelect
+                disabled={!editable.installation}
+                id="session-absolute-mode"
+                label="Total session lifetime"
+                value={current.absoluteLifetime === "Off" ? "Off" : "Limited"}
+                options={["Off", "Limited"]}
+                onChange={(value) =>
+                  changeSetting(
+                    "absoluteLifetime",
+                    value === "Off" ? "Off" : "",
+                  )
+                }
+              />
+              {current.absoluteLifetime !== "Off" &&
+                numberField(
+                  "absoluteLifetime",
+                  "session-absolute-minutes",
+                  "Lifetime (minutes)",
+                  1,
+                  43200,
+                )}
+              <p className="text-muted-foreground text-sm">
+                Limit the total time from sign-in, even while the session stays
+                active.
+              </p>
+            </div>
+            <div className="min-w-0 space-y-3">
+              <SettingSelect
+                disabled={!editable.installation}
+                id="session-cap-mode"
+                label="Concurrent session limit"
+                value={current.concurrentLimit === "Off" ? "Off" : "Limited"}
+                options={["Off", "Limited"]}
+                onChange={(value) =>
+                  changeSetting("concurrentLimit", value === "Off" ? "Off" : "")
+                }
+              />
+              {current.concurrentLimit !== "Off" &&
+                numberField(
+                  "concurrentLimit",
+                  "session-cap",
+                  "Maximum sessions",
+                  1,
+                  100,
+                )}
+              <p className="text-muted-foreground text-sm">
+                Applies when sign-in completes.
+              </p>
+            </div>
+          </div>
+        </fieldset>
+        <fieldset
+          disabled={!editable.installation}
+          className="min-w-0 space-y-3 sm:col-span-2"
+          aria-describedby={
+            retentionShortened ? "security-retention-description" : undefined
+          }
+        >
+          <legend className="text-sm font-medium">Retention</legend>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            {numberField(
+              "sessionRetention",
+              "session-retention-days",
+              "Session retention (days)",
+              1,
+              3650,
+            )}
+            {numberField(
+              "eventRetention",
+              "security-event-retention-days",
+              "Security event retention (days)",
+              1,
+              3650,
+            )}
+          </div>
+          {retentionShortened ? (
+            <Alert
+              id="security-retention-description"
+              variant="warning"
+              role="note"
+            >
+              Shortening a period can make older sessions or security events
+              eligible for deletion at the next cleanup.
+            </Alert>
+          ) : null}
+        </fieldset>
+        <fieldset
+          disabled={!editable.installation}
+          className="min-w-0 space-y-3 sm:col-span-2"
+          aria-describedby="login-policy-description"
+        >
+          <legend className="text-sm font-medium">Sign-in attempts</legend>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {numberField(
+              "loginThreshold",
+              "login-threshold",
+              "Failed attempts before lockout",
+              1,
+              100,
+            )}
+            {numberField(
+              "loginWindow",
+              "login-window",
+              "Attempt window (minutes)",
+              1,
+              1440,
+            )}
+            {numberField(
+              "loginCooldown",
+              "login-cooldown",
+              "Lockout duration (minutes)",
+              1,
+              1440,
+            )}
+          </div>
+          <p
+            id="login-policy-description"
+            className="text-muted-foreground text-sm"
+          >
+            Too many failed attempts within the window temporarily block further
+            attempts. Existing lockouts keep their remaining time.
+          </p>
         </fieldset>
       </div>
       {/* The dialog scrolls; the actions stay in reach at its bottom edge.

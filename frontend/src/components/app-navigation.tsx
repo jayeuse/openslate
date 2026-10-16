@@ -243,7 +243,7 @@ export function AppNavigation({
       if (href === "/manage?view=jobs" && jobsAdmission.current)
         void prefetchManageJobs(queryClient);
       if (
-        identity.data?.role === "admin" &&
+        identity.data?.currentOrganization?.role === "admin" &&
         href === "/manage?view=organization"
       )
         void prefetchManageWorkspace(queryClient);

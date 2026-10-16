@@ -608,7 +608,12 @@ function AppSidebarHeader({
   const name = brand?.display_name ?? "OpenSlate";
   return (
     <SidebarHeader className="shrink-0 gap-4 px-4 pt-4 pb-2">
-      <div className="flex min-w-0 items-center gap-1">
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-1",
+          collapsed && "flex-col",
+        )}
+      >
         <GuardedWorkspaceLink
           href={"/openview" as Route}
           aria-label={`${name} workspace`}
@@ -621,13 +626,12 @@ function AppSidebarHeader({
             hidden={concealed}
           />
         </GuardedWorkspaceLink>
-        {!collapsed ? (
-          <OrganizationMenu
-            name={name}
-            organizationId={organizationId}
-            onSwitchOrganization={onSwitchOrganization}
-          />
-        ) : null}
+        <OrganizationMenu
+          name={name}
+          organizationId={organizationId}
+          onSwitchOrganization={onSwitchOrganization}
+          iconOnly={collapsed}
+        />
       </div>
       {failed ? (
         <Button
