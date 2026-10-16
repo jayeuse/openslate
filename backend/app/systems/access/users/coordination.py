@@ -65,6 +65,20 @@ def get_user(db: Session, user_id: UUID) -> User:
     return user
 
 
+# TEMPORARY (owner checkpoint after S07): an account change (status, username, profile,
+# delete, security reset) reaches every organization the person belongs to. Until the
+# owner decides who may make such changes, one organization's administrator may make
+# them only for people who belong to no other organization.
+def refuse_shared_account(db: Session, user: User) -> None:
+    other = db.scalar(select(Membership.id).where(
+        Membership.user_id == user.id, Membership.org_id != bound_organization(db),
+        Membership.is_deleted.is_(False),
+    ).limit(1))
+    if other is not None:
+        db.rollback()
+        raise conflict("This person also belongs to another organization")
+
+
 def organization_member(db: Session, user: User) -> Membership:
     """The person's membership in the bound organization; others are not found here."""
     membership = organization_membership(db, user.id, fresh=True)

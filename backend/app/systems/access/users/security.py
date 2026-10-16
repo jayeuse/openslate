@@ -38,7 +38,7 @@ from app.systems.access.users.membership import (
     current_membership,
     require_current_membership,
 )
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.access.users.schemas import (
     UserMfaResetResponse,
     UserRecoveryResponse,
@@ -185,6 +185,14 @@ def checkpoint(
         if mutation and not eligible:
             raise refusal(
                 409, "security_target_ineligible", "This person is not eligible for this action."
+            )
+        if mutation and db.scalar(select(Membership.id).where(
+            Membership.user_id == target.id, Membership.org_id != bound_organization(db),
+            Membership.is_deleted.is_(False),
+        ).limit(1)) is not None:
+            # TEMPORARY (owner checkpoint after S07): account effects reach every organization.
+            raise refusal(
+                409, "security_target_shared", "This person also belongs to another organization."
             )
         return binding, eligible
     except InvalidProviderCredentials as error:

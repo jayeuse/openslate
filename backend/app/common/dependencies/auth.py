@@ -27,6 +27,7 @@ from app.systems.access.identity.provider_user_cache import recent_provider_user
 from app.systems.access.users.eligibility import is_active_account, is_active_membership
 from app.systems.access.users.membership import (
     bound_organization,
+    organization_membership,
     organization_required,
     remember_membership,
     require_current_membership,
@@ -324,10 +325,16 @@ def require_fresh_exact_admin(
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=503, detail="Unable to reload administrator") from error
+    # Re-read the membership under the lock too: a demotion may have committed meanwhile.
+    membership = (
+        organization_membership(db, actor.id, fresh=True) if isinstance(actor, User) else None
+    )
     if (
         not isinstance(actor, User)
+        or membership is None
         or not is_active_account(db, actor)
-        or require_current_membership(db, actor).role != UserRole.ADMIN.value
+        or not is_active_membership(actor, membership)
+        or membership.role != UserRole.ADMIN.value
     ):
         raise _forbidden(db)
     return actor

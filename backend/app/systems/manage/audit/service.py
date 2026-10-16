@@ -6,7 +6,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Select, String, exists, func, or_, select
+from sqlalchemy import Select, String, and_, exists, func, or_, select
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.exc import SQLAlchemyError
@@ -22,6 +22,7 @@ from app.common.listing import (
     execute_standard_list,
 )
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import bound_organization_column
 from app.core.database.session import AuditSession, get_engine
 from app.core.middleware.request_context import get_current_request_context
 from app.core.observability import log_event
@@ -111,10 +112,47 @@ def readable_audit_entries(db: Session, reader: User) -> ColumnElement[bool]:
     )
 
 
+def _bound_members() -> Select[tuple[UUID]]:
+    return select(Membership.user_id).where(Membership.org_id == bound_organization_column())
+
+
+def _audit_rows_of_bound_organization() -> ColumnElement[bool]:
+    """Rows of the bound organization, and account rows of its own people.
+
+    Install-wide rows (platform settings, backups) stay hidden from organization
+    readers until the owner decides who reads them (S07 checkpoint).
+    """
+
+    return or_(
+        AuditLog.org_id == bound_organization_column(),
+        and_(
+            AuditLog.org_id.is_(None),
+            AuditLog.entity_type == User.__tablename__,
+            AuditLog.entity_id.in_(_bound_members()),
+        ),
+    )
+
+
+def _security_events_of_bound_organization() -> ColumnElement[bool]:
+    """Events of the bound organization, and account events about its own people."""
+
+    return or_(
+        SecurityEvent.org_id == bound_organization_column(),
+        and_(
+            SecurityEvent.org_id.is_(None),
+            or_(
+                SecurityEvent.actor_id.in_(_bound_members()),
+                SecurityEvent.subject_id.in_(_bound_members()),
+            ),
+        ),
+    )
+
+
 def _reader_conditions(db: Session, reader: User | None) -> list[ColumnElement[bool]]:
+    organization = _audit_rows_of_bound_organization()
     if reader is None or require_current_membership(db, reader).role == UserRole.ADMIN.value:
-        return []
-    return [readable_audit_entries(db, reader)]
+        return [organization]
+    return [organization, readable_audit_entries(db, reader)]
 
 
 def audit_log_statement(
@@ -128,7 +166,7 @@ def audit_log_statement(
     created_after: datetime | None = None,
     created_before: datetime | None = None,
 ) -> Select[tuple[AuditLog]]:
-    conditions: list[ColumnElement[bool]] = []
+    conditions: list[ColumnElement[bool]] = [_audit_rows_of_bound_organization()]
     if action is not None:
         conditions.append(AuditLog.action == action)
     if entity_type is not None:
@@ -381,7 +419,7 @@ def list_security_events(
     occurred_after: datetime | None = None,
     occurred_before: datetime | None = None,
 ) -> ListQueryResult[SecurityEvent]:
-    conditions: list[ColumnElement[bool]] = []
+    conditions: list[ColumnElement[bool]] = [_security_events_of_bound_organization()]
     if operation_id is not None:
         conditions.append(SecurityEvent.operation_id == operation_id)
     if event_type is not None:

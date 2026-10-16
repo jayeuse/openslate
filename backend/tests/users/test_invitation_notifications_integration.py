@@ -12,6 +12,7 @@ from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.platform.scheduling.models import InAppNotification
+from tests.conftest import create_member, create_organization, membership_of
 from tests.platform_scheduling.support import notification_client as _client
 from tests.rbac.support import add_user
 
@@ -138,3 +139,39 @@ def test_acceptance_notifies_original_inviter_or_current_admins_once_and_atomica
     db.commit()
     assert client.get("/api/notifications").json()["items"] == []
     assert client.post(f"/api/notifications/{notices[0].id}/read").status_code == 404
+
+
+def test_an_existing_account_accepts_another_organizations_invitation(
+    integration_owner_db, monkeypatch
+):
+    """S05 step 6: an invitation to an existing account adds a membership it can accept."""
+    db = integration_owner_db
+    person = add_user(db, role=UserRole.MEMBER)
+    first = membership_of(db, person.id)
+    second_org = create_organization(db)
+    _, sponsor_membership = create_member(db, second_org, "admin")
+    invited = Membership(
+        id=uuid7(), org_id=second_org.id, user_id=person.id, role=UserRole.MEMBER.value,
+        status=UserStatus.PENDING.value, invitation_sent_at=utc_now(),
+    )
+    db.add(invited)
+    db.commit()
+    monkeypatch.setattr(acceptance, "begin_invitation_acceptance", lambda _id: uuid7())
+    monkeypatch.setattr(acceptance, "record_invitation_acceptance_failure", lambda *args: None)
+
+    accepted = acceptance.accept_verified_invitation(
+        db, person.id, verified_email=person.email, verified_identity=person.id
+    )
+
+    db.expire_all()
+    assert accepted.status == UserStatus.ACTIVE.value
+    assert invited.status == UserStatus.ACTIVE.value and invited.invitation_accepted_at
+    assert first.status == UserStatus.ACTIVE.value and first.org_id != second_org.id
+    assert sponsor_membership.role == UserRole.ADMIN.value
+    # A replay succeeds without a second effect.
+    accepted_at = invited.invitation_accepted_at
+    acceptance.accept_verified_invitation(
+        db, person.id, verified_email=person.email, verified_identity=person.id
+    )
+    db.expire_all()
+    assert invited.invitation_accepted_at == accepted_at

@@ -28,6 +28,7 @@ from app.systems.access.users.coordination import (
     forbidden,
     lock_user,
     organization_member,
+    refuse_shared_account,
     unavailable,
     validate_identity_profile,
 )
@@ -216,6 +217,8 @@ def update_user(
     )
     user = lock_user(db, user_id)
     membership = organization_member(db, user)
+    if payload.model_fields_set & {"username", "status", "display_name", "job_title"}:
+        refuse_shared_account(db, user)
     target_id = user.id
     if user.is_deleted:
         raise conflict("User is deleted")
@@ -395,6 +398,7 @@ def delete_user(
     actor_id = admin.id
     user = lock_user(db, user_id)
     membership = organization_member(db, user)
+    refuse_shared_account(db, user)
     target_id = user.id
     if user.is_deleted:
         raise conflict("User is already deleted")
@@ -452,6 +456,7 @@ def restore_user(
     actor_id = admin.id
     user = lock_user(db, user_id)
     membership = organization_member(db, user)
+    refuse_shared_account(db, user)
     target_id = user.id
     if not user.is_deleted:
         raise conflict("User is not deleted")

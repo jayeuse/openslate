@@ -17,6 +17,9 @@ from app.common.dependencies.auth import require_admin
 from app.core.database.session import get_db
 from app.main import create_app
 from app.systems.access.users.models import User
+from app.systems.manage.audit.models import SecurityEventOutcome
+from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.conftest import create_member, create_organization
 from tests.organization_scope_support import scoped_override
@@ -98,3 +101,43 @@ def test_the_same_account_still_administers_its_own_organization(
         assert client.get(path).status_code == 200
     with _client(db, actor, visited) as client:
         assert client.get(path).status_code == 403
+
+
+def test_account_rows_are_visible_only_for_people_of_the_bound_organization(
+    two_organizations: tuple[Session, User, WorkspaceProfile, WorkspaceProfile],
+) -> None:
+    db, actor, home, visited = two_organizations
+    neighbour, _ = create_member(db, home, "member")
+    stranger, _ = create_member(db, visited, "member")
+    for person in (neighbour, stranger):
+        append_security_event(db, SecurityEventIngestRequest(
+            event_type="identity.sign_in_failure", outcome=SecurityEventOutcome.DENIED,
+            source="tests", operation_id=uuid7(), actor_id=person.id, subject_id=person.id,
+        ))
+        person.display_name = f"Renamed {person.id.hex[:8]}"  # an account audit row
+    db.commit()
+    with _client(db, actor, home) as client:
+        events = client.get(f"/api/security-events?person_id={neighbour.id}&limit=50")
+        hidden_events = client.get(f"/api/security-events?person_id={stranger.id}&limit=50")
+        audits = client.get(f"/api/audit-logs?entity_id={neighbour.id}&limit=50")
+        hidden_audits = client.get(f"/api/audit-logs?entity_id={stranger.id}&limit=50")
+    assert events.status_code == 200 and events.json()["items"], events.text
+    assert hidden_events.status_code == 200 and hidden_events.json()["items"] == []
+    assert audits.status_code == 200 and audits.json()["items"], audits.text
+    assert hidden_audits.status_code == 200 and hidden_audits.json()["items"] == []
+
+
+def test_account_changes_refuse_a_person_who_belongs_to_another_organization(
+    two_organizations: tuple[Session, User, WorkspaceProfile, WorkspaceProfile],
+) -> None:
+    db, actor, home, visited = two_organizations
+    shared, _ = create_member(db, home, "member")
+    create_member(db, visited, "admin", user=shared)
+    db.commit()
+    with _client(db, actor, home) as client:
+        disabled = client.patch(f"/api/users/{shared.id}", json={"status": "disabled"})
+        deleted = client.delete(f"/api/users/{shared.id}")
+    assert disabled.status_code == 409, disabled.text
+    assert deleted.status_code == 409, deleted.text
+    db.expire_all()
+    assert shared.status == "active" and shared.is_deleted is False

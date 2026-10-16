@@ -27,6 +27,7 @@ from app.systems.access.users.coordination import (
     InvitationError,
     ProfileValidationError,
     not_found,
+    organization_member,
 )
 from app.systems.access.users.coordination import (
     get_user as load_user,
@@ -108,9 +109,7 @@ def get_user(
     user = load_user(db, user_id)
     if user.is_deleted:
         raise not_found("User")
-    membership = db.scalars(select(Membership).where(
-        Membership.user_id == user.id, Membership.org_id == bound_organization(db)
-    )).one()
+    membership = organization_member(db, user)
     return UserResponse(**{key: getattr(
         user if key in User.__table__.columns else membership, key
     ) for key in UserResponse.model_fields})
@@ -220,9 +219,7 @@ def get_user_access(
     if user.is_deleted:
         raise not_found("User")
     access, entries = explain_access(db, user)
-    membership = db.scalars(select(Membership).where(
-        Membership.user_id == user.id, Membership.org_id == bound_organization(db)
-    )).one()
+    membership = organization_member(db, user)
     return UserAccessResponse.model_validate(
         {
             "user_id": user.id,
