@@ -7,6 +7,8 @@ from operations import provision_database_role as provisioner
 BOOTSTRAP_URL = "postgresql://postgres:bootstrap@127.0.0.1:55322/openslate"
 OWNER_URL = "postgresql+psycopg://openslate_owner:owner@127.0.0.1:55322/openslate"
 RUNTIME_URL = "postgresql+psycopg://openslate_runtime:runtime@127.0.0.1:55322/openslate"
+# Realtime has created realtime.messages; the membership function does not exist yet.
+REALTIME_FIRST_RUN = ((True, True), None)
 
 def _database() -> tuple[MagicMock, MagicMock]:
     connection = MagicMock()
@@ -22,11 +24,13 @@ def _database() -> tuple[MagicMock, MagicMock]:
         (True, True, False, False, False, False, False),
         (False, True, False),
         None,  # No application-owned Auth liveness policy on first provisioning.
+        *REALTIME_FIRST_RUN,
         (True, True, True),
     ]
     cursor.fetchall.side_effect = [
         [("inherit_option",), ("set_option",)],
         [(provisioner.RUNTIME_ROLE, provisioner.PRIVILEGE_ROLE, False, True, False)],
+        [],  # No realtime.messages policies yet.
     ]
     return connection, cursor
 
@@ -76,6 +80,7 @@ def test_provision_rotates_existing_managed_login_role_passwords_after_validatio
         (True, True, False, False, False, False, False),
         (False, True, False),
         None,  # No application-owned Auth liveness policy on first provisioning.
+        *REALTIME_FIRST_RUN,
         (True, True, True),
     ]
     monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))
@@ -162,6 +167,7 @@ def test_provision_admits_only_bootstrap_non_inheriting_creator_grants(
         + [(creator, role, True, inherit, set_role) for role in (
             provisioner.OWNER_ROLE, provisioner.PRIVILEGE_ROLE, provisioner.RUNTIME_ROLE,
         )],
+        [],
     ]
     monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))
     if accepted:
@@ -169,3 +175,86 @@ def test_provision_admits_only_bootstrap_non_inheriting_creator_grants(
     else:
         with pytest.raises(RuntimeError, match="unsafe membership"):
             provisioner.provision(BOOTSTRAP_URL, OWNER_URL, RUNTIME_URL)
+
+
+def _realtime_cursor(fetchone: list[object], policies: list[tuple[object, ...]]) -> MagicMock:
+    cursor = MagicMock()
+    cursor.fetchone.side_effect = fetchone
+    cursor.fetchall.return_value = policies
+    return cursor
+
+
+EXPECTED_POLICIES = [
+    ("openslate_realtime_member_read", "r", True, True,
+     provisioner.REALTIME_JOIN_EXPRESSION, None),
+    ("openslate_realtime_member_write", "a", True, True,
+     None, provisioner.REALTIME_JOIN_EXPRESSION),
+]
+
+
+def test_realtime_policies_call_a_deny_all_function_until_alembic_replaces_it() -> None:
+    cursor = _realtime_cursor([*REALTIME_FIRST_RUN], [])
+
+    provisioner._provision_realtime_channel_policies(cursor)
+
+    statements = _statements(cursor)
+    assert "create function public.can_join_realtime_topic(topic text)" in statements
+    assert "select false" in statements
+    assert "security definer" not in statements
+    assert "alter function public.can_join_realtime_topic(text) owner to openslate_owner" in (
+        statements
+    )
+    assert "from public, anon, service_role, postgres" in statements
+    assert "grant execute on function public.can_join_realtime_topic(text) to authenticated" in (
+        statements
+    )
+    assert (
+        "create policy openslate_realtime_member_read on realtime.messages for select "
+        "to authenticated using (public.can_join_realtime_topic(realtime.topic()))"
+    ) in statements
+    assert (
+        "create policy openslate_realtime_member_write on realtime.messages for insert "
+        "to authenticated with check (public.can_join_realtime_topic(realtime.topic()))"
+    ) in statements
+
+
+def test_realtime_provisioning_keeps_exact_existing_objects() -> None:
+    cursor = _realtime_cursor([(True, True), (provisioner.OWNER_ROLE,)], EXPECTED_POLICIES)
+
+    provisioner._provision_realtime_channel_policies(cursor)
+
+    statements = _statements(cursor)
+    assert "create function" not in statements
+    assert "create policy" not in statements
+    assert "grant execute on function public.can_join_realtime_topic(text) to authenticated" in (
+        statements
+    )
+
+
+@pytest.mark.parametrize(
+    ("fetchone", "policies", "message"),
+    [
+        pytest.param([None], [], "realtime.messages", id="realtime-not-started"),
+        pytest.param([(False, True)], [], "realtime.messages", id="rls-disabled"),
+        pytest.param([(True, True), ("postgres",)], [], "unexpected owner", id="foreign-owner"),
+        pytest.param(
+            [(True, True), (provisioner.OWNER_ROLE,)],
+            [*EXPECTED_POLICIES, ("allow_all", "r", True, True, "true", None)],
+            "does not manage", id="widening-policy",
+        ),
+        pytest.param(
+            [(True, True), (provisioner.OWNER_ROLE,)],
+            [("openslate_realtime_member_read", "r", True, True, "true", None)],
+            "unsafe", id="altered-policy",
+        ),
+    ],
+)
+def test_realtime_provisioning_refuses_unsafe_state(
+    fetchone: list[object], policies: list[tuple[object, ...]], message: str
+) -> None:
+    cursor = _realtime_cursor(fetchone, policies)
+
+    with pytest.raises(RuntimeError, match=message):
+        provisioner._provision_realtime_channel_policies(cursor)
+
+    assert "create policy" not in _statements(cursor)

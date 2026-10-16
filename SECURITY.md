@@ -201,6 +201,6 @@ last-reviewed: 2026-10-17
 | Private bucket; downloads as attachments with `nosniff` | `docs/architecture/14-security-architecture.md` |
 | `AuditSession` for every application mutation; no bulk or raw ORM changes | `docs/architecture/10-audit-and-history.md` |
 | Organization isolation: `org_id` on organization tables; membership of the bound organization (`resolve_membership`, `get_current_membership`, `bound_membership_join`); row-level security on `openslate.org_id` | `backend/app/common/dependencies/auth.py`, `backend/app/core/database/organization_scope.py`, migration `f5a100021193`, `backend/tests/access/test_membership_join_guard.py` |
-| Realtime service with a FastAPI-issued short-lived token (S12). To be confirmed by S12 | `docs/plans/supabase-foundation.md` (D23) |
+| Realtime: only `/realtime/v1/websocket` with a header `apikey`; 5-minute ES256 token (`purpose: realtime`) that Supabase Auth, FastAPI, and Storage refuse; RLS on `realtime.messages` through `can_join_realtime_topic` | `backend/app/systems/platform/realtime/`, migration `071607de0f40`, `backend/operations/provision_database_role.py`, `infra/supabase/PLAN.md` |
 | No secret reaches the browser bundle; provider bootstrap secrets (`DATABASE_BOOTSTRAP_URL`, `POSTGRES_PASSWORD`, the JWT signing keys) stay out of the API env | `docs/architecture/17-configuration.md` |
 | SHA-pinned Actions; least-privilege token permissions; no checkout of pull-request code under `pull_request_target` | `.github/workflows/` |

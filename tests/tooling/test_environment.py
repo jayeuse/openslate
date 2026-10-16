@@ -22,6 +22,10 @@ environment = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = environment
 spec.loader.exec_module(environment)
 
+from operations.supabase_keys import realtime_secrets  # noqa: E402
+
+REALTIME_SIGNING_KEY = realtime_secrets()[0]["REALTIME_TOKEN_SIGNING_KEY"]
+
 
 def fixture() -> dict[str, str]:
     values = environment.read_environment(ROOT / ".env.example")
@@ -49,6 +53,9 @@ def fixture() -> dict[str, str]:
         DATABASE_URL="postgresql+psycopg://openslate_runtime:runtime-secret@127.0.0.1:55432/postgres",
         SUPABASE_SESSION_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
         PUBLICATION_SIGNING_KEY="a" * 64,
+        REALTIME_TOKEN_SIGNING_KEY=REALTIME_SIGNING_KEY,
+        REALTIME_SECRET_KEY_BASE="realtime-base-canary" * 4,
+        REALTIME_DB_ENC_KEY="k" * 16,
         SECURITY_EVENT_SERVER_KEY="security-canary",
     )
     return values

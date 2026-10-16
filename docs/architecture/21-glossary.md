@@ -180,7 +180,7 @@ Shared services for every workspace. Backend package: `app/systems/platform/`. "
 | Ready object | — | Immutable private Storage object in `openslate-ready`, written after file-type validation; FastAPI still authorizes each download. | Internal |
 | Supabase Compose installation | — | One self-hosted Supabase and OpenSlate deployment with its own Compose project, credentials, networks, and persistent volumes. It is per client and can hold several organizations; it is not a hosted service. | Internal |
 | Supabase Storage | — | Provider-managed object API and persistent volume for OpenSlate's private file bytes. FastAPI, not the browser, uses its privileged credentials. | Internal |
-| Supabase Realtime | — | Optional provider change-stream service. **Status:** absent. It is not started; OpenSlate uses PostgreSQL invalidations over authenticated SSE. | Internal |
+| Supabase Realtime | — | Provider WebSocket service for private organization channels (`org:<org_id>:…`). A client joins with a 5-minute FastAPI token; RLS on `realtime.messages` checks the membership at each join. Invalidations stay on SSE. | Internal |
 | SSE invalidation | `/api/events`, `platform/events` | Authenticated opaque signal asking a client to refetch authorized application data through FastAPI. It does not include protected row snapshots. | Internal |
 | `/api/ready` | — | Bounded component readiness report for Database, Auth, Storage, and SMTP configuration, all required; mail delivery, schema compatibility, and backup integrity need separate checks. | Internal |
 | `WEB_ASSETS_ROOT` | — | Server-side path to the static frontend export served by FastAPI in production. | Internal |

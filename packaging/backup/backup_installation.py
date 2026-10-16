@@ -51,6 +51,7 @@ _BASE_SERVICES = {
     "auth",
     "storage",
     "imgproxy",
+    "realtime",
     "meta",
     "studio",
     "api-gw",

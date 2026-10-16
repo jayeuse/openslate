@@ -215,6 +215,88 @@ def _provision_session_liveness_policy(cursor: object) -> None:
         raise RuntimeError("Existing OpenSlate provider session policy is unsafe")
 
 
+REALTIME_JOIN_FUNCTION = "public.can_join_realtime_topic(text)"
+REALTIME_JOIN_EXPRESSION = "public.can_join_realtime_topic(realtime.topic())"
+REALTIME_UNGRANTED = "anon, service_role, postgres"
+# Policy name -> (pg_policy.polcmd, USING expression, WITH CHECK expression).
+REALTIME_POLICIES = {
+    "openslate_realtime_member_read": ("r", REALTIME_JOIN_EXPRESSION, None),
+    "openslate_realtime_member_write": ("a", None, REALTIME_JOIN_EXPRESSION),
+}
+
+
+def _provision_realtime_channel_policies(cursor: object) -> None:
+    """Admit private Realtime channels only through the membership function.
+
+    Realtime owns ``realtime.messages`` and creates it at its first start, so only this
+    cluster-admin step can add policies. They call ``can_join_realtime_topic``, which the
+    application owns; Alembic, which runs later, replaces this deny-all body in place.
+    """
+    # Deparse policy expressions with schema-qualified names.
+    cursor.execute("SET LOCAL search_path TO pg_catalog")  # type: ignore[attr-defined]
+    cursor.execute(  # type: ignore[attr-defined]
+        """
+        SELECT c.relrowsecurity, pg_catalog.to_regprocedure('realtime.topic()') IS NOT NULL
+          FROM pg_catalog.pg_class AS c
+         WHERE c.oid = pg_catalog.to_regclass('realtime.messages')
+        """
+    )
+    if cursor.fetchone() != (True, True):  # type: ignore[attr-defined]
+        raise RuntimeError(
+            "Realtime has not initialized realtime.messages; start the realtime service "
+            "and wait until it is healthy"
+        )
+    cursor.execute(  # type: ignore[attr-defined]
+        "SELECT pg_catalog.pg_get_userbyid(p.proowner) FROM pg_catalog.pg_proc AS p "
+        "WHERE p.oid = pg_catalog.to_regprocedure(%s)",
+        (REALTIME_JOIN_FUNCTION,),
+    )
+    owner = cursor.fetchone()  # type: ignore[attr-defined]
+    if owner is None:
+        cursor.execute(  # type: ignore[attr-defined]
+            "CREATE FUNCTION public.can_join_realtime_topic(topic text) RETURNS boolean "
+            "LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp "
+            "AS $realtime$ SELECT false $realtime$"
+        )
+        cursor.execute(  # type: ignore[attr-defined]
+            f"ALTER FUNCTION {REALTIME_JOIN_FUNCTION} OWNER TO {OWNER_ROLE}"
+        )
+    elif owner != (OWNER_ROLE,):
+        raise RuntimeError("Existing Realtime membership function has an unexpected owner")
+    # Supabase default privileges grant new public functions to its API roles by name.
+    cursor.execute(  # type: ignore[attr-defined]
+        f"REVOKE ALL ON FUNCTION {REALTIME_JOIN_FUNCTION} FROM PUBLIC, {REALTIME_UNGRANTED}"
+    )
+    cursor.execute(  # type: ignore[attr-defined]
+        f"GRANT EXECUTE ON FUNCTION {REALTIME_JOIN_FUNCTION} TO authenticated"
+    )
+    cursor.execute(  # type: ignore[attr-defined]
+        """
+        SELECT polname, polcmd, polpermissive,
+               polroles = ARRAY['authenticated'::regrole::oid],
+               pg_catalog.pg_get_expr(polqual, polrelid),
+               pg_catalog.pg_get_expr(polwithcheck, polrelid)
+          FROM pg_catalog.pg_policy
+         WHERE polrelid = 'realtime.messages'::regclass
+        """
+    )
+    existing = {row[0]: tuple(row[1:]) for row in cursor.fetchall()}  # type: ignore[attr-defined]
+    # Policies are permissive and combine with OR: any other one would widen access.
+    if set(existing) - set(REALTIME_POLICIES):
+        raise RuntimeError("realtime.messages has policies that OpenSlate does not manage")
+    for name, (command, using, check) in REALTIME_POLICIES.items():
+        if name not in existing:
+            clause = f"USING ({using})" if using else f"WITH CHECK ({check})"
+            verb = "SELECT" if command == "r" else "INSERT"
+            cursor.execute(  # type: ignore[attr-defined]
+                f"CREATE POLICY {name} ON realtime.messages FOR {verb} "
+                f"TO authenticated {clause}"
+            )
+        elif existing[name] != (command, True, True, using, check):
+            raise RuntimeError("Existing OpenSlate Realtime channel policy is unsafe")
+    cursor.execute("RESET search_path")  # type: ignore[attr-defined]
+
+
 def provision(
     bootstrap_url: str,
     migration_url: str,
@@ -305,6 +387,7 @@ def provision(
                 )
             )
             _provision_session_liveness_policy(cursor)
+            _provision_realtime_channel_policies(cursor)
             cursor.execute(
                 """
                 SELECT has_schema_privilege('openslate_owner', 'public', 'CREATE'),

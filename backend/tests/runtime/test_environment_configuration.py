@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -123,6 +124,28 @@ def test_settings_rejects_an_undersized_publication_signing_key() -> None:
         Settings(**settings_values(publication_signing_key="too-short"), _env_file=None)
 
     assert "publication_signing_key" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param(lambda jwk: {key: value for key, value in jwk.items() if key != "d"},
+                     id="public-only"),
+        pytest.param(lambda jwk: {key: value for key, value in jwk.items() if key != "kid"},
+                     id="no-key-id"),
+        pytest.param(lambda jwk: {**jwk, "crv": "P-384"}, id="wrong-curve"),
+        pytest.param(lambda jwk: {"kty": "oct", "k": "c2VjcmV0", "kid": "x"}, id="symmetric"),
+    ],
+)
+def test_settings_require_a_private_es256_realtime_key(mutation) -> None:
+    jwk = json.loads(settings_values()["realtime_token_signing_key"])
+    rejected = json.dumps(mutation(jwk))
+
+    with pytest.raises(ValidationError) as error:
+        Settings(**settings_values(realtime_token_signing_key=rejected), _env_file=None)
+
+    assert "realtime_token_signing_key" in str(error.value)
+    assert rejected not in str(error.value)
 
 
 @pytest.mark.parametrize("concurrency", [1, 2])

@@ -14,7 +14,7 @@ Agreed decisions:
 - Windows runtime acceptance is explicitly pending by user decision: no Windows test host is available yet. Implement and document the Windows path, but leave startup, reboot, persistent-volume recovery, and restore checks unverified until executed on Windows. Linux-container evidence from another operating system does not satisfy those checks.
 - Fresh application database, accounts, and files. No legacy account/password/data import and no seamless session migration. Fresh-start scope is not permission to delete an existing volume automatically.
 - Email-only password login, invitation-only onboarding, and Supabase email invitations/password recovery. Preserve session listing/revocation, application authorization, account eligibility, and privileged-action reauthentication.
-- Supabase Database, Auth, Storage, and Studio now. Supabase Realtime integration is a later feature; preserve working SSE in this migration.
+- Supabase Database, Auth, Storage, Studio, and the Realtime service now. Realtime product features (chat, presence) are a later phase; preserve working SSE for cache invalidation.
 - Retain synchronous SQLAlchemy, audited ORM transactions, Alembic, the static Next.js export, FastAPI, and Caddy.
 - No antivirus file scanning (decided 2026-10-05). FastAPI validates each upload's file type, and the file is ready when its upload request finishes.
 
@@ -53,7 +53,7 @@ Budget roughly **4–6 engineering weeks**, allowing **5–7 calendar weeks** fo
 ### Deployment and database
 
 - Maintain one versioned Compose definition for Supabase services, with development and production overlays. Pin the official self-hosted release and image digests; use `self-hosted/v0.8.2` as the initial reviewed reference, not floating `latest`. Preserve its necessary initialization assets and service dependencies.
-- Required services are Supabase PostgreSQL, Auth, Storage, API gateway, Studio and postgres-meta, plus PostgREST/imgproxy where required by the selected upstream Storage configuration. Disable Edge Functions and optional analytics; keep Realtime stopped until its feature phase. Use direct internal PostgreSQL connections, so a pooler is unnecessary for the first topology.
+- Required services are Supabase PostgreSQL, Auth, Storage, API gateway, Studio and postgres-meta, plus PostgREST/imgproxy where required by the selected upstream Storage configuration. Run Realtime for private channels (see Realtime boundary). Disable Edge Functions and optional analytics. Use direct internal PostgreSQL connections, so a pooler is unnecessary for the first topology.
 - Development retains host-run FastAPI/Next. Production Compose runs the unified FastAPI/static-UI image and Caddy alongside Supabase. Studio is an operator-only administration surface, loopback-bound and password protected. It replaces pgweb but is more privileged than the former read-only inspector.
 - Keep application HTTP traffic same-origin through FastAPI. Keep database, Storage, PostgREST, metadata, and administrative APIs on private networks. Expose only the Auth paths necessary for email verification through the configured TLS ingress; never expose the entire administrative gateway as a shortcut.
 - Generate unique secrets per installation. Keep database owner/bootstrap credentials, Auth administration keys, Storage keys, and refresh-token encryption material out of frontend builds, the public Manager configuration, logs, and shared examples.
@@ -100,7 +100,19 @@ Budget roughly **4–6 engineering weeks**, allowing **5–7 calendar weeks** fo
 
 Keep `/api/events`, opaque invalidations, reconnect behavior, and per-user authorization. Connect its LISTEN subscriber directly to Supabase PostgreSQL; do not route this session-affine connection through transaction pooling.
 
-For a future Supabase Realtime phase, first select the actual product feature and its audience semantics. The default transport migration is server-side private Broadcast feeding the existing FastAPI-authorized SSE boundary. Direct browser subscriptions require an explicit channel admission/revocation contract; database row-change subscriptions can bypass backend-only authorization. No placeholder channels, broad row publications, JWT permission copies, or new realtime token endpoint are added now.
+Realtime runs in every stack (foundation plan S11, S12; decisions D22, D23, D24). The design is candidate A of D23, proven on the development stack on 2026-10-17:
+
+1. The browser asks FastAPI for a channel token: `POST /api/realtime/token` with `X-Org`. FastAPI admits the request through the normal session and membership checks (session, organization, MFA, IP policy).
+2. FastAPI signs a 5-minute ES256 token with its own key, `REALTIME_TOKEN_SIGNING_KEY`. The claims are `role: authenticated`, `sub` (local account id), `org_id`, `purpose: realtime`, `iat`, and `exp`. Only the public key is in `JWT_JWKS`. Supabase Auth signs and publishes only `JWT_KEYS`, so FastAPI and `/auth/v1/user` refuse the token.
+3. The client opens `/realtime/v1/websocket` through the gateway with a gateway key in the `apikey` header, then joins a private channel with the token in the join payload.
+4. Realtime checks each join and each send with RLS on `realtime.messages`. The two policies (`openslate_realtime_member_read`, `openslate_realtime_member_write`) call `public.can_join_realtime_topic(topic)`. This `SECURITY DEFINER` function requires `purpose: realtime`, a topic under `org:<org_id>:`, and an active, eligible membership of a live account in a live organization.
+5. Topic names are `org:<org_id>:<kind>:<id>` (D24). Phase 2 adds kinds.
+
+Provisioning (`provision_database_role.py`, as `supabase_admin`) creates the policies, because Realtime owns `realtime.messages`. It refuses any other policy on that table and needs a healthy Realtime service first. Alembic revision `071607de0f40` replaces the deny-all function body that provisioning creates.
+
+Limits that stay: after a membership ends, a joined channel and its token stay usable until the token expires (at most 5 minutes); each new join reads the membership again. Realtime keeps public channels available to any connected client (the seed resets `private_only` at each start), so OpenSlate sends nothing on public channels. Browsers can send the gateway key only as a query parameter, and the gateway refuses `apikey` in a query; Phase 2 must decide the browser connection. Storage accepts the token as `authenticated` but has no policies for that role. Supabase Cloud handling of an imported signing key is not verified; that needs a Cloud project (owner action), and candidate B (the GoTrue access token) is the fallback for Cloud.
+
+Database row-change subscriptions stay off: they can bypass backend authorization. Keep SSE for cache invalidation.
 
 ## 4. Delivery sequence
 

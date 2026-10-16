@@ -6,7 +6,10 @@ from typing import Any
 
 from cryptography.fernet import Fernet
 
+from operations.supabase_keys import realtime_secrets
+
 _SESSION_ENCRYPTION_KEY = Fernet.generate_key().decode("ascii")
+_REALTIME_SIGNING_KEY = realtime_secrets()[0]["REALTIME_TOKEN_SIGNING_KEY"]
 
 
 def settings_values(**overrides: Any) -> dict[str, Any]:
@@ -20,6 +23,7 @@ def settings_values(**overrides: Any) -> dict[str, Any]:
         "supabase_auth_issuer": "http://127.0.0.1:58000/auth/v1",
         "supabase_session_encryption_key": _SESSION_ENCRYPTION_KEY,
         "publication_signing_key": "a" * 64,
+        "realtime_token_signing_key": _REALTIME_SIGNING_KEY,
         "security_event_server_key": "test-security-event-key",
         "lifecycle_purge_enabled": True,
         "public_origin": "http://frontend.test",

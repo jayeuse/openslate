@@ -37,6 +37,10 @@ PROVIDER_IMAGES = {
         "supabase/storage-api:v1.81.0@sha256:"
         "98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54"
     ),
+    "realtime": (
+        "supabase/realtime:v2.143.3@sha256:"
+        "768b559241dd234c4e8852c5c0f504e598b80f1df2ad4dd78d5486fbed2f17a2"
+    ),
     "meta": (
         "supabase/postgres-meta:v0.100.0@sha256:"
         "145325b7e39f8ef4931d6e8cfd3f6f4d655de09d72a2ccc96d9513542c2202bd"

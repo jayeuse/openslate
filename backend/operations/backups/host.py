@@ -24,6 +24,7 @@ SERVICES = frozenset(
         "auth",
         "storage",
         "imgproxy",
+        "realtime",
         "meta",
         "studio",
         "api-gw",

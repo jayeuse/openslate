@@ -194,6 +194,57 @@ services:
     networks:
       - provider
 
+  # Upstream fixes container_name to encode the tenant id in the host name. That
+  # name is global on the Docker host, so the gateway rewrites the host instead
+  # (realtime-dev.supabase-realtime). The seed recreates the tenant from these
+  # values at every start; a JWT_JWKS change needs a Realtime restart.
+  realtime:
+    image: supabase/realtime:v2.143.3@sha256:768b559241dd234c4e8852c5c0f504e598b80f1df2ad4dd78d5486fbed2f17a2
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "4000"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:?Generate the Realtime encryption key}
+      API_JWT_SECRET: ${JWT_SECRET:?Generate JWT_SECRET}
+      # Provider keys plus the FastAPI Realtime token key; channel joins need both.
+      API_JWT_JWKS: ${JWT_JWKS:?Generate the public verification JWKS}
+      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE:?Generate the Realtime key base}
+      METRICS_JWT_SECRET: ${JWT_SECRET:?Generate JWT_SECRET}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      SELF_HOST_TENANT_NAME: realtime-dev
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
+      # The release renders runtime.exs into RELEASE_TMP; the image root stays read-only.
+      RELEASE_TMP: /tmp
+    healthcheck:
+      test: ["CMD", "curl", "-sSf", "-o", "/dev/null", "http://localhost:4000/healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      # Realtime migrates its own and the tenant schema before it listens.
+      start_period: 60s
+    user: "65534:65534"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=65534,gid=65534
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - provider
+
   meta:
     image: supabase/postgres-meta:v0.100.0@sha256:145325b7e39f8ef4931d6e8cfd3f6f4d655de09d72a2ccc96d9513542c2202bd
     restart: unless-stopped

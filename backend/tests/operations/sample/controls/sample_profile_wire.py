@@ -79,7 +79,8 @@ class ProfileWire:
         }}
         org = {"org_id": self.admin_id, "name": "Example", "slug": "example", "role": self.role}
         result.update(account=account, memberships=[org], pending_invitations=[],
-                      current_organization={**org, "access": []}, default_organization_blocked=None)
+                      current_organization={**org, "access": [], "owner": False},
+                      default_organization_blocked=None, operator=False)
         return result
 
     def handle(self, request):

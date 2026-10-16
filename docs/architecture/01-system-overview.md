@@ -19,7 +19,8 @@ OpenSlate is a self-hosted web application installed separately for each client.
 | Organization context | The `X-Org` request header, else the session's active organization; FastAPI binds each transaction to that organization |
 | Files | PostgreSQL file metadata; private Supabase Storage buckets `openslate-ready` (organization files) and `openslate-avatars` (account avatars), mediated by FastAPI |
 | File-type validation | FastAPI allowlist and bounded parser subprocess before the Storage write |
-| Invalidation | Authenticated SSE using PostgreSQL `LISTEN`/`NOTIFY`; Supabase Realtime integration is future work |
+| Invalidation | Authenticated SSE using PostgreSQL `LISTEN`/`NOTIFY` |
+| Realtime channels | Supabase Realtime private channels `org:<org_id>:…`, joined with a 5-minute token from `POST /api/realtime/token`; OpenComms (Phase 2) is the first user |
 | Operator database UI | Supabase Studio, loopback-bound behind gateway Basic Auth |
 
 The browser does not write application rows or read private objects directly. FastAPI verifies provider JWTs against the configured issuer and JWKS, confirms provider subject/session liveness, resolves an explicitly bound OpenSlate user, and checks the application's session and current authorization state. The backend never derives application roles from provider metadata. Normal application mutations use `AuditSession`; Alembic and provider-managed Auth/Storage operations remain outside that application ORM audit boundary.
@@ -38,7 +39,7 @@ Production uses `infra/supabase/compose.production.yaml` to add the unified Fast
 - Supabase Auth owns password verification, provider tokens, invitations, and password-recovery email actions. FastAPI owns application identity binding, sessions, authorization, and session revocation.
 - A private Supabase Storage bucket replaces the former local-filesystem file adapter. FastAPI validates each upload's file type, and the file is ready when its upload request finishes. File authorization stays in OpenSlate.
 - Alembic owns only OpenSlate's application schema. The prior Supabase/schema-redesign and vanilla PostgreSQL chains are retained as history; the active root is for fresh installations and does not import an existing database.
-- The OpenSlate event endpoint remains authenticated SSE over PostgreSQL notifications. Supabase Realtime is not part of the current application contract.
+- The OpenSlate event endpoint remains authenticated SSE over PostgreSQL notifications. Supabase Realtime carries private organization channels only; it never carries invalidations.
 - The selected server target is Linux and Windows with Linux containers. Windows acceptance remains pending; macOS is a workstation platform, not a server target.
 - `/api/ready` reports Database, Auth, Storage, and SMTP configuration states. All four are required. These probes do not establish mail delivery, backup integrity, or complete deployment acceptance.
 

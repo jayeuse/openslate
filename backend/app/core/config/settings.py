@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from ipaddress import IPv4Network, IPv6Network, ip_network
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import ClassVar, Literal
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
+from jwt import PyJWK, PyJWKError
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -95,6 +97,8 @@ class Settings(EnvironmentSettings):
         validation_alias="SUPABASE_TIMEOUT_SECONDS",
     )
     publication_signing_key: SecretStr = Field(validation_alias="PUBLICATION_SIGNING_KEY")
+    # ES256 private JWK (JSON) for 5-minute Realtime channel tokens; never a user session key.
+    realtime_token_signing_key: SecretStr = Field(validation_alias="REALTIME_TOKEN_SIGNING_KEY")
     auth_refresh_token_days: int = Field(
         default=7, ge=1, le=31, validation_alias="AUTH_REFRESH_TOKEN_DAYS"
     )
@@ -183,6 +187,27 @@ class Settings(EnvironmentSettings):
     def require_strong_publication_key(cls, value: SecretStr) -> SecretStr:
         if len(value.get_secret_value().encode("utf-8")) < 32:
             raise ValueError("must be at least 32 bytes")
+        return value
+
+    @field_validator("realtime_token_signing_key")
+    @classmethod
+    def require_realtime_signing_jwk(cls, value: SecretStr) -> SecretStr:
+        try:
+            jwk = json.loads(value.get_secret_value())
+            valid = (
+                isinstance(jwk, dict)
+                and jwk.get("kty") == "EC"
+                and jwk.get("crv") == "P-256"
+                and isinstance(jwk.get("d"), str)
+                and isinstance(jwk.get("kid"), str)
+                and bool(jwk["kid"])
+            )
+            if valid:
+                PyJWK(jwk, algorithm="ES256")
+        except (ValueError, TypeError, PyJWKError):
+            valid = False
+        if not valid:
+            raise ValueError("must be an ES256 private JWK with a key id")
         return value
 
     @field_validator("supabase_url", "supabase_auth_issuer")

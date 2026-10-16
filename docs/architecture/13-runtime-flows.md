@@ -46,4 +46,4 @@ FastAPI does not keep local password hashes, a local invitation/recovery token s
 3. The authenticated SSE listener receives the notification and sends a private invalidation or resync signal to eligible subscribers. Each stream binds to one organization when it opens (`/api/events?org=<id>`, else the session's active organization). The hub drops events of other organizations. It does not include row contents or replace a resource API.
 4. The client refetches through FastAPI, where current identity and authorization are checked again.
 
-This path remains PostgreSQL `LISTEN`/`NOTIFY` plus SSE. Direct browser Realtime subscriptions are not enabled.
+This path remains PostgreSQL `LISTEN`/`NOTIFY` plus SSE. Realtime channels are a separate path: a client asks `POST /api/realtime/token` for a 5-minute token, and Realtime checks the membership with `public.can_join_realtime_topic` at each join.

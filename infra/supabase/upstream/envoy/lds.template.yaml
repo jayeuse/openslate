@@ -266,6 +266,29 @@ resources:
                                     principals:
                                       - any: true
 
+                      # Only the Realtime WebSocket is routed. The REST and tenant
+                      # management API under /realtime/v1/api stays behind the 404 below.
+                      - name: realtime-v1-ws-protected
+                        match:
+                          path: /realtime/v1/websocket
+                        route:
+                          cluster: realtime
+                          prefix_rewrite: /socket/websocket
+                          # A WebSocket lives longer than any request; Phoenix heartbeats
+                          # keep it inside the connection manager's stream idle timeout.
+                          timeout: 0s
+                          host_rewrite_literal: realtime-dev.supabase-realtime
+                        request_headers_to_add:
+                          - header:
+                              key: X-Forwarded-Prefix
+                              value: /realtime/v1/
+                            append_action: ADD_IF_ABSENT
+                        typed_per_filter_config:
+                          envoy.filters.http.basic_auth:
+                            '@type': >-
+                              type.googleapis.com/envoy.config.route.v3.FilterConfig
+                            disabled: true
+
                       - match:
                           prefix: /realtime/
                         direct_response:
@@ -401,6 +424,7 @@ resources:
 
                       local PROTECTED_ROUTES = {
                         ["auth-v1-protected"] = true,
+                        ["realtime-v1-ws-protected"] = true,
                       }
 
                       local function is_protected_route(route_name)
@@ -473,6 +497,25 @@ resources:
                         end
                       end
 
+                # Realtime authenticates the WebSocket from x-api-key, which carries
+                # the translated gateway key; the channel token arrives in the join.
+                - name: envoy.filters.http.lua
+                  typed_config:
+                    '@type': >-
+                      type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                    inline_code: |
+                      function envoy_on_request(request_handle)
+                        if request_handle:streamInfo():routeName() ~= "realtime-v1-ws-protected" then
+                          return
+                        end
+                        local headers = request_handle:headers()
+                        local apikey = headers:get("apikey")
+                        if apikey == nil or apikey == "" then
+                          return
+                        end
+                        headers:replace("x-api-key", apikey)
+                      end
+
                 # Supply the translated API-key JWT when no user JWT was sent.
                 - name: envoy.filters.http.lua
                   typed_config:
@@ -484,6 +527,9 @@ resources:
                       end
 
                       function envoy_on_request(request_handle)
+                        if request_handle:streamInfo():routeName() == "realtime-v1-ws-protected" then
+                          return
+                        end
                         local headers = request_handle:headers()
                         if has_real_jwt(headers:get("authorization")) then
                           return
@@ -506,6 +552,9 @@ resources:
                             - url_path:
                                 path:
                                   prefix: /auth/v1/
+                            - url_path:
+                                path:
+                                  exact: /realtime/v1/websocket
                           principals:
                             - header:
                                 name: apikey
