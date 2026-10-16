@@ -1,4 +1,6 @@
 import {
+  appearanceUrl,
+  authMeBody,
   expect,
   heldResponse,
   test,
@@ -81,19 +83,19 @@ async function installApi(page: Page): Promise<State> {
   );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: state.userId,
         role: state.role,
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
   await page.route("**/api/auth/refresh", (route) => {
     state.refreshes += 1;
     return route.fulfill({ status: 401, json: { detail: "Unauthenticated" } });
   });
-  await page.route("**/api/workspace/appearance", (route) => {
+  await page.route(appearanceUrl, (route) => {
     state.appearanceReads += 1;
     return state.onAppearance
       ? state.onAppearance(route)
@@ -636,12 +638,12 @@ test("Organization cached administrator role cannot admit edits while its fresh 
     readingRole = true;
     await gate.released;
     await route.fulfill({
-      json: {
+      json: authMeBody({
         id: userA,
         role: "member",
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     });
   });
   try {
@@ -675,12 +677,12 @@ test("Organization keeps a trusted background role refresh interactive but requi
     await (old ? oldRead : freshRead).released;
     await route
       .fulfill({
-        json: {
+        json: authMeBody({
           id: userA,
           role: old ? "admin" : "member",
           access: [],
           default_organization_blocked: null,
-        },
+        }),
       })
       .catch(() => {});
     if (old) oldAnswered.release();

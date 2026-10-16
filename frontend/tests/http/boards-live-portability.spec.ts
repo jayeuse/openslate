@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { installOpenViewEventSource } from "./helpers/openview-event-source";
-import { isEventStream } from "./helpers/test";
+import { authMeBody, isEventStream } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireWorkspace } from "../helpers/wire";
 
@@ -136,12 +136,14 @@ test("real configuration download and import preserve the complete named normali
         setup_required: false,
       });
     if (path === "/api/auth/me")
-      return json({
-        id: actor,
-        role: "admin",
-        access: [],
-        default_organization_blocked: null,
-      });
+      return json(
+        authMeBody({
+          id: actor,
+          role: "admin",
+          access: [],
+          default_organization_blocked: null,
+        }),
+      );
     if (path === `/api/users/${actor}/preferences`)
       return json({
         user_id: actor,

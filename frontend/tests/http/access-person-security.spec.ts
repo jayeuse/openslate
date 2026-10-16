@@ -1,4 +1,10 @@
-import { expect, recheckSession, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  expect,
+  recheckSession,
+  test,
+  type Page,
+} from "./helpers/test";
 import { ids, mockAccessApi } from "./helpers/access-api";
 import { deferredMfaResponse } from "./helpers/mfa";
 
@@ -559,12 +565,12 @@ test("account replacement clears old pending ownership and cannot display its re
   );
   api.on("GET", "/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: ids.ben,
         role: "admin",
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
   api.on("GET", "/api/auth/mfa", (route) =>

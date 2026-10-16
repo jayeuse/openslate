@@ -1,4 +1,5 @@
 import {
+  eventStreamUrl,
   expect,
   expectNoHorizontalScroll,
   heldResponse,
@@ -1237,7 +1238,7 @@ test("Security reads show recovery and denial without sample sessions", async ({
       },
     }),
   );
-  await page.route("**/api/events", (route) => route.fulfill({ status: 503 }));
+  await page.route(eventStreamUrl, (route) => route.fulfill({ status: 503 }));
   await page.goto("/access?view=security");
   await expect(
     page.getByText("Sessions could not be loaded.", { exact: true }),

@@ -1,5 +1,5 @@
 import { expect, type Page, type Route } from "@playwright/test";
-import { isEventStream } from "./test";
+import { authMeBody, isEventStream } from "./test";
 import { pageOf } from "../../helpers/pagination";
 
 // A mocked Access API for the People, Groups and Overview HTTP specs. Every
@@ -397,10 +397,9 @@ export async function mockAccessApi(
       });
     if (path === "/api/auth/me")
       return route.fulfill({
-        json: {
-          default_organization_blocked: null,
-          ...(options.identity ?? { id: ids.rosa, role: "admin", access: [] }),
-        },
+        json: authMeBody(
+          options.identity ?? { id: ids.rosa, role: "admin", access: [] },
+        ),
       });
     const capturedAt = options.now ?? Date.now();
     const established = (user: User) =>

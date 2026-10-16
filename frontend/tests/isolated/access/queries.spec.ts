@@ -77,11 +77,25 @@ test("confirmed commands mark only the reads they change as stale", async () => 
   seed(accessKeys.memberCandidates());
   seed(accessKeys.departments("include"));
   seed(accessKeys.userAccess(user.id));
+  const organization = {
+    orgId: "00000000-0000-4000-8000-000000000102",
+    name: "OpenSlate",
+    slug: "openslate",
+    role: "admin" as const,
+  };
   queries.setQueryData(authMeOptions().queryKey, {
     id: user.id,
+    username: "admin",
+    displayName: null,
+    avatarFileId: null,
     defaultOrganizationBlocked: null,
     role: "admin",
     access: [],
+    memberships: [organization],
+    pendingInvitations: [],
+    currentOrganization: organization,
+    organizationOwner: false,
+    operator: false,
   });
   const stale = () =>
     queries

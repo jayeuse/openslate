@@ -1,4 +1,5 @@
 import {
+  authMeBody,
   expect,
   test,
   type Locator,
@@ -163,12 +164,12 @@ async function installPostBrowserApi(page: Page) {
   );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: currentViewerId,
         role: "member",
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
   await page.route("**/api/workspace", (route) =>

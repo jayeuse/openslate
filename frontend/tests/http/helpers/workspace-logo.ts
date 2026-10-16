@@ -1,5 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 import { pageOf } from "../../helpers/pagination";
+import { appearanceUrl, authMeBody } from "./test";
 
 export const logoActor = "11111111-1111-4111-8111-111111111111";
 export const oldLogoId = "22222222-2222-4222-8222-222222222222";
@@ -93,15 +94,15 @@ export async function installLogoApi(page: Page) {
   });
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: api.actor,
         role: api.role,
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
-  await page.route("**/api/workspace/appearance", (route) =>
+  await page.route(appearanceUrl, (route) =>
     route.fulfill({
       json: { theme: api.workspace.theme },
     }),

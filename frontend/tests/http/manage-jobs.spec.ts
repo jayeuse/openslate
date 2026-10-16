@@ -1,4 +1,5 @@
 import {
+  authMeBody,
   controlledSession,
   expect,
   heldResponse,
@@ -127,7 +128,7 @@ async function installJobs(
     await route.fulfill(
       identityFailure
         ? { status: 503, json: { detail: "Private role canary" } }
-        : { json: captured },
+        : { json: authMeBody(captured) },
     );
   });
   await page.route("**/api/jobs**", async (route) => {

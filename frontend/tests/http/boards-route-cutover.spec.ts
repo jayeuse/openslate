@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { authMeBody, expect, test } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -79,12 +79,12 @@ test("a member reading a Board sees no Board menu and no manager actions", async
   await installBoardApi(page, () => true);
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: userId,
         role: "member",
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
   const reader = { ...board, level: "read" };

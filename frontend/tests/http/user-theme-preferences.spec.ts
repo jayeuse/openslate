@@ -1,4 +1,5 @@
 import {
+  appearanceUrl,
   expect,
   heldResponse,
   test,
@@ -45,7 +46,7 @@ async function installIdentity(
   );
   let organizationTheme = organizationLook;
   let revision = 1;
-  await page.route("**/api/workspace/appearance", (route) =>
+  await page.route(appearanceUrl, (route) =>
     route.fulfill({ json: { theme: organizationTheme } }),
   );
   await page.route("**/api/workspace", (route) => {
@@ -114,7 +115,7 @@ test("a cold preference load is disabled, fails visibly, and retries without cha
   page,
 }) => {
   await installIdentity(page, "guest");
-  await page.route("**/api/workspace/appearance", (route) =>
+  await page.route(appearanceUrl, (route) =>
     route.fulfill({ json: { theme: "stockroom" } }),
   );
 

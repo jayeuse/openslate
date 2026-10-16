@@ -265,7 +265,8 @@ function OpenPersonButton({
         <PersonCardPopover
           personId={row.user.id}
           label={row.name}
-          className="text-foreground font-medium no-underline"
+          className="text-foreground font-medium"
+          decoration="none"
         />
         <p className="text-muted-foreground text-xs break-words">
           {row.user.username}

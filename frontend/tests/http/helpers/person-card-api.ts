@@ -1,4 +1,4 @@
-import { heldResponse, type Page } from "./test";
+import { authMeBody, heldResponse, type Page } from "./test";
 import { ids, mockAccessApi } from "./access-api";
 import { boardId, board, installBoardApi } from "./boards-api";
 import { installOpenViewEventSource } from "./openview-event-source";
@@ -347,12 +347,12 @@ export async function installPersonCardApi(
   );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: state.viewer,
         role: state.role,
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
   await page.route("**/api/users/*/preferences", (route) =>

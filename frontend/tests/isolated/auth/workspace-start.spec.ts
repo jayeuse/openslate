@@ -145,21 +145,35 @@ for (const row of rows) {
   test(`workspace start: ${row.name}`, async () => {
     const mock = installFetch((input) => {
       const path = String(input);
-      if (path === "/api/auth/me")
+      if (path === "/api/auth/me") {
+        const access = row.manages
+          ? [
+              {
+                department_id: departmentId,
+                module_id: null,
+                level: "manage",
+              },
+            ]
+          : [];
+        const organization = {
+          org_id: "00000000-0000-4000-8000-000000000102",
+          name: "OpenSlate",
+          slug: "openslate",
+          role: row.role,
+        };
         return Response.json({
           id: userId,
+          username: "start_person",
+          display_name: null,
+          avatar_file_id: null,
           role: row.role,
           default_organization_blocked: null,
-          access: row.manages
-            ? [
-                {
-                  department_id: departmentId,
-                  module_id: null,
-                  level: "manage",
-                },
-              ]
-            : [],
+          access,
+          memberships: [organization],
+          pending_invitations: [],
+          current_organization: { ...organization, access },
         });
+      }
       if (path === `/api/users/${userId}/preferences`)
         return Response.json(
           {

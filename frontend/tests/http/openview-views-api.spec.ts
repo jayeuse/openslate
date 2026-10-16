@@ -1,4 +1,5 @@
 import {
+  authMeBody,
   expect,
   test,
   type Locator,
@@ -107,7 +108,7 @@ async function installRecordFilesApi(
   );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: activeUser,
         role: options.role ?? "admin",
         default_organization_blocked: null,
@@ -121,7 +122,7 @@ async function installRecordFilesApi(
                 },
               ]
             : [],
-      },
+      }),
     }),
   );
   await page.route("**/api/files**", async (route) => {
@@ -1108,21 +1109,23 @@ async function installViewsApi(
   await page.route("**/api/auth/me", async (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        id: userId,
-        role: options.viewerRole ?? "admin",
-        default_organization_blocked: null,
-        access:
-          options.viewerRole === "member"
-            ? [
-                {
-                  department_id: departmentId,
-                  module_id: moduleId,
-                  level: "write",
-                },
-              ]
-            : [],
-      }),
+      body: JSON.stringify(
+        authMeBody({
+          id: userId,
+          role: options.viewerRole ?? "admin",
+          default_organization_blocked: null,
+          access:
+            options.viewerRole === "member"
+              ? [
+                  {
+                    department_id: departmentId,
+                    module_id: moduleId,
+                    level: "write",
+                  },
+                ]
+              : [],
+        }),
+      ),
     }),
   );
   let nextPatchBarrier: {
@@ -2567,14 +2570,14 @@ test("a reader keeps temporary View filters in the address without save controls
   await installViewsApi(page);
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: userId,
         role: "member",
         default_organization_blocked: null,
         access: [
           { department_id: departmentId, module_id: null, level: "read" },
         ],
-      },
+      }),
     }),
   );
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
@@ -2617,14 +2620,14 @@ test("a module reader can browse archived Views without a Restore action", async
   });
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: userId,
         role: "member",
         default_organization_blocked: null,
         access: [
           { department_id: departmentId, module_id: null, level: "read" },
         ],
-      },
+      }),
     }),
   );
   await page.goto(`/openview?section=views&module=${moduleId}&view=${viewId}`);
@@ -4731,12 +4734,12 @@ test.describe("OpenView workspace regional dates", () => {
     );
     await page.route("**/api/auth/me", (route) =>
       route.fulfill({
-        json: {
+        json: authMeBody({
           id: actor,
           role: "admin",
           access: [],
           default_organization_blocked: null,
-        },
+        }),
       }),
     );
     await page.route("**/api/workspace", async (route) => {
@@ -6141,13 +6144,13 @@ async function installS16Export(
   );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: actor,
         role,
         access: [
           { department_id: departmentId, module_id: moduleId, level: "read" },
         ],
-      },
+      }),
     }),
   );
   const requests: unknown[] = [];

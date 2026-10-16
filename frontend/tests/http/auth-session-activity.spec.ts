@@ -1,4 +1,5 @@
 import {
+  authMeBody,
   expect,
   heldResponse,
   quietEventSource,
@@ -74,12 +75,12 @@ async function workspaceSession(page: Page, baseURL: string | undefined) {
   });
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: state.userId,
         role: "admin",
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
   await page.route("**/api/search?**", (route) => {

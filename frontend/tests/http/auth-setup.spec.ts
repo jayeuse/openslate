@@ -1,4 +1,5 @@
 import {
+  authMeBody,
   expect,
   heldResponse,
   settleReact,
@@ -219,12 +220,12 @@ test("login accepts email and does not send a username field", async ({
   );
   await page.route("**/api/auth/me", async (route) => {
     await route.fulfill({
-      json: {
+      json: authMeBody({
         id: "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8",
         role: "member",
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     });
   });
   await page.goto("/login");

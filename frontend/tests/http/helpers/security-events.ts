@@ -4,6 +4,7 @@ import { mockManageSecurity } from "./manage-security";
 import { deferredMfaResponse, mockMfa, mfaUserA } from "./mfa";
 import type { Page, Route } from "./test";
 import { pageOf } from "../../helpers/pagination";
+import { authMeBody } from "./test";
 
 export const historicalPersonId = "00000000-0000-4000-8000-000000000099";
 export const eventOperationId = "00000000-0000-4000-8000-000000000900";
@@ -145,7 +146,7 @@ export async function mockSecurityEvents(page: Page) {
   };
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: auth.userId,
         role: state.role,
         default_organization_blocked: null,
@@ -158,7 +159,7 @@ export async function mockSecurityEvents(page: Page) {
               },
             ]
           : [],
-      },
+      }),
     }),
   );
   await page.route("**/api/auth/session", async (route) => {

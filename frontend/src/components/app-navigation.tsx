@@ -104,7 +104,7 @@ export function AppNavigation({
     identity.isSuccess &&
     !identity.isError &&
     identity.data.id === userId &&
-    identity.data.role === "admin";
+    identity.data.currentOrganization?.role === "admin";
   useLayoutEffect(() => {
     jobsAdmission.current = jobsAdmitted;
     if (suspended) {
@@ -135,6 +135,7 @@ export function AppNavigation({
   const groups = getWorkspaceNavigation(
     pathname,
     searchParams,
+    // Roles belong to memberships: the current organization's role decides.
     accessNavigationFor(identity.data),
     jobsAdmitted,
   );

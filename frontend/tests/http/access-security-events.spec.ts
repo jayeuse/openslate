@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { authMeBody, expect, test, type Page } from "./helpers/test";
 import { person } from "./helpers/access-api";
 import { profilePreferences } from "./helpers/profile-api";
 import { deferredMfaResponse, mfaUserA, mfaUserB } from "./helpers/mfa";
@@ -1148,7 +1148,10 @@ test("Audit awaits a current-account role and refuses failed or mismatched ident
     }
     await route.fulfill({
       status,
-      json: status === 200 ? response : { detail: "Controlled unavailable" },
+      json:
+        status === 200
+          ? authMeBody(response)
+          : { detail: "Controlled unavailable" },
     });
   });
   try {

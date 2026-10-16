@@ -1,4 +1,5 @@
 import {
+  authMeBody,
   expect,
   heldResponse,
   recheckSession,
@@ -230,12 +231,12 @@ test("People membership cache is replaced when the verified account changes", as
   );
   api.on("GET", "/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: signedInId,
         role: "admin",
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
   await page.goto("/access?view=people");

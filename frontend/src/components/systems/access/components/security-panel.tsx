@@ -96,6 +96,12 @@ type SecurityPolicyFormProps = {
     clearDraft: () => void;
   };
   onManageMfa: (event?: MouseEvent<HTMLButtonElement>) => void;
+  /**
+   * What this administrator may change. The organization owner changes the
+   * organization's settings; the installation owner also changes the
+   * installation-wide password, session, retention, and sign-in rules.
+   */
+  editable: { organization: boolean; installation: boolean };
 };
 
 export function SecurityPanel({
@@ -505,6 +511,7 @@ export function SecurityPanel({
 export function SecurityPolicyForm({
   form,
   onManageMfa,
+  editable,
 }: SecurityPolicyFormProps) {
   const {
     dirty,
@@ -538,6 +545,7 @@ export function SecurityPolicyForm({
     label: string,
     minimum: number,
     maximum: number,
+    disabled = false,
   ) {
     const error = errors[key];
     return (
@@ -552,6 +560,7 @@ export function SecurityPolicyForm({
           step={1}
           className={`min-h-11 ${hideNumberSpinners}`}
           value={current[key]}
+          disabled={disabled}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? `${id}-error` : undefined}
           onChange={(event) => changeSetting(key, event.target.value)}
@@ -570,8 +579,19 @@ export function SecurityPolicyForm({
         void saveSection();
       }}
     >
+      {!editable.organization ? (
+        <Alert role="note">
+          Only the organization owner can change these settings.
+        </Alert>
+      ) : !editable.installation ? (
+        <Alert role="note">
+          Password, session, retention, and sign-in attempt rules apply to the
+          whole installation. Only the installation owner can change them.
+        </Alert>
+      ) : null}
       <div className="grid gap-4 sm:grid-cols-2">
         <fieldset
+          disabled={!editable.installation}
           className="min-w-0 space-y-3 sm:col-span-2"
           aria-describedby="password-rules-description"
         >
@@ -612,6 +632,7 @@ export function SecurityPolicyForm({
                 >
                   <Checkbox
                     id="password-mixed-case"
+                    disabled={!editable.installation}
                     checked={current.requireMixedCase}
                     onCheckedChange={(value) =>
                       changeSetting("requireMixedCase", value)
@@ -627,6 +648,7 @@ export function SecurityPolicyForm({
                 >
                   <Checkbox
                     id="password-number"
+                    disabled={!editable.installation}
                     checked={current.requireNumber}
                     onCheckedChange={(value) =>
                       changeSetting("requireNumber", value)
@@ -646,7 +668,10 @@ export function SecurityPolicyForm({
             stay unchanged.
           </p>
         </fieldset>
-        <fieldset className="min-w-0 space-y-3 sm:col-span-2">
+        <fieldset
+          disabled={!editable.installation}
+          className="min-w-0 space-y-3 sm:col-span-2"
+        >
           <legend className="text-sm font-medium">Session limits</legend>
           <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div className="min-w-0 sm:col-span-2 lg:col-span-1">
@@ -715,6 +740,7 @@ export function SecurityPolicyForm({
           </div>
         </fieldset>
         <fieldset
+          disabled={!editable.installation}
           className="min-w-0 space-y-3 sm:col-span-2"
           aria-describedby={
             retentionShortened ? "security-retention-description" : undefined
@@ -775,6 +801,7 @@ export function SecurityPolicyForm({
                 >
                   <Checkbox
                     id={`mfa-${role}`}
+                    disabled={!editable.organization}
                     checked={current[key]}
                     onCheckedChange={(value) => changeSetting(key, value)}
                   />
@@ -790,6 +817,7 @@ export function SecurityPolicyForm({
               "Enrollment grace (days)",
               0,
               30,
+              !editable.organization,
             )}
             <Button
               type="button"
@@ -806,6 +834,7 @@ export function SecurityPolicyForm({
           </p>
         </fieldset>
         <fieldset
+          disabled={!editable.installation}
           className="min-w-0 space-y-3 sm:col-span-2"
           aria-describedby="login-policy-description"
         >
@@ -842,6 +871,7 @@ export function SecurityPolicyForm({
           </p>
         </fieldset>
         <fieldset
+          disabled={!editable.organization}
           className="min-w-0 space-y-3 sm:col-span-2"
           aria-describedby="ip-allow-list-description"
         >
@@ -950,13 +980,15 @@ export function SecurityPolicyForm({
       </div>
       {/* The dialog scrolls; the actions stay in reach at its bottom edge.
           -bottom-5 also covers the dialog's padding so fields don't show below. */}
-      <div className="bg-card sticky -bottom-5 z-10 -mx-5 -mb-5 border-t px-5 pb-8">
-        <SettingActions
-          dirty={dirty}
-          onDiscard={() => clearDraft()}
-          onSave={() => void saveSection()}
-        />
-      </div>
+      {editable.organization ? (
+        <div className="bg-card sticky -bottom-5 z-10 -mx-5 -mb-5 border-t px-5 pb-8">
+          <SettingActions
+            dirty={dirty}
+            onDiscard={() => clearDraft()}
+            onSave={() => void saveSection()}
+          />
+        </div>
+      ) : null}
     </form>
   );
 }

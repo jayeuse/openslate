@@ -1,4 +1,5 @@
 import {
+  authMeBody,
   expect,
   signedInAs,
   test,
@@ -1688,12 +1689,12 @@ for (const operation of ["template", "create"] as const) {
     );
     await page.route("**/api/auth/me", (route) =>
       route.fulfill({
-        json: {
+        json: authMeBody({
           id: account,
           role: "admin",
           access: [],
           default_organization_blocked: null,
-        },
+        }),
       }),
     );
     let hold = false;

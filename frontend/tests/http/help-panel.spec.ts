@@ -1,4 +1,5 @@
 import {
+  authMeBody,
   expect,
   heldResponse,
   test,
@@ -106,12 +107,12 @@ async function installHelpApi(page: Page) {
   );
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: api.userId,
         role: api.role,
         access: [],
         default_organization_blocked: null,
-      },
+      }),
     }),
   );
   await page.route("**/api/users/*/preferences", (route) =>

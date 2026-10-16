@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
+  authMeBody,
   expect,
   test,
   type Locator,
@@ -249,12 +250,12 @@ async function installLinksApi(page: Page, options: HarnessOptions = {}) {
       });
     if (url.pathname === "/api/auth/me")
       return route.fulfill({
-        json: {
+        json: authMeBody({
           id: userId,
           role: "admin",
           access: [],
           default_organization_blocked: null,
-        },
+        }),
       });
     if (url.pathname === "/api/departments")
       return route.fulfill({

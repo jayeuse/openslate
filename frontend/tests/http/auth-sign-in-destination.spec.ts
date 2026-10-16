@@ -1,4 +1,10 @@
-import { expect, heldResponse, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  expect,
+  heldResponse,
+  test,
+  type Page,
+} from "./helpers/test";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { regionalDefaults } from "./helpers/profile-api";
@@ -29,7 +35,7 @@ async function installDestination(
     }[],
   };
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: identity }),
+    route.fulfill({ json: authMeBody(identity) }),
   );
   const dataSourceRequests: string[] = [];
   const sandboxProbes: string[] = [];
