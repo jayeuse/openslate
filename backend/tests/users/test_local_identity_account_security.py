@@ -32,7 +32,7 @@ def test_account_security_state_changes_revoke_provider_backed_sessions(
     db.scalar.side_effect = [actor, member]
     db.dirty = set()
     db.scalars.return_value = MagicMock()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
     revoke = Mock()
     monkeypatch.setattr(account_operations, "revoke_user_sessions", revoke, raising=False)
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
@@ -107,7 +107,7 @@ def test_last_active_admin_cannot_be_deleted() -> None:
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1]
     db.dirty = set()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
 
     with pytest.raises(HTTPException) as error:
         account_operations.delete_user(target.id, actor, db)
@@ -123,7 +123,7 @@ def test_last_administrator_cannot_be_given_an_expiry(expiry_offset: timedelta) 
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1, 1]
     db.dirty = set()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
 
     with pytest.raises(HTTPException) as error:
         account_operations.update_user(
@@ -146,7 +146,7 @@ def test_only_durable_administrator_cannot_be_disabled_when_another_will_expire(
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 2, 1]
     db.dirty = set()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
 
     with pytest.raises(HTTPException) as error:
@@ -165,7 +165,7 @@ def test_only_durable_administrator_cannot_be_deleted_when_another_will_expire(
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 2, 1]
     db.dirty = set()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
 
     with pytest.raises(HTTPException) as error:
@@ -187,7 +187,7 @@ def test_disabled_user_is_locally_revoked_without_provider_call(
     db.scalar.side_effect = [actor, member, member.id]
     db.dirty = set()
     db.scalars.return_value = MagicMock()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
 
     result = account_operations.update_user(
         member.id, UserUpdate(status=UserStatus.DISABLED), actor, db
@@ -210,7 +210,7 @@ def test_deleted_established_member_can_be_restored(
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target]
     db.dirty = set()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)
 
     result = account_operations.restore_user(target.id, actor, db)
@@ -251,7 +251,7 @@ def test_removing_last_admin_role_assignment_is_rejected() -> None:
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, target, 1]
     db.dirty = set()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
 
     with pytest.raises(HTTPException) as error:
         account_operations.update_user(
@@ -275,7 +275,7 @@ def test_local_disable_commit_failure_records_attempt_and_failure(
     db.scalar.side_effect = [actor, target, target.id]
     db.dirty = set()
     db.scalars.return_value = MagicMock()
-    db.scalars.return_value.all.side_effect = [[actor_membership], [actor_membership], [membership]]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
     db.commit.side_effect = SQLAlchemyError("database unavailable")
     events = Mock()
     monkeypatch.setattr(account_operations, "_record_security_event", events)

@@ -18,7 +18,7 @@ from app.systems.access.auth.aggregate_router import router
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
-from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings
 from tests.organization_scope_support import scoped_override
 from tests.users.user_support import local_user
 
@@ -341,11 +341,6 @@ def test_session_routes_reject_non_admin_and_cookie_mutation_without_csrf(
     monkeypatch.setattr(auth_dependencies, "get_supabase_auth_client", lambda: provider)
     monkeypatch.setattr(
         auth_dependencies, "resolve_provider_session", lambda *_args, **_kwargs: (admin, session)
-    )
-    monkeypatch.setattr(
-        auth_dependencies,
-        "load_workspace_policy",
-        lambda _db: WorkspaceProfile(ip_allow_list=[]),
     )
     monkeypatch.setattr(auth_dependencies, "load_platform_policy", lambda _db: PlatformSettings(
         session_timeout_minutes=60, session_absolute_lifetime_minutes=None,

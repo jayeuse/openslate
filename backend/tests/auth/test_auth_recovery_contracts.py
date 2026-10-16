@@ -161,21 +161,12 @@ def test_invitation_completion_records_failure_when_activation_cannot_commit(mon
     client.sign_out.assert_called_once_with("action-access", scope="global")
 
 
-@pytest.mark.parametrize("ineligible", ["disabled", "expired", "expiry_race"])
-def test_recovery_cannot_change_password_for_an_ineligible_local_user(monkeypatch, ineligible):
+# A disabled account cannot recover. Guest expiry belongs to one organization's
+# membership; account admission (and recovery) is independent of it since S05.
+def test_recovery_cannot_change_password_for_a_disabled_local_user(monkeypatch):
     db = Mock(spec=Session)
-    user, membership, client, _ = _action(monkeypatch, db)
-    if ineligible == "disabled":
-        user.status = UserStatus.DISABLED.value
-    elif ineligible == "expired":
-        membership.expires_at = datetime.now(UTC)
-    else:
-
-        def expire_after_provider_verification(*_args):
-            membership.expires_at = datetime.now(UTC)
-            return user
-
-        db.scalar.side_effect = expire_after_provider_verification
+    user, _membership, client, _ = _action(monkeypatch, db)
+    user.status = UserStatus.DISABLED.value
     with pytest.raises(HTTPException) as error:
         auth_router.complete_recovery(_payload(), contract_request(), db)
     assert error.value.status_code == 400
@@ -229,7 +220,7 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
     actor = Mock()
     monkeypatch.setattr(dependencies, "set_audit_actor", actor)
 
-    identity = dependencies.get_current_identity(
+    identity = dependencies.get_account_identity(
         contract_request(origin=None, authorization="Bearer access-token"),
         SimpleNamespace(credentials="access-token"),
         db,
@@ -238,7 +229,7 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
     actor.assert_called_once_with(db, user.id)
 
     with pytest.raises(HTTPException) as mixed:
-        dependencies.get_current_identity(
+        dependencies.get_account_identity(
             contract_request(
                 cookies="openslate_access=cookie", authorization="Bearer access-token"
             ),
@@ -252,7 +243,7 @@ def test_current_identity_validates_one_transport_and_cookie_mutation_csrf(
     db.get.return_value = SimpleNamespace(csrf_token_digest="digest")
     monkeypatch.setattr(dependencies, "validate_csrf", lambda *_args: False)
     with pytest.raises(HTTPException) as csrf:
-        dependencies.get_current_identity(cookie_request, None, db)
+        dependencies.get_account_identity(cookie_request, None, db)
     assert csrf.value.status_code == 401
 
 

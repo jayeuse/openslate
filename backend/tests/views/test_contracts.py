@@ -148,6 +148,11 @@ def test_stale_saved_view_conflict_includes_current_revision() -> None:
     membership.user_id = user_id
 
     class ViewResultSession:
+
+        def flush(self) -> None:
+
+            pass  # the access function flushes before reading memberships
+
         dirty = set()
         def scalars(self, _statement):
             return SimpleNamespace(all=lambda: [membership])
@@ -189,6 +194,13 @@ def _admin() -> tuple[User, Membership]:
 
 
 class _NoRowSession:
+
+
+    def flush(self) -> None:
+
+
+        pass  # the access function flushes before reading memberships
+
     def __init__(self, membership=None):
         self.dirty = set()
         self.membership = membership
@@ -262,6 +274,11 @@ def test_saved_view_definition_refuses_a_deleted_field(column_deleted: bool, ref
     column = Field(id=uuid7(), module_id=module.id, type=FieldType.TEXT, is_deleted=column_deleted)
 
     class ModuleFieldSession:
+
+        def flush(self) -> None:
+
+            pass  # the access function flushes before reading memberships
+
         dirty = set()
         def get(self, model: type, ident: object) -> object:
             return module if model is Module and ident == module.id else None

@@ -96,6 +96,11 @@ def test_field_catalog_filters_relationship_fields_before_offset_pagination() ->
             return self.items
 
     class CatalogSession:
+
+        def flush(self) -> None:
+
+            pass  # the access function flushes before reading memberships
+
         dirty = set()
         def __init__(self) -> None:
             self.list_statements: list[object] = []

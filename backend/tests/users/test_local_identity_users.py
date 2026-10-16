@@ -71,9 +71,7 @@ def test_guest_cannot_receive_administrator_role_during_profile_update() -> None
     db.scalar.side_effect = [actor, guest]
     # A promotion first reads the groups to lock; a guest is in none here.
     db.dirty = set()
-    db.scalars.return_value.all.side_effect = [
-        [actor_membership], [actor_membership], [], [membership],
-    ]
+    db.scalars.return_value.all.side_effect = [[actor_membership], [], [membership]]
 
     with pytest.raises(HTTPException) as error:
         account_operations.update_user(guest.id, UserUpdate(role=UserRole.ADMIN), actor, db)

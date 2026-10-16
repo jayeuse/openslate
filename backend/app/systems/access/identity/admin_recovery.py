@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -30,13 +30,20 @@ from app.systems.manage.audit.service import (
 # organization the person administers and refuses when there is none or several.
 # S15 replaces this rule with recovery for people who administer several organizations.
 def sole_administered_membership(db: Session, user_id: UUID) -> Membership | None:
+    now = utc_now()
     memberships = db.scalars(select(Membership).where(
         Membership.user_id == user_id, Membership.role == UserRole.ADMIN.value,
         Membership.status == UserStatus.ACTIVE.value, Membership.is_deleted.is_(False),
+        or_(Membership.expires_at.is_(None), Membership.expires_at > now),
     ).limit(2)).all()
-    if len(memberships) != 1 or memberships[0].role != UserRole.ADMIN.value:
+    if len(memberships) != 1:
         return None
-    return memberships[0]
+    membership = memberships[0]
+    if membership.role != UserRole.ADMIN.value or (
+        membership.expires_at is not None and membership.expires_at <= now
+    ):
+        return None
+    return membership
 
 
 class LocalRecoveryError(RuntimeError):
