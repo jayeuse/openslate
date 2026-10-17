@@ -2,6 +2,7 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 import playwright from "eslint-plugin-playwright";
+import fieldPartsInRoot from "./eslint-rules/field-parts-in-root.mts";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -13,6 +14,15 @@ const eslintConfig = defineConfig([
       "react-hooks/exhaustive-deps": "off",
       "@next/next/no-html-link-for-pages": "off",
     },
+  },
+  {
+    // Base UI throws at render for a Field part without a Field root; this
+    // catches it at edit time (tests/isolated/eslint/field-parts-in-root.spec.ts).
+    files: ["src/**/*.tsx"],
+    plugins: {
+      openslate: { rules: { "field-parts-in-root": fieldPartsInRoot } },
+    },
+    rules: { "openslate/field-parts-in-root": "error" },
   },
   {
     // Test-quality guards from item 10 of docs/plans/test-suite-tier-2-5.md.
