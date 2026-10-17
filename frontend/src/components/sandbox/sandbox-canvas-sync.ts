@@ -47,7 +47,10 @@ interface SandboxCanvasSynchronization {
   movingNodeId: string | null;
   dropTargetId: string | null;
   pendingPositions: MutableCurrent<Map<string, CanvasPosition>>;
+  /** The layout the graph shows: the last one applied or emitted. */
   appliedLayout: MutableCurrent<SandboxCanvasLayout | undefined>;
+  /** The last `layout` prop applied; only a new prop moves nodes. */
+  appliedLayoutProp: MutableCurrent<SandboxCanvasLayout | undefined>;
   syncing: MutableCurrent<boolean>;
 }
 
@@ -60,6 +63,7 @@ export function synchronizeSandboxCanvas({
   dropTargetId,
   pendingPositions,
   appliedLayout,
+  appliedLayoutProp,
   syncing,
 }: SandboxCanvasSynchronization): void {
   const fieldsById = new Map(state.fields.map((field) => [field.id, field]));
@@ -276,9 +280,11 @@ export function synchronizeSandboxCanvas({
       }
     }
 
-    // Apply external restores once. Selection/rename and in-flight drag
-    // feedback must never reset a node to the last persisted coordinates.
-    if (layout !== undefined && layout !== appliedLayout.current) {
+    // Apply a layout only when the owner's layout prop changes: undo, redo,
+    // arrange, a refused layout, or the server's copy. After a drag the graph
+    // already shows its new layout while the prop is still the old one; that
+    // stale prop must not move the node back before the new one arrives.
+    if (layout !== undefined && layout !== appliedLayoutProp.current) {
       for (const [id, box] of Object.entries(layout)) {
         const node = graph.getCellById(id);
         if (!node?.isNode()) continue;
@@ -288,6 +294,7 @@ export function synchronizeSandboxCanvas({
           node.setSize(box.width, box.height);
       }
       appliedLayout.current = layout;
+      appliedLayoutProp.current = layout;
     }
     if (movingNodeId === null) fitDepartmentFrames(graph);
 

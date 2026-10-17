@@ -1622,6 +1622,107 @@ test("the canvas zoom range keeps a spread design legible", async ({
   );
 });
 
+async function dragCanvasNode(
+  page: Page,
+  node: ReturnType<Page["locator"]>,
+  beforeDrop: () => Promise<void> = async () => {},
+) {
+  const box = (await node.locator("text").first().boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 80, y + 48, { steps: 8 });
+  await beforeDrop();
+  await page.mouse.up();
+}
+
+function translation(transform: string | null) {
+  const match = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(transform ?? "");
+  if (!match) throw new Error(`No translation in ${transform}`);
+  return { x: Number(match[1]), y: Number(match[2]) };
+}
+
+test("a dropped module stays where it lands while its layout saves", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  let releaseSave = () => {};
+  const saveDelay = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { saveDelay },
+  );
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const node = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
+  const before = await node.getAttribute("transform");
+  const save = page.waitForRequest(
+    (request) =>
+      request.method() === "PUT" &&
+      request.url().endsWith("/api/sandbox/document"),
+  );
+  try {
+    // Record every position the module takes from the drop on.
+    await dragCanvasNode(page, node, () =>
+      node.evaluate((element) => {
+        const seen: string[] = [];
+        Object.assign(window, { droppedPositions: seen });
+        new MutationObserver(() =>
+          seen.push(element.getAttribute("transform") ?? ""),
+        ).observe(element, { attributeFilter: ["transform"] });
+      }),
+    );
+    await save;
+    await expect.poll(() => node.getAttribute("transform")).not.toBe(before);
+    const dropped = await node.getAttribute("transform");
+    // The drag-end sync once re-applied the last saved layout, so the module
+    // jumped back to its old place before the new layout arrived.
+    expect(
+      await page.evaluate(
+        () =>
+          (window as unknown as { droppedPositions: string[] })
+            .droppedPositions,
+      ),
+    ).not.toContain(before);
+    releaseSave();
+    await expect
+      .poll(() => {
+        const box = sandbox.document().design.layout?.["sample-requests"];
+        return box ? { x: box.x, y: box.y } : null;
+      })
+      .toEqual(translation(dropped));
+    await expect(node).toHaveAttribute("transform", dropped!);
+  } finally {
+    releaseSave();
+  }
+});
+
+test("a refused layout puts the dropped module back", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    saveFailure: "Sandbox storage is unavailable",
+  });
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const requests = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
+  const equipment = canvas.locator('.x6-cell[data-cell-id="sample-equipment"]');
+  // A failed save keeps that change local and refuses later changes.
+  await dragCanvasNode(page, requests);
+  await expect(
+    page.getByText(
+      "Your change was not saved. It remains local until you reapply it successfully.",
+    ),
+  ).toBeVisible();
+  const before = await equipment.getAttribute("transform");
+  await dragCanvasNode(page, equipment);
+  await expect(
+    page.getByText("A Sandbox change is already being saved."),
+  ).toBeVisible();
+  await expect(equipment).toHaveAttribute("transform", before!);
+});
+
 test("an empty, never-published Sandbox offers one start and nothing to publish", async ({
   page,
 }) => {

@@ -60,6 +60,22 @@ function commandFailed(
   return result?.ok === false;
 }
 
+function sameLayout(a: SandboxCanvasLayout, b: SandboxCanvasLayout): boolean {
+  return (
+    Object.keys(a).length === Object.keys(b).length &&
+    Object.entries(a).every(([id, box]) => {
+      const other = b[id];
+      return (
+        other !== undefined &&
+        other.x === box.x &&
+        other.y === box.y &&
+        other.width === box.width &&
+        other.height === box.height
+      );
+    })
+  );
+}
+
 export type { SandboxCanvasLayout } from "@/lib/sandbox/model";
 
 export interface SandboxCanvasViewState {
@@ -198,6 +214,18 @@ export function SandboxCanvas({
   const keyboardShortcutsRef = useRef(keyboardShortcutsEnabled);
   const syncingRef = useRef(false);
   const appliedLayoutRef = useRef<SandboxCanvasLayout | undefined>(undefined);
+  const appliedLayoutPropRef = useRef<SandboxCanvasLayout | undefined>(
+    undefined,
+  );
+  // Bumped when the owner refuses an emitted layout, so the next sync shows
+  // the owner's layout again.
+  const [layoutRestore, setLayoutRestore] = useState(0);
+  const syncedRef = useRef<{
+    state: SandboxState;
+    movingNodeId: string | null;
+    dropTargetId: string | null;
+    layoutRestore: number;
+  } | null>(null);
   const [editor, setEditor] = useState<CanvasEditor | null>(null);
   const editorRef = useRef<CanvasEditor | null>(null);
   const editorCommitRef = useRef<string | null>(null);
@@ -271,6 +299,7 @@ export function SandboxCanvas({
       gridRef.current.dataset.snapSize = `${graph.getGridSize()}`;
     runtimeRef.current = { graph, history };
     appliedLayoutRef.current = undefined;
+    appliedLayoutPropRef.current = undefined;
     let layoutQueue = Promise.resolve();
     const emitLayout = (): Promise<void> => {
       if (syncingRef.current || !callbacksRef.current.onLayoutChange)
@@ -281,26 +310,17 @@ export function SandboxCanvas({
       if (enabled) history.enable();
       const next = readLayout(graph);
       const previous = appliedLayoutRef.current;
-      if (
-        previous &&
-        Object.keys(next).length === Object.keys(previous).length &&
-        Object.entries(next).every(([id, box]) => {
-          const before = previous[id];
-          return (
-            before &&
-            before.x === box.x &&
-            before.y === box.y &&
-            before.width === box.width &&
-            before.height === box.height
-          );
-        })
-      )
-        return Promise.resolve();
+      if (previous && sameLayout(next, previous)) return Promise.resolve();
       appliedLayoutRef.current = next;
       layoutQueue = layoutQueue
         .catch(() => undefined)
         .then(async () => {
-          await callbacksRef.current.onLayoutChange?.(next);
+          const result = await callbacksRef.current.onLayoutChange?.(next);
+          // A refused layout leaves the owner's layout as it was.
+          if (commandFailed(result)) {
+            appliedLayoutPropRef.current = undefined;
+            setLayoutRestore((count) => count + 1);
+          }
         });
       return layoutQueue;
     };
@@ -977,6 +997,25 @@ export function SandboxCanvas({
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (runtime === null) return;
+    // A saved drag brings the graph's own layout back as a new prop. When that
+    // is the only change and the graph already shows it, a full sync (about
+    // 100 ms for the Harbor sample) would change nothing.
+    const synced = syncedRef.current;
+    const shown = appliedLayoutRef.current;
+    if (
+      synced?.state === state &&
+      synced.movingNodeId === movingNodeId &&
+      synced.dropTargetId === dropTargetId &&
+      synced.layoutRestore === layoutRestore &&
+      layout !== undefined &&
+      shown !== undefined &&
+      sameLayout(layout, shown)
+    ) {
+      appliedLayoutRef.current = layout;
+      appliedLayoutPropRef.current = layout;
+      return;
+    }
+    syncedRef.current = { state, movingNodeId, dropTargetId, layoutRestore };
     synchronizeSandboxCanvas({
       graph: runtime.graph,
       history: runtime.history,
@@ -986,10 +1025,11 @@ export function SandboxCanvas({
       dropTargetId,
       pendingPositions: pendingPositionsRef,
       appliedLayout: appliedLayoutRef,
+      appliedLayoutProp: appliedLayoutPropRef,
       syncing: syncingRef,
     });
     traceRef.current?.refresh();
-  }, [dropTargetId, layout, movingNodeId, state]);
+  }, [dropTargetId, layout, layoutRestore, movingNodeId, state]);
 
   async function commitEditor(value: string): Promise<void> {
     const activeEditor = editorRef.current;

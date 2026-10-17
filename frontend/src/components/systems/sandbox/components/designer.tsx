@@ -646,11 +646,16 @@ export function Designer({
     });
     return () => cancelAnimationFrame(frame);
   }, [design, focusTargetId, pane]);
-  // The canvas re-syncs its whole graph whenever this object changes, so keep
-  // it stable across renders that do not change the design or selection.
-  const projected = useMemo(
-    () => projectDesign(design, selected),
+  // The canvas re-syncs its whole graph (about 100 ms for the Harbor sample)
+  // whenever this object changes, so it changes only when its content does:
+  // not for a layout-only save or the server's copy of the same design.
+  const projectedJson = useMemo(
+    () => JSON.stringify(projectDesign(design, selected)),
     [design, selected],
+  );
+  const projected = useMemo(
+    () => JSON.parse(projectedJson) as SandboxState,
+    [projectedJson],
   );
   const keyboardTarget: SandboxInspectorTarget | null = selectedField
     ? { kind: "field", id: selected }
@@ -2777,6 +2782,7 @@ export function Designer({
                         };
                       }, "sandbox.design.layout");
                       if (!result.ok) notify(result.error);
+                      return result;
                     }}
                   />
                 </div>
