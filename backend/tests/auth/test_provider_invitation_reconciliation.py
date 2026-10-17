@@ -437,7 +437,10 @@ def _committed_events(monkeypatch: pytest.MonkeyPatch) -> list[SecurityEventInge
     """Keep the attempt and failure events that commit on their own session."""
 
     events: list[SecurityEventIngestRequest] = []
-    monkeypatch.setattr(service, "append_committed_security_event", events.append)
+    monkeypatch.setattr(
+        service, "append_committed_security_event",
+        lambda event, **_kwargs: events.append(event),
+    )
     return events
 
 

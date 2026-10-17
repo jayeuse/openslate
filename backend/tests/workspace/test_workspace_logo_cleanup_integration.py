@@ -66,7 +66,8 @@ def logo_world(policy_world, monkeypatch):
     world.client.app.dependency_overrides[get_storage] = lambda: world.storage
     monkeypatch.setattr(router, "get_storage", lambda: world.storage)
     monkeypatch.setattr(
-        "app.systems.platform.files.delivery.append_committed_security_event", lambda payload: None
+        "app.systems.platform.files.delivery.append_committed_security_event",
+        lambda payload, **_kwargs: None,
     )
     try:
         yield world
