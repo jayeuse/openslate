@@ -18,7 +18,7 @@ from app.systems.access.users.models import Membership, User, UserRole, UserStat
 from app.systems.manage.audit.models import AuditLog, SecurityEventOutcome
 from tests.access.user_admin_support import UserAdminWorld, add_session
 from tests.access.user_admin_support import world as world
-from tests.conftest import create_member, membership_of
+from tests.conftest import create_member, make_operator, membership_of
 from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
@@ -114,6 +114,8 @@ def test_disabling_a_member_revokes_their_sessions_and_enabling_restores_the_acc
 
 
 def test_administrator_deletes_and_restores_a_member_once(world: UserAdminWorld) -> None:
+    make_operator(world.db, world.admin)
+    world.db.commit()
     client = world.client(world.admin)
     member_session = world.sessions[world.member.id]
 

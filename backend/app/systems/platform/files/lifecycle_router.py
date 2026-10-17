@@ -9,16 +9,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_admin, require_fresh_exact_admin
+from app.common.dependencies import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.platform.files.access import error, load, require_unlinked
+from app.systems.platform.files.access import error, load, require_avatar_unbound, require_unlinked
 from app.systems.platform.files.providers import StorageBackend, hold_file_worker
 from app.systems.platform.files.purge import purge_confirmed
 from app.systems.platform.files.schemas import FileResponse
+from app.systems.platform.files.service import authorize_lifecycle
 from app.systems.platform.files.storage import get_storage
 from app.systems.sandbox.lifecycle.exceptions import LifecycleError
 from app.systems.sandbox.lifecycle.planner import canonical_lifecycle_digest
@@ -41,7 +42,7 @@ from app.systems.sandbox.lifecycle.service import (
 )
 
 router = APIRouter(prefix="/files", tags=["files"])
-Admin = Annotated[User, Depends(require_admin)]
+Actor = Annotated[User, Depends(get_current_user)]
 DB = Annotated[Session, Depends(get_db)]
 
 
@@ -50,6 +51,7 @@ def purge_impact(
 ) -> LifecycleImpactResponse:
     if not get_settings().lifecycle_purge_enabled:
         raise error("purge_disabled", PURGE_DISABLED_MESSAGE, 403)
+    authorize_lifecycle(db, actor_id, load(db, file_id))
     # Workspace mutations lock profile before file; use that same order.
     profile = db.scalar(
         select(WorkspaceProfile)
@@ -60,6 +62,8 @@ def purge_impact(
     if profile is not None and profile.logo_file_id == file_id:
         raise error("file_current_logo", "Replace or remove the current logo before purging")
     file = load(db, file_id, lock=True)
+    authorize_lifecycle(db, actor_id, file)
+    require_avatar_unbound(db, file)
     if file.purpose == "board_attachment":
         if board_id is None or file.board_id != board_id:
             raise error("file_not_found", "File not found", 404)
@@ -116,11 +120,10 @@ def _mapped(exc: LifecycleError) -> HTTPException:
 
 @router.post("/{file_id}/purge/preview", response_model=LifecyclePurgePreviewResponse)
 def preview(
-    file_id: UUID, user: Admin, db: DB, response: Response
+    file_id: UUID, user: Actor, db: DB, response: Response
 ) -> LifecyclePurgePreviewResponse:
     response.headers["Cache-Control"] = "no-store"
     actor_id = user.id
-    require_fresh_exact_admin(db, actor_id)
     impact = purge_impact(db, actor_id, file_id)
     try:
         issued = issue_challenge(db, actor_id, "purge", "file", file_id, impact.impact_digest)
@@ -140,7 +143,7 @@ def execute(
     request: Request,
     file_id: UUID,
     payload: LifecyclePurgeRequest,
-    user: Admin,
+    user: Actor,
     db: DB,
     storage: Annotated[StorageBackend, Depends(get_storage)],
     response: Response,
@@ -148,6 +151,7 @@ def execute(
     with hold_file_worker(request):
         response.headers["Cache-Control"] = "no-store"
         actor_id, email = user.id, user.email
+        authorize_lifecycle(db, actor_id, load(db, file_id))
         if payload.confirmation_name != load(db, file_id).filename:
             raise error("confirmation_name_mismatch", "Confirmation must match the file name", 422)
         if not get_settings().lifecycle_purge_enabled:

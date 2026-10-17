@@ -36,7 +36,9 @@ from app.systems.access.users.directory import (
     UserListRequest,
     UserSummaryRequest,
     directory_list,
+    directory_membership,
     directory_summary,
+    membership_view,
 )
 from app.systems.access.users.directory import UserSortField as UserSortField
 from app.systems.access.users.membership import (
@@ -109,10 +111,10 @@ def get_user(
     user = load_user(db, user_id)
     if user.is_deleted:
         raise not_found("User")
-    membership = organization_member(db, user)
-    return UserResponse(**{key: getattr(
-        user if key in User.__table__.columns else membership, key
-    ) for key in UserResponse.model_fields})
+    membership = directory_membership(db, user.id)
+    if membership is None:
+        raise not_found("User")
+    return membership_view(user, membership)
 
 
 @router.get("/{user_id}/preferences", response_model=UserPreferencesResponse)

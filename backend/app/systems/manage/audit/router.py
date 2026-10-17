@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from pydantic import AwareDatetime, BaseModel, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -39,6 +40,7 @@ from app.systems.manage.audit.schemas import (
 from app.systems.manage.audit.service import (
     AuditLogSortField,
     SecurityEventSortField,
+    _security_events_of_bound_organization,
     active_actor_names,
     append_security_event,
     audit_log_statement,
@@ -221,7 +223,7 @@ def get_audit_log(
     user: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> AuditLogResponse:
-    log = db.get(AuditLog, audit_log_id)
+    log = db.scalar(audit_log_statement().where(AuditLog.id == audit_log_id))
     if log is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
     return _audit_log_responses(db, user, [log])[0]
@@ -292,7 +294,9 @@ def get_security_event(
     response: Response,
 ) -> SecurityEventResponse:
     response.headers["Cache-Control"] = "no-store"
-    event = db.get(SecurityEvent, security_event_id)
+    event = db.scalar(select(SecurityEvent).where(
+        SecurityEvent.id == security_event_id, _security_events_of_bound_organization(),
+    ))
     if event is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

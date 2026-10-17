@@ -27,12 +27,14 @@ from app.systems.access.users.coordination import (
     ensure_projected_admin_remains,
     forbidden,
     lock_user,
+    not_found,
     organization_member,
     refuse_account_details,
     shares_another_organization,
     unavailable,
     validate_identity_profile,
 )
+from app.systems.access.users.directory import directory_membership, membership_view
 from app.systems.access.users.eligibility import is_established_user
 from app.systems.access.users.membership import is_platform_operator
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
@@ -285,8 +287,7 @@ def update_user(
         user.username = payload.username
     notify_access_changes(db, before)
     commit(db, "Username unavailable")
-    return UserResponse(**{key: getattr(user if key in User.__table__.columns else membership, key)
-                           for key in UserResponse.model_fields})
+    return membership_view(user, membership)
 
 
 def _change_membership_status(
@@ -309,7 +310,7 @@ def _change_membership_status(
     membership.performed_by = actor_id
     notify_access_changes(db, before)
     commit(db, "Unable to update membership")
-    return _membership_view(user, membership)
+    return membership_view(user, membership)
 
 
 def _remove_membership(
@@ -334,15 +335,6 @@ def _remove_membership(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _membership_view(user: User, membership: Membership) -> UserResponse:
-    """The person as this organization sees them: the membership's status wins."""
-
-    values = {key: getattr(user if key in User.__table__.columns else membership, key)
-              for key in UserResponse.model_fields}
-    values["status"] = membership.status
-    return UserResponse(**values)
-
-
 def _activate_user(
     db: Session,
     user: User,
@@ -355,13 +347,8 @@ def _activate_user(
     before: AccessSnapshot | None,
 ) -> UserResponse:
     operation_id = uuid7()
-    _record_outcome(
-        "user.authentication_activation",
-        SecurityEventOutcome.ATTEMPT,
-        operation_id,
-        actor_id,
-        target_id,
-    )
+    _record_outcome("user.authentication_activation", SecurityEventOutcome.ATTEMPT,
+                    operation_id, actor_id, target_id)
     try:
         ensure_projected_admin_remains(db, user, membership,
             destination_role=destination_role,
@@ -376,25 +363,13 @@ def _activate_user(
     except HTTPException as error:
         if db.in_transaction():
             db.rollback()
-        _record_outcome(
-            "user.authentication_activation",
-            SecurityEventOutcome.PARTIAL,
-            operation_id,
-            actor_id,
-            target_id,
-            "local activation finalization failed",
-        )
+        _record_outcome("user.authentication_activation", SecurityEventOutcome.PARTIAL,
+            operation_id, actor_id, target_id,
+            "local activation finalization failed")
         raise error
-    _record_outcome(
-        "user.authentication_activation",
-        SecurityEventOutcome.SUCCESS,
-        operation_id,
-        actor_id,
-        target_id,
-    )
-    return UserResponse(**{key: getattr(
-        user if key in User.__table__.columns else membership, key
-    ) for key in UserResponse.model_fields})
+    _record_outcome("user.authentication_activation", SecurityEventOutcome.SUCCESS,
+                    operation_id, actor_id, target_id)
+    return membership_view(user, membership)
 
 
 def _disable_user(
@@ -409,13 +384,8 @@ def _disable_user(
     before: AccessSnapshot | None,
 ) -> UserResponse:
     operation_id = uuid7()
-    _record_outcome(
-        "user.authentication_disable",
-        SecurityEventOutcome.ATTEMPT,
-        operation_id,
-        actor_id,
-        target_id,
-    )
+    _record_outcome("user.authentication_disable", SecurityEventOutcome.ATTEMPT,
+                    operation_id, actor_id, target_id)
     membership.role = destination_role
     if payload.username is not None:
         user.username = payload.username
@@ -426,25 +396,13 @@ def _disable_user(
         notify_access_changes(db, before)
         commit(db, "Username unavailable")
     except HTTPException as error:
-        _record_outcome(
-            "user.authentication_disable",
-            SecurityEventOutcome.FAILURE,
-            operation_id,
-            actor_id,
-            target_id,
-            "local disable finalization failed",
-        )
+        _record_outcome("user.authentication_disable", SecurityEventOutcome.FAILURE,
+            operation_id, actor_id, target_id,
+            "local disable finalization failed")
         raise error
-    _record_outcome(
-        "user.authentication_disable",
-        SecurityEventOutcome.SUCCESS,
-        operation_id,
-        actor_id,
-        target_id,
-    )
-    return UserResponse(**{key: getattr(
-        user if key in User.__table__.columns else membership, key
-    ) for key in UserResponse.model_fields})
+    _record_outcome("user.authentication_disable", SecurityEventOutcome.SUCCESS,
+                    operation_id, actor_id, target_id)
+    return membership_view(user, membership)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -477,32 +435,17 @@ def delete_user(
         user.status = UserStatus.DISABLED.value
     advance_token_cutoff(user)
     revoke_user_sessions(db, user.id, except_session_id=None)
-    _record_outcome(
-        "user.authentication_disable",
-        SecurityEventOutcome.ATTEMPT,
-        operation_id,
-        actor_id,
-        target_id,
-    )
+    _record_outcome("user.authentication_disable", SecurityEventOutcome.ATTEMPT,
+                    operation_id, actor_id, target_id)
     try:
         commit(db, "Unable to delete user")
     except HTTPException as error:
-        _record_outcome(
-            "user.authentication_disable",
-            SecurityEventOutcome.FAILURE,
-            operation_id,
-            actor_id,
-            target_id,
-            "local delete finalization failed",
-        )
+        _record_outcome("user.authentication_disable", SecurityEventOutcome.FAILURE,
+            operation_id, actor_id, target_id,
+            "local delete finalization failed")
         raise error
-    _record_outcome(
-        "user.authentication_disable",
-        SecurityEventOutcome.SUCCESS,
-        operation_id,
-        actor_id,
-        target_id,
-    )
+    _record_outcome("user.authentication_disable", SecurityEventOutcome.SUCCESS,
+                    operation_id, actor_id, target_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -512,23 +455,30 @@ def restore_user(
     admin: AdminUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> UserResponse:
-    admin = require_fresh_exact_admin(db, admin.id)
+    admin = require_fresh_exact_admin(db, admin.id, serialize_admin_changes=True)
     actor_id = admin.id
     user = lock_user(db, user_id)
-    membership = organization_member(db, user)
+    membership = directory_membership(db, user.id)
+    if membership is None:
+        raise not_found("User")
     target_id = user.id
-    if not user.is_deleted:
+    if not user.is_deleted and not membership.is_deleted:
         raise conflict("User is not deleted")
     if not is_established_user(membership):
         raise conflict("Unaccepted invitations cannot be restored")
+    if not user.is_deleted:
+        before = snapshot_access(db, (user,))
+        membership.is_deleted, membership.deleted_at = False, None
+        membership.status, membership.performed_by = UserStatus.ACTIVE.value, actor_id
+        notify_access_changes(db, before)
+        commit(db, "Unable to restore membership")
+        return membership_view(user, membership)
+    if not is_platform_operator(db, actor_id):
+        db.rollback()
+        raise conflict("Only the installation owner can restore a deleted account")
     operation_id = uuid7()
-    _record_outcome(
-        "user.authentication_restore",
-        SecurityEventOutcome.ATTEMPT,
-        operation_id,
-        actor_id,
-        target_id,
-    )
+    _record_outcome("user.authentication_restore", SecurityEventOutcome.ATTEMPT,
+                    operation_id, actor_id, target_id)
     try:
         ensure_projected_admin_remains(db, user, membership,
             destination_role=membership.role,
@@ -541,21 +491,10 @@ def restore_user(
     except HTTPException as error:
         if db.in_transaction():
             db.rollback()
-        _record_outcome(
-            "user.authentication_restore",
-            SecurityEventOutcome.PARTIAL,
-            operation_id,
-            actor_id,
-            target_id,
-            "local restore finalization failed",
-        )
+        _record_outcome("user.authentication_restore", SecurityEventOutcome.PARTIAL,
+            operation_id, actor_id, target_id,
+            "local restore finalization failed")
         raise error
-    _record_outcome(
-        "user.authentication_restore",
-        SecurityEventOutcome.SUCCESS,
-        operation_id,
-        actor_id,
-        target_id,
-    )
-    return UserResponse(**{key: getattr(user if key in User.__table__.columns else membership, key)
-                           for key in UserResponse.model_fields})
+    _record_outcome("user.authentication_restore", SecurityEventOutcome.SUCCESS,
+                    operation_id, actor_id, target_id)
+    return membership_view(user, membership)

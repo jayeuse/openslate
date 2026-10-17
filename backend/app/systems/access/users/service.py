@@ -192,12 +192,13 @@ def invite_user(
         existing = db.scalar(select(User).where(
             or_(User.email == payload.email, User.username == payload.username)
         ).order_by((User.email == payload.email).desc()))
+        removed = None if existing is None else db.scalar(select(Membership).where(
+            Membership.org_id == org_id, Membership.user_id == existing.id,
+        ).with_for_update())
         if existing is not None and (
             existing.email != payload.email or existing.is_deleted or existing.status != "active"
             or existing.supabase_user_id is None
-            or db.scalar(select(Membership.id).where(
-                Membership.org_id == org_id, Membership.user_id == existing.id,
-            )) is not None
+            or (removed is not None and not removed.is_deleted)
         ):
             raise InvitationConflict("Email or username is already in use")
         if existing is not None and db.scalar(select(Membership.id).where(
@@ -219,13 +220,21 @@ def invite_user(
         )
         db.add(user)
         db.flush()
-        membership = Membership(
-            org_id=org_id, user_id=user.id, role=role.value, status=UserStatus.PENDING.value,
-            sponsor_user_id=payload.sponsor_user_id, expires_at=expires_at,
-            provider_invitation_operation_id=operation_id,
-            invitation_sent_at=utc_now() if existing is not None else None,
-        )
+        membership = removed or Membership(org_id=org_id, user_id=user.id)
+        membership.role, membership.status = role.value, UserStatus.PENDING.value
+        membership.sponsor_user_id, membership.expires_at = payload.sponsor_user_id, expires_at
+        membership.provider_invitation_operation_id = operation_id
+        membership.invitation_sent_at = utc_now() if existing is not None else None
+        membership.invitation_accepted_at, membership.mfa_required_since = None, None
+        membership.is_deleted, membership.deleted_at = False, None
+        membership.performed_by = actor_id
         db.add(membership)
+        if removed is not None:
+            for previous in db.scalars(select(GroupMember).where(
+                GroupMember.org_id == org_id, GroupMember.user_id == user.id,
+            ).order_by(GroupMember.group_id).with_for_update()):
+                db.delete(previous)
+            db.flush()
         initialize_observation(db, user.id)
         for group_id in group_ids:
             db.add(GroupMember(org_id=org_id, group_id=group_id, user_id=user.id,

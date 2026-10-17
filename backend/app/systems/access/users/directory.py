@@ -20,6 +20,7 @@ from app.systems.access.identity.eligibility import identity_eligible_clause
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.eligibility import established_user_clause
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import (
     DirectoryRowResponse,
@@ -71,6 +72,8 @@ class UserListRequest(StandardListRequest[UserSortField]):
 
 
 _NAME = func.lower(func.coalesce(func.nullif(func.trim(User.display_name), ""), User.username))
+_STATUS = case((User.status != "active", User.status), else_=Membership.status)
+_DELETED = or_(User.is_deleted, Membership.is_deleted)
 _SORT_FIELDS = {
     UserSortField.EMAIL: cast(ColumnElement[Any], User.email),
     UserSortField.USERNAME: cast(ColumnElement[Any], User.username),
@@ -79,6 +82,24 @@ _SORT_FIELDS = {
     UserSortField.NAME: _NAME,
     UserSortField.EXPIRES_AT: cast(ColumnElement[Any], Membership.expires_at),
 }
+
+
+def directory_membership(db: Session, user_id: UUID) -> Membership | None:
+    """People includes removed memberships so their organization can restore them."""
+    return db.scalar(select(Membership).where(
+        Membership.org_id == bound_organization(db), Membership.user_id == user_id,
+    ).execution_options(populate_existing=True))
+
+
+def membership_view(user: User, membership: Membership) -> UserResponse:
+    values = {key: getattr(user if key in User.__table__.columns else membership, key)
+              for key in UserResponse.model_fields}
+    values.update(
+        status=user.status if user.status != "active" else membership.status,
+        is_deleted=user.is_deleted or membership.is_deleted,
+        deleted_at=user.deleted_at if user.is_deleted else membership.deleted_at,
+    )
+    return UserResponse.model_validate(values)
 
 
 def _active_account(now: datetime) -> ColumnElement[bool]:
@@ -137,16 +158,16 @@ def _filtered_users(params: UserListRequest, now: datetime, org_id: UUID) -> Sel
             condition = Membership.expires_at <= now
         elif params.status == "ending":
             condition = and_(
-                User.status.in_(("active", "pending")),
+                _STATUS.in_(("active", "pending")),
                 Membership.expires_at > now,
                 Membership.expires_at <= now + timedelta(days=14),
             )
         else:
             condition = and_(
-                User.status == params.status,
+                _STATUS == params.status,
                 or_(Membership.expires_at.is_(None), Membership.expires_at > now)
             )
-        statement = statement.where(User.is_deleted.is_(False), condition)
+        statement = statement.where(~_DELETED, condition)
     membership = (
         select(1)
         .select_from(GroupMember)
@@ -204,7 +225,7 @@ def directory_list(
             cast(ColumnElement[str], User.username),
             cast(ColumnElement[str], User.job_title),
         ),
-        deleted_field=cast(ColumnElement[bool], User.is_deleted),
+        deleted_field=_DELETED,
     )
     result = execute_standard_list(db, _filtered_users(params, now, org_id), params, spec)
     policy = load_platform_policy(db)
@@ -250,9 +271,7 @@ def directory_list(
         items=[
             DirectoryRowResponse.model_validate(
                 {
-                    **{key: getattr(item if key in User.__table__.columns
-                                    else memberships[item.id], key)
-                       for key in UserResponse.model_fields},
+                    **membership_view(item, memberships[item.id]).model_dump(),
                     "active_session_count": metadata[item.id]["active_session_count"],
                     "mfa_verified_totp": metadata[item.id]["mfa_verified_totp"],
                     "mfa_observed_at": metadata[item.id]["mfa_observed_at"],

@@ -5,13 +5,16 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
+from app.systems.access.users.models import Membership, PlatformOperator, User
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.access.user_admin_support import add_session
 from tests.access.user_security_support import open_security_world
-from tests.conftest import membership_of
+from tests.conftest import create_member, create_organization, make_operator, membership_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -20,6 +23,137 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def world(fake_provider_account, monkeypatch):
     yield from open_security_world(fake_provider_account, monkeypatch)
+
+
+@pytest.fixture
+def peer(world):
+    with Session(world.owner) as db:
+        peer = create_organization(db)
+        peer_id = peer.id
+        db.commit()
+    try:
+        yield peer_id
+    finally:
+        with Session(world.owner) as db:
+            for row in db.scalars(select(Membership).where(Membership.org_id == peer_id)):
+                db.delete(row)
+            for row in db.scalars(select(PlatformOperator).where(
+                PlatformOperator.user_id == world.actor_id,
+            )):
+                db.delete(row)
+            db.flush()
+            db.delete(db.get(WorkspaceProfile, peer_id))
+            db.commit()
+
+
+@pytest.mark.parametrize("operator", [False, True])
+def test_admitted_admin_session_surfaces_hide_foreign_people(world, peer, operator):
+    with Session(world.owner) as db:
+        membership_of(db, world.target_id).org_id = peer
+        if not operator:
+            db.delete(db.scalars(select(PlatformOperator).where(
+                PlatformOperator.user_id == world.actor_id,
+            )).one())
+        db.commit()
+    assert world.client.get("/api/users", headers=world.headers()).status_code == 200
+    listed = world.client.get("/api/auth/admin-sessions", headers=world.headers())
+    assert listed.status_code == 200, listed.text
+    assert {row["user_id"] for row in listed.json()["items"]} == {str(world.actor_id)}
+    session = world.sessions()[0]
+    for method, suffix in (("GET", ""), ("DELETE", f"/{session.id}"), ("DELETE", "")):
+        refused = world.client.request(
+            method, f"/api/users/{world.target_id}/sessions{suffix}", headers=world.headers(),
+        )
+        assert refused.status_code == 404, refused.text
+    ended = world.client.delete("/api/auth/admin-sessions", headers=world.headers())
+    assert ended.status_code == 204
+    assert ended.headers["X-Skipped-Shared-Accounts"] == "0"
+    assert all(row.revoked_at is None for row in world.sessions())
+
+
+@pytest.mark.parametrize("operator", [False, True])
+def test_shared_person_sessions_are_visible_but_only_operator_revokes(world, peer, operator):
+    with Session(world.owner) as db:
+        target = db.get(User, world.target_id)
+        membership_of(db, target.id).status = "disabled"
+        create_member(db, db.get(WorkspaceProfile, peer), user=target)
+        add_session(db, db.get(User, world.actor_id))
+        if not operator:
+            db.delete(db.scalars(select(PlatformOperator).where(
+                PlatformOperator.user_id == world.actor_id,
+            )).one())
+        db.commit()
+    listed = world.client.get(
+        f"/api/users/{world.target_id}/sessions", headers=world.headers(),
+    )
+    assert listed.status_code == 200 and listed.json()["items"], listed.text
+    session_id = world.sessions()[0].id
+    expected = 204 if operator else 409
+    for suffix in (f"/{session_id}", ""):
+        ended = world.client.delete(
+            f"/api/users/{world.target_id}/sessions{suffix}", headers=world.headers(),
+        )
+        assert ended.status_code == expected, ended.text
+    ended = world.client.delete("/api/auth/admin-sessions", headers=world.headers())
+    assert ended.status_code == 204
+    assert ended.headers["X-Skipped-Shared-Accounts"] == ("0" if operator else "1")
+    assert all((row.revoked_at is not None) is operator for row in world.sessions())
+    assert world.client.get("/api/users", headers=world.headers()).status_code == 200
+
+
+@pytest.mark.parametrize("membership_state", ["foreign", "removed"])
+def test_person_security_hides_targets_before_provider_observation(world, peer, membership_state):
+    with Session(world.owner) as db:
+        target_membership = membership_of(db, world.target_id)
+        if membership_state == "foreign":
+            target_membership.org_id = peer
+        else:
+            target_membership.is_deleted = True
+            target_membership.deleted_at = datetime.now(UTC)
+        db.commit()
+    assert world.client.get("/api/users", headers=world.headers()).status_code == 200
+    world.calls.clear()
+    refused = world.client.get(f"/api/users/{world.target_id}/security", headers=world.headers())
+    assert refused.status_code == 404, refused.text
+    assert not any(path.endswith(str(world.target_provider_id)) for _, path in world.calls)
+    assert not world.events()
+    with Session(world.owner) as db:
+        assert db.get(IdentityMfaObservation, world.target_id) is None
+
+
+def test_global_restore_requires_operator_and_never_restores_removed_membership(world, peer):
+    with Session(world.owner) as db:
+        target = db.get(User, world.target_id)
+        create_member(db, db.get(WorkspaceProfile, peer), user=target)
+        db.commit()
+    deleted = world.client.delete(f"/api/users/{world.target_id}", headers=world.headers())
+    assert deleted.status_code == 204, deleted.text
+    with Session(world.owner) as db:
+        operator = db.scalars(select(PlatformOperator).where(
+            PlatformOperator.user_id == world.actor_id,
+        )).one()
+        db.delete(operator)
+        db.commit()
+    refused = world.client.post(f"/api/users/{world.target_id}/restore", headers=world.headers())
+    assert refused.status_code == 409, refused.text
+    with Session(world.owner) as db:
+        target = db.get(User, world.target_id)
+        assert target.is_deleted and target.status == "disabled"
+        removed = db.scalars(select(Membership).where(
+            Membership.user_id == target.id, Membership.org_id == peer,
+        )).one()
+        removed.is_deleted, removed.deleted_at = True, datetime.now(UTC)
+        make_operator(db, db.get(User, world.actor_id))
+        db.commit()
+    restored = world.client.post(f"/api/users/{world.target_id}/restore", headers=world.headers())
+    assert restored.status_code == 200, restored.text
+    with Session(world.owner) as db:
+        target = db.get(User, world.target_id)
+        assert not target.is_deleted and target.status == "active"
+        assert db.scalars(select(Membership).where(
+            Membership.user_id == target.id, Membership.org_id == peer,
+        )).one().is_deleted
+    assert all(row.revoked_at is not None for row in world.sessions())
 
 
 def test_live_status_requires_real_auth_and_reports_current_enrollment(world):
@@ -131,7 +265,9 @@ def test_status_reports_empty_factors_and_absent_smtp_truthfully(world, monkeypa
     assert response.json()["smtp_configured"] is False
 
 
-@pytest.mark.parametrize("change,expected", [("role", 403), ("session", 401), ("binding", 409)])
+@pytest.mark.parametrize(
+    "change,expected", [("role", 403), ("session", 401), ("binding", 409), ("membership", 404)],
+)
 def test_status_discards_provider_facts_after_authority_or_binding_changes(world, change, expected):
     changed = []
 
@@ -143,6 +279,8 @@ def test_status_discards_provider_facts_after_authority_or_binding_changes(world
                     membership_of(db, world.actor_id).role = "member"
                 elif change == "session":
                     db.get(IdentitySession, world.session_id).revoked_at = datetime.now(UTC)
+                elif change == "membership":
+                    membership_of(db, world.target_id).is_deleted = True
                 else:
                     db.get(User, world.target_id).supabase_user_id = uuid4()
                 db.commit()

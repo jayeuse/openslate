@@ -19548,7 +19548,16 @@
         ],
         "responses": {
           "204": {
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Skipped-Shared-Accounts": {
+                "description": "Number of shared accounts skipped by this organization administrator",
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "422": {
             "content": {
