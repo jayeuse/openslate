@@ -9,7 +9,7 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.policy.scope import allowed_module_ids
 from app.systems.access.users.membership import current_membership
 from app.systems.access.users.models import User
-from app.systems.boards.access import board_level
+from app.systems.boards.access import visible_board_clause
 from app.systems.boards.models import Board
 from app.systems.platform.files.access import error
 from app.systems.sandbox.departments.models import Department
@@ -45,11 +45,18 @@ def visible_person(db: Session, actor: User, target_id: UUID) -> User:
         modules = modules.where(Module.id.in_(target_modules))
     if db.scalar(modules.limit(1)) is not None:
         return target
-    for board in db.scalars(
-        select(Board).where(Board.is_deleted.is_(False), Board.deleted_at.is_(None))
-    ):
-        if board_level(db, actor, board) is not None and board_level(db, target, board) is not None:
-            return target
+    board = db.scalar(
+        select(Board.id)
+        .where(
+            Board.is_deleted.is_(False),
+            Board.deleted_at.is_(None),
+            visible_board_clause(db, actor),
+            visible_board_clause(db, target),
+        )
+        .limit(1)
+    )
+    if board is not None:
+        return target
     actor_groups = select(GroupMember.group_id).where(
         GroupMember.user_id == actor.id,
         GroupMember.is_deleted.is_(False),
