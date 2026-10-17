@@ -83,6 +83,7 @@ def test_privileged_collection_detail_and_export_are_not_cached(event_world):
         outcome="success",
         source="feed.fixture",
         operation_id=world.operation_id,
+        org_id=world.org_id,
     )
     for path in [
         "/api/security-events",

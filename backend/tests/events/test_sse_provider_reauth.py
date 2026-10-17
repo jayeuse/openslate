@@ -24,6 +24,11 @@ from tests.auth.provider_jwt_support import client_for_key, signed_access
 from tests.users.user_support import local_user
 
 
+@pytest.fixture(autouse=True)
+def nonoperator_snapshot(monkeypatch):
+    monkeypatch.setattr(events_router, "is_platform_operator", lambda *_args: False)
+
+
 def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.MonkeyPatch) -> None:
     db = Mock()
     client = Mock()

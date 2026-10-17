@@ -236,23 +236,30 @@ def update_workspace_security(
         if changed & {"session_timeout_minutes", "session_absolute_lifetime_minutes"}:
             clamp_session_deadlines(db, old_deadlines, platform)
         if actual_changes:
-            append_security_event(
-                db,
-                SecurityEventIngestRequest(
-                    event_type="workspace.security_policy_change",
-                    outcome="success",
-                    source="workspace.security_policy",
-                    operation_id=uuid7(),
-                    actor_id=actor_id,
-                    metadata={
-                        "changed_fields": actual_changes,
-                        "revision": profile.revision,
-                        "ip_address": canonical_source(
-                            request.client.host if request.client else None
-                        ),
-                    },
-                ),
-            )
+            operation_id = uuid7()
+            for platform_change in (False, True):
+                fields = [field for field in actual_changes
+                          if (field in _PLATFORM_FIELDS) == platform_change]
+                if not fields:
+                    continue
+                append_security_event(
+                    db,
+                    SecurityEventIngestRequest(
+                        event_type="workspace.security_policy_change",
+                        outcome="success",
+                        source="workspace.security_policy",
+                        operation_id=operation_id,
+                        actor_id=actor_id,
+                        metadata={
+                            "changed_fields": fields,
+                            "revision": profile.revision,
+                            "ip_address": canonical_source(
+                                request.client.host if request.client else None
+                            ),
+                        },
+                    ),
+                    org_id=None if platform_change else profile.id,
+                )
         db.commit()
     except SQLAlchemyError as error:
         db.rollback()

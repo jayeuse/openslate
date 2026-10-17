@@ -17,7 +17,7 @@ from app.core.database import get_db
 from app.core.observability import log_event
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import effective_levels
-from app.systems.access.users.membership import require_current_membership
+from app.systems.access.users.membership import is_platform_operator, require_current_membership
 from app.systems.access.users.models import User, UserRole
 from app.systems.manage.audit import listeners as _listeners  # noqa: F401
 from app.systems.manage.audit.export import encode_audit_csv
@@ -256,6 +256,7 @@ def get_security_events(
     result = list_security_events(
         db,
         params,
+        reader=_,
         operation_id=operation_id,
         event_type=event_type,
         outcome=outcome,
@@ -281,6 +282,7 @@ def export_security_events(
     result = list_security_events(
         db,
         SecurityEventListRequest(limit=limit),
+        reader=_,
         operation_id=operation_id,
     )
     return [SecurityEventResponse.model_validate(event) for event in result.items[:limit]]
@@ -295,7 +297,8 @@ def get_security_event(
 ) -> SecurityEventResponse:
     response.headers["Cache-Control"] = "no-store"
     event = db.scalar(select(SecurityEvent).where(
-        SecurityEvent.id == security_event_id, _security_events_of_bound_organization(),
+        SecurityEvent.id == security_event_id,
+        _security_events_of_bound_organization(operator=is_platform_operator(db, _.id)),
     ))
     if event is None:
         raise HTTPException(

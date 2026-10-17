@@ -71,6 +71,8 @@ class InvalidationEvent:
     # The organization the change happened in. It routes the event only inside
     # PostgreSQL NOTIFY and is never sent to a browser.
     org_id: UUID | None = None
+    # Producer-only subject for account files; stripped before NOTIFY publication.
+    account_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if self.entity == "charts" and (self.entity_id is not None or self.all_authenticated):
@@ -145,6 +147,7 @@ def event_for_entity(
     module_id: UUID | None = None,
     board_id: UUID | None = None,
     org_id: UUID | None = None,
+    account_id: UUID | None = None,
 ) -> InvalidationEvent | None:
     """Classify an audited table without exposing rows or audit snapshots.
 
@@ -172,6 +175,7 @@ def event_for_entity(
         administrators_only=entity in _ADMINISTRATOR_ENTITIES or (scoped and module_id is None),
         all_authenticated=entity in _ALL_AUTHENTICATED_ENTITIES,
         org_id=org_id,
+        account_id=account_id,
     )
 
 

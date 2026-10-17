@@ -36,10 +36,16 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
         actor_label="system_migration",
         note="migration",
     )
+
+    def scalar(statement):
+        if statement.column_descriptions[0]["entity"] is AuditLog:
+            return log if log.id in statement.compile().params.values() else None
+        assert statement.column_descriptions[0]["entity"] is None, "Unexpected scalar query"
+        return 3
+
     database = Mock()
     database.scalars.return_value.all.return_value = [log, log]
-    database.scalar.return_value = 3
-    database.get.return_value = log
+    database.scalar.side_effect = scalar
     database.execute.return_value.all.return_value = []
     actor, membership = make_user("audit-admin")
     database.dirty = set()
@@ -91,7 +97,6 @@ def test_audit_listing_filters_pagination_detail_and_bounded_export() -> None:
         ValidationError, match=r"limit\n  Input should be less than or equal to 100"
     ):
         AuditLogListRequest(limit=101)
-    database.get.return_value = None
     with pytest.raises(HTTPException) as error:
         get_audit_log(uuid7(), actor, database)
     assert error.value.status_code == 404

@@ -23,6 +23,7 @@ from app.systems.platform.events.router import (
 )
 
 READABLE_MODULE = uuid7()
+ORGANIZATION = uuid7()
 
 
 def test_event_stream_starts_with_resync_then_uses_comment_heartbeats() -> None:
@@ -49,7 +50,10 @@ def test_event_stream_serializes_only_opaque_invalidation_metadata() -> None:
     async def exercise() -> None:
         hub = EventHub()
         request = SimpleNamespace(is_disconnected=_not_disconnected)
-        user = EventViewer(user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE}))
+        user = EventViewer(
+            user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE}),
+            org_id=ORGANIZATION,
+        )
         stream = event_stream(
             request,
             hub,
@@ -59,7 +63,9 @@ def test_event_stream_serializes_only_opaque_invalidation_metadata() -> None:
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
-        await hub.publish(InvalidationEvent("records", module_id=READABLE_MODULE))
+        await hub.publish(InvalidationEvent(
+            "records", module_id=READABLE_MODULE, org_id=ORGANIZATION,
+        ))
         assert await anext(stream) == (
             b'event: invalidate\ndata: {"entity":"records","module_id":"'
             + str(READABLE_MODULE).encode()
@@ -126,9 +132,12 @@ def test_event_stream_rechecks_changed_permissions_before_delivery() -> None:
         hub = EventHub()
         request = SimpleNamespace(is_disconnected=_not_disconnected)
         allowed = EventViewer(
-            user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE})
+            user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE}),
+            org_id=ORGANIZATION,
         )
-        denied = EventViewer(user_id=uuid7(), role="member", module_ids=frozenset())
+        denied = EventViewer(
+            user_id=uuid7(), role="member", module_ids=frozenset(), org_id=ORGANIZATION,
+        )
         stream = event_stream(
             request,
             hub,
@@ -138,7 +147,9 @@ def test_event_stream_rechecks_changed_permissions_before_delivery() -> None:
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
-        await hub.publish(InvalidationEvent("records", module_id=READABLE_MODULE))
+        await hub.publish(InvalidationEvent(
+            "records", module_id=READABLE_MODULE, org_id=ORGANIZATION,
+        ))
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
         await stream.aclose()
 
@@ -150,8 +161,12 @@ def test_board_access_revoke_and_grant_resync_before_delivering_queued_events() 
         hub = EventHub()
         request = SimpleNamespace(is_disconnected=_not_disconnected)
         board_id, user_id = uuid7(), uuid7()
-        allowed = EventViewer(user_id, "member", frozenset(), board_ids=frozenset({board_id}))
-        denied = EventViewer(user_id, "member", frozenset(), board_ids=frozenset())
+        allowed = EventViewer(
+            user_id, "member", frozenset(), board_ids=frozenset({board_id}), org_id=ORGANIZATION,
+        )
+        denied = EventViewer(
+            user_id, "member", frozenset(), board_ids=frozenset(), org_id=ORGANIZATION,
+        )
         stream = event_stream(
             request,
             hub,
@@ -159,7 +174,7 @@ def test_board_access_revoke_and_grant_resync_before_delivering_queued_events() 
             heartbeat_seconds=0.1,
             reauthorize=_sequence_authorizer(allowed, denied, denied, allowed, allowed),
         )
-        event = InvalidationEvent("board_posts", board_id=board_id)
+        event = InvalidationEvent("board_posts", board_id=board_id, org_id=ORGANIZATION)
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
         await hub.publish(event)

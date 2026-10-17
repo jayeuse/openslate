@@ -251,6 +251,7 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
         with Session(engine) as observer:
             event = observer.scalar(select(SecurityEvent).where(SecurityEvent.actor_id == actor_id))
             assert event is not None and event.event_type == "records.export.authorized"
+            assert event.org_id == org_id
             assert event.event_metadata["row_count"] == 1
             assert event.event_metadata["format"] == "csv"
     finally:
@@ -275,6 +276,8 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
             cleanup.commit()
         with engine.begin() as cleanup:
             cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.security_events WHERE org_id = :id"),
                             {"id": org_id})
             cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
                             {"id": org_id})

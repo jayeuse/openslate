@@ -6,7 +6,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Select, String, and_, exists, func, or_, select
+from sqlalchemy import Select, String, and_, exists, func, literal, or_, select
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.exc import SQLAlchemyError
@@ -27,7 +27,11 @@ from app.core.database.session import AuditSession, get_engine
 from app.core.middleware.request_context import get_current_request_context
 from app.core.observability import log_event
 from app.systems.access.users.eligibility import established_user_clause
-from app.systems.access.users.membership import bound_membership_join, require_current_membership
+from app.systems.access.users.membership import (
+    bound_membership_join,
+    is_platform_operator,
+    require_current_membership,
+)
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.manage.audit.models import (
     AuditAction,
@@ -133,17 +137,23 @@ def _audit_rows_of_bound_organization() -> ColumnElement[bool]:
     )
 
 
-def _security_events_of_bound_organization() -> ColumnElement[bool]:
+def _security_events_of_bound_organization(*, operator: bool = False) -> ColumnElement[bool]:
     """Events of the bound organization, and account events about its own people."""
 
     return or_(
         SecurityEvent.org_id == bound_organization_column(),
         and_(
             SecurityEvent.org_id.is_(None),
+            SecurityEvent.event_type != "workspace.security_policy_change",
             or_(
                 SecurityEvent.actor_id.in_(_bound_members()),
                 SecurityEvent.subject_id.in_(_bound_members()),
             ),
+        ),
+        and_(
+            SecurityEvent.org_id.is_(None),
+            SecurityEvent.event_type == "workspace.security_policy_change",
+            literal(operator),
         ),
     )
 
@@ -418,6 +428,7 @@ def list_security_events(
     db: Session,
     params: StandardListRequest[SecurityEventSortField],
     *,
+    reader: User | None = None,
     operation_id: UUID | None = None,
     event_type: str | None = None,
     outcome: SecurityEventOutcome | None = None,
@@ -425,7 +436,9 @@ def list_security_events(
     occurred_after: datetime | None = None,
     occurred_before: datetime | None = None,
 ) -> ListQueryResult[SecurityEvent]:
-    conditions: list[ColumnElement[bool]] = [_security_events_of_bound_organization()]
+    conditions: list[ColumnElement[bool]] = [_security_events_of_bound_organization(
+        operator=reader is not None and is_platform_operator(db, reader.id),
+    )]
     if operation_id is not None:
         conditions.append(SecurityEvent.operation_id == operation_id)
     if event_type is not None:

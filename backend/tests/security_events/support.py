@@ -7,7 +7,7 @@ from uuid6 import uuid7
 import app.systems.manage.audit.models as audit_models
 import app.systems.manage.audit.schemas as audit_schemas
 import app.systems.manage.audit.service as audit_service
-from app.systems.access.users.models import Membership, User, UserRole
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.conftest import create_member
@@ -149,7 +149,14 @@ class _SecurityEventDatabase:
     def refresh(self, event: Any) -> None:
         pass
 
-    def scalar(self, statement: Any) -> int:
+    def scalar(self, statement: Any) -> Any:
+        entity = statement.column_descriptions[0]["entity"]
+        if entity is _security_event_model():
+            identifiers = statement.compile().params.values()
+            return next((event for event in self.events if event.id in identifiers), None)
+        if entity is PlatformOperator:
+            return None
+        assert entity is None, "Unexpected scalar query"
         return len(self.events)
 
     def scalars(self, statement: Any) -> _ScalarItems:

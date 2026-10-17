@@ -118,6 +118,7 @@ def _event_entity(instance: Any, entity: str) -> str:
     if entity in {"board_attachments", "board_record_links"}:
         return "board_posts" if instance.post_id is not None else "board_events"
     return {
+        "organizations": "workspace_profiles",
         "board_groups": "boards",
         "board_event_reminders": "board_events",
         "board_post_revisions": "board_posts",
@@ -235,6 +236,8 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             module_id=_event_module_id(change.instance, edge_modules),
             board_id=change.board.id if isinstance(change.board, Board) else change.board,
             org_id=org_id,
+            account_id=(getattr(change.instance, "creator_id", None)
+                        if entity_type == "files" and org_id is None else None),
         )
         if invalidation is not None:
             invalidations.append(invalidation)

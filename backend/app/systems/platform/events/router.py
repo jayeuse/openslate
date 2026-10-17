@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -26,7 +26,7 @@ from app.systems.access.identity.provider_sessions import resolve_provider_sessi
 from app.systems.access.identity.provider_user_cache import recent_provider_user
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import allowed_module_ids
-from app.systems.access.users.membership import current_membership
+from app.systems.access.users.membership import current_membership, is_platform_operator
 from app.systems.boards.access import readable_board_ids
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import ip_allowed, load_workspace_policy
@@ -145,6 +145,7 @@ async def events(
     user = await reauthorize_event_principal(principal)
     if user is None:
         raise _unauthorized()
+    principal = replace(principal, org_id=user.org_id)
     try:
         subscription = await hub.subscribe(user)
     except SubscriberLimitReached:
@@ -190,6 +191,7 @@ async def event_stream(
         user = initial_user if initial_user is not None else await checked_identity()
         if user is None:
             return
+        principal = replace(principal, org_id=user.org_id)
         if active_subscription is None:
             try:
                 active_subscription = await hub.subscribe(user)
@@ -287,6 +289,7 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
                 module_ids=allowed_module_ids(db, user, AccessLevel.READ),
                 board_ids=readable_board_ids(db, user),
                 org_id=org_id,
+                operator=is_platform_operator(db, user.id),
             )
     except MFARequired as error:
         raise HTTPException(

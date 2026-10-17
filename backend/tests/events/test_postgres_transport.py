@@ -12,6 +12,7 @@ from app.systems.platform.events.models import InvalidationEvent, event_for_enti
 from app.systems.platform.events.publisher import publish_invalidation, publish_invalidations
 
 READABLE_MODULE = uuid7()
+ORGANIZATION = uuid7()
 
 
 def test_publisher_sends_only_the_opaque_payload_with_pg_notify(monkeypatch) -> None:
@@ -183,7 +184,10 @@ def test_listener_reconnects_and_fans_out_notification(monkeypatch) -> None:
         from app.systems.platform.events.hub import EventHub
 
         hub = EventHub()
-        user = EventViewer(user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE}))
+        user = EventViewer(
+            user_id=uuid7(), role="member", module_ids=frozenset({READABLE_MODULE}),
+            org_id=ORGANIZATION,
+        )
         subscription = await hub.subscribe(user)
         stop_wait = threading.Event()
         attempts = 0
@@ -209,7 +213,9 @@ def test_listener_reconnects_and_fans_out_notification(monkeypatch) -> None:
                 if not self.delivered:
                     self.delivered = True
                     yield SimpleNamespace(
-                        payload=InvalidationEvent("records", module_id=READABLE_MODULE).to_json()
+                        payload=InvalidationEvent(
+                            "records", module_id=READABLE_MODULE, org_id=ORGANIZATION,
+                        ).to_transport_json()
                     )
                 else:
                     stop_wait.wait(0.5)
@@ -234,7 +240,7 @@ def test_listener_reconnects_and_fans_out_notification(monkeypatch) -> None:
         try:
             assert await asyncio.wait_for(subscription.queue.get(), timeout=2) is None
             assert await asyncio.wait_for(subscription.queue.get(), timeout=2) == InvalidationEvent(
-                "records", module_id=READABLE_MODULE
+                "records", module_id=READABLE_MODULE, org_id=ORGANIZATION,
             )
             assert attempts >= 2
             # The live connection: autocommit (LISTEN needs it) and the bounded timeouts.

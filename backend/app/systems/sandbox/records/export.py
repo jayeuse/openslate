@@ -23,6 +23,7 @@ from uuid6 import uuid7
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import apply_connection_scope
 from app.systems.access.policy.checks import module_hidden
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -345,6 +346,7 @@ def commit_export_event(db: Session, actor_id: UUID, payload: ExportRequest, row
                     ],
                 },
             ),
+            org_id=bound_organization(db),
         )
         db.commit()
     except SQLAlchemyError as error:
