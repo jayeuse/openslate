@@ -14,8 +14,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.systems.access.users.membership import bound_organization
-from app.systems.manage.workspace.models import WorkspaceProfile
-from app.systems.openview.charts.models import Chart
 from app.systems.platform.scheduling.notification_creation import notify_sandbox_publication
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.designs.service import (
@@ -29,6 +27,7 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.binding_keys import normalize_legacy_field_bindings
 from app.systems.sandbox.publications.close_rules import lifecycle_closed_relationships
 from app.systems.sandbox.publications.models import SandboxBinding, SandboxPublication
+from app.systems.sandbox.publications.operational_locks import lock_operational_rows
 from app.systems.sandbox.publications.planner import (
     _binding_map,
     locked_publication_plan,
@@ -42,18 +41,12 @@ from app.systems.sandbox.publications.rules import (
 from app.systems.sandbox.publications.schemas import PublicationResponse, PublicationVersion
 from app.systems.sandbox.publications.structure_mutations import (
     close_removed_structure,
-    lock_module_access,
     stage_bound_names_and_positions,
     sync_department_boards,
     sync_module_access_departments,
     sync_module_chart_departments,
 )
 from app.systems.sandbox.publications.trigger_mutations import apply_record_triggers
-from app.systems.sandbox.record_triggers.models import (
-    RecordTrigger,
-    RecordTriggerAction,
-    RecordTriggerCondition,
-)
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 
@@ -142,7 +135,7 @@ def apply_publication(
     if replay is not None:
         return replay
     document = _parse_row_document(document_row)
-    _lock_operational_rows(db)
+    lock_operational_rows(db)
     plan = locked_publication_plan(db, document)
     if plan.blockers:
         raise PublicationError("publication_blocked", "Fix the listed publication blockers")
@@ -241,29 +234,6 @@ def apply_publication(
             "publication_unavailable", "Unable to publish the Sandbox structure", 503
         ) from error
     return response
-
-
-def _lock_operational_rows(db: Session) -> None:
-    """Use canonical class order, after group and access rows, before inspection and mutation."""
-
-    lock_module_access(db)
-    for model in (
-        WorkspaceProfile,
-        SandboxBinding,
-        Department,
-        Module,
-        Chart,
-        Field,
-        Record,
-        RelationshipEdge,
-        RecordTrigger,
-        RecordTriggerCondition,
-        RecordTriggerAction,
-    ):
-        statement = select(model.id)
-        if model is WorkspaceProfile:
-            statement = statement.where(WorkspaceProfile.id == bound_organization(db))
-        db.scalars(statement.order_by(model.id).with_for_update()).all()
 
 
 def _apply_departments(
