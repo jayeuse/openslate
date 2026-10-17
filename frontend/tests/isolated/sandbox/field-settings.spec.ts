@@ -1,6 +1,38 @@
 import { expect, test } from "@playwright/test";
-import { buildField } from "../../../src/components/systems/sandbox/components/designer-field-settings";
+import {
+  buildField,
+  FieldSettings,
+} from "../../../src/components/systems/sandbox/components/designer-field-settings";
 import type { Field } from "../../../src/components/systems/sandbox/domain/model";
+import { staticMarkup } from "./static-markup";
+
+// A User field has no shared default, so its settings show a note in place of
+// a default-value control. The note once used a Field part outside a Field
+// root, and selecting any User field crashed the Sandbox designer.
+test("User field settings render the no-shared-default note", () => {
+  const markup = staticMarkup(FieldSettings, {
+    field: {
+      id: "sample-field-Assigned to",
+      name: "Assigned to",
+      type: "User",
+      required: false,
+      value: "",
+      options: "",
+      closed: false,
+    },
+    index: 0,
+    count: 1,
+    onSave: async () => ({ ok: true, value: undefined }),
+    onMove: async () => ({ ok: true, value: undefined }),
+    onLifecycle: async () => ({ ok: true, value: undefined }),
+    titleFieldId: null,
+    draftId: "field-settings-user",
+    onDraftStateChange: () => {},
+  });
+  expect(markup).toContain(
+    "User values are assigned on individual records, so this field has no shared default user.",
+  );
+});
 
 // Field settings save Date/Time bounds by instant, not by text: a bound
 // written with +02:00 can come before a later-looking bound written in UTC.

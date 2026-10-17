@@ -20,7 +20,6 @@ import {
 import {
   Field as FormField,
   FieldError,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
@@ -467,10 +466,11 @@ export function FieldSettings({
         ) : draft.type === "User" ? (
           <div className="space-y-1">
             <p className="text-sm font-medium">Default value</p>
-            <FieldDescription>
+            {/* A plain note: there is no control here, so no Field root. */}
+            <p className="text-muted-foreground text-sm">
               User values are assigned on individual records, so this field has
               no shared default user.
-            </FieldDescription>
+            </p>
           </div>
         ) : draft.type === "Select" ? (
           <FormField>
