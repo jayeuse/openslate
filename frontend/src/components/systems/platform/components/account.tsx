@@ -121,7 +121,10 @@ export default function Account() {
   const identity = useQuery(authMeOptions());
   const accountId = identity.data?.id ?? "";
   const sessionsQuery = useQuery(accountSessionsOptions(accountId));
-  const workspaceQuery = useQuery(manageWorkspaceOptions());
+  const workspaceQuery = useQuery({
+    ...manageWorkspaceOptions(),
+    enabled: Boolean(identity.data?.currentOrganization),
+  });
   const displayRegion = useDisplayRegion(workspaceQuery.data);
   const passwordMutation = useMutation({
     mutationFn: (values: { currentPassword: string; newPassword: string }) =>
@@ -443,7 +446,7 @@ export default function Account() {
                               session.refreshed_at,
                               displayRegion,
                             )
-                          : workspaceQuery.isPending
+                          : workspaceQuery.isLoading
                             ? "Loading organization date settings…"
                             : "Date settings unavailable"}
                       </p>

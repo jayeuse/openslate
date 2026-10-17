@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { AppQueryProvider } from "@/components/query-provider";
 import {
@@ -11,6 +12,7 @@ import {
   clearVerifiedWorkspaceSessionSnapshot,
   keepAccessDraftsForVerifiedWorkspaceUser,
   VerifiedWorkspaceIdentityProvider,
+  WorkspaceSignOutProvider,
 } from "@/components/systems/shared/runtime/workspace-identity";
 import {
   acceptOrganizationInvitation,
@@ -36,6 +38,10 @@ import { OrganizationGate } from "@/components/organization-gate";
 import { toast } from "@/components/ui/toast";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  WorkspaceNavigationGuardProvider,
+  GuardedWorkspaceLink,
+} from "@/components/workspace-navigation-guard";
 import { getMfaStatus, type MfaStatus } from "@/lib/mfa-api";
 import {
   MfaFlowContext,
@@ -174,6 +180,7 @@ export function AppPage({ children }: AppPageProps) {
   const [unavailable, setUnavailable] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [networkDenied, setNetworkDenied] = useState(false);
+  const [accountProfileAvailable, setAccountProfileAvailable] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
   const [draftCleanupFailed, setDraftCleanupFailed] = useState(false);
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
@@ -182,6 +189,7 @@ export function AppPage({ children }: AppPageProps) {
   // query cache, preferences owner and event stream) is keyed by account and
   // organization, so a switch starts from an empty cache.
   const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [accountOnly, setAccountOnly] = useState(false);
   const organizationIdRef = useRef<string | null>(null);
   const [organizationChoice, setOrganizationChoice] =
     useState<OrganizationChoice | null>(null);
@@ -358,9 +366,31 @@ export function AppPage({ children }: AppPageProps) {
         let responseUserId: string | null = null;
         let mfaStatus: MfaStatus | null = null;
         let responseOrganizationId: string | null = null;
+        let responseAccountOnly = false;
         let choice: OrganizationChoice | null = null;
         try {
-          const body = await getSessionStatus(controller.signal);
+          const body = await getSessionStatus(controller.signal).catch(
+            (error: unknown) => {
+              if (
+                !mounted.current ||
+                current.requestId !== requestId ||
+                current.nextVersion > requested.version ||
+                requested.pathname !== "/profile" ||
+                currentOrganizationId() === null ||
+                !(
+                  error instanceof ApiError &&
+                  error.status === 403 &&
+                  (error.code === "ip_not_allowed" ||
+                    error.code === "mfa_required")
+                )
+              )
+                throw error;
+              // A refused tab organization cannot strand account settings. Retry
+              // the account's default; account-wide MFA still refuses this read.
+              setCurrentOrganizationId(null);
+              return getSessionStatus(controller.signal);
+            },
+          );
           if (
             !mounted.current ||
             current.requestId !== requestId ||
@@ -374,7 +404,18 @@ export function AppPage({ children }: AppPageProps) {
           const blocked = body.authenticated
             ? body.default_organization_blocked
             : null;
-          if (result === "valid" && blocked === "mfa_required") {
+          if (
+            result === "valid" &&
+            requested.pathname === "/profile" &&
+            (blocked || (body.authenticated && body.organization_id === null))
+          ) {
+            const me = await getAuthMe(controller.signal);
+            if (me.id !== responseUserId) result = "unavailable";
+            else {
+              responseOrganizationId = me.currentOrganization?.orgId ?? null;
+              responseAccountOnly = me.currentOrganization === null;
+            }
+          } else if (result === "valid" && blocked === "mfa_required") {
             result = "mfa";
             try {
               mfaStatus = await getMfaStatus(controller.signal);
@@ -443,6 +484,13 @@ export function AppPage({ children }: AppPageProps) {
         // Do not let a response for an older pathname or retry affect the UI;
         // the loop will immediately process the newest queued request.
         if (current.nextVersion > requested.version) continue;
+        // A refused tab organization may still permit account settings. This
+        // offers navigation only; Profile must pass its own session recheck.
+        setAccountProfileAvailable(
+          responseUserId !== null ||
+            (currentOrganizationId() !== null &&
+              (result === "mfa" || result === "network")),
+        );
         if (result === "invalid" || result === "setup") {
           setCurrentOrganizationId(null);
           organizationIdRef.current = null;
@@ -514,7 +562,7 @@ export function AppPage({ children }: AppPageProps) {
           // Another organization's drafts and notices never carry over.
           const contextChanged =
             accountChanged ||
-            (result === "valid" &&
+            ((result === "valid" || requested.pathname === "/profile") &&
               previousUserId !== null &&
               organizationIdRef.current !== null &&
               organizationIdRef.current !== responseOrganizationId);
@@ -547,29 +595,36 @@ export function AppPage({ children }: AppPageProps) {
             }
           }
           if (result === "organization") {
-            // Keep a still-verified workspace concealed behind the choice.
-            try {
-              if (curtain.current && !curtain.current.open)
-                curtain.current.showModal();
-            } catch {
-              setForceFallback(true);
+            if (requested.pathname === "/profile") {
+              // Verified account-only route, with a fresh cache and no shell reads.
+              responseOrganizationId = null;
+              responseAccountOnly = true;
+            } else {
+              // Keep a still-verified workspace concealed behind the choice.
+              try {
+                if (curtain.current && !curtain.current.open)
+                  curtain.current.showModal();
+              } catch {
+                setForceFallback(true);
+              }
+              if (accountChanged) {
+                organizationIdRef.current = null;
+                setOrganizationId(null);
+              }
+              hideMfa();
+              setMfaRequired(false);
+              setNetworkDenied(false);
+              setOrganizationChoice(choice);
+              setDraftCleanupFailed(false);
+              setUnavailable(false);
+              setChecking(true);
+              continue;
             }
-            if (accountChanged) {
-              organizationIdRef.current = null;
-              setOrganizationId(null);
-            }
-            hideMfa();
-            setMfaRequired(false);
-            setNetworkDenied(false);
-            setOrganizationChoice(choice);
-            setDraftCleanupFailed(false);
-            setUnavailable(false);
-            setChecking(true);
-            continue;
           }
           setCurrentOrganizationId(responseOrganizationId);
           organizationIdRef.current = responseOrganizationId;
           setOrganizationId(responseOrganizationId);
+          setAccountOnly(responseAccountOnly);
           setOrganizationChoice(null);
           verifiedUserIdRef.current = responseUserId;
           bindMfa(responseUserId, "workspace");
@@ -737,6 +792,11 @@ export function AppPage({ children }: AppPageProps) {
       </p>
       <MfaPresentation flow={mfa} gate />
       <div className="mt-2 flex flex-wrap gap-3">
+        {accountProfileAvailable && (
+          <Button asChild variant="outline" className="min-h-11">
+            <Link href="/profile">Your profile</Link>
+          </Button>
+        )}
         <Button
           type="button"
           variant="outline"
@@ -767,6 +827,11 @@ export function AppPage({ children }: AppPageProps) {
         contact your administrator.
       </Alert>
       <div className="mt-5 flex flex-wrap justify-center gap-3">
+        {accountProfileAvailable && (
+          <Button asChild variant="outline" className="min-h-11">
+            <Link href="/profile">Your profile</Link>
+          </Button>
+        )}
         <Button
           type="button"
           variant="outline"
@@ -838,15 +903,37 @@ export function AppPage({ children }: AppPageProps) {
           suspended={checking}
         >
           <AppQueryProvider>
-            <AppShell
-              verifiedUserId={verifiedUserId}
-              organizationId={organizationId}
-              onSwitchOrganization={switchOrganization}
-              onSignOutAccepted={acceptSignOut}
-            >
-              <MfaCleanupNotice flow={mfa} />
-              {children}
-            </AppShell>
+            {accountOnly ? (
+              <WorkspaceNavigationGuardProvider
+                onAcceptedNavigation={() => undefined}
+              >
+                <WorkspaceSignOutProvider
+                  complete={async () => finishFactorRemoval()}
+                >
+                  <main className="bg-background text-foreground min-h-screen px-4 py-6 sm:px-8">
+                    <div className="mx-auto max-w-5xl space-y-6">
+                      <Button asChild variant="outline" className="min-h-11">
+                        <GuardedWorkspaceLink href="/boards">
+                          Your organizations
+                        </GuardedWorkspaceLink>
+                      </Button>
+                      <MfaCleanupNotice flow={mfa} />
+                      {pathname === "/profile" ? children : null}
+                    </div>
+                  </main>
+                </WorkspaceSignOutProvider>
+              </WorkspaceNavigationGuardProvider>
+            ) : (
+              <AppShell
+                verifiedUserId={verifiedUserId}
+                organizationId={organizationId}
+                onSwitchOrganization={switchOrganization}
+                onSignOutAccepted={acceptSignOut}
+              >
+                <MfaCleanupNotice flow={mfa} />
+                {children}
+              </AppShell>
+            )}
           </AppQueryProvider>
           {unavailable && !checking && (
             <div

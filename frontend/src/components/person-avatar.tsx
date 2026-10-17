@@ -2,6 +2,7 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { currentOrganizationId } from "@/lib/organization-context";
 
 const AVATAR_PATH = /^\/api\/users\/[0-9a-f-]{36}\/avatar$/i;
 
@@ -22,7 +23,8 @@ export function avatarThumbnailUrl(
   avatarUrl: string | null | undefined,
 ): string | undefined {
   if (!avatarUrl || !AVATAR_PATH.test(avatarUrl)) return undefined;
-  return `${avatarUrl}?size=64`;
+  const orgId = currentOrganizationId();
+  return `${avatarUrl}?size=64${orgId ? `&org=${encodeURIComponent(orgId)}` : ""}`;
 }
 
 type PersonAvatarProps = {

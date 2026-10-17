@@ -88,16 +88,22 @@ def get_current_identity(
     identity = get_account_identity(request, bearer, db)
     # Direct callers (delivery rechecks) pass no header value; read it from the request.
     raw_org = raw_org if raw_org is not None else request.headers.get("X-Org")
-    try:
-        org_id = UUID(raw_org) if raw_org is not None else None
-    except ValueError as error:
-        raise RequestValidationError([{
-            "type": "uuid_parsing", "loc": ("header", "x-org"),
-            "msg": "Input should be a valid UUID", "input": raw_org,
-        }]) from error
+    org_id = parse_organization_id(raw_org)
     if get_optional_membership(request, identity, db, org_id) is None:
         raise organization_required()
     return identity
+
+
+def parse_organization_id(
+    raw_org: str | None, *, location: tuple[str, str] = ("header", "x-org"),
+) -> UUID | None:
+    try:
+        return UUID(raw_org) if raw_org is not None else None
+    except ValueError as error:
+        raise RequestValidationError([{
+            "type": "uuid_parsing", "loc": location,
+            "msg": "Input should be a valid UUID", "input": raw_org,
+        }]) from error
 
 
 def get_account_identity(

@@ -77,10 +77,11 @@ function self(overrides: Record<string, unknown> = {}) {
   };
   return {
     ...flat,
+    operator: false,
     account,
     memberships: [org],
     pending_invitations: [],
-    current_organization: { ...org, access: flat.access },
+    current_organization: { ...org, access: flat.access, owner: false },
     default_organization_blocked: null,
     ...overrides,
   };

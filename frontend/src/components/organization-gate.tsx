@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Building2, ChevronRight, MailOpen } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
@@ -215,6 +216,9 @@ export function OrganizationGate({
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">
+        <Button asChild variant="outline" className="min-h-11">
+          <Link href="/profile">Your profile</Link>
+        </Button>
         <Button
           type="button"
           variant="outline"

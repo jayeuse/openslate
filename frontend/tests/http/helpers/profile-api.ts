@@ -41,7 +41,7 @@ export function profilePreferences(
 
 export function profileSelf(
   id = profileUserA,
-  role: "admin" | "member" | "guest" = "member",
+  role: "admin" | "member" | "guest" | null = "member",
 ) {
   const flat = {
     id,
@@ -88,10 +88,13 @@ export function profileSelf(
   };
   return {
     ...flat,
+    operator: role === "admin",
     account,
-    memberships: [org],
+    memberships: role ? [org] : [],
     pending_invitations: [],
-    current_organization: { ...org, access: flat.access },
+    current_organization: role
+      ? { ...org, access: flat.access, owner: role === "admin" }
+      : null,
     default_organization_blocked: null,
   };
 }
@@ -130,7 +133,7 @@ export async function observeProfilePhotoRevocations(page: Page) {
 export async function installProfileApi(
   page: Page,
   options: {
-    role?: "admin" | "member" | "guest";
+    role?: "admin" | "member" | "guest" | null;
     session?: boolean;
     mfa?: boolean;
   } = {},
@@ -181,6 +184,8 @@ export async function installProfileApi(
         json: {
           authenticated: true,
           user_id: state.userId,
+          organization_id:
+            people.get(state.userId)!.current_organization?.org_id ?? null,
           default_organization_blocked: null,
           setup_required: false,
         },

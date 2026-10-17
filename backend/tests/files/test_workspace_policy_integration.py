@@ -16,7 +16,7 @@ from app.systems.access.users.models import User, UserRole
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import transfer_slot
-from app.systems.platform.files.router import router
+from app.systems.platform.files.router import get_create_user, get_upload_user, router
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.storage import get_storage
 from app.systems.sandbox.departments.models import Department
@@ -100,7 +100,8 @@ def _client(db, actor: User, storage: _Store) -> TestClient:
 
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
+    for dependency in (get_current_user, get_create_user, get_upload_user):
+        app.dependency_overrides[dependency] = scoped_override(lambda: actor)
     app.dependency_overrides[get_storage] = lambda: storage
     return TestClient(app)
 

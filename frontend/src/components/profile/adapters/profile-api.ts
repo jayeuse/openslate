@@ -58,6 +58,7 @@ const accountSchema = selfSchema.omit({
   access: true,
 });
 const profileSchema = selfSchema.extend({
+  operator: z.boolean(),
   default_organization_blocked: defaultOrganizationBlockedSchema,
   account: accountSchema,
   memberships: z.array(membershipSchema),
@@ -65,7 +66,7 @@ const profileSchema = selfSchema.extend({
     membershipSchema.extend({ id: uuid, expires_at: timestamp }),
   ),
   current_organization: membershipSchema
-    .extend({ access: selfSchema.shape.access })
+    .extend({ owner: z.boolean(), access: selfSchema.shape.access })
     .nullable(),
 });
 export type ProfileSelf = z.output<typeof profileSchema>;

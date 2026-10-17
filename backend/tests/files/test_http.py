@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.systems.access.users.models import UserRole
-from app.systems.platform.files.router import router
+from app.systems.platform.files.router import get_create_user, router
 from tests.organization_scope_support import scoped_override
 from tests.users.user_support import local_user
 
@@ -24,6 +24,7 @@ def client():
     database.dirty = set()
     database.scalars.return_value.all.return_value = [membership]
     app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
+    app.dependency_overrides[get_create_user] = scoped_override(lambda: actor)
     app.dependency_overrides[get_db] = lambda: database
     with TestClient(app) as client:
         yield client

@@ -38481,7 +38481,25 @@
             }
           },
           {
-            "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+            "description": "Organization for avatar visibility (UUID). X-Org takes precedence.",
+            "in": "query",
+            "name": "org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Organization for avatar visibility (UUID). X-Org takes precedence.",
+              "title": "Org"
+            }
+          },
+          {
+            "description": "Organization for avatar visibility (UUID). Overrides org.",
             "in": "header",
             "name": "X-Org",
             "required": false,
@@ -38494,7 +38512,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Organization this request acts in (UUID). Without it, the session's active organization applies.",
+              "description": "Organization for avatar visibility (UUID). Overrides org.",
               "title": "X-Org"
             }
           }

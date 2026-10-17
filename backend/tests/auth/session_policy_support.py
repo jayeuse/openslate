@@ -408,7 +408,9 @@ def policy_world(monkeypatch, shared_provider_account):
                 select(InAppNotification).where(InAppNotification.recipient_id.in_(ids))
             ):
                 db.delete(notice)
-            for event in db.scalars(select(SecurityEvent).where(SecurityEvent.subject_id.in_(ids))):
+            for event in db.scalars(select(SecurityEvent).where(
+                SecurityEvent.subject_id.in_(ids) | (SecurityEvent.org_id == org_id),
+            )):
                 db.delete(event)
             for session in db.scalars(
                 select(IdentitySession).where(IdentitySession.user_id.in_(ids))

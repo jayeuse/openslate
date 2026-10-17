@@ -2,24 +2,57 @@
 
 from enum import IntEnum
 from io import BytesIO
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import Request, Response
+from fastapi import Depends, Header, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from PIL import Image, ImageOps
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies.auth import CurrentIdentity, get_current_identity
+from app.common.dependencies.auth import (
+    CurrentIdentity,
+    get_account_identity,
+    get_optional_membership,
+    parse_organization_id,
+)
+from app.core.database import get_db
 from app.systems.access.policy.checks import require_live_session
 from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import organization_required
 from app.systems.access.users.person_visibility import visible_person
 from app.systems.access.users.profile import ready_avatar
 from app.systems.platform.files.access import error, fresh_user
 from app.systems.platform.files.delivery import read_content, record_download
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import StorageBackend, transfer_slot
+
+
+def get_avatar_identity(
+    request: Request,
+    user_id: UUID,
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
+    db: Annotated[Session, Depends(get_db)],
+    org: Annotated[str | None, Query(
+        description="Organization for avatar visibility (UUID). X-Org takes precedence.",
+    )] = None,
+    raw_org: Annotated[str | None, Header(
+        alias="X-Org", description="Organization for avatar visibility (UUID). Overrides org.",
+    )] = None,
+) -> CurrentIdentity:
+    raw_header = raw_org if raw_org is not None else request.headers.get("X-Org")
+    org_id = parse_organization_id(
+        raw_header if raw_header is not None else org,
+        location=("header", "x-org") if raw_header is not None else ("query", "org"),
+    )
+    if (
+        user_id != identity.user.id
+        and get_optional_membership(request, identity, db, org_id) is None
+    ):
+        raise organization_required()
+    return identity
 
 
 def _bound_avatar(db: Session, identity: CurrentIdentity, target_id: UUID) -> File:
@@ -74,7 +107,10 @@ def deliver_avatar(
             file_id, digest, size = file.id, file.digest, file.actual_size
             content, media_type, _ = read_content(db, file, storage)
             # Reuse the complete existing resolver, not merely a pre-I/O user snapshot.
-            current = get_current_identity(request, bearer, db)
+            current = get_avatar_identity(
+                request, target_id, get_account_identity(request, bearer, db), db,
+                request.query_params.get("org"),
+            )
             file = _bound_avatar(db, current, target_id)
             if file.id != file_id or file.digest != digest or file.actual_size != size:
                 raise error("avatar_changed", "Avatar changed; reload", 409)

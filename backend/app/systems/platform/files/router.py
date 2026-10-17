@@ -2,12 +2,19 @@ from typing import Annotated, Any, cast
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.common.dependencies import get_current_user
+from app.common.dependencies.auth import (
+    _bearer,
+    get_account_identity,
+    get_account_user,
+    get_current_identity,
+)
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.database import get_db
 from app.systems.access.identity.eligibility import identity_eligible_clause
@@ -33,6 +40,38 @@ router = APIRouter(prefix="/files", tags=["files"])
 DB = Annotated[Session, Depends(get_db)]
 Actor = Annotated[User, Depends(get_current_user)]
 Store = Annotated[StorageBackend, Depends(get_storage)]
+Bearer = Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)]
+OrganizationHeader = Annotated[str | None, Header(
+    alias="X-Org",
+    description="Organization this request acts in (UUID). Without it, the session's "
+    "active organization applies.",
+)]
+
+
+def get_create_user(
+    payload: FileCreate, request: Request, db: DB, bearer: Bearer,
+    raw_org: OrganizationHeader = None,
+) -> User:
+    identity = (
+        get_account_identity(request, bearer, db) if payload.purpose == "user_avatar"
+        else get_current_identity(request, bearer, db, raw_org)
+    )
+    return get_account_user(identity)
+
+
+def get_upload_user(
+    file_id: UUID, request: Request, db: DB, bearer: Bearer,
+    raw_org: OrganizationHeader = None,
+) -> User:
+    identity = get_account_identity(request, bearer, db)
+    # Account files are visible without an organization scope; organization files
+    # remain behind admission before the service loads their inventory row.
+    file = db.get(File, file_id)
+    if file is None or file.purpose != "user_avatar":
+        identity = get_current_identity(request, bearer, db, raw_org)
+    return get_account_user(identity)
+
+
 SPEC = ListQuerySpec(
     sort_fields={
         FileSortField.CREATED_AT: cast(ColumnElement[Any], File.created_at),
@@ -59,7 +98,9 @@ LIBRARY_SPEC = ListQuerySpec(
 
 
 @router.post("", response_model=FileResponse, status_code=201)
-def create_file(payload: FileCreate, user: Actor, db: DB) -> FileResponse:
+def create_file(
+    payload: FileCreate, user: Annotated[User, Depends(get_create_user)], db: DB,
+) -> FileResponse:
     return service.reserve(db, user, payload)
 
 
@@ -147,7 +188,7 @@ def get_file(file_id: UUID, user: Actor, db: DB) -> FileResponse:
 def upload_file(
     request: Request,
     file_id: UUID,
-    user: Actor,
+    user: Annotated[User, Depends(get_upload_user)],
     db: DB,
     storage: Store,
     content: Annotated[bytes, Body(media_type="application/octet-stream")],
