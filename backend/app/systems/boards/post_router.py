@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
-from sqlalchemy import func, literal, or_, select
+from sqlalchemy import func, literal, or_, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user
@@ -115,14 +115,34 @@ def list_posts(
     result = execute_standard_list(
         db, statement, params, list_spec(params.view, pinned_first=pinned_first)
     )
-    items = [
-        post_response(
-            item,
-            board,
-            displayed_revision(db, item) if params.view is PostView.PUBLISHED else None,
-        )
-        for item in result.items
-    ]
+    displayed: dict[tuple[UUID, int], BoardPostRevision] = {}
+    if params.view is PostView.PUBLISHED:
+        keys = [
+            (item.id, item.displayed_publication_number)
+            for item in result.items
+            if item.displayed_publication_number is not None
+        ]
+        if keys:
+            displayed = {
+                (revision.post_id, revision.publication_number): revision
+                for revision in db.scalars(
+                    select(BoardPostRevision).where(
+                        tuple_(
+                            BoardPostRevision.post_id, BoardPostRevision.publication_number
+                        ).in_(keys),
+                        BoardPostRevision.is_deleted.is_(False),
+                        BoardPostRevision.deleted_at.is_(None),
+                    )
+                )
+            }
+    items = []
+    for item in result.items:
+        published = None
+        if params.view is PostView.PUBLISHED and item.displayed_publication_number is not None:
+            published = displayed.get((item.id, item.displayed_publication_number))
+            if published is None:
+                raise conflict("publication_invalid", "The displayed publication is unavailable")
+        items.append(post_response(item, board, published))
     return PostListResponse(
         items=items, pagination=result.pagination, board_revision=board.revision
     )
