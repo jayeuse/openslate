@@ -86,8 +86,14 @@ class RealSessionPool:
         self._created.append(provider_id)
         # A separate client: the shared one may already route to a fake.
         real = SupabaseAuthClient(get_settings())
+        # Only the session ids are needed; admission later checks each against
+        # auth.sessions. The verifier compares `iat` with this host's clock at zero
+        # leeway, and Auth's clock in the Docker VM can lead it by milliseconds.
         sessions = tuple(
-            real.verify_access_token(real.password_grant(email, password).access_token).session_id
+            UUID(jwt.decode(
+                real.password_grant(email, password).access_token,
+                options={"verify_signature": False},
+            )["session_id"])
             for _ in range(SESSIONS_PER_USER)
         )
         return provider_id, sessions
