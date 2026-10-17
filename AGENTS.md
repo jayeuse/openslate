@@ -8,8 +8,16 @@ Read and apply this before any other instruction, every time a task runs tests.
 - **Keep parallelism inside each side.** Backend coverage runs `tests.parallel_coverage --shards 3`; the frontend suite keeps its Playwright workers. Do not drop to `--coverage-stacks 1` or a single worker without a measured failure.
 - **The pre-push gate runs with `--serial`:** `python3 scripts/prepush.py --base <base-ref> --serial`. It orders the frontend and backend lanes one after the other and keeps each lane's own parallelism.
 - **Start nothing else beside a running heavy lane:** no focused tests, batches, or sample runs "to use the time". Wait for it to finish.
+- **Free the machine before the gate or a full suite.** The gate uses its own disposable stacks; development runtimes only take CPU and memory from it. Before `prepush.py` or a full backend/frontend suite:
+  1. Stop dev servers and processes you started (`npm run dev`, `uv run python -m app`, preview servers, sample runs, idle OpenCode/agent clients).
+  2. Stop the owned development Supabase stack with `python3 scripts/dev.py stop` (never `docker compose down -v`; its volumes hold the data).
+  3. Stop other running development containers on the machine (other projects' Compose stacks) with `docker stop`; tell the user which ones you stopped. Never remove them or their volumes.
+  4. Check headroom (`uptime` load near or below the core count); report a busy machine instead of starting the gate on it.
+  5. After the gate, restart the owned development stack (`python3 scripts/dev.py db`) and anything the user was using.
 
 Correct: "Ran `prepush.py --base main --serial`: frontend lane alone, then backend coverage on 3 shards."
+Correct: "Stopped the dev Supabase stack, the Next dev server and `four-week-microservice-dev-*`; load 4; ran the gate; restarted the dev stack."
+Wrong: "Started the gate with the dev stack, two dev servers and another project's containers running; the Playwright lane took 40 minutes at load 110."
 Wrong: "Ran prepush without `--serial`, so the frontend suite and backend shards ran at the same time."
 Wrong: "While backend coverage ran, repeated three Playwright tests to check flakes."
 
