@@ -208,13 +208,13 @@ def test_disabled_user_is_locally_revoked_without_provider_call(
     ]
 
 
-def test_deleted_established_member_can_be_restored(
+def test_operator_can_restore_a_deleted_established_account(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     actor, actor_membership = local_user(UserRole.ADMIN)
     target, membership = local_user(deleted=True)
     db = Mock(spec=Session)
-    db.scalar.side_effect = [actor, target]
+    db.scalar.side_effect = [actor, target, membership, actor.id]
     db.dirty = set()
     db.scalars.return_value.all.side_effect = [[actor_membership], [membership]]
     monkeypatch.setattr(account_operations, "_record_security_event", lambda **_kwargs: None)

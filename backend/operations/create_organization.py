@@ -25,13 +25,39 @@ from app.core.integrations.supabase_auth import ProviderUser, get_supabase_auth_
 from app.systems.access.identity.mfa_observations import initialize_observation
 from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import InvitationCreate
-from app.systems.access.users.service import invite_user
+from app.systems.access.users.service import invite_user, reconcile_invitation
 from app.systems.boards.models import Board
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.designs.schemas import DesignDocument
 from app.systems.sandbox.designs.schemas import SandboxDocument as Document
 from app.systems.sandbox.designs.service import canonical_document
+
+
+def _resume_invitation(
+    db: Session, org: WorkspaceProfile, invitation: InvitationCreate,
+) -> WorkspaceProfile:
+    """Resume only the exact first administrator, never transfer organization ownership."""
+    user = db.scalar(select(User).where(User.email == invitation.email).with_for_update())
+    reservations = db.scalars(select(Membership).where(
+        Membership.org_id == org.id, Membership.role == "admin", Membership.is_deleted.is_(False),
+    ).with_for_update()).all()
+    if user is None or user.username != invitation.username or user.is_deleted or (
+        user.status != "pending" or org.owner_user_id not in {None, user.id}
+    ) or len(reservations) != 1:
+        raise ValueError("Organization reservation is unavailable")
+    membership = reservations[0]
+    if (membership.user_id != user.id or membership.status != "pending"
+            or membership.provider_invitation_operation_id is None
+            or membership.invitation_accepted_at is not None):
+        raise ValueError("Organization reservation is unavailable")
+    scope_session(db, org.id)
+    # Repair older exact reservations durably before retrying provider delivery.
+    org.owner_user_id = user.id
+    db.commit()
+    reconcile_invitation(db, user.id, actor_id=None, bootstrap=True, org_id=org.id)
+    db.refresh(org)
+    return org
 
 
 def provision(
@@ -50,6 +76,13 @@ def provision(
         raise ValueError("Organization name or slug is invalid")
     if (admin_user_id is None) == (invitation is None):
         raise ValueError("Choose an account or an invitation")
+    reserved = db.scalar(select(WorkspaceProfile).where(
+        WorkspaceProfile.slug == slug,
+    ).with_for_update())
+    if reserved is not None:
+        if invitation is None or provider_user_id is not None:
+            raise ValueError("Organization already exists")
+        return _resume_invitation(db, reserved, invitation)
     provider = get_supabase_auth_client()
     user = None
     if provider_user_id is not None:
@@ -94,13 +127,7 @@ def provision(
         else:
             assert invitation is not None
             invite_user(db, invitation.model_copy(update={"role": UserRole.ADMIN}),
-                        bootstrap=True, org_id=org.id)
-            # The first administrator owns the organization.
-            scope_session(db, org.id)
-            owner = db.scalar(select(User.id).where(User.email == invitation.email))
-            org = db.get(WorkspaceProfile, org.id, populate_existing=True) or org
-            org.owner_user_id = owner
-            db.commit()
+                        bootstrap=True, org_id=org.id, owner_organization=org)
         db.refresh(org)
         return org
     except SQLAlchemyError as error:

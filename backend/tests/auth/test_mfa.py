@@ -16,9 +16,11 @@ from sqlalchemy.orm import Session
 from app.common.dependencies import auth as dependency
 from app.core.database import get_db
 from app.core.integrations.supabase_auth import (
+    InvalidProviderCredentials,
     ProviderAccessIdentity,
     ProviderFactor,
     ProviderUser,
+    SupabaseAuthClient,
     SupabaseAuthUnavailable,
 )
 from app.systems.access.identity import provider_sessions
@@ -27,7 +29,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import Membership, User
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from tests.auth.provider_jwt_support import client_for_key, signed_access
-from tests.conftest import create_member
+from tests.conftest import create_member, create_organization
 
 
 def test_verified_provider_access_uses_exact_instance_session_and_assurance() -> None:
@@ -217,39 +219,43 @@ def test_authenticated_ip_policy_uses_transport_peer_not_forwarded_header(
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "path,payload",
+    "path,payload,expected",
     [
-        ("/login", {"email": "mfa@example.test", "password": "ValidPassword12345"}),
-        ("/token", {"email": "mfa@example.test", "password": "ValidPassword12345"}),
-        ("/refresh", None),
-        ("/token/refresh", {"refresh_token": "r" * 48}),
-        ("/logout", None),
-        ("/recovery/request", {"email": "mfa@example.test"}),
-        ("/recovery/complete", {"token_hash": "a" * 56, "password": "ValidPassword12345"}),
-        ("/invitations/complete", {"token_hash": "a" * 56, "password": "ValidPassword12345"}),
+        ("/login", {"email": "mfa@example.test", "password": "ValidPassword12345"}, 401),
+        ("/token", {"email": "mfa@example.test", "password": "ValidPassword12345"}, 401),
+        ("/refresh", None, 401),
+        ("/token/refresh", {"refresh_token": "r" * 48}, 401),
+        ("/logout", None, 204),
+        ("/recovery/request", {"email": "mfa@example.test"}, 204),
+        ("/recovery/complete", {"token_hash": "a" * 56, "password": "ValidPassword12345"}, 400),
+        ("/invitations/complete", {"token_hash": "a" * 56, "password": "ValidPassword12345"}, 400),
     ],
 )
 def test_auth_actions_are_not_gated_by_an_organization_allow_list(
-    monkeypatch, path, payload
+    integration_db, monkeypatch, path, payload, expected
 ):
     """Owner decision (2026-10-16): allow lists gate organization entry, not sign-in.
 
     No organization is known before sign-in, so an anonymous auth action from an address
-    that some organization blocks is never refused with ``ip_not_allowed``; sign-in budgets
-    (H1, H2) limit it instead.
+    that some organization blocks still reaches the requested auth operation. Wrong
+    credentials/unknown handles/invalid action tokens have their real controlled outcomes;
+    recovery requests and anonymous logout succeed. Unexpected server exceptions propagate.
     """
 
     from app.core.config import get_settings
     from app.systems.access.auth import router as auth_routes
 
-    provider = Mock()
+    create_organization(integration_db, ip_allow_list=["10.0.0.0/8"])
+    integration_db.commit()
+    provider = Mock(spec=SupabaseAuthClient)
+    provider.password_grant.side_effect = InvalidProviderCredentials("invalid fixture credentials")
+    provider.verify_email_action.side_effect = InvalidProviderCredentials("invalid fixture action")
     monkeypatch.setattr(auth_routes, "get_supabase_auth_client", lambda: provider)
     app = FastAPI()
-    app.dependency_overrides[get_db] = lambda: Mock()
+    app.dependency_overrides[get_db] = lambda: integration_db
     app.include_router(auth_routes.auth_router, prefix="/api")
     with TestClient(
         app, base_url=get_settings().public_origin, client=("203.0.113.8", 50000),
-        raise_server_exceptions=False,
     ) as browser:
         if path == "/refresh":
             browser.cookies.set("openslate_refresh", "r" * 48)
@@ -262,12 +268,26 @@ def test_auth_actions_are_not_gated_by_an_organization_allow_list(
                 "X-Forwarded-For": "10.1.2.3",
             },
         )
-    try:
-        body = response.json()
-    except ValueError:
-        body = None
-    detail = body.get("detail") if isinstance(body, dict) else None
-    assert not (isinstance(detail, dict) and detail.get("code") == "ip_not_allowed")
+    assert response.status_code == expected
+    if expected == 204:
+        assert response.content == b""
+    else:
+        assert response.json() == {"detail": (
+            "Recovery token is invalid" if path == "/recovery/complete" else
+            "Invitation token is invalid" if path == "/invitations/complete" else
+            "Invalid authentication credentials"
+        )}
+    if path in {"/login", "/token"}:
+        provider.password_grant.assert_called_once_with(payload["email"], payload["password"])
+    elif path == "/recovery/request":
+        provider.request_recovery.assert_called_once_with(payload["email"])
+    elif path in {"/recovery/complete", "/invitations/complete"}:
+        provider.verify_email_action.assert_called_once_with(
+            payload["token_hash"], "recovery" if path == "/recovery/complete" else "invite"
+        )
+        provider.update_password.assert_not_called()
+    else:
+        assert provider.mock_calls == []
 
 
 def test_mfa_verification_commits_both_rotated_credentials_before_return(mfa_context):

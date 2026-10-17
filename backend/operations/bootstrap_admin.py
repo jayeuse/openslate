@@ -30,7 +30,6 @@ from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.systems.access.users.coordination import InvitationError
 from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
-from app.systems.access.users.service import reconcile_invitation
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from operations.create_organization import provision
@@ -160,8 +159,8 @@ def _provision(
                 if membership is None:
                     raise BootstrapError("Organization bootstrap identity does not match")
                 if _is_exact_admin_reservation(db, existing_profile, invitation):
-                    reconcile_invitation(db, existing_profile.id, actor_id=None,
-                                         bootstrap=True, org_id=org.id)
+                    org = provision(db, name=name, slug=slug, invitation=invitation,
+                                    provider_user_id=provider_user_id)
                 elif (existing_profile.status != "active" or existing_profile.is_deleted
                       or membership.status != "active"
                       or existing_profile.supabase_user_id is None

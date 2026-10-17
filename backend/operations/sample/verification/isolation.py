@@ -61,17 +61,28 @@ def verify_isolation(
     own = organization_id
     if own is None:
         return {}, []  # A run from before one organization per pack.
-    memberships = _object(admin.request("GET", "/api/auth/me")).get("memberships")
+    discovery = admin.request("GET", "/api/auth/me")
+    memberships = _object(discovery).get("memberships")
+    observed = {"isolation_organizations": 0, "isolation_refusals": 0}
+    if discovery.status_code != 200 or not isinstance(memberships, list):
+        return observed, ["isolation: peer organization discovery failed"]
+    try:
+        for row in memberships:
+            if not isinstance(row, dict) or not isinstance(row.get("slug"), str) or not row["slug"]:
+                raise ValueError("Invalid membership")
+            UUID(str(row["org_id"]))
+    except (ValueError, KeyError, TypeError):
+        return observed, ["isolation: peer organization discovery failed"]
     slugs = {sample_slug(key) for key in pack_keys()}
     others = sorted(
         {
             str(row.get("org_id"))
-            for row in (memberships if isinstance(memberships, list) else [])
-            if isinstance(row, dict) and row.get("slug") in slugs
+            for row in memberships
+            if row["slug"] in slugs
         }
         - {own}
     )
-    observed = {"isolation_organizations": len(others), "isolation_refusals": 0}
+    observed["isolation_organizations"] = len(others)
     if not others:
         return observed, []
     issues: list[str] = []

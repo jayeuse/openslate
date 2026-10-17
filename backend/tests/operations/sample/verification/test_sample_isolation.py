@@ -112,6 +112,34 @@ def test_a_single_sample_organization_needs_no_member_sign_in(
     assert wire.logins == [ADMIN[0]]
 
 
+@pytest.mark.parametrize("response", [
+    httpx.Response(500, json={"memberships": []}),
+    httpx.Response(403, json={"memberships": []}),
+    httpx.Response(200, content=b"not json"),
+    httpx.Response(200, json=[]),
+    httpx.Response(200, json={}),
+    httpx.Response(200, json={"memberships": {}}),
+    httpx.Response(200, json={"memberships": [None]}),
+    httpx.Response(200, json={"memberships": [{"slug": "sample-school"}]}),
+    httpx.Response(200, json={"memberships": [{"org_id": SCHOOL}]}),
+    httpx.Response(200, json={"memberships": [{"org_id": "bad", "slug": "sample-school"}]}),
+])
+def test_failed_or_malformed_peer_discovery_is_incomplete(tmp_path, monkeypatch, response):
+    wire = _Wire(school=False)
+    handle = wire.handle
+
+    def fail_discovery(request):
+        if request.url.path == "/api/auth/me":
+            return response
+        return handle(request)
+
+    wire.handle = fail_discovery
+    observed, issues = _verify(tmp_path, monkeypatch, wire)
+    assert issues == ["isolation: peer organization discovery failed"]
+    assert observed == {"isolation_organizations": 0, "isolation_refusals": 0}
+    assert wire.logins == [ADMIN[0]]
+
+
 def test_roster_logins_return_only_named_people_with_passwords(tmp_path: Path) -> None:
     roster = tmp_path / "credentials.json"
     roster.write_text(json.dumps({"accounts": [

@@ -37,7 +37,7 @@ def test_invitation_requires_actor_outside_bootstrap() -> None:
 
 def test_invitation_rejects_duplicate_email_or_username() -> None:
     db = Mock(spec=Session)
-    db.scalar.side_effect = [local_user()[0]]
+    db.scalar.side_effect = [local_user()[0], None]
 
     with pytest.raises(InvitationConflict):
         user_service.invite_user(db, _invitation(), bootstrap=True)
@@ -49,7 +49,7 @@ def test_invitation_keeps_duplicate_conflict_when_failure_audit_cannot_persist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = Mock(spec=Session)
-    db.scalar.side_effect = [local_user()[0]]
+    db.scalar.side_effect = [local_user()[0], None]
     monkeypatch.setattr(
         user_service,
         "_security_event",
@@ -180,7 +180,7 @@ def _actor_session(existing: User | None = None, groups: tuple = ()) -> tuple[Mo
 
     admin, membership = local_user(UserRole.ADMIN)
     db = Mock(spec=Session)
-    reads: list[User | None] = [admin, existing]
+    reads: list[User | None] = [admin, existing, *([None] if existing is not None else [])]
     db.scalar.side_effect = lambda _statement: reads.pop(0) if reads else _added(db, User)[0]
     db.dirty = set()
     # The administrator's membership, then the active groups; the organization is bound.

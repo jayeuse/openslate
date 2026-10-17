@@ -146,15 +146,16 @@ def update_workspace_security(
             require_platform_operator(db, actor_id)
         claims = _factor_evidence(db, actor, payload, request)
         actor = require_fresh_exact_admin(db, actor_id)
+        # Match retention and bootstrap: installation policy before organization policy.
+        platform = db.scalar(select(PlatformSettings).where(
+            PlatformSettings.singleton_key.is_(True)
+        ).execution_options(populate_existing=True).with_for_update())
         profile = db.scalar(
             select(WorkspaceProfile)
             .where(WorkspaceProfile.id == bound_organization(db))
             .execution_options(populate_existing=True)
             .with_for_update()
         )
-        platform = db.scalar(select(PlatformSettings).where(
-            PlatformSettings.singleton_key.is_(True)
-        ).execution_options(populate_existing=True).with_for_update())
     except (SQLAlchemyError, SupabaseAuthUnavailable) as error:
         db.rollback()
         raise _unavailable() from error

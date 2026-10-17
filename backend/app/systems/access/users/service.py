@@ -160,6 +160,7 @@ def invite_user(
     bootstrap: bool = False,
     client: SupabaseAuthClient | None = None,
     org_id: UUID | None = None,
+    owner_organization: WorkspaceProfile | None = None,
 ) -> User:
     """Commit local authorization before creating and mailing a provider identity."""
 
@@ -173,6 +174,11 @@ def invite_user(
         org_id = (bound_organization(db) if actor_id is not None
                   else org_id or bound_organization(db))
         role = UserRole(payload.role)
+        if owner_organization is not None and (
+            not bootstrap or role is not UserRole.ADMIN or owner_organization.id != org_id
+            or owner_organization.owner_user_id is not None
+        ):
+            raise InvitationError("Organization owner reservation is unavailable")
         expires_at = payload.expires_at
         if role is UserRole.GUEST and expires_at is None:
             expires_at = utc_now() + timedelta(days=_guest_duration_days(db, org_id))
@@ -229,6 +235,8 @@ def invite_user(
         membership.is_deleted, membership.deleted_at = False, None
         membership.performed_by = actor_id
         db.add(membership)
+        if owner_organization is not None:
+            owner_organization.owner_user_id = user.id
         if removed is not None:
             for previous in db.scalars(select(GroupMember).where(
                 GroupMember.org_id == org_id, GroupMember.user_id == user.id,
