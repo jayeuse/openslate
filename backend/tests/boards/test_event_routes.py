@@ -394,6 +394,113 @@ def test_event_revisioned_author_and_manager_lifecycle(
 
 
 @pytest.mark.integration
+def test_event_capacity_applies_to_create_and_restore_without_partial_changes(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    author, manager, other, reader = member(db), member(db), member(db), member(db)
+    board = project_board(db)
+    grant(db, board, [author, other], AccessLevel.WRITE)
+    grant(db, board, [manager], AccessLevel.MANAGE)
+    grant(db, board, [reader], AccessLevel.READ)
+    for index in range(499):
+        _series(db, board, author, f"Calendar event {index}")
+    _series(db, board, author, "Retained archive").archived = True
+    deleted = _series(db, board, author, "Deleted event")
+    deleted.is_deleted = True
+    deleted.deleted_at = datetime(2026, 9, 1, tzinfo=UTC)
+    _series(db, project_board(db), author, "Another Board's event")
+    db.commit()
+    api = _client(db, author)
+    root = f"/api/boards/{board.id}/events"
+    created = api.post(root, json=_payload(1, reminders=["start"]))
+    assert created.status_code == 201
+    event_id = created.json()["id"]
+    detail_url = f"{root}/{event_id}"
+    reminder = db.scalars(
+        select(BoardEventReminder).where(BoardEventReminder.event_id == UUID(event_id))
+    ).one()
+    reminder_id = reminder.id
+    instant = datetime(2026, 9, 14, tzinfo=UTC)
+    work = ScheduledWork(
+        org_id=board.org_id, kind=WorkKind.EVENT_REMINDER, reminder_id=reminder_id,
+        occurrence_start_at=instant, scheduled_for=instant, next_attempt_at=instant,
+        state=WorkState.SUCCEEDED, finished_at=instant,
+    )
+    db.add(work)
+    db.commit()
+    work_id = work.id
+
+    archived = api.post(
+        f"{detail_url}/archive", json={"board_revision": 2, "event_revision": 1}
+    )
+    assert archived.status_code == 200
+    replacement = api.post(root, json=_payload(3, title="Replacement event"))
+    assert replacement.status_code == 201
+    replacement_url = f"{root}/{replacement.json()['id']}"
+    before = api.get(detail_url).json()
+    assert before["archived"] is True
+    assert (before["revision"], before["board_revision"]) == (2, 4)
+    revision = {"board_revision": 4, "event_revision": 2}
+    assert _client(db, reader).post(f"{detail_url}/restore", json=revision).status_code == 403
+    assert _client(db, other).post(f"{detail_url}/restore", json=revision).status_code == 403
+    for stale, code in (
+        ({"board_revision": 3, "event_revision": 2}, "stale_board_revision"),
+        ({"board_revision": 4, "event_revision": 1}, "stale_event_revision"),
+    ):
+        refused = api.post(f"{detail_url}/restore", json=stale)
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["code"] == code
+    already_active = api.post(
+        f"{replacement_url}/restore", json={"board_revision": 4, "event_revision": 1}
+    )
+    assert already_active.status_code == 409
+    assert already_active.json()["detail"]["code"] == "event_not_archived"
+
+    capacity_error = {
+        "detail": {"code": "event_limit_reached", "message": "The Board has 500 active events"}
+    }
+    refused_create = api.post(root, json=_payload(4, reminders=["15m"]))
+    assert refused_create.status_code == 409
+    assert refused_create.json() == capacity_error
+    refused_restore = api.post(f"{detail_url}/restore", json=revision)
+    assert refused_restore.status_code == 409
+    assert refused_restore.json() == capacity_error
+    db.expire_all()
+    assert api.get(detail_url).json() == before
+    assert api.get(root).json()["pagination"]["total"] == 500
+    assert list(db.execute(
+        select(BoardEventReminder.id, BoardEventReminder.timing).where(
+            BoardEventReminder.board_id == board.id
+        )
+    )) == [(reminder_id, "start")]
+    assert list(db.execute(
+        select(ScheduledWork.id, ScheduledWork.state, ScheduledWork.finished_at).where(
+            ScheduledWork.reminder_id == reminder_id
+        )
+    )) == [(work_id, WorkState.SUCCEEDED, instant)]
+
+    freed = api.post(
+        f"{replacement_url}/archive", json={"board_revision": 4, "event_revision": 1}
+    )
+    assert freed.status_code == 200
+    restored = _client(db, manager).post(
+        f"{detail_url}/restore", json={"board_revision": 5, "event_revision": 2}
+    )
+    assert restored.status_code == 200
+    assert restored.json() == {"id": event_id, "event_revision": 3, "board_revision": 6}
+    current = api.get(detail_url).json()
+    assert current["archived"] is False
+    assert current["reminders"] == ["start"]
+    calendar = api.get(
+        f"{root}/occurrences", params={"window_start": "2026-09-01", "window_end": "2026-09-30"}
+    )
+    assert calendar.status_code == 200
+    assert calendar.json()["pagination"]["total"] == 500
+    assert calendar.json()["board_revision"] == 6
+
+
+@pytest.mark.integration
 def test_every_reader_sees_every_event_and_outsiders_see_none(
     integration_owner_db: Session,
 ) -> None:

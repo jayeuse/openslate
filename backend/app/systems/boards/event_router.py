@@ -165,6 +165,21 @@ def _check_event(event: BoardEvent, revision: int) -> None:
         )
 
 
+def _check_event_capacity(db: Session, board: Board) -> None:
+    """The caller holds the Board lock through the event change and commit."""
+
+    count = db.scalar(
+        select(func.count(BoardEvent.id)).where(
+            BoardEvent.board_id == board.id,
+            BoardEvent.is_deleted.is_(False),
+            BoardEvent.deleted_at.is_(None),
+            BoardEvent.archived.is_(False),
+        )
+    )
+    if count is None or count >= MAX_SERIES_CANDIDATES:
+        raise _conflict("event_limit_reached", "The Board has 500 active events")
+
+
 def _set_definition(event: BoardEvent, definition: EventDefinition) -> None:
     for key in EVENT_FIELDS:
         setattr(event, key, getattr(definition, key))
@@ -273,16 +288,7 @@ def create_board_event(
 ) -> EventMutationResponse:
     board = _board_with_access(db, actor, board_id, AccessLevel.WRITE, lock=True)
     _check_board(board, payload.board_revision)
-    count = db.scalar(
-        select(func.count(BoardEvent.id)).where(
-            BoardEvent.board_id == board.id,
-            BoardEvent.is_deleted.is_(False),
-            BoardEvent.deleted_at.is_(None),
-            BoardEvent.archived.is_(False),
-        )
-    )
-    if count is None or count >= MAX_SERIES_CANDIDATES:
-        raise _conflict("event_limit_reached", "The Board has 500 active events")
+    _check_event_capacity(db, board)
     event = BoardEvent(org_id=board.org_id, board_id=board.id, author_id=actor.id)
     _set_definition(event, payload)
     db.add(event)
@@ -371,6 +377,7 @@ def restore_board_event(
     board, event = _lifecycle_event(db, board_id, event_id, actor, payload)
     if not event.archived:
         raise _conflict("event_not_archived", "Archive the event before restoring it")
+    _check_event_capacity(db, board)
     event.archived = False
     event.revision += 1
     board.revision += 1
