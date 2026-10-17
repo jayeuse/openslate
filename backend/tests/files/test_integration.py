@@ -73,7 +73,10 @@ def test_upload_returns_ready_and_downloads_with_no_further_step(guarded_db, act
     stored = db.get(File, file_id)
     assert stored.operation_id is None and stored.operation_expires_at is None
     events = []
-    monkeypatch.setattr(delivery, "append_committed_security_event", events.append)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event",
+        lambda event, **_kwargs: events.append(event),
+    )
     downloaded, mime, filename = service.download(db, actor_id, file_id, storage)
     assert (downloaded, mime, filename) == (content, "image/png", "image.png")
     assert len(events) == 1 and events[0].event_type == "file.download"
@@ -163,7 +166,7 @@ def test_access_event_failure_releases_no_bytes(guarded_db, actor, monkeypatch):
     storage = Store(db)
     service.upload(db, actor_id, file_id, content, storage)
 
-    def fail(event):
+    def fail(event, **_kwargs):
         raise delivery.SecurityEventPersistenceError("unavailable")
 
     monkeypatch.setattr(delivery, "append_committed_security_event", fail)
@@ -214,7 +217,9 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
     for dependency in (get_current_user, get_create_user, get_upload_user):
         app.dependency_overrides[dependency] = scoped_override(lambda: actor)
     app.dependency_overrides[get_storage] = lambda: storage
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda event, **_kwargs: None
+    )
     with TestClient(app) as client:
         response = client.post(
             "/api/files",

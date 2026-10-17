@@ -32,7 +32,8 @@ def read_content(db: Session, file: File, storage: StorageBackend) -> tuple[byte
     return content, media_type, filename
 
 
-def record_download(actor_id: UUID, file_id: UUID) -> None:
+def record_download(actor_id: UUID, file_id: UUID, *, org_id: UUID | None = None) -> None:
+    """Record a download; ``org_id`` is the file's organization (None for account files)."""
     try:
         append_committed_security_event(
             SecurityEventIngestRequest(
@@ -42,7 +43,8 @@ def record_download(actor_id: UUID, file_id: UUID) -> None:
                 operation_id=uuid4(),
                 actor_id=actor_id,
                 metadata={"file_id": str(file_id)},
-            )
+            ),
+            org_id=org_id,
         )
     except SecurityEventPersistenceError as exc:
         raise error("file_event_unavailable", "Unable to record file access", 503) from exc
@@ -90,6 +92,7 @@ def download(
         raise error("file_not_found", "Logo not found", 404)
     if file.state != "ready":
         raise error("file_not_ready", "File is not available")
+    org_id = file.org_id
     db.commit()
-    record_download(actor_id, file_id)
+    record_download(actor_id, file_id, org_id=org_id)
     return content, media_type, filename

@@ -345,6 +345,8 @@ def test_snapshot_returns_every_group_and_commits_safe_audit_event(
     assert event is not None
     assert event.event_type == "records.aggregate_snapshot.authorized"
     assert event.event_metadata == {"bucket_count": 105}
+    # PR #52 review: an aggregate read is an organization event, not an account event.
+    assert event.org_id == snapshot_fixture.org_id
 
 
 @pytest.mark.integration

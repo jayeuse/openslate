@@ -12,6 +12,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies import require_admin, require_fresh_exact_admin
 from app.core.database import get_db
+from app.core.database.organization_scope import session_organization
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.policy.access_notifications import (
     AccessSnapshot,
@@ -36,7 +37,7 @@ from app.systems.access.users.coordination import (
 )
 from app.systems.access.users.directory import directory_membership, membership_view
 from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.membership import is_platform_operator
+from app.systems.access.users.membership import bound_organization, is_platform_operator
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import UserResponse, UserUpdate
 from app.systems.manage.audit.models import SecurityEventOutcome
@@ -45,6 +46,7 @@ from app.systems.manage.audit.service import (
     SecurityEventPersistenceError,
     append_committed_security_event,
 )
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.security_policy import apply_role_mfa_episode
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -59,6 +61,7 @@ def _record_security_event(
     actor_id: UUID | None = None,
     subject_id: UUID | None = None,
     reason: str | None = None,
+    org_id: UUID | None = None,
 ) -> None:
     try:
         append_committed_security_event(
@@ -70,13 +73,30 @@ def _record_security_event(
                 actor_id=actor_id,
                 subject_id=subject_id,
                 reason=reason,
-            )
+            ),
+            org_id=org_id,
         )
     except SecurityEventPersistenceError as error:
         raise unavailable("Unable to record security event") from error
 
 
+def _protect_owners(db: Session, user: User) -> None:
+    """Keep the organization owner and installation owners able to sign in and act.
+
+    There is no ownership transfer yet, so removing, disabling, or demoting either
+    would leave owner-only settings and recovery with no one who can use them.
+    """
+    owner_id = db.scalar(
+        select(WorkspaceProfile.owner_user_id).where(WorkspaceProfile.id == bound_organization(db))
+    )
+    if user.id == owner_id:
+        raise conflict("The organization owner cannot be removed, disabled, or demoted")
+    if is_platform_operator(db, user.id):
+        raise conflict("An installation owner cannot be removed, disabled, or demoted here")
+
+
 def _record_outcome(
+    db: Session,
     event_type: str,
     outcome: SecurityEventOutcome,
     operation_id: UUID,
@@ -91,6 +111,7 @@ def _record_outcome(
         actor_id=actor_id,
         subject_id=target_id,
         reason=reason,
+        org_id=session_organization(db),
     )
 
 
@@ -221,6 +242,11 @@ def update_user(
     )
     user = lock_user(db, user_id)
     membership = organization_member(db, user)
+    if payload.status == UserStatus.DISABLED or (
+        payload.role is not None and payload.role != UserRole.ADMIN
+        and membership.role == UserRole.ADMIN.value
+    ):
+        _protect_owners(db, user)
     if shares_another_organization(db, user) and not is_platform_operator(db, actor_id):
         if payload.model_fields_set & {"username", "display_name", "job_title"}:
             refuse_account_details(db)
@@ -347,7 +373,7 @@ def _activate_user(
     before: AccessSnapshot | None,
 ) -> UserResponse:
     operation_id = uuid7()
-    _record_outcome("user.authentication_activation", SecurityEventOutcome.ATTEMPT,
+    _record_outcome(db, "user.authentication_activation", SecurityEventOutcome.ATTEMPT,
                     operation_id, actor_id, target_id)
     try:
         ensure_projected_admin_remains(db, user, membership,
@@ -363,11 +389,11 @@ def _activate_user(
     except HTTPException as error:
         if db.in_transaction():
             db.rollback()
-        _record_outcome("user.authentication_activation", SecurityEventOutcome.PARTIAL,
+        _record_outcome(db, "user.authentication_activation", SecurityEventOutcome.PARTIAL,
             operation_id, actor_id, target_id,
             "local activation finalization failed")
         raise error
-    _record_outcome("user.authentication_activation", SecurityEventOutcome.SUCCESS,
+    _record_outcome(db, "user.authentication_activation", SecurityEventOutcome.SUCCESS,
                     operation_id, actor_id, target_id)
     return membership_view(user, membership)
 
@@ -384,7 +410,7 @@ def _disable_user(
     before: AccessSnapshot | None,
 ) -> UserResponse:
     operation_id = uuid7()
-    _record_outcome("user.authentication_disable", SecurityEventOutcome.ATTEMPT,
+    _record_outcome(db, "user.authentication_disable", SecurityEventOutcome.ATTEMPT,
                     operation_id, actor_id, target_id)
     membership.role = destination_role
     if payload.username is not None:
@@ -396,11 +422,11 @@ def _disable_user(
         notify_access_changes(db, before)
         commit(db, "Username unavailable")
     except HTTPException as error:
-        _record_outcome("user.authentication_disable", SecurityEventOutcome.FAILURE,
+        _record_outcome(db, "user.authentication_disable", SecurityEventOutcome.FAILURE,
             operation_id, actor_id, target_id,
             "local disable finalization failed")
         raise error
-    _record_outcome("user.authentication_disable", SecurityEventOutcome.SUCCESS,
+    _record_outcome(db, "user.authentication_disable", SecurityEventOutcome.SUCCESS,
                     operation_id, actor_id, target_id)
     return membership_view(user, membership)
 
@@ -415,6 +441,7 @@ def delete_user(
     actor_id = admin.id
     user = lock_user(db, user_id)
     membership = organization_member(db, user)
+    _protect_owners(db, user)
     if shares_another_organization(db, user) and not is_platform_operator(db, actor_id):
         return _remove_membership(db, user, membership, actor_id)
     target_id = user.id
@@ -435,16 +462,16 @@ def delete_user(
         user.status = UserStatus.DISABLED.value
     advance_token_cutoff(user)
     revoke_user_sessions(db, user.id, except_session_id=None)
-    _record_outcome("user.authentication_disable", SecurityEventOutcome.ATTEMPT,
+    _record_outcome(db, "user.authentication_disable", SecurityEventOutcome.ATTEMPT,
                     operation_id, actor_id, target_id)
     try:
         commit(db, "Unable to delete user")
     except HTTPException as error:
-        _record_outcome("user.authentication_disable", SecurityEventOutcome.FAILURE,
+        _record_outcome(db, "user.authentication_disable", SecurityEventOutcome.FAILURE,
             operation_id, actor_id, target_id,
             "local delete finalization failed")
         raise error
-    _record_outcome("user.authentication_disable", SecurityEventOutcome.SUCCESS,
+    _record_outcome(db, "user.authentication_disable", SecurityEventOutcome.SUCCESS,
                     operation_id, actor_id, target_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -477,7 +504,7 @@ def restore_user(
         db.rollback()
         raise conflict("Only the installation owner can restore a deleted account")
     operation_id = uuid7()
-    _record_outcome("user.authentication_restore", SecurityEventOutcome.ATTEMPT,
+    _record_outcome(db, "user.authentication_restore", SecurityEventOutcome.ATTEMPT,
                     operation_id, actor_id, target_id)
     try:
         ensure_projected_admin_remains(db, user, membership,
@@ -491,10 +518,10 @@ def restore_user(
     except HTTPException as error:
         if db.in_transaction():
             db.rollback()
-        _record_outcome("user.authentication_restore", SecurityEventOutcome.PARTIAL,
+        _record_outcome(db, "user.authentication_restore", SecurityEventOutcome.PARTIAL,
             operation_id, actor_id, target_id,
             "local restore finalization failed")
         raise error
-    _record_outcome("user.authentication_restore", SecurityEventOutcome.SUCCESS,
+    _record_outcome(db, "user.authentication_restore", SecurityEventOutcome.SUCCESS,
                     operation_id, actor_id, target_id)
     return membership_view(user, membership)

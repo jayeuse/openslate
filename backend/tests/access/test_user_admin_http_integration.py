@@ -362,3 +362,32 @@ def test_non_administrator_cannot_replace_group_access(world: UserAdminWorld) ->
     world.db.refresh(group)
     assert group.revision == revision
     assert world.access_rows(group) == before
+
+
+@pytest.mark.parametrize("change", ["delete", "disable", "demote"])
+@pytest.mark.parametrize("protected", ["organization_owner", "installation_owner"])
+def test_another_administrator_cannot_remove_disable_or_demote_an_owner(
+    world: UserAdminWorld, change: str, protected: str
+) -> None:
+    """PR #52 review: without ownership transfer, an owner must keep their access."""
+    owner = world.member
+    membership = membership_of(world.db, owner.id)
+    membership.role = UserRole.ADMIN.value
+    if protected == "organization_owner":
+        organization(world.db).owner_user_id = owner.id
+    else:
+        make_operator(world.db, owner)
+    world.db.flush()
+    client = world.client(world.admin)
+    if change == "delete":
+        refused = client.delete(f"/api/users/{owner.id}")
+    else:
+        body = {"status": "disabled"} if change == "disable" else {"role": "member"}
+        refused = client.patch(f"/api/users/{owner.id}", json=body)
+    assert refused.status_code == 409, refused.text
+    world.db.expire_all()
+    kept = world.db.get(User, owner.id)
+    assert kept is not None
+    assert (kept.is_deleted, kept.status) == (False, UserStatus.ACTIVE.value)
+    assert membership_of(world.db, owner.id).role == UserRole.ADMIN.value
+    assert world.events == []

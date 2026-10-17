@@ -11,6 +11,7 @@ from uuid6 import uuid7
 
 from app.common.dependencies import lock_administrator_changes, require_fresh_exact_admin
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import session_organization
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     SupabaseAuthClient,
@@ -51,6 +52,7 @@ def _security_event(
     actor_id: UUID | None = None,
     subject_id: UUID | None = None,
     reason: str | None = None,
+    org_id: UUID | None = None,
 ) -> None:
     try:
         append_committed_security_event(
@@ -62,7 +64,8 @@ def _security_event(
                 actor_id=actor_id,
                 subject_id=subject_id,
                 reason=reason,
-            )
+            ),
+            org_id=org_id,
         )
     except SecurityEventPersistenceError as error:
         raise InvitationError("Unable to record security event") from error
@@ -74,6 +77,7 @@ def _record_invitation_failure(
     *,
     event_type: str = "user.invitation",
     subject_id: UUID | None = None,
+    org_id: UUID | None = None,
 ) -> None:
     """Record a secondary failure event without replacing the primary safe error."""
 
@@ -84,6 +88,7 @@ def _record_invitation_failure(
             operation_id=operation_id,
             actor_id=actor_id,
             subject_id=subject_id,
+            org_id=org_id,
         )
     except InvitationError:
         pass
@@ -254,11 +259,11 @@ def invite_user(
             return get_user(db, user.id)
     except InvitationError:
         db.rollback()
-        _record_invitation_failure(operation_id, actor_id)
+        _record_invitation_failure(operation_id, actor_id, org_id=session_organization(db))
         raise
     except (IntegrityError, SQLAlchemyError) as error:
         db.rollback()
-        _record_invitation_failure(operation_id, actor_id)
+        _record_invitation_failure(operation_id, actor_id, org_id=session_organization(db))
         constraint = getattr(getattr(error.orig, "diag", None), "constraint_name", None) if (
             isinstance(error, IntegrityError)
         ) else None
@@ -307,11 +312,11 @@ def invite_user(
         return get_user(db, user.id)
     except (InvalidProviderCredentials, SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()
-        _record_invitation_failure(operation_id, actor_id)
+        _record_invitation_failure(operation_id, actor_id, org_id=session_organization(db))
         raise InvitationError("Unable to send invitation") from error
     except InvitationError:
         db.rollback()
-        _record_invitation_failure(operation_id, actor_id)
+        _record_invitation_failure(operation_id, actor_id, org_id=session_organization(db))
         raise
 
 
@@ -372,6 +377,7 @@ def resend_invitation(
         operation_id=operation_id,
         actor_id=actor_id,
         subject_id=user_id,
+        org_id=session_organization(db),
     )
     provider = client or get_supabase_auth_client()
     try:
@@ -419,13 +425,15 @@ def resend_invitation(
     except (InvalidProviderCredentials, SupabaseAuthUnavailable, SQLAlchemyError) as error:
         db.rollback()
         _record_invitation_failure(
-            operation_id, actor_id, event_type="user.invitation_resend", subject_id=user_id
+            operation_id, actor_id, event_type="user.invitation_resend", subject_id=user_id,
+            org_id=session_organization(db),
         )
         raise InvitationError("Unable to resend invitation") from error
     except (InvitationError, HTTPException):
         db.rollback()
         _record_invitation_failure(
-            operation_id, actor_id, event_type="user.invitation_resend", subject_id=user_id
+            operation_id, actor_id, event_type="user.invitation_resend", subject_id=user_id,
+            org_id=session_organization(db),
         )
         raise
 

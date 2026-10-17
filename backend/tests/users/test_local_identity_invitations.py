@@ -162,7 +162,10 @@ def _committed_events(monkeypatch: pytest.MonkeyPatch) -> list[SecurityEventInge
 
     events: list[SecurityEventIngestRequest] = []
     monkeypatch.setattr(user_service, "_security_event", SECURITY_EVENT)
-    monkeypatch.setattr(user_service, "append_committed_security_event", events.append)
+    monkeypatch.setattr(
+        user_service, "append_committed_security_event",
+        lambda event, *, org_id=None: events.append(event),
+    )
     return events
 
 

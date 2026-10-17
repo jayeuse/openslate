@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.core.database.organization_scope import session_organization
 from app.systems.access.policy.checks import require_fresh_module_access
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -116,6 +117,7 @@ def aggregate_snapshot_route(
                 outcome=SecurityEventOutcome.SUCCESS,
                 metadata={"bucket_count": bucket_count},
             ),
+            org_id=bound_organization(db),
         )
         db.commit()
     except SQLAlchemyError as error:
@@ -175,6 +177,7 @@ def aggregate_snapshots_route(
                     "module_ids": [str(module_id) for module_id in module_ids],
                 },
             ),
+            org_id=bound_organization(db),
         )
         db.commit()
     except SQLAlchemyError as error:

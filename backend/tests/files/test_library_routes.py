@@ -114,7 +114,9 @@ def test_library_routes_apply_direct_department_action_levels(
     file = library_file(db, actor, department)
     storage = _Store(db)
     storage.objects[file.object_key] = _png()
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda _event, **_kwargs: None
+    )
     with _client(db, actor, storage) as client:
         path = f"/api/files/{file.id}"
         assert client.get(path).status_code == 200
@@ -217,7 +219,9 @@ def test_closed_library_parent_allows_read_download_archive_but_refuses_active_w
     db.commit()
     storage = _Store(db)
     storage.objects[ready.object_key] = _png()
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda _event, **_kwargs: None
+    )
     with _client(db, actor, storage) as client:
         path = f"/api/files/{ready.id}"
         assert (

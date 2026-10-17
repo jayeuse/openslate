@@ -86,7 +86,8 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
     store.objects[file.object_key] = content
     events = []
     monkeypatch.setattr(
-        "app.systems.boards.attachment_router.append_committed_security_event", events.append
+        "app.systems.boards.attachment_router.append_committed_security_event",
+        lambda event, **_kwargs: events.append(event)
     )
     with _client(db, actor, store) as client:
         assert client.get(f"/api/files/{file.id}").status_code == 403
@@ -182,7 +183,8 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
     store.objects[file.object_key] = content
     logged = []
     monkeypatch.setattr(
-        "app.systems.boards.attachment_router.append_committed_security_event", logged.append
+        "app.systems.boards.attachment_router.append_committed_security_event",
+        lambda event, **_kwargs: logged.append(event)
     )
     path = f"/api/boards/{board.id}/posts/{notice.id}/attachments"
     with _client(db, outsider, store) as client:
@@ -251,7 +253,7 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
     store.objects[file.object_key] = content
     monkeypatch.setattr(
         "app.systems.boards.attachment_router.append_committed_security_event",
-        lambda _event: None,
+        lambda _event, **_kwargs: None,
     )
 
     with _client(db, viewer, store) as client:
@@ -333,7 +335,7 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
     store.objects[file.object_key] = b"own"
     monkeypatch.setattr(
         "app.systems.boards.attachment_router.append_committed_security_event",
-        lambda _event: None,
+        lambda _event, **_kwargs: None,
     )
 
     with _client(db, excluded, store) as client:

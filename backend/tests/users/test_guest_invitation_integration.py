@@ -25,7 +25,7 @@ def quiet_invitation_events(monkeypatch: pytest.MonkeyPatch) -> None:
     # Security events use their own session; they are outside this contract.
     monkeypatch.setattr(user_service, "require_fresh_exact_admin", lambda *_args: None)
     monkeypatch.setattr(user_service, "append_security_event", lambda *_args: None)
-    monkeypatch.setattr(user_service, "_record_invitation_failure", lambda *_args: None)
+    monkeypatch.setattr(user_service, "_record_invitation_failure", lambda *_args, **_kwargs: None)
 
 
 def _provider() -> Mock:

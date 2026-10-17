@@ -377,7 +377,11 @@ SECURITY_EVENT_LIST_SPEC = ListQuerySpec(
 def append_security_event(
     db: Session, payload: SecurityEventIngestRequest, *, org_id: UUID | None = None
 ) -> SecurityEvent:
-    """Add one security event; ``org_id`` records the organization it happened in."""
+    """Add one security event; ``org_id`` records the organization it happened in.
+
+    Producers pass it explicitly: an organization-only event names its organization,
+    while account and installation events (sign-in, platform policy) stay ``None``.
+    """
     context = get_current_request_context()
     event = SecurityEvent(
         id=uuid7(),

@@ -87,6 +87,7 @@ def world(
     operations: list[tuple[str, UUID, UUID]] = []
 
     def capture_outcome(
+        _db: Session,
         event_type: str,
         outcome: SecurityEventOutcome,
         operation_id: UUID,

@@ -278,9 +278,17 @@ def _reauthorize_in_database(principal: EventPrincipal) -> EventViewer | None:
                 (recent_provider_user(provider_id) or client.get_admin_user(provider_id))
                 if provider_id is not None else None
             )
+            # Same test as organization requests: an aal2 claim and a verified TOTP factor
+            # that still exists at the provider (a factor removed there ends the stream).
             if provider_user is None or (
                 requires_mfa(organization, membership, provider_user)
-                and claims.assurance_level != "aal2"
+                and (
+                    claims.assurance_level != "aal2"
+                    or not any(
+                        factor.factor_type == "totp" and factor.status == "verified"
+                        for factor in provider_user.factors
+                    )
+                )
             ):
                 return None
             return EventViewer(

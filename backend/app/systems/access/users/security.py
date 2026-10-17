@@ -15,6 +15,7 @@ from app.common.dependencies.auth import (
 )
 from app.core.base_model import utc_now
 from app.core.config import get_settings
+from app.core.database.organization_scope import session_organization
 from app.core.integrations.supabase_auth import (
     InvalidProviderCredentials,
     InvalidProviderToken,
@@ -315,7 +316,9 @@ def admit_operation(
     if kind == "mfa_reset" and actor.claims.assurance_level != "aal2":
         denied = Operation(actor, binding, kind)
         try:
-            append_committed_security_event(denied.payload(SecurityEventOutcome.DENIED))
+            append_committed_security_event(
+                denied.payload(SecurityEventOutcome.DENIED), org_id=session_organization(db)
+            )
         except SecurityEventPersistenceError as error:
             raise denied.failure() from error
         raise refusal(
@@ -347,7 +350,8 @@ def failed_operation(db: Session, operation: Operation) -> HTTPException:
         append_committed_security_event(
             operation.payload(
                 SecurityEventOutcome.PARTIAL if effected else SecurityEventOutcome.FAILURE
-            )
+            ),
+            org_id=session_organization(db),
         )
     except SecurityEventPersistenceError:
         pass  # The HTTP outcome remains unavailable even when recording also fails.

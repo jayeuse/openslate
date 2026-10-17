@@ -111,7 +111,9 @@ def test_record_attachment_routes_allow_a_member_who_can_write_the_module(guarde
     actor, _grant, record = _actor_with_record(db, level=AccessLevel.WRITE)
     content = _png()
     storage = _Store(db)
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda _event, **_kwargs: None
+    )
 
     with _client(db, actor, storage) as client:
         created = client.post(
@@ -218,7 +220,9 @@ def test_attachment_download_reauthorizes_after_storage_latency(guarded_db, monk
 
     storage = _RevokingStore(db)
     storage.objects[file.object_key] = content
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda _event, **_kwargs: None
+    )
 
     with _client(db, actor, storage) as client:
         response = client.get(f"/api/files/{file.id}/content")

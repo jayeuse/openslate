@@ -11,6 +11,7 @@ import pytest
 
 from app.core.config import Settings, get_settings
 from app.core.config.provider_instance import assert_provider_instance
+from app.systems.platform.files import delivery
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable
 from app.systems.platform.files.supabase_storage import SupabaseStorage, bucket_for
@@ -101,9 +102,18 @@ def test_avatar_bucket_refuses_other_media_types(live_provider_storage) -> None:
         storage.upload(f"user/{uuid4()}/{uuid4().hex}", b"%PDF-1.7", "application/pdf")
 
 
-def test_fastapi_file_roundtrip_reaches_real_private_storage(guarded_db, live_provider_storage):
+def test_fastapi_file_roundtrip_reaches_real_private_storage(
+    guarded_db, live_provider_storage, monkeypatch
+):
     _settings, storage, _provider = live_provider_storage
     actor, _grant, record = _actor_with_record(guarded_db, role="admin")
+    # The test's organization exists only in its own transaction, so the separately
+    # committed access event is captured here; it must name the record's organization.
+    download_events: list[object] = []
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event",
+        lambda event, *, org_id=None: download_events.append(org_id),
+    )
     content = _png()
     with _client(guarded_db, actor, storage) as client:
         reserved = client.post(
@@ -129,6 +139,7 @@ def test_fastapi_file_roundtrip_reaches_real_private_storage(guarded_db, live_pr
             assert storage.download(key) == content
             downloaded = client.get(f"/api/files/{file_id}/content")
             assert downloaded.status_code == 200, downloaded.text
+            assert download_events == [record.org_id]
             assert downloaded.content == content
             assert downloaded.headers["content-disposition"].startswith("attachment;")
             assert downloaded.headers["x-content-type-options"] == "nosniff"

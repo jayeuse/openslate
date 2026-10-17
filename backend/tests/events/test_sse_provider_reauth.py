@@ -71,6 +71,61 @@ def test_reauth_uses_live_provider_session_not_local_jwt(monkeypatch: pytest.Mon
     client.verify_access_token.assert_called_once_with("access")
 
 
+@pytest.mark.parametrize(
+    ("factors", "admitted"),
+    [
+        ([{"factor_type": "totp", "status": "verified"}], True),
+        ([{"factor_type": "totp", "status": "unverified"}], False),
+        ([], False),
+    ],
+    ids=["verified-factor", "unverified-factor", "factor-removed-at-provider"],
+)
+def test_sse_reauthorization_requires_a_current_verified_factor_with_aal2(
+    monkeypatch: pytest.MonkeyPatch, factors, admitted
+) -> None:
+    """An aal2 token whose factor was removed at the provider no longer keeps the stream."""
+    db = Mock()
+    client = Mock()
+    client.verify_access_token.return_value = SimpleNamespace(
+        user_id="provider", session_id="session", assurance_level="aal2"
+    )
+    user = SimpleNamespace(id="local-user", role="member", supabase_user_id=uuid4())
+    membership = Membership(user_id=user.id, role="member")
+    db.dirty = set()
+    monkeypatch.setattr(events_router, "get_supabase_auth_client", lambda: client, raising=False)
+    monkeypatch.setattr(events_router, "allowed_module_ids", lambda *_args: None)
+    monkeypatch.setattr(events_router, "readable_board_ids", lambda *_args: None, raising=False)
+    monkeypatch.setattr(
+        events_router, "load_workspace_policy",
+        lambda _db, **_kwargs: WorkspaceProfile(ip_allow_list=[]),
+    )
+    monkeypatch.setattr(
+        events_router,
+        "resolve_provider_session",
+        lambda *_args: (user, SimpleNamespace(active_org_id=uuid7())),
+        raising=False,
+    )
+    monkeypatch.setattr(events_router, "current_membership", lambda *_args: membership)
+    db.get.return_value = WorkspaceProfile(is_deleted=False)
+    provider_user = SimpleNamespace(
+        factors=[SimpleNamespace(**factor) for factor in factors]
+    )
+    monkeypatch.setattr(events_router, "recent_provider_user", lambda _id: provider_user)
+    monkeypatch.setattr(events_router, "requires_mfa", lambda *_args: True)
+    monkeypatch.setattr(events_router, "get_engine", lambda: object())
+
+    @contextmanager
+    def session(_engine: object):
+        yield db
+
+    monkeypatch.setattr(events_router, "AuditSession", session)
+
+    viewer = events_router._reauthorize_in_database(events_router.EventPrincipal("access"))
+    assert (viewer is not None) is admitted
+    if admitted:
+        assert viewer.user_id == "local-user" and viewer.role == "member"
+
+
 @pytest.mark.parametrize("denial", ["mfa_required", "ip_not_allowed"])
 def test_sse_reauthorization_enforces_signed_mfa_and_current_ip_policy(monkeypatch, denial):
     key = ec.generate_private_key(ec.SECP256R1())
