@@ -260,7 +260,7 @@ def _lock_operational_rows(db: Session) -> None:
         RecordTriggerCondition,
         RecordTriggerAction,
     ):
-        db.scalars(select(model).order_by(model.id).with_for_update()).all()
+        db.scalars(select(model.id).order_by(model.id).with_for_update()).all()
 
 
 def _apply_departments(
