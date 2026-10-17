@@ -21,13 +21,16 @@ Claude is the design and frontend agent for this repository: UI, UX, visual desi
 
 ## Design work
 
-- **Impeccable is the primary design skill** for design, redesign, critique, audit, and polish. Do not load a second generic design skill for the same task. Use `react-frontend-patterns` for implementation rules and `frontend-design-review` (personal skill) only inside `ui-reviewer`.
+- **Design skills: `impeccable` and `ui-ux-pro-max` only.** Impeccable owns design, redesign, critique, audit, polish, and the design-system files; `ui-ux-pro-max` is its reference catalog and never decides or writes design files. Load no other design skill for any design operation, including plugin and personal skills (`design:*`, `frontend-design*`, `artifact-design` outside Artifact pages). `react-frontend-patterns` holds implementation rules, not design direction.
 - **Design truth** lives in `.impeccable/design.json`, `PRODUCT.md`, and the tokens in `frontend/src/app/globals.css`. Point to these files; never copy token values into other documents.
 - **No image generation** exists in this harness. Build code-led: SVG for marks, icons, and illustrations; CSS and canvas for texture and motion. The existing comps in `.impeccable/mocks/` are valid references. If a flow needs a new raster comp or asset, say so and continue code-led; never fake one.
 - **Library facts.** This is Next.js 16, React 19, and Tailwind v4 (CSS-first). Before writing framework code from memory, check `node_modules/next/dist/docs/` (per `frontend/AGENTS.md`) or Context7. For a shadcn primitive, check `src/components/ui/` first, then the shadcn MCP.
 
 Correct: `Checked Context7 for the Tailwind v4 @theme syntax, then added the token to globals.css.`
 Wrong: `Added a tailwind.config.ts with the new color.` (v4 here has no config file.)
+
+Correct: `Ran impeccable critique on /boards; pulled two chart-type options from ui-ux-pro-max for the summary widget.`
+Wrong: `Ran design:design-critique on /boards, then design:accessibility-review.`
 
 ## Visual verification loop
 
