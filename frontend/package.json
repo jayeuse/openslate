@@ -18,7 +18,8 @@
     "verify": "npm run check && npm run build && npm test",
     "test:section": "python3 ../scripts/run_tests.py frontend section",
     "test:affected": "python3 ../scripts/run_tests.py frontend affected",
-    "test:full": "python3 ../scripts/run_tests.py frontend full"
+    "test:full": "python3 ../scripts/run_tests.py frontend full",
+    "sweep": "node tooling/runtime-sweep.mjs"
   },
   "dependencies": {
     "@antv/x6": "^3.1.8",
