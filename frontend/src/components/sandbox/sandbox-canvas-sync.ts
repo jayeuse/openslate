@@ -29,6 +29,16 @@ import {
 
 type MutableCurrent<T> = { current: T };
 
+/**
+ * X6 compares routers by value but functions by identity, and the manhattan
+ * fallback below is a new closure on every sync. Setting an otherwise equal
+ * router re-routes the line (about 11 ms each with manhattan), so the sync
+ * sets a router only when this says it changed. JSON leaves out the function.
+ */
+function sameRouter(current: unknown, next: object): boolean {
+  return JSON.stringify(current) === JSON.stringify(next);
+}
+
 interface SandboxCanvasSynchronization {
   graph: Graph;
   history: History;
@@ -284,31 +294,47 @@ export function synchronizeSandboxCanvas({
     const moduleDepartment = new Map(
       state.modules.map((item) => [item.id, item.departmentId]),
     );
+    // Manhattan searches for an obstacle-free path on every pointer move, so
+    // lines on a dragged module or department use orth until the drop sync.
+    const movingNode =
+      movingNodeId === null ? null : graph.getCellById(movingNodeId);
+    const movingIds = new Set(
+      movingNode?.isNode()
+        ? [movingNode.id, ...movingNode.getDescendants().map((cell) => cell.id)]
+        : [],
+    );
     for (const link of state.links) {
       const sourceNode = moduleNodes.get(link.sourceModuleId);
       const targetNode = moduleNodes.get(link.targetModuleId);
       if (sourceNode === undefined || targetNode === undefined) {
         continue;
       }
-      const relationshipRouter = {
-        name: "manhattan",
-        args: {
-          // A 24px halo on both cards closes the compact 48px corridor.
-          padding: 12,
-          startDirections: ["right"],
-          endDirections: ["left"],
-          excludeNodes: state.departments.map((department) => department.id),
-          // Overlapping cards have no obstacle-free route. X6's route-level
-          // fallback handles that normal editing state before its warning.
-          fallbackRoute: () => {
-            const view = graph.findViewByCell(link.id);
-            if (!view?.isEdgeView()) return [];
-            return routerPresets.orth
-              .call(view, [], { padding: 12 }, view)
-              .map((point) => Point.create(point));
-          },
-        },
-      };
+      const dragged =
+        movingIds.has(link.sourceModuleId) ||
+        movingIds.has(link.targetModuleId);
+      const relationshipRouter = dragged
+        ? { name: "orth", args: { padding: 12 } }
+        : {
+            name: "manhattan",
+            args: {
+              // A 24px halo on both cards closes the compact 48px corridor.
+              padding: 12,
+              startDirections: ["right"],
+              endDirections: ["left"],
+              excludeNodes: state.departments.map(
+                (department) => department.id,
+              ),
+              // Overlapping cards have no obstacle-free route. X6's route-level
+              // fallback handles that normal editing state before its warning.
+              fallbackRoute: () => {
+                const view = graph.findViewByCell(link.id);
+                if (!view?.isEdgeView()) return [];
+                return routerPresets.orth
+                  .call(view, [], { padding: 12 }, view)
+                  .map((point) => Point.create(point));
+              },
+            },
+          };
       const source = {
         cell: link.sourceModuleId,
         port: `${link.sourceModuleId}-out`,
@@ -379,7 +405,8 @@ export function synchronizeSandboxCanvas({
       }
       edge.setSource(source);
       edge.setTarget(target);
-      edge.setRouter(relationshipRouter);
+      if (!sameRouter(edge.getRouter(), relationshipRouter))
+        edge.setRouter(relationshipRouter);
       edge.setConnector({ name: "rounded", args: { radius: 8 } });
       edge.setAttrs(linkAttrs);
       edge.setLabels(linkLabels);
