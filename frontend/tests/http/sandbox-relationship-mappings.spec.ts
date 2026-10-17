@@ -2244,6 +2244,23 @@ async function openConnectModules(page: Page) {
   return page.getByRole("dialog", { name: "Connect modules" });
 }
 
+// A design rule the Designer checks while applying a change is refused with
+// its authored reason; it once rejected silently and left the dialog open.
+test("a duplicate relationship is refused with its reason and nothing is saved", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  const dialog = await openConnectModules(page);
+  await dialog.getByLabel("Source module").selectOption("sample-requests");
+  await dialog.getByLabel("Target module").selectOption("sample-equipment");
+  await dialog.getByLabel("Relationship name").fill("Uses equipment again");
+  await dialog.getByRole("button", { name: "Create relationship" }).click();
+  await expect(
+    dialog.getByText("A relationship between these modules already exists."),
+  ).toBeVisible();
+  expect(sandbox.document().design.relationships).toHaveLength(1);
+});
+
 test("a relationship can target a module in another department and publish", async ({
   page,
 }) => {

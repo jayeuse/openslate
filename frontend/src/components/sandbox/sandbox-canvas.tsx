@@ -315,11 +315,17 @@ export function SandboxCanvas({
       layoutQueue = layoutQueue
         .catch(() => undefined)
         .then(async () => {
-          const result = await callbacksRef.current.onLayoutChange?.(next);
-          // A refused layout leaves the owner's layout as it was.
-          if (commandFailed(result)) {
+          // A refused or failed layout leaves the owner's layout as it was.
+          const restore = () => {
             appliedLayoutPropRef.current = undefined;
             setLayoutRestore((count) => count + 1);
+          };
+          try {
+            const result = await callbacksRef.current.onLayoutChange?.(next);
+            if (commandFailed(result)) restore();
+          } catch (error) {
+            restore();
+            throw error;
           }
         });
       return layoutQueue;

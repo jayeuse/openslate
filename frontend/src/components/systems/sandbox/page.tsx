@@ -46,9 +46,10 @@ import {
 } from "./helpers/view-preferences";
 import { sandboxWorkInProgress } from "./helpers/work-in-progress";
 import { Designer } from "./components/designer";
-import type {
-  SandboxCommandFailure,
-  SandboxCommandResult,
+import {
+  SandboxCommandError,
+  type SandboxCommandFailure,
+  type SandboxCommandResult,
 } from "./state/commands";
 import {
   createSandboxVersion,
@@ -702,8 +703,18 @@ export default function SandboxPage() {
           ok: false,
           error: "A Sandbox change is already being saved.",
         };
-      const nextDesign =
-        typeof update === "function" ? update(session.history.present) : update;
+      let nextDesign: Design;
+      try {
+        nextDesign =
+          typeof update === "function"
+            ? update(session.history.present)
+            : update;
+      } catch (error) {
+        // A design rule the update checks refuses it with its own reason.
+        if (error instanceof SandboxCommandError)
+          return { ok: false, error: error.message };
+        throw error;
+      }
       if (
         nextDesign === session.history.present ||
         JSON.stringify(nextDesign) === JSON.stringify(session.history.present)
