@@ -68,13 +68,18 @@ def test_relationship_field_routes_close_reopen_and_purge_links_keep_records(
         db, "field", "sample-requests:sample-field-requests-request-number"
     )
     asset_tag = bound_field(db, "field", "sample-equipment:sample-field-equipment-asset-tag")
-    source = Record(module_id=link.module_id, data={str(request_number.id): "Owned request 1"})
+    source = Record(
+        org_id=link.org_id, module_id=link.module_id,
+        data={str(request_number.id): "Owned request 1"},
+    )
     target = Record(
-        module_id=link.relationship_target_module_id, data={str(asset_tag.id): "Owned asset 1"}
+        org_id=asset_tag.org_id, module_id=link.relationship_target_module_id,
+        data={str(asset_tag.id): "Owned asset 1"},
     )
     db.add_all([source, target])
     db.flush()
     edge = RelationshipEdge(
+        org_id=link.org_id,
         field_id=link.id, source_record_id=source.id, target_record_id=target.id
     )
     db.add(edge)

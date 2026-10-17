@@ -283,7 +283,7 @@ def create_board_event(
     )
     if count is None or count >= MAX_SERIES_CANDIDATES:
         raise _conflict("event_limit_reached", "The Board has 500 active events")
-    event = BoardEvent(board_id=board.id, author_id=actor.id)
+    event = BoardEvent(org_id=board.org_id, board_id=board.id, author_id=actor.id)
     _set_definition(event, payload)
     db.add(event)
     db.flush()

@@ -377,6 +377,8 @@ def populate_sample_data(
     organization: OrganizationPack | None = None,
     mfa_observer: Callable[..., object] | None = None,
     host_control: Callable[..., object] | None = None,
+    organization_id: str | None = None,
+    partner_organization_id: str | None = None,
 ) -> SamplePopulationReport:
     """Create a private run, populate through user APIs, then prove the readback."""
     dataset = build_dataset(
@@ -412,6 +414,8 @@ def populate_sample_data(
         "anchor_date": anchor_date.isoformat(),
         "host_acceptance": host_control is not None,
         "admin_id": expected_admin_id,
+        "organization_id": organization_id,
+        "partner_organization_id": partner_organization_id,
         "started_at": None,
         "finished_at": None,
         "mappings": {},
@@ -443,6 +447,8 @@ def populate_sample_data(
             manifest=manifest,
             mfa_observer=mfa_observer,
             host_control=host_control,
+            organization_id=organization_id,
+            partner_organization_id=partner_organization_id,
         )
         manifest["mappings"] = _journal_mappings(directory / "requests.jsonl")
         manifest["observed"] = dict(observed)

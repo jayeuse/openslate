@@ -49,9 +49,9 @@ _BASE_VOLUMES = (
 _BASE_SERVICES = {
     "db",
     "auth",
-    "rest",
     "storage",
     "imgproxy",
+    "realtime",
     "meta",
     "studio",
     "api-gw",

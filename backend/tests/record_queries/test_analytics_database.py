@@ -19,6 +19,7 @@ from app.systems.sandbox.records.query_schemas import (
     GroupedAggregateSnapshotQuery,
     GroupedRecordQuery,
 )
+from tests.rbac.support import organization
 from tests.record_queries.support import (
     READER,
     add_values,
@@ -281,7 +282,7 @@ def test_date_series_includes_empty_days_and_uses_utc_for_datetime(query_db) -> 
 
 def test_datetime_series_buckets_by_validated_workspace_timezone(query_db) -> None:
     profile = query_db.scalar(
-        select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+        select(WorkspaceProfile).where(WorkspaceProfile.id == organization(query_db).id)
     )
     assert profile is not None
     update = WorkspaceUpdate(revision=profile.revision, timezone="Asia/Manila")
@@ -357,7 +358,7 @@ def test_grouped_snapshot_combines_or_filters_with_an_independent_date_window(qu
 
 def test_grouped_snapshot_date_window_uses_workspace_day_bounds_for_datetime(query_db) -> None:
     profile = query_db.scalar(
-        select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+        select(WorkspaceProfile).where(WorkspaceProfile.id == organization(query_db).id)
     )
     assert profile is not None
     profile.timezone = "Asia/Manila"

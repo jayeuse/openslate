@@ -8,14 +8,13 @@ from uuid import UUID
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.common.dependencies import require_fresh_exact_admin
 from app.core.config import get_settings
 from app.systems.platform.files.access import error, load, require_avatar_unbound, require_unlinked
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable, StorageBackend
 from app.systems.platform.files.quota import lock_quota
 from app.systems.platform.files.schemas import FileResponse
-from app.systems.platform.files.service import _claim, _current
+from app.systems.platform.files.service import _claim, _current, authorize_lifecycle
 from app.systems.sandbox.lifecycle.purge_support import PURGE_DISABLED_MESSAGE
 
 
@@ -94,11 +93,12 @@ def purge_confirmed(
     """Parent must validate its signed/digest confirmation and current-logo exclusion."""
     if not get_settings().lifecycle_purge_enabled:
         raise error("purge_disabled", PURGE_DISABLED_MESSAGE, 403)
+    authorize_lifecycle(db, actor_id, load(db, file_id))
     lock_quota(db)
-    require_fresh_exact_admin(db, actor_id)
     if validate_locked is not None:
         validate_locked()
     file = load(db, file_id, lock=True)
+    authorize_lifecycle(db, actor_id, file)
     require_avatar_unbound(db, file)
     if file.purpose == "board_attachment":
         if board_id is None or file.board_id != board_id:

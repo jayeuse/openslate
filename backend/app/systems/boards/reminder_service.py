@@ -188,7 +188,8 @@ def set_event_reminders(db: Session, event: BoardEvent, timings: Iterable[str]) 
         db.delete(reminder)
     db.flush()
     for timing in ordered_timings(wanted):
-        db.add(BoardEventReminder(board_id=event.board_id, event_id=event.id, timing=timing))
+        db.add(BoardEventReminder(org_id=event.org_id, board_id=event.board_id,
+                                  event_id=event.id, timing=timing))
     db.flush()
 
 

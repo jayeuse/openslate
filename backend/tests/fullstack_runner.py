@@ -132,7 +132,8 @@ def wait_for(url, process, *, verify: bool = True):
 
 def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
     """Owner-only fixture setup, guarded by a brand-new empty application DB."""
-    from app.systems.access.users.models import User, UserStatus
+    from app.systems.access.users.models import UserStatus
+    from tests.conftest import create_member, create_organization
 
     target = instance_target_for_process(owner_url, "openslate_owner", database_environment)
     assert_provider_instance(
@@ -147,10 +148,11 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
             assert_instance_target(db.connection(), target, expected_user="openslate_owner")
             if db.scalar(text("SELECT count(*) FROM public.users")) != 0:
                 raise RuntimeError("refusing to seed a nonempty database")
+            organization = create_organization(db)
             for role in roles:
                 email = f"p5-{run_id}-{role}@example.com"
                 password = f"P5-{secrets.token_urlsafe(24)}!9"
-                user = User(
+                user, _membership = create_member(db, organization,
                     email=email,
                     username=f"p5-{role}",
                     status=UserStatus.ACTIVE.value,

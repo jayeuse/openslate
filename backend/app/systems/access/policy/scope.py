@@ -28,9 +28,19 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import bound_organization_column
+from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
-from app.systems.access.users.eligibility import established_user_clause, is_active_account
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.eligibility import (
+    established_user_clause,
+    is_established_user,
+)
+from app.systems.access.users.membership import (
+    bound_membership_join,
+    current_membership,
+    organization_membership,
+)
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.sandbox.modules.models import Module
 
 _RANK = {AccessLevel.READ: 1, AccessLevel.WRITE: 2, AccessLevel.MANAGE: 3}
@@ -149,19 +159,31 @@ class _Resolution:
     guest: bool = False
 
 
-def effective_levels(db: Session, user: User, *, now: datetime | None = None) -> EffectiveAccess:
+def effective_levels(
+    db: Session, user: User, *, now: datetime | None = None, membership: Membership | None = None
+) -> EffectiveAccess:
     """Resolve the user's level on every department and module they can reach."""
 
-    return _resolve(db, user, now=now).access
+    return _resolve(db, user, now=now, membership=membership).access
 
 
-def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
+def _resolve(
+    db: Session, user: User, *, now: datetime | None, membership: Membership | None = None
+) -> _Resolution:
     """Rule 2 and the reads; :func:`_fold_access` applies the other rules."""
 
-    if not is_active_account(user, now=now):
+    # Resolve current transaction state first; the membership read may be cached.
+    db.flush()
+    membership = membership or organization_membership(db, user.id)
+    if membership is None:
         return _Resolution(NO_ACCESS)
-    if user.role == UserRole.ADMIN.value:
-        return _fold_access(user.role, (), {})
+    if (membership.user_id != user.id or membership.status != "active"
+            or user.status != UserStatus.ACTIVE.value or not is_established_user(membership)
+            or not is_identity_eligible(user, membership, now=now)):
+        return _Resolution(NO_ACCESS)
+    role = membership.role
+    if role == UserRole.ADMIN.value:
+        return _fold_access(role, (), {})
     rows: list[AccessRow] = list(
         db.execute(
             select(
@@ -174,6 +196,9 @@ def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
             .join(Group, Group.id == GroupAccess.group_id)
             .where(
                 GroupMember.user_id == user.id,
+                GroupMember.org_id == membership.org_id,
+                Group.org_id == membership.org_id,
+                GroupAccess.org_id == membership.org_id,
                 GroupMember.is_deleted.is_(False),
                 Group.is_deleted.is_(False),
                 GroupAccess.is_deleted.is_(False),
@@ -188,11 +213,12 @@ def _resolve(db: Session, user: User, *, now: datetime | None) -> _Resolution:
         module_id: department_id
         for module_id, department_id in db.execute(
             select(Module.id, Module.department_id).where(
+                Module.org_id == membership.org_id,
                 or_(Module.department_id.in_(department_ids), Module.id.in_(module_ids))
             )
         ).tuples()
     }
-    return _fold_access(user.role, rows, module_departments)
+    return _fold_access(role, rows, module_departments)
 
 
 def _fold_access(
@@ -372,7 +398,10 @@ def _active_account_clause(now: datetime | None) -> ColumnElement[bool]:
     return and_(
         User.status == UserStatus.ACTIVE.value,
         User.is_deleted.is_(False),
-        or_(User.expires_at.is_(None), User.expires_at > timestamp),
+        Membership.org_id == bound_organization_column(),
+        Membership.status == UserStatus.ACTIVE.value,
+        Membership.is_deleted.is_(False),
+        or_(Membership.expires_at.is_(None), Membership.expires_at > timestamp),
         established_user_clause(),
     )
 
@@ -395,9 +424,9 @@ def _readers(access_target: ColumnElement[bool], now: datetime | None) -> Select
             access_target,
         )
     )
-    return select(User.id).where(
+    return select(User.id).join(Membership, bound_membership_join()).where(
         _active_account_clause(now),
-        or_(User.role == UserRole.ADMIN.value, User.id.in_(group_readers)),
+        or_(Membership.role == UserRole.ADMIN.value, User.id.in_(group_readers)),
     )
 
 
@@ -447,16 +476,17 @@ def department_reader_ids(
     return frozenset(db.scalars(_readers(target, now)).all())
 
 
-def department_reader_clause(user: User, department_id: Any) -> ColumnElement[bool]:
+def department_reader_clause(db: Session, user: User, department_id: Any) -> ColumnElement[bool]:
     """SQL test that ``user`` can read something in the department named by a column.
 
     It replaces department membership for Board audiences: an administrator reads
     every department, and a member or guest needs a live group row there.
     """
 
-    if not is_active_account(user):
+    membership = current_membership(db, user)
+    if membership is None:
         return false()
-    if user.role == UserRole.ADMIN.value:
+    if membership.role == UserRole.ADMIN.value:
         return true()
     return exists(
         select(GroupAccess.id)

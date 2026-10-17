@@ -20,6 +20,8 @@ from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
 from tests.boards.support import admin, client, company_board, department_board
 from tests.boards.test_permanent_delete import _enabled
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
 
@@ -63,8 +65,10 @@ def test_reopening_a_department_restores_a_missing_board(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
+    create_document(db, organization(db))
     actor = admin(db)
-    department = Department(department_name=f"Reopen {uuid7().hex[:8]}")
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Reopen {uuid7().hex[:8]}")
     db.add(department)
     db.flush()
     department_board(db, department)

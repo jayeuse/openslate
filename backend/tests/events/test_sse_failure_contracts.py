@@ -24,6 +24,7 @@ from app.systems.platform.events.router import (
 )
 
 READABLE_MODULE = uuid7()
+ORGANIZATION = uuid7()
 
 
 def test_untrusted_notification_payloads_fail_closed_without_fanout() -> None:
@@ -185,7 +186,9 @@ def test_stream_stops_before_queued_event_when_session_is_revoked() -> None:
         )
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
-        await hub.publish(InvalidationEvent("records", module_id=READABLE_MODULE))
+        await hub.publish(InvalidationEvent(
+            "records", module_id=READABLE_MODULE, org_id=ORGANIZATION,
+        ))
         with pytest.raises(StopAsyncIteration):
             await anext(stream)
         assert hub.subscriber_count == 0
@@ -306,18 +309,18 @@ def test_hub_denies_missing_and_non_admin_roles_but_releases_one_of_many_streams
         hub = EventHub()
         no_role = await hub.subscribe(EventViewer(user_id=uuid7(), role=None, module_ids=None))
         administrator = await hub.subscribe(
-            EventViewer(user_id=uuid7(), role="admin", module_ids=None)
+            EventViewer(user_id=uuid7(), role="admin", module_ids=None, org_id=ORGANIZATION)
         )
         member = _user()
         first_member = await hub.subscribe(member)
         second_member = await hub.subscribe(member)
         records_event = event_for_entity("records")
-        admin_event = event_for_entity("users")
+        admin_event = event_for_entity("users", org_id=ORGANIZATION)
         unclassified_event = InvalidationEvent("unclassified")
 
         assert no_role.access_signature == ()
         assert not hub.can_receive(no_role, records_event)
-        assert administrator.access_signature == ("admin",)
+        assert administrator.access_signature == (f"org:{ORGANIZATION}", "admin")
         assert hub.can_receive(administrator, admin_event)
         assert not hub.can_receive(first_member, admin_event)
         assert not hub.can_receive(first_member, unclassified_event)
@@ -400,7 +403,7 @@ def test_stream_closes_a_subscription_marked_slow_before_sending_data() -> None:
             EventPrincipal("token"),
             initial_user=_user(reads=True),
         )
-        event = InvalidationEvent("records", module_id=READABLE_MODULE)
+        event = InvalidationEvent("records", module_id=READABLE_MODULE, org_id=ORGANIZATION)
 
         assert await anext(stream) == b"event: resync\ndata: {}\n\n"
         await hub.publish(event)
@@ -421,6 +424,7 @@ def _user(*, reads: bool = False) -> EventViewer:
         user_id=_MEMBER_ID,
         role="member",
         module_ids=frozenset({READABLE_MODULE}) if reads else frozenset(),
+        org_id=ORGANIZATION,
     )
 
 

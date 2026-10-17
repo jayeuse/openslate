@@ -1,4 +1,6 @@
 import {
+  eventStreamUrl,
+  authMeBody,
   expect,
   test,
   type Page,
@@ -617,7 +619,7 @@ test("URL-selected event retries a failed detail read without changing the calen
 }) => {
   await installSelectedEventApi(browser);
   // A held event stream sends no resync, so only Retry can recover the read.
-  await browser.route("**/api/events", () => undefined);
+  await browser.route(eventStreamUrl, () => undefined);
   let available = false;
   await browser.route(`**/api/boards/${boardId}/events/${eventId}`, (route) =>
     route.fulfill(
@@ -686,7 +688,7 @@ async function installArchivedEventPurge(
   await installOpenViewEventSource(browser);
   await installSelectedEventApi(browser);
   await browser.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: authorId, role, access: [] } }),
+    route.fulfill({ json: authMeBody({ id: authorId, role, access: [] }) }),
   );
   const workspace = {
     display_name: "OpenSlate",

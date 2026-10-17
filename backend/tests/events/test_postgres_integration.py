@@ -2,11 +2,11 @@
 
 import asyncio
 import os
-from uuid import UUID
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.config import get_settings
@@ -14,7 +14,7 @@ from app.core.database.session import AuditSession
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.platform.events.hub import EventHub, EventViewer, PostgresInvalidationListener
 from app.systems.sandbox.departments.models import Department
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine
 
 READABLE_MODULE = uuid7()
 
@@ -35,20 +35,25 @@ async def _exercise_postgres_invalidation() -> None:
     runtime_url = os.environ["TEST_DATABASE_URL"]
     owner_url = os.environ["MIGRATION_DATABASE_URL"]
     _assert_runtime_settings_target(get_settings().database_url, runtime_url)
-    committed_id: UUID | None = None
+    organization_id = uuid7()
     hub = EventHub()
     subscriber = await hub.subscribe(
         EventViewer(
-            user_id="event-integration-user", role="member", module_ids=frozenset({READABLE_MODULE})
+            user_id="event-integration-user", role="member",
+            module_ids=frozenset({READABLE_MODULE}), org_id=organization_id,
         )
     )
     listener = PostgresInvalidationListener(hub)
     runtime_engine = guarded_create_engine(runtime_url)
-    listener.start()
+    cleanup_engine = guarded_create_engine(owner_url)
     try:
+        with Session(cleanup_engine) as setup:
+            create_organization(setup, id=organization_id)
+            setup.commit()
+        listener.start()
         assert await asyncio.wait_for(subscriber.queue.get(), timeout=5) is None
 
-        committed = Department(department_name="event-commit")
+        committed = Department(org_id=organization_id, department_name="event-commit")
         with AuditSession(runtime_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(
                 request_method="POST",
@@ -56,7 +61,6 @@ async def _exercise_postgres_invalidation() -> None:
             )
             db.add(committed)
             db.flush()
-            committed_id = committed.id
             db.commit()
 
         event = await asyncio.wait_for(subscriber.queue.get(), timeout=5)
@@ -71,7 +75,7 @@ async def _exercise_postgres_invalidation() -> None:
                 request_method="POST",
                 request_path="/api/test",
             )
-            db.add(Department(department_name="event-rollback"))
+            db.add(Department(org_id=organization_id, department_name="event-rollback"))
             db.flush()
             db.rollback()
 
@@ -81,19 +85,19 @@ async def _exercise_postgres_invalidation() -> None:
         listener.stop()
         await hub.unsubscribe(subscriber)
         runtime_engine.dispose()
-        cleanup_engine = guarded_create_engine(owner_url)
         try:
             with cleanup_engine.begin() as connection:
-                if committed_id is not None:
-                    connection.execute(
-                        text("DELETE FROM public.audit_logs WHERE entity_id = :entity_id"),
-                        {"entity_id": committed_id},
-                    )
                 connection.execute(
-                    text(
-                        "DELETE FROM public.departments "
-                        "WHERE department_name IN ('event-commit', 'event-rollback')"
-                    )
+                    text("DELETE FROM public.audit_logs WHERE org_id = :org_id"),
+                    {"org_id": organization_id},
+                )
+                connection.execute(
+                    text("DELETE FROM public.departments WHERE org_id = :org_id"),
+                    {"org_id": organization_id},
+                )
+                connection.execute(
+                    text("DELETE FROM public.organizations WHERE id = :org_id"),
+                    {"org_id": organization_id},
                 )
         finally:
             cleanup_engine.dispose()

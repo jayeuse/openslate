@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session, aliased
 
 from app.systems.access.policy.checks import module_filter
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.membership import require_current_membership
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.manage.backups.models import BackupRun
 from app.systems.openview.reports.models import Report
 from app.systems.platform.scheduling.models import (
@@ -24,6 +25,7 @@ from app.systems.sandbox.records.models import Record
 
 
 def additional_notification_ids(db: Session, user: User) -> Select[tuple[UUID]]:
+    role = require_current_membership(db, user).role
     failed_report = (
         select(InAppNotification.id)
         .join(ScheduledWork, ScheduledWork.id == InAppNotification.work_id)
@@ -54,7 +56,7 @@ def additional_notification_ids(db: Session, user: User) -> Select[tuple[UUID]]:
             BackupRun.deleted_at.is_(None),
             BackupRun.reconciled_at.is_not(None),
             BackupRun.state.in_(("failed", "interrupted")),
-            true() if user.role == UserRole.ADMIN.value else false(),
+            true() if role == UserRole.ADMIN.value else false(),
         )
     )
     assigned = (
@@ -68,18 +70,20 @@ def additional_notification_ids(db: Session, user: User) -> Select[tuple[UUID]]:
         )
     )
     accepted_user = aliased(User)
+    accepted_membership = aliased(Membership)
     invitation = (
         select(InAppNotification.id)
         .join(accepted_user, accepted_user.id == InAppNotification.subject_id)
+        .join(accepted_membership, accepted_membership.user_id == accepted_user.id)
         .where(
             InAppNotification.kind == NotificationKind.INVITATION_ACCEPTED,
             InAppNotification.subject_type == "user",
             InAppNotification.work_id.is_(None),
             accepted_user.is_deleted.is_(False),
             accepted_user.deleted_at.is_(None),
-            accepted_user.invitation_accepted_at.is_not(None),
+            accepted_membership.invitation_accepted_at.is_not(None),
             accepted_user.status != "pending",
-            true() if user.role == UserRole.ADMIN.value else false(),
+            true() if role == UserRole.ADMIN.value else false(),
         )
     )
     publication = (
@@ -96,7 +100,7 @@ def additional_notification_ids(db: Session, user: User) -> Select[tuple[UUID]]:
             SandboxPublication.is_deleted.is_(False),
             SandboxPublication.deleted_at.is_(None),
             SandboxPublication.document_id == SandboxVersion.document_id,
-            true() if user.role == UserRole.ADMIN.value else false(),
+            true() if role == UserRole.ADMIN.value else false(),
         )
     )
     access = select(InAppNotification.id).where(

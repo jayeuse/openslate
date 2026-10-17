@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database.session import get_engine
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import SecurityEvent
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member, create_organization
 
 
 @pytest.fixture
@@ -21,21 +23,18 @@ def world(integration_owner_db):
     events = []
     with Session(owner) as db:
         before = set(db.scalars(select(SecurityEvent.id)))
+        organization_id = create_organization(db).id
+        db.commit()
 
     def add_users(count=1):
-        rows = [
-            User(
-                id=uuid4(),
-                username=str(uuid4()),
-                email=f"{uuid4()}@example.test",
-                status="active",
-                role="member",
-            )
-            for _ in range(count)
-        ]
-        users.extend(row.id for row in rows)
         with Session(owner) as db:
-            db.add_all(rows)
+            organization = db.get(WorkspaceProfile, organization_id)
+            rows = [
+                create_member(db, organization, id=uuid4(), username=str(uuid4()),
+                              email=f"{uuid4()}@example.test", status="active")[0]
+                for _ in range(count)
+            ]
+            users.extend(row.id for row in rows)
             db.commit()
         return users[-count:]
 
@@ -81,8 +80,13 @@ def world(integration_owner_db):
                 )
             ):
                 db.delete(row)
+            for row in db.scalars(select(Membership).where(Membership.user_id.in_(users))):
+                db.delete(row)
+            db.flush()
             for row in db.scalars(select(User).where(User.id.in_(users))):
                 db.delete(row)
+            db.flush()
+            db.delete(db.get(WorkspaceProfile, organization_id))
             db.commit()
 
     try:

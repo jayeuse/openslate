@@ -180,7 +180,7 @@ def test_report_run_mapping_freezes_output_and_restricts_source_purge() -> None:
 
 def test_report_run_eligible_user_mapping_is_immutable_and_restrictive() -> None:
     table = ReportRunEligibleUser.__table__
-    assert set(table.columns.keys()) == {"run_id", "user_id"}
+    assert set(table.columns.keys()) == {"org_id", "run_id", "user_id"}
     assert {column.name for column in table.primary_key.columns} == {"run_id", "user_id"}
     assert {key.target_fullname for key in table.columns["run_id"].foreign_keys} == {
         "report_runs.id"

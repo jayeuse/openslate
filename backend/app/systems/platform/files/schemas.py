@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.common.listing import StandardListRequest, StandardListResponse
+from app.systems.platform.files.validation import MAX_BYTES
 
 
 class FilePurpose(StrEnum):
@@ -31,7 +32,7 @@ class FileCreate(BaseModel):
     record_id: UUID | None = None
     department_id: UUID | None = None
     filename: str = Field(min_length=1, max_length=255)
-    expected_size: int = Field(gt=0, le=25 * 1024 * 1024, strict=True)
+    expected_size: int = Field(gt=0, le=MAX_BYTES, strict=True)
 
     @field_validator("filename")
     @classmethod
@@ -61,7 +62,7 @@ class FileCreate(BaseModel):
 class BoardFileCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     filename: str = Field(min_length=1, max_length=255)
-    expected_size: int = Field(gt=0, le=25 * 1024 * 1024, strict=True)
+    expected_size: int = Field(gt=0, le=MAX_BYTES, strict=True)
 
     @field_validator("filename")
     @classmethod

@@ -29,6 +29,10 @@ _SHUTDOWN_JOIN_SECONDS = 2.0
 _DEFAULT_MAX_SUBSCRIBERS = 128
 _DEFAULT_MAX_SUBSCRIBERS_PER_USER = 4
 _RESERVED_HTTP_CONCURRENCY = 8
+_INSTALLATION_ENTITIES = frozenset({
+    "platform_settings", "platform_operators", "backup_policies", "backup_runs",
+    "backup_export_operations", "update_statuses",
+})
 
 
 class SubscriberLimitReached(RuntimeError):
@@ -55,6 +59,9 @@ class EventViewer:
     role: str | None
     module_ids: frozenset[UUID] | None
     board_ids: frozenset[UUID] | None = frozenset()
+    # The organization the stream is bound to; events of other organizations never reach it.
+    org_id: UUID | None = None
+    operator: bool = False
 
 
 @dataclass(slots=True)
@@ -194,8 +201,14 @@ def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> b
     viewer = subscription.viewer
     if viewer.role is None:
         return False
+    if event.org_id is not None and event.org_id != viewer.org_id:
+        return False
     if event.entity == PRIVATE_NOTIFICATION_ENTITY:
         return event.recipient_id is not None and subscription.user_id == event.recipient_id
+    if event.org_id is None:
+        # Account events must have been expanded into membership organizations by
+        # the publisher; missing scope never substitutes for organization authority.
+        return viewer.operator and event.entity in _INSTALLATION_ENTITIES
     if event.entity in BOARD_SCOPED_ENTITIES:
         return viewer.role == "admin" or (
             viewer.board_ids is not None and event.board_id in viewer.board_ids
@@ -212,8 +225,10 @@ def _can_receive(subscription: EventSubscription, event: InvalidationEvent) -> b
 def _access_signature(viewer: EventViewer) -> tuple[str, ...]:
     if viewer.role is None:
         return ()
+    organization = f"org:{viewer.org_id}"
+    authority = ("operator",) if viewer.operator else ()
     if viewer.role == "admin":
-        return (viewer.role,)
+        return (organization, viewer.role, *authority)
     modules = (
         ("module:*",)
         if viewer.module_ids is None
@@ -224,7 +239,7 @@ def _access_signature(viewer: EventViewer) -> tuple[str, ...]:
         if viewer.board_ids is None
         else tuple(f"board:{board_id}" for board_id in sorted(viewer.board_ids))
     )
-    return (viewer.role, *modules, *boards)
+    return (organization, viewer.role, *authority, *modules, *boards)
 
 
 class PostgresInvalidationListener:

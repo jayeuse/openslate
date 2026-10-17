@@ -12,7 +12,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 from jwt.algorithms import ECAlgorithm
-from sqlalchemy import select
+from sqlalchemy import delete, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -21,13 +21,19 @@ from app.core.config.provider_instance import assert_provider_instance
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentityRateLimitBucket, IdentitySession
-from app.systems.access.identity.rate_limits import login_fingerprint
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.identity.rate_limits import login_fingerprint, rate_limit_fingerprint
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.provider_jwt_support import signed_access
-from tests.conftest import guarded_create_engine
+from tests.conftest import (
+    create_member,
+    create_organization,
+    guarded_create_engine,
+    membership_of,
+    workspace_of,
+)
 
 POLICY_FIELDS = (
     "session_timeout_minutes",
@@ -84,6 +90,7 @@ class PolicyWorld:
     handles: list[str] = field(default_factory=list, repr=False)
     csrf: list[str] = field(default_factory=list, repr=False)
     bucket_ids: list[str] = field(default_factory=list, repr=False)
+    org_id: UUID | None = None
 
     def access(self, aal="aal1", slot=0, **extra):
         return signed_access(
@@ -100,9 +107,11 @@ class PolicyWorld:
 
     def policy(self, **values):
         with Session(self.owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.get(WorkspaceProfile, self.org_id)
+            platform = db.scalar(select(PlatformSettings))
             for name, value in values.items():
-                setattr(profile, name, value)
+                setattr(platform if name in PlatformSettings.__table__.columns else profile,
+                        name, value)
             db.commit()
 
     def sessions(self):
@@ -160,13 +169,15 @@ def _local_account(email):
     local_id = None
     try:
         with Session(owner) as db:
-            user = User(
+            organization = create_organization(db)
+            user, _membership = create_member(db, organization,
                 email=email,
                 username=f"journey-{uuid4().hex[:16]}",
                 status=UserStatus.ACTIVE.value,
                 role="member",
             )
-            db.add(user)
+            # The journey's account owns the installation (on-prem first admin).
+            db.add(PlatformOperator(user_id=user.id))
             db.commit()
             local_id = user.id
         yield local_id, owner
@@ -182,9 +193,22 @@ def _local_account(email):
                 ):
                     db.delete(notice)
                 db.flush()
+                membership = db.scalar(select(Membership).where(Membership.user_id == local_id))
+                organization = db.get(WorkspaceProfile, membership.org_id)
+                for table in ("audit_logs", "in_app_notifications"):
+                    # Acceptance notices now belong to the invited organization.
+                    db.connection().execute(
+                        text(f"DELETE FROM public.{table} WHERE org_id = :org_id"),
+                        {"org_id": organization.id},
+                    )
+                db.delete(membership)
+                db.flush()
+                db.execute(delete(PlatformOperator).where(PlatformOperator.user_id == local_id))
                 user = db.get(User, local_id)
                 if user is not None:
                     db.delete(user)
+                db.flush()
+                db.delete(organization)
                 db.commit()
         owner.dispose()
 
@@ -202,23 +226,26 @@ def policy_world(monkeypatch, shared_provider_account):
     target_id, target_provider_id = uuid4(), uuid4()
     target_email = f"target-{target_id}@example.test"
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
-        saved = {name: getattr(profile, name) for name in POLICY_FIELDS}
-        episodes = {user.id: user.mfa_required_since for user in db.scalars(select(User))}
+        profile = workspace_of(db, actor_id)
+        org_id = profile.id
+        platform = db.scalar(select(PlatformSettings))
+        saved = {name: getattr(platform if name in PlatformSettings.__table__.columns else profile,
+                               name) for name in POLICY_FIELDS}
+        episodes = {row.id: row.mfa_required_since for row in db.scalars(select(Membership))}
         actor = db.get(User, actor_id)
-        actor.role, actor.supabase_user_id = "admin", provider_id
-        db.add(
-            User(
+        membership_of(db, actor_id).role = "admin"
+        actor.supabase_user_id = provider_id
+        create_member(db, profile,
                 id=target_id,
                 email=target_email,
                 username=f"target-{target_id.hex}",
                 status="active",
                 role="member",
                 supabase_user_id=target_provider_id,
-            )
         )
         for name, value in DEFAULTS.items():
-            setattr(profile, name, value)
+            setattr(platform if name in PlatformSettings.__table__.columns else profile,
+                    name, value)
         db.commit()
     transport = get_supabase_auth_client()
     original_transport = transport._transport
@@ -241,6 +268,7 @@ def policy_world(monkeypatch, shared_provider_account):
         # Four sessions sign in below; the last two exist only at the provider.
         list(provider_sessions),
         datetime.now(UTC),
+        org_id=org_id,
     )
     try:
         jwk = ECAlgorithm.to_jwk(world.key.public_key(), as_dict=True)
@@ -363,6 +391,11 @@ def policy_world(monkeypatch, shared_provider_account):
         with Session(owner) as db:
             ids = [actor_id, target_id]
             fingerprints = [login_fingerprint(email, source) for source in (None, "testclient")]
+            fingerprints += [
+                rate_limit_fingerprint("login-account", email, None),
+                rate_limit_fingerprint("login-source", "testclient", None),
+                rate_limit_fingerprint("login-source", "", None),
+            ]
             if world is not None:
                 fingerprints += world.bucket_ids
             for bucket in db.scalars(
@@ -375,22 +408,30 @@ def policy_world(monkeypatch, shared_provider_account):
                 select(InAppNotification).where(InAppNotification.recipient_id.in_(ids))
             ):
                 db.delete(notice)
-            for event in db.scalars(select(SecurityEvent).where(SecurityEvent.subject_id.in_(ids))):
+            for event in db.scalars(select(SecurityEvent).where(
+                SecurityEvent.subject_id.in_(ids) | (SecurityEvent.org_id == org_id),
+            )):
                 db.delete(event)
             for session in db.scalars(
                 select(IdentitySession).where(IdentitySession.user_id.in_(ids))
             ):
                 db.delete(session)
             db.flush()
-            for user in db.scalars(select(User)):
-                if user.id in episodes:
-                    user.mfa_required_since = episodes[user.id]
-            profile = db.scalar(select(WorkspaceProfile))
+            for row in db.scalars(select(Membership)):
+                if row.id in episodes:
+                    row.mfa_required_since = episodes[row.id]
+            profile = db.get(WorkspaceProfile, org_id)
+            platform = db.scalar(select(PlatformSettings))
             for name, value in saved.items():
-                setattr(profile, name, value)
+                setattr(platform if name in PlatformSettings.__table__.columns else profile,
+                        name, value)
             actor = db.get(User, actor_id)
-            actor.role, actor.tokens_valid_after = "member", None
-            actor.sponsor_user_id, actor.expires_at = None, None
+            membership = membership_of(db, actor_id)
+            membership.role, actor.tokens_valid_after = "member", None
+            membership.sponsor_user_id, membership.expires_at = None, None
+            for row in db.scalars(select(Membership).where(Membership.user_id == target_id)):
+                db.delete(row)
+            db.flush()
             db.delete(db.get(User, target_id))
             db.commit()
         try:

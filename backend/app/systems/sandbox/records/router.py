@@ -276,7 +276,7 @@ def create_record(
         normalized_data = prepare_record_creation(db, payload.module_id, payload.data, fields)
     except RecordValidationError as error:
         raise _record_validation_http_error(error) from error
-    record = Record(module_id=payload.module_id, data=normalized_data)
+    record = Record(org_id=fields[0].org_id, module_id=payload.module_id, data=normalized_data)
     db.add(record)
     db.flush()
     enqueue_record_event(db, record, previous=None)

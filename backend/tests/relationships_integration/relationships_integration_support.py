@@ -17,6 +17,8 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
 from tests.conftest import guarded_create_engine as create_engine
+from tests.organization_scope_support import scope_like_a_request
+from tests.rbac.support import organization
 
 
 def _guard_integration_database(database_url: str) -> None:
@@ -90,7 +92,16 @@ def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
                             {"ids": list(ids)},
                         )
                     connection.execute(
-                        text("DELETE FROM public.audit_logs WHERE entity_id IN :ids").bindparams(
+                        text(
+                            "DELETE FROM public.audit_logs "
+                            "WHERE entity_id IN :ids OR org_id IN :ids"
+                        ).bindparams(
+                            bindparam("ids", expanding=True)
+                        ),
+                        {"ids": list(ids)},
+                    )
+                    connection.execute(
+                        text("DELETE FROM public.organizations WHERE id IN :ids").bindparams(
                             bindparam("ids", expanding=True)
                         ),
                         {"ids": list(ids)},
@@ -100,6 +111,7 @@ def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
 
 
 def _set_request(session: Session, request_id: UUID) -> None:
+    scope_like_a_request(session)
     session.info[AUDIT_CONTEXT_KEY] = AuditContext(
         request_id=request_id,
         request_method="POST",
@@ -114,15 +126,21 @@ def _seed_graph(
     record_count: int = 1,
 ) -> tuple[Field, Module, Module, list[Record], list[Record]]:
     token = str(uuid7())
-    department = Department(department_name=f"Relationship integration {token}")
+    owns_organization = "rbac_organization" not in db.info
+    org_id = organization(db).id
+    if owns_organization:
+        owned.add(org_id)
+    department = Department(org_id=org_id, department_name=f"Relationship integration {token}")
     db.add(department)
     db.flush()
 
     source_module = Module(
+        org_id=org_id,
         department_id=department.id,
         module_name=f"Source {token}",
     )
     target_module = Module(
+        org_id=org_id,
         department_id=department.id,
         module_name=f"Target {token}",
     )
@@ -130,6 +148,7 @@ def _seed_graph(
     db.flush()
 
     field = Field(
+        org_id=org_id,
         module_id=source_module.id,
         name=f"Related {token}",
         type=FieldType.RELATIONSHIP,
@@ -140,8 +159,10 @@ def _seed_graph(
         relationship_multiple_targets=False,
         relationship_multiple_sources=False,
     )
-    sources = [Record(module_id=source_module.id, data={}) for _ in range(record_count)]
-    targets = [Record(module_id=target_module.id, data={}) for _ in range(record_count)]
+    sources = [Record(org_id=org_id, module_id=source_module.id, data={})
+               for _ in range(record_count)]
+    targets = [Record(org_id=org_id, module_id=target_module.id, data={})
+               for _ in range(record_count)]
     db.add_all([field, *sources, *targets])
     db.flush()
     owned.update(
@@ -192,6 +213,7 @@ def _add_edge(
     deleted: bool = False,
 ) -> RelationshipEdge:
     edge = RelationshipEdge(
+        org_id=field.org_id,
         field_id=field.id,
         source_record_id=source.id,
         target_record_id=target.id,
@@ -216,4 +238,3 @@ def _edge_audit_rows(db: Session, *entity_ids: UUID) -> list[AuditLog]:
             .order_by(AuditLog.created_at, AuditLog.id)
         ).all()
     )
-

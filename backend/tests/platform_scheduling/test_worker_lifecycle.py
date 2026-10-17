@@ -9,6 +9,7 @@ from unittest.mock import Mock, call
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import func, select
+from uuid6 import uuid7
 
 import app.main as main
 from app.core.database.session import AuditSession
@@ -17,6 +18,15 @@ from app.systems.platform.scheduling.models import InAppNotification, ScheduledW
 
 pytest_plugins = ("tests.platform_scheduling.test_execution",)
 NOW = datetime(2026, 1, 1, 12, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _one_organization(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests poll one organization without a database to list them."""
+    if request.node.get_closest_marker("integration") is None:
+        organization = uuid7()
+        target = "app.systems.platform.scheduling.worker.active_organization_ids"
+        monkeypatch.setattr(target, lambda _engine: [organization])
 
 
 def test_test_environment_does_not_start_report_thread() -> None:

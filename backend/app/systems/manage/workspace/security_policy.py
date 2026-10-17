@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from ipaddress import IPv4Network, IPv6Address, IPv6Network, ip_address, ip_network
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,8 +15,8 @@ from app.core.base_model import utc_now
 from app.core.integrations.supabase_auth import SupabaseAuthUnavailable
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.eligibility import established_user_clause, is_established_user
-from app.systems.access.users.models import User
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.access.users.models import Membership, User
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 
 COMMON_PASSWORDS = frozenset(
     Path(__file__).with_name("common_passwords.txt").read_text(encoding="utf-8").splitlines()
@@ -28,22 +29,33 @@ class PasswordPolicyViolation(ValueError):
     """A candidate password does not meet the workspace's safe public requirement."""
 
 
-def load_workspace_policy(db: Session) -> WorkspaceProfile:
-    """Read current persisted policy without committing or admitting fallback defaults."""
+def load_workspace_policy(db: Session, *, org_id: UUID) -> WorkspaceProfile:
+    """Read one organization's persisted policy without committing or fallback defaults."""
     try:
-        profile = db.scalar(
-            select(WorkspaceProfile)
-            .where(WorkspaceProfile.singleton_key.is_(True))
+        statement = select(WorkspaceProfile).where(WorkspaceProfile.id == org_id)
+        profiles = db.scalars(
+            statement
             .execution_options(populate_existing=True)
-        )
+            .limit(2)
+        ).all()
     except SQLAlchemyError as error:
         raise SupabaseAuthUnavailable("Workspace security policy is unavailable") from error
-    if not isinstance(profile, WorkspaceProfile):
+    if len(profiles) != 1:
         raise SupabaseAuthUnavailable("Workspace security policy is unavailable")
+    return profiles[0]
+
+
+def load_platform_policy(db: Session) -> PlatformSettings:
+    profile = db.scalar(
+        select(PlatformSettings).where(PlatformSettings.singleton_key.is_(True))
+        .execution_options(populate_existing=True)
+    )
+    if not isinstance(profile, PlatformSettings):
+        raise SupabaseAuthUnavailable("Installation security policy is unavailable")
     return profile
 
 
-def validate_password(profile: WorkspaceProfile, password: str) -> None:
+def validate_password(profile: PlatformSettings, password: str) -> None:
     minimum = max(12, profile.password_min_length)
     requirements = [f"at least {minimum} characters"]
     if profile.password_require_mixed_case:
@@ -67,7 +79,7 @@ def validate_password(profile: WorkspaceProfile, password: str) -> None:
         raise PasswordPolicyViolation("Choose a password that is not commonly used")
 
 
-def session_timeout(profile: WorkspaceProfile) -> timedelta:
+def session_timeout(profile: PlatformSettings) -> timedelta:
     return timedelta(minutes=profile.session_timeout_minutes)
 
 
@@ -113,7 +125,7 @@ class SessionDeadlines:
     session_absolute_lifetime_minutes: int | None
 
 
-def snapshot_deadlines(profile: WorkspaceProfile) -> SessionDeadlines:
+def snapshot_deadlines(profile: PlatformSettings) -> SessionDeadlines:
     return SessionDeadlines(
         profile.session_timeout_minutes, profile.session_absolute_lifetime_minutes
     )
@@ -121,7 +133,7 @@ def snapshot_deadlines(profile: WorkspaceProfile) -> SessionDeadlines:
 
 def effective_session_expiry(
     session: IdentitySession,
-    policy: WorkspaceProfile | SessionDeadlines,
+    policy: PlatformSettings | SessionDeadlines,
 ) -> datetime:
     deadlines = [
         session.expires_at,
@@ -135,7 +147,7 @@ def effective_session_expiry(
 
 
 def renewed_session_expiry(
-    session: IdentitySession, policy: WorkspaceProfile, now: datetime
+    session: IdentitySession, policy: PlatformSettings, now: datetime
 ) -> datetime:
     deadline = now + session_timeout(policy)
     if policy.session_absolute_lifetime_minutes is not None:
@@ -146,7 +158,7 @@ def renewed_session_expiry(
     return deadline
 
 
-def session_expiry_expression(profile: WorkspaceProfile) -> ColumnElement[datetime]:
+def session_expiry_expression(profile: PlatformSettings) -> ColumnElement[datetime]:
     deadlines = [
         IdentitySession.expires_at,
         IdentitySession.refreshed_at + session_timeout(profile),
@@ -160,7 +172,7 @@ def session_expiry_expression(profile: WorkspaceProfile) -> ColumnElement[dateti
 
 
 def clamp_session_deadlines(
-    db: Session, old: SessionDeadlines, candidate: WorkspaceProfile
+    db: Session, old: SessionDeadlines, candidate: PlatformSettings
 ) -> None:
     for session in db.scalars(
         select(IdentitySession)
@@ -192,18 +204,22 @@ def lock_policy_users(
         return
     timestamp = utc_now()
     for user in db.scalars(
-        select(User)
-        .where(established_user_clause(), User.role.in_(roles))
-        .order_by(User.id)
+        select(Membership)
+        .join(User, User.id == Membership.user_id)
+        .where(established_user_clause(), Membership.role.in_(roles),
+               Membership.org_id == profile.id)
+        .order_by(Membership.user_id)
         .execution_options(populate_existing=True)
-        .with_for_update(of=User, nowait=True)
+        .with_for_update(of=Membership, nowait=True)
     ):
         transition_mfa_episode(
             user, old[user.role], mfa_role_required(profile, user.role), timestamp
         )
 
 
-def transition_mfa_episode(user: User, was_required: bool, required: bool, now: datetime) -> None:
+def transition_mfa_episode(
+    user: Membership, was_required: bool, required: bool, now: datetime
+) -> None:
     if not is_established_user(user):
         return
     if required and not was_required:
@@ -212,10 +228,10 @@ def transition_mfa_episode(user: User, was_required: bool, required: bool, now: 
         user.mfa_required_since = None
 
 
-def apply_role_mfa_episode(db: Session, user: User, role: str) -> None:
+def apply_role_mfa_episode(db: Session, user: Membership, role: str) -> None:
     profile = db.scalar(
         select(WorkspaceProfile)
-        .where(WorkspaceProfile.singleton_key.is_(True))
+        .where(WorkspaceProfile.id == user.org_id)
         .execution_options(populate_existing=True)
         .with_for_update(read=True)
     )
@@ -226,10 +242,10 @@ def apply_role_mfa_episode(db: Session, user: User, role: str) -> None:
     )
 
 
-def accepted_mfa_episode(db: Session, user: User, now: datetime) -> None:
+def accepted_mfa_episode(db: Session, user: Membership, now: datetime) -> None:
     profile = db.scalar(
         select(WorkspaceProfile)
-        .where(WorkspaceProfile.singleton_key.is_(True))
+        .where(WorkspaceProfile.id == user.org_id)
         .execution_options(populate_existing=True)
         .with_for_update(read=True)
     )

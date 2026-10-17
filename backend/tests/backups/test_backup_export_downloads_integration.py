@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership
 from app.systems.manage.backups import downloads
 from tests.backups.export_support import content_scope, request_then_wait, stored_export
 
@@ -193,7 +193,9 @@ def test_preparation_rechecks_authority_and_streams_only_retained_descriptor(
         else:
             with Session(world.auth.owner) as db:
                 if change == "role":
-                    db.get(User, world.auth.actor_id).role = "member"
+                    db.scalars(
+                        select(Membership).where(Membership.user_id == world.auth.actor_id)
+                    ).one().role = "member"
                 else:
                     db.get(IdentitySession, world.auth.session_ids[0]).revoked_at = world.auth.clock
                 db.commit()

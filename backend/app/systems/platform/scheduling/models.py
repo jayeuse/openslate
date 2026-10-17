@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -43,6 +44,29 @@ class ScheduledWork(Base):
     __tablename__ = "scheduled_work"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_scheduled_work_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "report_id"], ["reports.org_id", "reports.id"],
+            name="fk_scheduled_work_report_id_reports", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "post_id"], ["board_posts.org_id", "board_posts.id"],
+            name="fk_scheduled_work_post_id_board_posts", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "reminder_id"], ["board_event_reminders.org_id", "board_event_reminders.id"],
+            name="fk_scheduled_work_reminder_id_board_event_reminders", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "publication_result_id"],
+            ["board_post_revisions.org_id", "board_post_revisions.id"],
+            name="fk_scheduled_work_publication_result_id_board_post_revisions",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "run_id"], ["report_runs.org_id", "report_runs.id"],
+            name="fk_scheduled_work_run_id_report_runs", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "kind IN ('report-run', 'post-publish', 'event-reminder')",
             name="ck_scheduled_work_kind",
@@ -94,19 +118,16 @@ class ScheduledWork(Base):
         Index("ix_scheduled_work_publication_result_id", "publication_result_id"),
     )
 
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7)
     kind: Mapped[WorkKind] = mapped_column(
         String(24), nullable=False, default=WorkKind.REPORT_RUN, server_default=text("'report-run'")
     )
-    report_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("reports.id", ondelete="RESTRICT"), nullable=True
-    )
-    post_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("board_posts.id", ondelete="RESTRICT"), nullable=True
-    )
-    reminder_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("board_event_reminders.id", ondelete="RESTRICT"), nullable=True
-    )
+    report_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    post_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    reminder_id: Mapped[UUID | None] = mapped_column(nullable=True)
     occurrence_start_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -114,9 +135,7 @@ class ScheduledWork(Base):
     scheduling_actor_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
-    publication_result_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("board_post_revisions.id", ondelete="RESTRICT"), nullable=True
-    )
+    publication_result_id: Mapped[UUID | None] = mapped_column(nullable=True)
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     state: Mapped[WorkState] = mapped_column(String(16), nullable=False, default=WorkState.PENDING)
@@ -125,7 +144,7 @@ class ScheduledWork(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_token: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    run_id: Mapped[UUID | None] = mapped_column(ForeignKey("report_runs.id", ondelete="RESTRICT"))
+    run_id: Mapped[UUID | None] = mapped_column()
     failure_code: Mapped[str | None] = mapped_column(String(48))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
@@ -152,6 +171,15 @@ class InAppNotification(BaseModel):
 
     __tablename__ = "in_app_notifications"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_in_app_notifications_org_id_id"),
+        CheckConstraint(
+            "(kind = 'backup-failed') = (org_id IS NULL)",
+            name="ck_in_app_notifications_organization",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "work_id"], ["scheduled_work.org_id", "scheduled_work.id"],
+            name="fk_in_app_notifications_work_id_scheduled_work", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "(kind = 'report-run' AND subject_type = 'report_run' AND work_id IS NOT NULL) OR "
             "(kind = 'post-publish' AND subject_type = 'board_post' AND work_id IS NOT NULL) OR "
@@ -178,12 +206,13 @@ class InAppNotification(BaseModel):
         ),
     )
 
+    org_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True
+    )
     kind: Mapped[NotificationKind] = mapped_column(String(32), nullable=False)
     subject_type: Mapped[str] = mapped_column(String(24), nullable=False)
     subject_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
-    work_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("scheduled_work.id", ondelete="RESTRICT"), nullable=True
-    )
+    work_id: Mapped[UUID | None] = mapped_column(nullable=True)
     recipient_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

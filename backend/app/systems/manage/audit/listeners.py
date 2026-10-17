@@ -118,6 +118,7 @@ def _event_entity(instance: Any, entity: str) -> str:
     if entity in {"board_attachments", "board_record_links"}:
         return "board_posts" if instance.post_id is not None else "board_events"
     return {
+        "organizations": "workspace_profiles",
         "board_groups": "boards",
         "board_event_reminders": "board_events",
         "board_post_revisions": "board_posts",
@@ -220,16 +221,28 @@ def create_audit_logs(session: AuditSession, flush_context: Any) -> None:
             after = snapshot["after"]
 
         entity_type = inspect(change.instance).mapper.local_table.name
+        org_id = (change.instance.id if entity_type == "organizations"
+                  else getattr(change.instance, "org_id", None))
+        if entity_type in {"files", "in_app_notifications"}:
+            proof = after if after is not None else before
+            if proof is not None:
+                proof["org_id"] = str(org_id) if org_id is not None else None
+                discriminator = "purpose" if entity_type == "files" else "kind"
+                proof[discriminator] = getattr(change.instance, discriminator)
         invalidation = event_for_entity(
             _event_entity(change.instance, entity_type),
             getattr(change.instance, "id", None),
             recipient_id=getattr(change.instance, "recipient_id", None),
             module_id=_event_module_id(change.instance, edge_modules),
             board_id=change.board.id if isinstance(change.board, Board) else change.board,
+            org_id=org_id,
+            account_id=(getattr(change.instance, "creator_id", None)
+                        if entity_type == "files" and org_id is None else None),
         )
         if invalidation is not None:
             invalidations.append(invalidation)
         audit_log = AuditLog(
+            org_id=org_id,
             action=change.action,
             entity_type=entity_type,
             entity_id=getattr(change.instance, "id", None),

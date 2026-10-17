@@ -14,13 +14,28 @@ import {
   FieldError,
 } from "@/components/ui/field";
 import { ApiError } from "@/lib/api";
-import { completeInvitation } from "@/lib/auth-api";
+import {
+  acceptOrganizationInvitation,
+  completeInvitation,
+  getAuthMe,
+  probeEmailConfirmationSession,
+  selectOrganization,
+  type PendingInvitation,
+} from "@/lib/auth-api";
+import { setCurrentOrganizationId } from "@/lib/organization-context";
+import { PendingInvitationList } from "@/components/organization-gate";
+import { workspaceStartRoute } from "@/components/workspace-start";
 import {
   consumeInvitationToken,
   retainInvitationToken,
 } from "@/lib/invitation-token";
 
 type SetupFailure = "retryable" | "session" | "unavailable" | "uncertain";
+/** Without a link, a signed-in account joins from its pending invitations. */
+type SignedInAccount =
+  | { status: "unknown" }
+  | { status: "signed-out" }
+  | { status: "signed-in"; invitations: PendingInvitation[] };
 
 function classifySetupFailure(error: unknown): SetupFailure {
   if (!(error instanceof ApiError)) return "uncertain";
@@ -40,6 +55,9 @@ export default function AuthSetupPage() {
   const [error, setError] = useState("");
   const [failure, setFailure] = useState<SetupFailure | null>(null);
   const [pending, setPending] = useState(false);
+  const [account, setAccount] = useState<SignedInAccount>({
+    status: "unknown",
+  });
   useEffect(() => {
     function captureInitialLink() {
       const captured = consumeInvitationToken(window.location, window.history);
@@ -64,7 +82,46 @@ export default function AuthSetupPage() {
       window.removeEventListener("hashchange", captureNewLink);
     };
   }, []);
-  const missingInvitationLink = hydrated && !invitationToken;
+  useEffect(() => {
+    // Without a link, ask whether an account is signed in (it may join here).
+    if (!hydrated || invitationToken) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const session = await probeEmailConfirmationSession(controller.signal);
+        if (!session.authenticated || session.setup_required) {
+          setAccount({ status: "signed-out" });
+          return;
+        }
+        const me = await getAuthMe(controller.signal);
+        if (!controller.signal.aborted)
+          setAccount({
+            status: "signed-in",
+            invitations: me.pendingInvitations,
+          });
+      } catch {
+        if (!controller.signal.aborted) setAccount({ status: "signed-out" });
+      }
+    })();
+    return () => controller.abort();
+  }, [hydrated, invitationToken]);
+
+  async function join(invitation: PendingInvitation) {
+    await acceptOrganizationInvitation(invitation.id);
+    try {
+      await selectOrganization(invitation.orgId);
+    } catch {
+      // A gated organization opens its gate in the workspace.
+    }
+    setCurrentOrganizationId(invitation.orgId);
+    router.replace(await workspaceStartRoute());
+  }
+
+  // Without a link, wait for the signed-in check before offering the form.
+  const ready =
+    hydrated && (invitationToken !== null || account.status !== "unknown");
+  const missingInvitationLink =
+    hydrated && !invitationToken && account.status === "signed-out";
   const setupFailure = missingInvitationLink ? "session" : failure;
   const setupError = missingInvitationLink
     ? "This invitation link is invalid or incomplete. Request a new invitation."
@@ -135,97 +192,123 @@ export default function AuthSetupPage() {
           <div className="bg-accent text-accent-foreground mb-5 grid size-11 place-items-center rounded-full">
             <KeyRound size={20} aria-hidden="true" />
           </div>
-          <h1 className="text-2xl font-semibold">Set your password</h1>
+          <h1 className="text-2xl font-semibold">
+            {account.status === "signed-in"
+              ? "Join an organization"
+              : "Set your password"}
+          </h1>
           <p className="text-muted-foreground mt-2 text-sm">
-            Finish setting up your invited OpenSlate account.
+            {account.status === "signed-in"
+              ? "You are signed in. Join an organization that invited this account."
+              : "Finish setting up your invited OpenSlate account."}
           </p>
         </div>
-        {setupError && (
-          <div className="mb-5 space-y-3">
-            <Alert role="alert" variant="destructive">
-              {setupError}
-            </Alert>
-            {setupFailure === "session" || setupFailure === "uncertain" ? (
-              <Button asChild variant="outline" className="w-full">
-                <a href="/login">Return to sign in</a>
-              </Button>
-            ) : null}
-          </div>
-        )}
-        <form className="space-y-5" onSubmit={submit}>
-          <Field className="space-y-2">
-            <FieldLabel htmlFor="password">Password</FieldLabel>
-            <FieldControl
-              render={
-                <Input
-                  id="password"
-                  type="password"
-                  disabled={
-                    !hydrated ||
-                    pending ||
-                    missingInvitationLink ||
-                    setupFailure === "session" ||
-                    setupFailure === "uncertain"
-                  }
-                  autoComplete="new-password"
-                  minLength={12}
-                  required
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-              }
-            />
-          </Field>
-          <Field className="space-y-2" invalid={mismatch}>
-            <FieldLabel htmlFor="confirmation">Confirm password</FieldLabel>
-            <FieldControl
-              render={
-                <Input
-                  id="confirmation"
-                  aria-invalid={mismatch}
-                  aria-describedby={mismatch ? "confirmation-error" : undefined}
-                  type="password"
-                  disabled={
-                    !hydrated ||
-                    pending ||
-                    missingInvitationLink ||
-                    setupFailure === "session" ||
-                    setupFailure === "uncertain"
-                  }
-                  autoComplete="new-password"
-                  minLength={12}
-                  required
-                  value={confirmation}
-                  onChange={(event) => setConfirmation(event.target.value)}
-                />
-              }
-            />
-            {mismatch && (
-              <FieldError match id="confirmation-error">
-                Passwords must match.
-              </FieldError>
-            )}
-          </Field>
-          <Button
-            className="w-full"
-            size="lg"
-            disabled={
-              !hydrated ||
-              pending ||
-              missingInvitationLink ||
-              setupFailure === "session" ||
-              setupFailure === "uncertain"
-            }
-          >
-            {pending ? (
-              "Saving…"
+        {account.status === "signed-in" ? (
+          <div className="space-y-5">
+            {account.invitations.length > 0 ? (
+              <PendingInvitationList
+                invitations={account.invitations}
+                onJoin={join}
+              />
             ) : (
-              <>
-                Continue <ArrowRight aria-hidden="true" />
-              </>
+              <Alert>No pending invitations for this account.</Alert>
             )}
-          </Button>
-        </form>
+            <Button asChild variant="outline" className="w-full">
+              <a href="/openview">Go to your workspace</a>
+            </Button>
+          </div>
+        ) : (
+          <>
+            {setupError && (
+              <div className="mb-5 space-y-3">
+                <Alert role="alert" variant="destructive">
+                  {setupError}
+                </Alert>
+                {setupFailure === "session" || setupFailure === "uncertain" ? (
+                  <Button asChild variant="outline" className="w-full">
+                    <a href="/login">Return to sign in</a>
+                  </Button>
+                ) : null}
+              </div>
+            )}
+            <form className="space-y-5" onSubmit={submit}>
+              <Field className="space-y-2">
+                <FieldLabel htmlFor="password">Password</FieldLabel>
+                <FieldControl
+                  render={
+                    <Input
+                      id="password"
+                      type="password"
+                      disabled={
+                        !ready ||
+                        pending ||
+                        missingInvitationLink ||
+                        setupFailure === "session" ||
+                        setupFailure === "uncertain"
+                      }
+                      autoComplete="new-password"
+                      minLength={12}
+                      required
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                    />
+                  }
+                />
+              </Field>
+              <Field className="space-y-2" invalid={mismatch}>
+                <FieldLabel htmlFor="confirmation">Confirm password</FieldLabel>
+                <FieldControl
+                  render={
+                    <Input
+                      id="confirmation"
+                      aria-invalid={mismatch}
+                      aria-describedby={
+                        mismatch ? "confirmation-error" : undefined
+                      }
+                      type="password"
+                      disabled={
+                        !ready ||
+                        pending ||
+                        missingInvitationLink ||
+                        setupFailure === "session" ||
+                        setupFailure === "uncertain"
+                      }
+                      autoComplete="new-password"
+                      minLength={12}
+                      required
+                      value={confirmation}
+                      onChange={(event) => setConfirmation(event.target.value)}
+                    />
+                  }
+                />
+                {mismatch && (
+                  <FieldError match id="confirmation-error">
+                    Passwords must match.
+                  </FieldError>
+                )}
+              </Field>
+              <Button
+                className="w-full"
+                size="lg"
+                disabled={
+                  !ready ||
+                  pending ||
+                  missingInvitationLink ||
+                  setupFailure === "session" ||
+                  setupFailure === "uncertain"
+                }
+              >
+                {pending ? (
+                  "Saving…"
+                ) : (
+                  <>
+                    Continue <ArrowRight aria-hidden="true" />
+                  </>
+                )}
+              </Button>
+            </form>
+          </>
+        )}
       </section>
     </main>
   );

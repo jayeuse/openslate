@@ -19,7 +19,7 @@ from tests.rbac.support import (
     add_module,
     add_user,
     make_group_access,
-    make_user,
+    organization,
 )
 
 pytestmark = pytest.mark.integration
@@ -44,6 +44,7 @@ def test_department_manager_audit_actor_names_follow_visible_rows(
     finance_entity_id = uuid7()
     logs = [
         AuditLog(
+            org_id=inventory.org_id,
             id=uuid7(),
             created_at=datetime.now(UTC),
             action=AuditAction.UPDATE,
@@ -53,6 +54,7 @@ def test_department_manager_audit_actor_names_follow_visible_rows(
             performed_by=inventory_actor.id,
         ),
         AuditLog(
+            org_id=finance.org_id,
             id=uuid7(),
             created_at=datetime.now(UTC),
             action=AuditAction.UPDATE,
@@ -108,6 +110,7 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
     )
     record_id = uuid7()
     record_log = AuditLog(
+        org_id=organization(integration_db).id,
         id=uuid7(),
         created_at=timestamp,
         action=AuditAction.UPDATE,
@@ -129,6 +132,7 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
         after={"role": f"after-value-{token}", "nested": [3, False]},
     )
     entity_type_log = AuditLog(
+        org_id=organization(integration_db).id,
         id=uuid7(),
         created_at=timestamp,
         action=AuditAction.UPDATE,
@@ -167,11 +171,15 @@ def test_admin_audit_search_matches_actor_record_id_and_snapshot_values_across_p
     seeded_request_id = uuid7()
     for row in seeded_logs:
         row.request_id = seeded_request_id
+        # History recorded inside this organization (owner decision 10 keeps rows without
+        # an organization hidden unless they concern its own people).
+        row.org_id = row.org_id or organization(integration_db).id
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(seeded_logs)
     integration_db.flush()
 
-    with _client(api, make_user(f"audit-search-{token}"), integration_db) as client:
+    with _client(api, add_user(integration_db, f"audit-search-{token}", role="admin"),
+                 integration_db) as client:
         actor_pages = [
             client.get(
                 "/api/audit-logs",
@@ -236,6 +244,7 @@ def test_admin_csv_exports_complete_filtered_history_with_safe_cells(
     horizon = datetime(2026, 10, 1, 12, tzinfo=UTC)
     rows = [
         AuditLog(
+            org_id=department.org_id,
             id=uuid7(),
             created_at=horizon,
             action=AuditAction.UPDATE,
@@ -262,6 +271,7 @@ def test_admin_csv_exports_complete_filtered_history_with_safe_cells(
         {"after": {"name": "Decoy", "marker": "literalXX"}},
     ):
         row = AuditLog(
+            org_id=department.org_id,
             id=uuid7(),
             created_at=horizon,
             action=AuditAction.UPDATE,
@@ -290,7 +300,8 @@ def test_admin_csv_exports_complete_filtered_history_with_safe_cells(
         "created_before": horizon.isoformat(),
         "search": "literal_%",
     }
-    with _client(api, make_user(f"csv-admin-{token}"), integration_db) as client:
+    with _client(api, add_user(integration_db, f"csv-admin-{token}", role="admin"),
+                 integration_db) as client:
         preview = client.get("/api/audit-logs", params={**filters, "limit": 10})
         assert preview.status_code == 200
         assert preview.json()["pagination"]["total"] == 105
@@ -342,6 +353,7 @@ def test_admin_csv_accepts_10000_and_refuses_overflow_without_partial_data(
     entity_type = f"cap_{uuid7().hex}"
     rows = [
         AuditLog(
+            org_id=organization(integration_db).id,
             id=uuid7(),
             created_at=datetime.now(UTC),
             action=AuditAction.CREATE,
@@ -354,13 +366,15 @@ def test_admin_csv_accepts_10000_and_refuses_overflow_without_partial_data(
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(rows)
     integration_db.flush()
-    with _client(create_app(), make_user("csv-cap-admin"), integration_db) as client:
+    with _client(create_app(), add_user(integration_db, "csv-cap-admin", role="admin"),
+                 integration_db) as client:
         accepted = client.get("/api/audit-logs/export", params={"entity_type": entity_type})
         assert accepted.status_code == 200
         assert accepted.headers["content-type"].startswith("text/csv")
         assert accepted.headers["x-audit-export-count"] == "10000"
         assert len(list(csv.reader(io.StringIO(accepted.text)))) == 10001
         overflow = AuditLog(
+            org_id=organization(integration_db).id,
             id=uuid7(),
             created_at=datetime.now(UTC),
             action=AuditAction.CREATE,
@@ -391,9 +405,12 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
     inventory, finance = add_department(integration_db), add_department(integration_db)
     module, outside = add_module(integration_db, inventory), add_module(integration_db, finance)
     private_module = add_module(integration_db, inventory)
-    title = Field(module_id=module.id, name="Title", type=FieldType.TEXT, position=0)
-    outside_title = Field(module_id=outside.id, name="Title", type=FieldType.TEXT, position=0)
+    title = Field(org_id=module.org_id, module_id=module.id,
+                  name="Title", type=FieldType.TEXT, position=0)
+    outside_title = Field(org_id=outside.org_id, module_id=outside.id,
+                          name="Title", type=FieldType.TEXT, position=0)
     private_title = Field(
+        org_id=private_module.org_id,
         module_id=private_module.id,
         name="Title",
         type=FieldType.TEXT,
@@ -404,9 +421,12 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
     integration_db.flush()
     module.title_field_id, outside.title_field_id = title.id, outside_title.id
     private_module.title_field_id = private_title.id
-    public = Record(module_id=module.id, data={str(title.id): "Visible record"})
-    moved = Record(module_id=module.id, data={})
+    public = Record(
+        org_id=module.org_id, module_id=module.id, data={str(title.id): "Visible record"},
+    )
+    moved = Record(org_id=module.org_id, module_id=module.id, data={})
     secret = Record(
+        org_id=private_module.org_id,
         module_id=private_module.id, data={str(private_title.id): "Private title canary"}
     )
     integration_db.add_all([public, moved, secret])
@@ -417,6 +437,7 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
     unknown_id = uuid7()
     synthetic = [
         AuditLog(
+            org_id=inventory.org_id,
             id=uuid7(),
             action=AuditAction.UPDATE,
             entity_type="legacy_target",
@@ -426,6 +447,7 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
             before={"name": "Before name"},
         ),
         AuditLog(
+            org_id=inventory.org_id,
             id=uuid7(),
             action=AuditAction.DELETE,
             entity_type="legacy_target",
@@ -459,7 +481,8 @@ def test_audit_target_labels_respect_current_scope_redaction_and_snapshot_priori
         == "Legacy Target · name unavailable"
     )
     assert all("Private title canary" not in item["target_label"] for item in items)
-    with _client(api, make_user("audit-label-admin"), integration_db) as client:
+    with _client(api, add_user(integration_db, "audit-label-admin", role="admin"),
+                 integration_db) as client:
         for record, expected_label in (
             (public, "Visible record"),
             (secret, "Records · name unavailable"),

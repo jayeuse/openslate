@@ -13,6 +13,7 @@ from uuid6 import uuid7
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.records.query_schemas import WindowRecordQuery
 from app.systems.sandbox.records.windowing import query_window_records
+from tests.rbac.support import organization
 from tests.record_queries.support import (
     READER,
     add_values,
@@ -24,7 +25,7 @@ from tests.record_queries.support import (
 
 
 def set_workspace_timezone(db: Session, timezone_name: str) -> None:
-    profile = db.scalar(select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True)))
+    profile = db.scalar(select(WorkspaceProfile).where(WorkspaceProfile.id == organization(db).id))
     assert profile is not None
     profile.timezone = timezone_name
     db.flush()

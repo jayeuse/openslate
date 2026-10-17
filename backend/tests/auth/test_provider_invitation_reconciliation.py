@@ -17,10 +17,12 @@ from app.core.integrations.supabase_auth import (
     SupabaseAuthUnavailable,
 )
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
 from app.systems.manage.audit.models import SecurityEvent, SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 
 @pytest.fixture
@@ -33,10 +35,13 @@ def fresh_admin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service, "require_fresh_exact_admin", lambda _db, _actor_id: None)
 
 
-def _pending_profile(local_id: UUID, operation_id: UUID, **values: Any) -> User:
+def _pending_profile(
+    db: Mock, local_id: UUID, operation_id: UUID, *, actor_id: UUID | None = None, **values: Any
+) -> tuple[User, Membership]:
     """A pending invitation profile; ``Mock(spec=Session).scalar`` returns it as the lock read."""
 
-    return User(
+    organization = WorkspaceProfile(id=uuid7())
+    profile, membership = create_member(None, organization,
         **{
             "id": local_id,
             "email": "person@example.test",
@@ -47,13 +52,22 @@ def _pending_profile(local_id: UUID, operation_id: UUID, **values: Any) -> User:
             **values,
         }
     )
+    _actor, admin_membership = create_member(None, organization, "admin", id=actor_id or uuid7())
+    db.dirty = set()
+    db.scalars.side_effect = lambda query: (
+        Mock(all=lambda: [organization])
+        if query.column_descriptions[0]["entity"] is WorkspaceProfile
+        else Mock(all=lambda: [admin_membership], one_or_none=lambda: membership)
+    )
+    return profile, membership
 
 
 @pytest.mark.usefixtures("fresh_admin")
 def test_reconciliation_requires_exact_provider_admin_marker() -> None:
     db = Mock(spec=Session)
     actor_id, local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7(), uuid7()
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=None)
+    profile, _membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                           supabase_user_id=None)
     client = Mock()
     client.find_invitation_user.return_value = ProviderUser(
         provider_id, None, "person@example.test", {"openslate_user_id": "wrong"}
@@ -71,7 +85,8 @@ def test_reconciliation_requires_exact_provider_admin_marker() -> None:
 def test_reconciliation_binds_only_owned_provider_user() -> None:
     db = Mock(spec=Session)
     actor_id, local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7(), uuid7()
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=None)
+    profile, membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                          supabase_user_id=None)
     client = Mock()
     marker = {
         "openslate_user_id": str(local_id),
@@ -87,7 +102,7 @@ def test_reconciliation_binds_only_owned_provider_user() -> None:
 
     assert result is profile
     assert profile.supabase_user_id == provider_id
-    assert profile.invitation_sent_at is not None
+    assert membership.invitation_sent_at is not None
     db.commit.assert_called_once()
     client.admin_send_invitation.assert_called_once_with("person@example.test")
     assert [
@@ -104,6 +119,9 @@ def test_invitation_persists_pending_profile_before_provider_email(
 ) -> None:
     db = Mock(spec=Session)
     actor_id, operation_id, provider_id = uuid7(), uuid7(), uuid7()
+    _actor, membership = create_member(None, WorkspaceProfile(id=uuid7()), "admin", id=actor_id)
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
     payload = InvitationCreate(email="person@example.test", username="person")
     events: list[str] = []
     db.scalar.return_value = None
@@ -147,7 +165,7 @@ def test_invitation_persists_pending_profile_before_provider_email(
 
     assert events == ["commit", "create", "send", "commit"]
     assert user.supabase_user_id == provider_id
-    assert user.invitation_sent_at is not None
+    assert _added(db, Membership)[0].invitation_sent_at is not None
 
 
 @pytest.mark.usefixtures("fresh_admin")
@@ -156,7 +174,8 @@ def test_resend_rechecks_bound_provider_identity_before_mail(
 ) -> None:
     db = Mock(spec=Session)
     actor_id, local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7(), uuid7()
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=provider_id)
+    profile, _membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                           supabase_user_id=provider_id)
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(
         provider_id, None, profile.email, {"openslate_user_id": "wrong"}
@@ -184,7 +203,8 @@ def test_resend_rejects_admin_response_with_a_different_bound_identity(
         uuid7(),
         uuid7(),
     )
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=bound_id)
+    profile, _membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                           supabase_user_id=bound_id)
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(
         other_id,
@@ -212,7 +232,8 @@ def test_resend_rejects_admin_response_with_a_different_bound_identity(
 def test_reconcile_creates_missing_provider_user_from_committed_pending_marker() -> None:
     db = Mock(spec=Session)
     actor_id, local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7(), uuid7()
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=None)
+    profile, membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                          supabase_user_id=None)
     marker = {
         "openslate_user_id": str(local_id),
         "openslate_invitation_operation_id": str(operation_id),
@@ -228,7 +249,7 @@ def test_reconcile_creates_missing_provider_user_from_committed_pending_marker()
     result = service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
 
     assert result.supabase_user_id == provider_id
-    assert result.invitation_sent_at is not None
+    assert membership.invitation_sent_at is not None
     client.admin_create_invitation_user.assert_called_once_with(
         profile.email, local_id, operation_id
     )
@@ -237,8 +258,8 @@ def test_reconcile_creates_missing_provider_user_from_committed_pending_marker()
 def test_bootstrap_reconcile_rejects_nonsole_pending_admin() -> None:
     db = Mock(spec=Session)
     local_id, operation_id = uuid7(), uuid7()
-    profile = _pending_profile(
-        local_id, operation_id, email="admin@example.test", supabase_user_id=None, role="admin"
+    profile, _membership = _pending_profile(
+        db, local_id, operation_id, email="admin@example.test", supabase_user_id=None, role="admin"
     )
     client = Mock()
     # The first scalar locks the profile; the second counts the other administrators.
@@ -256,7 +277,8 @@ def test_resend_replaces_owned_confirmed_identity_after_revoked_link(
 ) -> None:
     db = Mock(spec=Session)
     actor_id, local_id, operation_id, old_id, new_id = (uuid7(), uuid7(), uuid7(), uuid7(), uuid7())
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=old_id)
+    profile, membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                          supabase_user_id=old_id)
     marker = {
         "openslate_user_id": str(local_id),
         "openslate_invitation_operation_id": str(operation_id),
@@ -280,7 +302,7 @@ def test_resend_replaces_owned_confirmed_identity_after_revoked_link(
     result = service.resend_invitation(db, local_id, actor_id=actor_id, client=client)
 
     assert result.supabase_user_id == new_id
-    assert result.invitation_sent_at is not None
+    assert membership.invitation_sent_at is not None
     client.admin_send_invitation.assert_called_once_with("person@example.test")
     client.admin_delete_user.assert_called_once_with(old_id)
     client.admin_create_invitation_user.assert_called_once_with(
@@ -299,7 +321,8 @@ def test_reconcile_resumes_replacement_after_old_identity_was_deleted() -> None:
         uuid7(),
         uuid7(),
     )
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=old_id)
+    profile, membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                          supabase_user_id=old_id)
     marker = {
         "openslate_user_id": str(local_id),
         "openslate_invitation_operation_id": str(operation_id),
@@ -315,7 +338,7 @@ def test_reconcile_resumes_replacement_after_old_identity_was_deleted() -> None:
     result = service.reconcile_invitation(db, local_id, actor_id=actor_id, client=client)
 
     assert result.supabase_user_id == replacement_id
-    assert result.invitation_sent_at is not None
+    assert membership.invitation_sent_at is not None
     client.admin_delete_user.assert_not_called()
     client.admin_create_invitation_user.assert_not_called()
     db.commit.assert_called_once()
@@ -327,7 +350,8 @@ def test_resend_preserves_binding_when_provider_lookup_is_not_authoritative(
 ) -> None:
     db = Mock(spec=Session)
     actor_id, local_id, operation_id, old_id = uuid7(), uuid7(), uuid7(), uuid7()
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=old_id)
+    profile, _membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                           supabase_user_id=old_id)
     client = Mock()
     client.get_admin_user.side_effect = SupabaseAuthUnavailable("provider denied")
     monkeypatch.setattr(service, "_security_event", lambda **_kw: None)
@@ -347,8 +371,9 @@ def test_resend_preserves_binding_when_provider_lookup_is_not_authoritative(
 def test_reconcile_does_not_delete_identity_with_recorded_acceptance() -> None:
     db = Mock(spec=Session)
     actor_id, local_id, operation_id, bound_id = uuid7(), uuid7(), uuid7(), uuid7()
-    profile = _pending_profile(
-        local_id, operation_id, supabase_user_id=bound_id, invitation_accepted_at=datetime.now(UTC)
+    profile, _membership = _pending_profile(
+        db, local_id, operation_id, actor_id=actor_id, supabase_user_id=bound_id,
+        invitation_accepted_at=datetime.now(UTC)
     )
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(
@@ -381,7 +406,8 @@ def test_reconcile_never_rebinds_deleted_old_identity_from_stale_search() -> Non
         uuid7(),
         uuid7(),
     )
-    profile = _pending_profile(local_id, operation_id, supabase_user_id=old_id)
+    profile, _membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                           supabase_user_id=old_id)
     marker = {
         "openslate_user_id": str(local_id),
         "openslate_invitation_operation_id": str(operation_id),
@@ -411,7 +437,10 @@ def _committed_events(monkeypatch: pytest.MonkeyPatch) -> list[SecurityEventInge
     """Keep the attempt and failure events that commit on their own session."""
 
     events: list[SecurityEventIngestRequest] = []
-    monkeypatch.setattr(service, "append_committed_security_event", events.append)
+    monkeypatch.setattr(
+        service, "append_committed_security_event",
+        lambda event, **_kwargs: events.append(event),
+    )
     return events
 
 
@@ -437,11 +466,11 @@ def test_a_resend_refuses_a_profile_that_is_not_a_bound_pending_invitation(
     events = _committed_events(monkeypatch)
     db = Mock(spec=Session)
     actor_id, local_id, operation_id = uuid7(), uuid7(), uuid7()
-    db.scalar.return_value = (
-        None
-        if state is None
-        else _pending_profile(local_id, operation_id, **{"supabase_user_id": uuid7(), **state})
+    profile, _membership = _pending_profile(
+        db, local_id, operation_id, actor_id=actor_id,
+        **{"supabase_user_id": uuid7(), **(state or {})},
     )
+    db.scalar.return_value = profile if state is not None else None
     client = Mock()
 
     with pytest.raises(InvitationError):
@@ -463,7 +492,9 @@ def test_a_resend_the_provider_cannot_complete_records_its_failure(
     events = _committed_events(monkeypatch)
     db = Mock(spec=Session)
     actor_id, local_id, operation_id = uuid7(), uuid7(), uuid7()
-    db.scalar.return_value = _pending_profile(local_id, operation_id, supabase_user_id=uuid7())
+    profile, _membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                           supabase_user_id=uuid7())
+    db.scalar.return_value = profile
     client = Mock()
     client.get_admin_user.side_effect = SupabaseAuthUnavailable("provider unavailable")
 
@@ -484,9 +515,9 @@ def test_a_resend_the_provider_cannot_complete_records_its_failure(
 def test_a_reconcile_refuses_a_missing_or_deleted_invitation(state: dict[str, Any] | None) -> None:
     db = Mock(spec=Session)
     actor_id, local_id, operation_id = uuid7(), uuid7(), uuid7()
-    db.scalar.return_value = (
-        None if state is None else _pending_profile(local_id, operation_id, **state)
-    )
+    profile, _membership = _pending_profile(db, local_id, operation_id, actor_id=actor_id,
+                                           **(state or {}))
+    db.scalar.return_value = profile if state is not None else None
     client = Mock()
 
     with pytest.raises(InvitationError):
@@ -508,8 +539,8 @@ def test_bootstrap_reconciles_only_the_sole_pending_administrator(
 ) -> None:
     db = Mock(spec=Session)
     local_id, operation_id, provider_id = uuid7(), uuid7(), uuid7()
-    profile = _pending_profile(
-        local_id, operation_id, email="admin@example.test", supabase_user_id=None, role=role
+    profile, _membership = _pending_profile(
+        db, local_id, operation_id, email="admin@example.test", supabase_user_id=None, role=role
     )
     # The profile lock, the count of other administrators, then the profile read back.
     db.scalar.side_effect = [profile, 0, profile]

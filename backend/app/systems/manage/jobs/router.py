@@ -12,6 +12,7 @@ from uuid6 import uuid7
 from app.common.dependencies import get_current_user, require_fresh_exact_admin
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
+from app.systems.access.users.membership import is_platform_operator
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -52,6 +53,8 @@ def list_jobs(
         raise _error("job_filter_invalid", 422)
     try:
         statement, columns = registry.jobs_query(backups.installation_id(db))
+        if not is_platform_operator(db, actor.id):
+            statement = statement.where(columns.kind != "backup")
         for name in ("kind", "state"):
             value = getattr(params, name)
             if value is not None:

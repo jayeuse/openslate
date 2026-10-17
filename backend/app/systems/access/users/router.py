@@ -6,21 +6,32 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_admin
-from app.common.dependencies.auth import CurrentIdentity, _bearer, get_current_identity
+from app.common.dependencies.auth import (
+    CurrentIdentity,
+    _bearer,
+    get_account_user,
+    get_current_identity,
+)
 from app.core.base_model import utc_now
 from app.core.database import get_db
 from app.systems.access.auth.cookies import clear_browser_session
 from app.systems.access.policy.scope import explain_access
-from app.systems.access.users.avatar_delivery import deliver_avatar
+from app.systems.access.users.avatar_delivery import (
+    ThumbnailSize,
+    deliver_avatar,
+    get_avatar_identity,
+)
 from app.systems.access.users.coordination import (
     InvitationConflict,
     InvitationError,
     ProfileValidationError,
     not_found,
+    organization_member,
 )
 from app.systems.access.users.coordination import (
     get_user as load_user,
@@ -29,10 +40,16 @@ from app.systems.access.users.directory import (
     UserListRequest,
     UserSummaryRequest,
     directory_list,
+    directory_membership,
     directory_summary,
+    membership_view,
 )
 from app.systems.access.users.directory import UserSortField as UserSortField
-from app.systems.access.users.models import User
+from app.systems.access.users.membership import (
+    bound_organization,
+    require_current_membership,
+)
+from app.systems.access.users.models import Membership, User
 from app.systems.access.users.person_visibility import visible_person
 from app.systems.access.users.schemas import (
     InvitationCreate,
@@ -51,6 +68,7 @@ from app.systems.access.users.schemas import (
     UserResponse,
     UserSecurityResponse,
     UserSummaryResponse,
+    invitation_response,
 )
 from app.systems.access.users.security import read_security, recover_person, reset_person_mfa
 from app.systems.access.users.service import (
@@ -72,7 +90,7 @@ def list_users(
     response: Response,
 ) -> UserListResponse:
     response.headers["Cache-Control"] = "no-store"
-    return directory_list(db, params, utc_now())
+    return directory_list(db, params, utc_now(), org_id=bound_organization(db))
 
 
 @router.get("/summary", response_model=UserSummaryResponse)
@@ -83,7 +101,9 @@ def user_summary(
     response: Response,
 ) -> UserSummaryResponse:
     response.headers["Cache-Control"] = "no-store"
-    return directory_summary(db, utc_now(), params.inactive_days)
+    return directory_summary(
+        db, utc_now(), params.inactive_days, org_id=bound_organization(db)
+    )
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -91,16 +111,19 @@ def get_user(
     user_id: UUID,
     _: AdminUser,
     db: Annotated[Session, Depends(get_db)],
-) -> User:
+) -> UserResponse:
     user = load_user(db, user_id)
     if user.is_deleted:
         raise not_found("User")
-    return user
+    membership = directory_membership(db, user.id)
+    if membership is None:
+        raise not_found("User")
+    return membership_view(user, membership)
 
 
 @router.get("/{user_id}/preferences", response_model=UserPreferencesResponse)
 def get_user_preferences(
-    user_id: UUID, actor: CurrentUser, response: Response
+    user_id: UUID, actor: Annotated[User, Depends(get_account_user)], response: Response
 ) -> UserPreferencesResponse:
     if user_id != actor.id:
         raise HTTPException(
@@ -130,7 +153,7 @@ def get_person_card(
         "job_title": target.job_title,
         "avatar_url": f"/api/users/{user_id}/avatar" if target.avatar_file_id else None,
     }
-    if actor.role == "guest":
+    if require_current_membership(db, actor).role == "guest":
         return PersonCardPublicResponse.model_validate(public)
     return PersonCardResponse.model_validate(
         {**public, "email": target.email, "phone": target.phone, "bio": target.bio}
@@ -141,19 +164,20 @@ def get_person_card(
 def get_person_avatar(
     user_id: UUID,
     request: Request,
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_avatar_identity)],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage)],
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    size: Annotated[ThumbnailSize | None, Query()] = None,
 ) -> Response:
-    return deliver_avatar(request, db, identity, user_id, storage, bearer)
+    return deliver_avatar(request, db, identity, user_id, storage, bearer, size)
 
 
 @router.patch("/{user_id}/preferences", response_model=UserPreferencesResponse)
 def update_user_preferences(
     user_id: UUID,
     payload: UserPreferencesUpdate,
-    actor: CurrentUser,
+    actor: Annotated[User, Depends(get_account_user)],
     db: Annotated[Session, Depends(get_db)],
     response: Response,
 ) -> UserPreferencesResponse:
@@ -202,10 +226,11 @@ def get_user_access(
     if user.is_deleted:
         raise not_found("User")
     access, entries = explain_access(db, user)
+    membership = organization_member(db, user)
     return UserAccessResponse.model_validate(
         {
             "user_id": user.id,
-            "role": user.role,
+            "role": membership.role,
             "unrestricted": access.unrestricted,
             "entries": [
                 {
@@ -247,10 +272,9 @@ def create_user(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Unable to send invitation",
         ) from error
-    return InvitationResponse(
-        user=UserResponse.model_validate(user),
-        delivery="email",
-    )
+    org_id = bound_organization(db)
+    membership = db.scalars(select(Membership).filter_by(user_id=user.id, org_id=org_id)).one()
+    return invitation_response(user, membership)
 
 
 @router.get("/{user_id}/security", response_model=UserSecurityResponse)

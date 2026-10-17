@@ -6,6 +6,8 @@ from app.common.dependencies.auth import (
     require_admin,
     require_fresh_exact_admin,
     require_non_guest,
+    require_organization_owner,
+    require_platform_operator,
 )
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     "require_admin",
     "require_fresh_exact_admin",
     "require_non_guest",
+    "require_organization_owner",
+    "require_platform_operator",
 ]

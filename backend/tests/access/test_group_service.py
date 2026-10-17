@@ -13,6 +13,7 @@ import app.systems.access.policy.schemas as schemas
 import app.systems.access.policy.service as policy_service
 from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.models import User, UserRole, UserStatus
+from tests.users.user_support import local_user
 
 
 def _group(*, deleted: bool = False) -> Group:
@@ -34,7 +35,6 @@ def _member_user() -> User:
         id=uuid7(),
         email="member@example.test",
         username="member",
-        role=UserRole.MEMBER.value,
         status=UserStatus.ACTIVE.value,
         is_deleted=False,
     )
@@ -132,6 +132,9 @@ def test_group_creation_maps_database_failures_and_rolls_back(
     failure: str, status_code: int
 ) -> None:
     db = Mock(spec=Session)
+    actor, membership = local_user(UserRole.ADMIN)
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
     db.flush.side_effect = (
         IntegrityError("insert", {}, RuntimeError("duplicate"))
         if failure == "integrity"
@@ -139,7 +142,7 @@ def test_group_creation_maps_database_failures_and_rolls_back(
     )
 
     with pytest.raises(HTTPException) as error:
-        policy_service.create_group(db, schemas.GroupCreate(name="Operations"), uuid7())
+        policy_service.create_group(db, schemas.GroupCreate(name="Operations"), actor.id)
 
     assert error.value.status_code == status_code
     assert db.rollback.call_count == 1

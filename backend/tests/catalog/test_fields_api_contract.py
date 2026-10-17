@@ -134,7 +134,7 @@ def _catalog_rejection_client(db: Session) -> TestClient:
     app = FastAPI()
     for router in (fields_router, records_router, modules_router, departments_router):
         app.include_router(router, prefix="/api")
-    override_catalog_authorization(app)
+    override_catalog_authorization(app, db)
     app.dependency_overrides[get_db] = lambda: db
     return TestClient(app)
 

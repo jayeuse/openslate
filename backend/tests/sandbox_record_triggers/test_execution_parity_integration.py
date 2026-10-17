@@ -113,6 +113,7 @@ def test_hundred_action_budget_prevents_an_extra_child_event(integration_owner_d
     actor, module, fields, template = publish_trigger(integration_owner_db)
     targets = [
         Field(
+            org_id=module.org_id,
             module_id=module.id,
             name=f"Trigger target {index}",
             type=FieldType.TEXT,
@@ -237,6 +238,7 @@ def test_execution_position_defaults_to_zero_and_rejects_negative_values(
     _actor, _module, _fields, template = publish_trigger(integration_owner_db)
     assert template.execution_position == 0
     invalid = RecordTrigger(
+        org_id=template.org_id,
         publication_id=template.publication_id,
         published_version_id=template.published_version_id,
         publisher_id=template.publisher_id,
@@ -267,6 +269,7 @@ def _definition(
     trigger_value: str | None = None,
 ) -> RecordTrigger:
     definition = RecordTrigger(
+        org_id=template.org_id,
         publication_id=template.publication_id,
         published_version_id=template.published_version_id,
         publisher_id=template.publisher_id,
@@ -289,6 +292,7 @@ def _definition(
 def _set_action(db: Session, definition: RecordTrigger, field: Field, value: str) -> None:
     db.add(
         RecordTriggerAction(
+            org_id=definition.org_id,
             trigger_id=definition.id,
             target_field_id=field.id,
             position=0,

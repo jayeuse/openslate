@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies import require_fresh_exact_admin
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.membership import (
+    bound_organization,
+)
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.access import (
@@ -130,17 +133,26 @@ def reserve(db: Session, user: User, payload: FileCreate) -> FileResponse:
         record_id=payload.record_id,
         department_id=payload.department_id,
     )
-    require_capacity(db, payload.purpose, payload.expected_size)
+    require_capacity(db, payload.purpose, payload.expected_size, creator_id=user.id)
     parent(db, payload.record_id, active=True, lock=True, department_id=payload.department_id)
     if payload.purpose == "user_avatar":
         db.refresh(user, with_for_update={"nowait": True})
         authorize(db, user, "user_avatar", write=True)
+    org_id = None if payload.purpose == "user_avatar" else bound_organization(db)
     file = File(
-        **payload.model_dump(), creator_id=user.id, object_key=uuid4().hex, state="awaiting_upload"
+        org_id=org_id,
+        **payload.model_dump(), creator_id=user.id,
+        object_key=object_key(org_id=org_id, user_id=user.id), state="awaiting_upload",
     )
     db.add(file)
     db.commit()
     return FileResponse.model_validate(file)
+
+
+def object_key(*, org_id: UUID | None, user_id: UUID) -> str:
+    """Storage key: ``org/<org_id>/…`` for organization files, ``user/<user_id>/…`` avatars."""
+
+    return f"org/{org_id}/{uuid4().hex}" if org_id is not None else f"user/{user_id}/{uuid4().hex}"
 
 
 def reserve_board(
@@ -152,15 +164,16 @@ def reserve_board(
     expire_unused_reservations(db, datetime.now(UTC))
     lock_quota(db)
     authorize_board_file(db, fresh_user(db, user.id), board_id, write=True, lock=True)
-    require_capacity(db, "board_attachment", payload.expected_size)
+    require_capacity(db, "board_attachment", payload.expected_size, creator_id=user.id)
     file = File(
+        org_id=bound_organization(db),
         purpose="board_attachment",
         board_id=board_id,
         record_id=None,
         creator_id=user.id,
         filename=payload.filename,
         expected_size=payload.expected_size,
-        object_key=uuid4().hex,
+        object_key=object_key(org_id=bound_organization(db), user_id=user.id),
         state="awaiting_upload",
     )
     db.add(file)
@@ -329,13 +342,13 @@ def reconcile(
     board_id: UUID | None = None,
 ) -> FileResponse:
     token: UUID | None
-    lock_quota(db)
-    require_fresh_exact_admin(db, actor_id)
-    fresh_user(db, actor_id)
     candidate = load(db, file_id)
+    authorize_lifecycle(db, actor_id, candidate)
+    lock_quota(db)
     if candidate.purpose == "workspace_logo":
         profile = db.scalar(
             select(WorkspaceProfile)
+            .where(WorkspaceProfile.id == bound_organization(db))
             .with_for_update(nowait=True)
             .execution_options(populate_existing=True)
         )
@@ -344,6 +357,7 @@ def reconcile(
         if profile.logo_file_id == file_id:
             raise error("file_current_logo", "Replace or remove the current logo before purging")
     file = load(db, file_id, lock=True)
+    authorize_lifecycle(db, actor_id, file)
     require_avatar_unbound(db, file)
     if file.purpose == "board_attachment":
         if board_id is None or file.board_id != board_id:
@@ -384,8 +398,19 @@ def reconcile(
         if token is None:
             raise error("upload_unresolved", "Upload outcome remains unresolved")
         file = _current(db, file_id, token, "uploading")
-        if fresh_user(db, actor_id).role != UserRole.ADMIN.value:
-            raise error("forbidden", "Forbidden", 403)
+        authorize_lifecycle(db, actor_id, file)
         _finish_ready(file)
         db.commit()
     return FileResponse.model_validate(file)
+
+
+def authorize_lifecycle(db: Session, actor_id: UUID, file: File) -> None:
+    """Account files use account authority; organization files retain administrator admission."""
+    if file.purpose == "user_avatar":
+        from app.systems.access.users.membership import is_platform_operator
+
+        fresh_user(db, actor_id)
+        if file.creator_id != actor_id and not is_platform_operator(db, actor_id):
+            raise error("file_not_found", "File not found", 404)
+    else:
+        require_fresh_exact_admin(db, actor_id)

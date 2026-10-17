@@ -60,6 +60,7 @@ def test_single_target_race_returns_unavailable_then_committed_conflict(
                 assert held_source is not None
 
                 holder_edge = RelationshipEdge(
+                    org_id=field.org_id,
                     field_id=field.id,
                     source_record_id=source.id,
                     target_record_id=holder_target.id,

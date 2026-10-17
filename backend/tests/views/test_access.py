@@ -3,10 +3,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException, Request, Response
 from sqlalchemy import func, select
-from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
-from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.router import (
@@ -20,6 +18,7 @@ from app.systems.openview.views.router import (
 from app.systems.openview.views.schemas import ViewCreate, ViewUpdate
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.records.query_schemas import QueryDefinition
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_user, make_group_access
 from tests.record_queries.support import setup_rows
 
@@ -51,7 +50,7 @@ def test_view_is_shared_with_every_module_reader_and_hidden_from_others(query_db
         query_db,
         Response(),
     )
-    admin = User(id=uuid7(), status="active", role="admin")
+    admin = actor(query_db, role="admin")
 
     assert get_view(query_db, viewer, view.id).id == view.id
     assert [
@@ -96,7 +95,7 @@ def test_guest_with_module_read_cannot_create_a_view(query_db):
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: query_db
-    app.dependency_overrides[get_current_user] = lambda: guest
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: guest)
 
     response = TestClient(app).post(
         "/api/views",

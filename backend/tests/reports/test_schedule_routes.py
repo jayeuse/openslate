@@ -12,7 +12,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -34,7 +34,8 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.conftest import guarded_create_engine
-from tests.rbac.support import add_user, make_group_access
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 
@@ -48,10 +49,12 @@ def _actor(db: Session, permissions: dict[str, bool]) -> User:
 
 
 def _report(db: Session, owner: User) -> tuple[Report, Module]:
-    department = Department(department_name=f"Schedule {uuid7().hex}")
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Schedule {uuid7().hex}")
     db.add(department)
     db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=f"Schedule {uuid7().hex}",
     )
@@ -59,6 +62,7 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     db.flush()
     make_group_access(db, [owner], department, module, level=AccessLevel.MANAGE)
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Status",
         type=FieldType.TEXT,
@@ -69,6 +73,7 @@ def _report(db: Session, owner: User) -> tuple[Report, Module]:
     db.add(field)
     db.flush()
     report = Report(
+        org_id=module.org_id,
         module_id=module.id,
         name="Scheduled status",
         recipe={
@@ -90,7 +95,7 @@ def _client(db: Session, user: User) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: user)
     return TestClient(app)
 
 
@@ -199,11 +204,13 @@ def test_edit_cancels_pending_and_running_work_and_rejects_stale_revision(
     with _client(db, owner) as client:
         assert client.post(path, json={**_daily(), "timezone_name": "UTC"}).status_code == 201
     pending = ScheduledWork(
+        org_id=report.org_id,
         report_id=report.id,
         scheduled_for=now - timedelta(days=1),
         next_attempt_at=now - timedelta(days=1),
     )
     running = ScheduledWork(
+        org_id=report.org_id,
         report_id=report.id,
         scheduled_for=now - timedelta(days=2),
         next_attempt_at=now - timedelta(days=2),
@@ -212,6 +219,7 @@ def test_edit_cancels_pending_and_running_work_and_rejects_stale_revision(
         lease_expires_at=now + timedelta(minutes=2),
     )
     completed_run = ReportRun(
+        org_id=report.org_id,
         report_id=report.id,
         module_id=report.module_id,
         idempotency_key=uuid7(),
@@ -224,6 +232,7 @@ def test_edit_cancels_pending_and_running_work_and_rejects_stale_revision(
     db.add(completed_run)
     db.flush()
     completed = ScheduledWork(
+        org_id=report.org_id,
         report_id=report.id,
         scheduled_for=now - timedelta(days=3),
         next_attempt_at=now - timedelta(days=3),
@@ -319,6 +328,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 select(GroupMember.group_id).where(GroupMember.user_id == owner.id)
             )
             schedule = ReportSchedule(
+                org_id=report.org_id,
                 report_id=report.id,
                 enabled=True,
                 cadence="daily",
@@ -327,6 +337,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 next_due_at=now + timedelta(days=1),
             )
             work = ScheduledWork(
+                org_id=report.org_id,
                 report_id=report.id,
                 scheduled_for=now,
                 next_attempt_at=now,
@@ -337,6 +348,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
             setup.add_all([schedule, work])
             setup.flush()
             run = ReportRun(
+                org_id=report.org_id,
                 report_id=report.id,
                 module_id=module.id,
                 idempotency_key=work.id,
@@ -353,6 +365,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 "module": module.id, "department": department_id,
                 "field": field.id, "work": work.id, "run": run.id,
                 "lease": work.lease_token,
+                "organization": report.org_id,
             }
 
         def request_db() -> Generator[Session, None, None]:
@@ -369,7 +382,7 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
         app = FastAPI()
         app.include_router(router, prefix="/api")
         app.dependency_overrides[get_db] = request_db
-        app.dependency_overrides[get_current_user] = request_user
+        app.dependency_overrides[get_current_user] = scoped_override(request_user)
         path = f"/api/reports/{ids['report']}/schedule"
         attempted = Event()
         original_report = schedule_router._report
@@ -421,6 +434,10 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                 if group is not None:
                     cleanup.delete(group)
                     cleanup.flush()
+                cleanup.connection().execute(
+                    text("DELETE FROM public.memberships WHERE user_id = :id"),
+                    {"id": ids["owner"]},
+                )
                 for model, key in (
                     (Field, "field"), (Module, "module"), (Department, "department"),
                     (User, "owner"),
@@ -429,6 +446,14 @@ def test_run_committed_before_disable_remains_successful_under_report_lock(
                     if row is not None:
                         cleanup.delete(row)
                         cleanup.flush()
+                cleanup.connection().execute(
+                    text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                    {"id": ids["organization"]},
+                )
+                cleanup.connection().execute(
+                    text("DELETE FROM public.organizations WHERE id = :id"),
+                    {"id": ids["organization"]},
+                )
                 cleanup.commit()
         engine.dispose()
 
@@ -444,10 +469,12 @@ def test_last_run_uses_latest_begun_or_terminal_occurrence_and_preserves_legacy_
     with _client(db, owner) as client:
         assert client.post(path, json=_daily(enabled=False)).status_code == 201
         legacy = ScheduledWork(
+            org_id=report.org_id,
             report_id=report.id, scheduled_for=now, next_attempt_at=now,
             state="failed", attempt_count=5, failure_code="attempts_exhausted",
         )
         untouched = ScheduledWork(
+            org_id=report.org_id,
             report_id=report.id, scheduled_for=now + timedelta(days=1),
             next_attempt_at=now + timedelta(days=1),
         )
@@ -459,6 +486,7 @@ def test_last_run_uses_latest_begun_or_terminal_occurrence_and_preserves_legacy_
             "failure_label": "The job failed after five attempts.",
         }
         begun = ScheduledWork(
+            org_id=report.org_id,
             report_id=report.id, scheduled_for=now + timedelta(hours=1),
             next_attempt_at=now + timedelta(hours=1, seconds=2),
             state="pending", attempt_count=1, last_attempt_started_at=now + timedelta(hours=1),

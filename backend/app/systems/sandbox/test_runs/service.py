@@ -12,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.systems.access.users.membership import bound_organization
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.schemas import SandboxDocument
 from app.systems.sandbox.test_runs.evaluator import evaluate_test
@@ -66,6 +67,7 @@ def create_run(
         result=result_payload,
     )
     run = SandboxTestRun(
+        org_id=document_row.org_id,
         document_id=document_row.id,
         document_revision=document_row.revision,
         document_hash=document_row.content_hash,
@@ -135,7 +137,10 @@ def clear_runs(db: Session, *, actor_id: UUID) -> None:
 def _locked_document(db: Session, expected_revision: int) -> SandboxDocumentRow:
     document = db.scalar(
         select(SandboxDocumentRow)
-        .where(SandboxDocumentRow.singleton_key.is_(True))
+        .where(
+            SandboxDocumentRow.singleton_key.is_(True),
+            SandboxDocumentRow.org_id == bound_organization(db),
+        )
         .with_for_update()
     )
     if document is None:

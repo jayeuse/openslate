@@ -3,7 +3,16 @@
 from typing import ClassVar
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, text
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +25,15 @@ class Chart(BaseModel):
     __tablename__ = "charts"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"query"})
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_charts_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "department_id"], ["departments.org_id", "departments.id"],
+            name="fk_charts_department_id_departments", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_charts_module_id_modules", ondelete="RESTRICT",
+        ),
         CheckConstraint("length(btrim(name)) > 0", name="ck_charts_name_nonempty"),
         CheckConstraint("revision > 0", name="ck_charts_revision_positive"),
         CheckConstraint(
@@ -26,12 +44,11 @@ class Chart(BaseModel):
         Index("ix_charts_module_id", "module_id"),
     )
 
-    department_id: Mapped[UUID] = mapped_column(
-        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    module_id: Mapped[UUID] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"), nullable=False
-    )
+    department_id: Mapped[UUID] = mapped_column(nullable=False)
+    module_id: Mapped[UUID] = mapped_column(nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     chart_type: Mapped[str] = mapped_column(String(20), nullable=False)
     query: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)

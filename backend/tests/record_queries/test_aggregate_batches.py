@@ -27,11 +27,19 @@ PATH = "/api/records/aggregate-snapshots"
 @contextmanager
 def second_module(world: ExportWorld):
     with Session(world.owner) as db:
-        module = Module(department_id=world.department_id, module_name="Second batch source")
+        module = Module(
+            org_id=db.get(Module, world.module_id).org_id,
+            department_id=world.department_id,
+            module_name="Second batch source",
+        )
         db.add(module)
         db.flush()
-        field = Field(module_id=module.id, name="Label", type="text", position=0, config={})
+        field = Field(
+            org_id=module.org_id,
+            module_id=module.id, name="Label", type="text", position=0, config={},
+        )
         grant = GroupAccess(
+            org_id=module.org_id,
             group_id=world.group_id,
             department_id=world.department_id,
             module_id=module.id,
@@ -39,7 +47,7 @@ def second_module(world: ExportWorld):
         )
         db.add_all([field, grant])
         db.flush()
-        record = Record(module_id=module.id, data={str(field.id): "Second"})
+        record = Record(org_id=module.org_id, module_id=module.id, data={str(field.id): "Second"})
         db.add(record)
         db.commit()
         ids = module.id, field.id, grant.id, record.id

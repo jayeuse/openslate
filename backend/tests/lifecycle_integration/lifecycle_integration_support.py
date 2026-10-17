@@ -9,16 +9,19 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Connection, bindparam, text
+from sqlalchemy import Connection, bindparam, select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import BaseModel
 from app.systems.sandbox.departments.models import Department
+from app.systems.sandbox.designs.models import SandboxDocument
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 
 
 @dataclass(frozen=True)
@@ -57,19 +60,28 @@ class PrimitiveFieldGraph:
 @pytest.fixture
 def lifecycle_graph(integration_db: Session) -> LifecycleGraph:
     token = str(uuid7())
-    department_x = Department(department_name=f"Lifecycle X {token}")
-    department_y = Department(department_name=f"Lifecycle Y {token}")
+    org = organization(integration_db)
+    org_id = org.id
+    if integration_db.scalar(
+        select(SandboxDocument.id).where(SandboxDocument.org_id == org_id)
+    ) is None:
+        create_document(integration_db, org)
+    department_x = Department(org_id=org_id, department_name=f"Lifecycle X {token}")
+    department_y = Department(org_id=org_id, department_name=f"Lifecycle Y {token}")
     module_x = Module(
+        org_id=org_id,
         department=department_x,
         module_name=f"Module X {token}",
     )
     module_y = Module(
+        org_id=org_id,
         department=department_y,
         module_name=f"Module Y {token}",
     )
     integration_db.add_all([department_x, department_y, module_x, module_y])
     integration_db.flush()
     field_same = Field(
+        org_id=org_id,
         module=module_x,
         name="Same module relationship",
         type=FieldType.RELATIONSHIP,
@@ -79,6 +91,7 @@ def lifecycle_graph(integration_db: Session) -> LifecycleGraph:
         relationship_multiple_sources=True,
     )
     field_external = Field(
+        org_id=org_id,
         module=module_x,
         name="External relationship",
         type=FieldType.RELATIONSHIP,
@@ -88,6 +101,7 @@ def lifecycle_graph(integration_db: Session) -> LifecycleGraph:
         relationship_multiple_sources=True,
     )
     field_y = Field(
+        org_id=org_id,
         module=module_y,
         name="Y relationship",
         type=FieldType.RELATIONSHIP,
@@ -96,11 +110,11 @@ def lifecycle_graph(integration_db: Session) -> LifecycleGraph:
         relationship_multiple_targets=True,
         relationship_multiple_sources=True,
     )
-    source = Record(module=module_x)
-    same_target = Record(module=module_x)
-    external_target = Record(module=module_y)
-    external_other = Record(module=module_y)
-    deleted_target = Record(module=module_x)
+    source = Record(org_id=org_id, module=module_x)
+    same_target = Record(org_id=org_id, module=module_x)
+    external_target = Record(org_id=org_id, module=module_y)
+    external_other = Record(org_id=org_id, module=module_y)
+    deleted_target = Record(org_id=org_id, module=module_x)
     integration_db.add_all(
         [
             field_same,
@@ -114,14 +128,18 @@ def lifecycle_graph(integration_db: Session) -> LifecycleGraph:
         ]
     )
     integration_db.flush()
-    same_edge = RelationshipEdge(field=field_same, source_record=source, target_record=same_target)
+    same_edge = RelationshipEdge(org_id=org_id, field=field_same,
+                                 source_record=source, target_record=same_target)
     external_edge = RelationshipEdge(
+        org_id=org_id,
         field=field_external, source_record=source, target_record=external_target
     )
     unrelated_edge = RelationshipEdge(
+        org_id=org_id,
         field=field_same, source_record=same_target, target_record=deleted_target
     )
     external_unrelated_edge = RelationshipEdge(
+        org_id=org_id,
         field=field_y, source_record=external_target, target_record=external_other
     )
     integration_db.add_all([same_edge, external_edge, unrelated_edge, external_unrelated_edge])
@@ -153,14 +171,23 @@ def lifecycle_graph(integration_db: Session) -> LifecycleGraph:
 @pytest.fixture
 def primitive_field_graph(integration_db: Session) -> PrimitiveFieldGraph:
     token = str(uuid7())
-    department = Department(department_name=f"Primitive purge {token}")
-    module = Module(department=department, module_name=f"Primitive module {token}")
-    field = Field(module=module, name="Retired primitive", type=FieldType.TEXT, position=0)
+    org = organization(integration_db)
+    org_id = org.id
+    if integration_db.scalar(
+        select(SandboxDocument.id).where(SandboxDocument.org_id == org_id)
+    ) is None:
+        create_document(integration_db, org)
+    department = Department(org_id=org_id, department_name=f"Primitive purge {token}")
+    module = Module(org_id=org_id, department=department, module_name=f"Primitive module {token}")
+    field = Field(org_id=org_id, module=module, name="Retired primitive",
+                  type=FieldType.TEXT, position=0)
     integration_db.add_all([department, module, field])
     integration_db.flush()
     field_key = str(field.id)
-    active = Record(module=module, data={"keep": {"nested": [1, 2]}, field_key: "active"})
+    active = Record(org_id=org_id, module=module,
+                    data={"keep": {"nested": [1, 2]}, field_key: "active"})
     archived = Record(
+        org_id=org_id,
         module=module,
         data={"keep": "archived", field_key: {"preserve": True}},
         is_deleted=True,

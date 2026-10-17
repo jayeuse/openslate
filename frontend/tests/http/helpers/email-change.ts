@@ -54,6 +54,7 @@ export async function installEmailChangeApi(
           ? {
               authenticated: true,
               user_id: profileUserA,
+              default_organization_blocked: null,
               setup_required: false,
             }
           : { authenticated: false },

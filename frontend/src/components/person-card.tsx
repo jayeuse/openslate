@@ -23,6 +23,7 @@ import {
   PopoverTitle,
 } from "@/components/ui/popover";
 import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
+import { PersonAvatar } from "@/components/person-avatar";
 import {
   useVerifiedWorkspaceUserId,
   useWorkspaceInteractionSuspended,
@@ -42,6 +43,8 @@ type PersonCardPopoverProps = {
   label?: string;
   unavailableLabel?: string;
   className?: string;
+  /** "none" when the name sits in a row that has its own link action. */
+  decoration?: "underline" | "none";
 };
 
 /** One read-only identity disclosure. The account QueryClient deduplicates known visible targets. */
@@ -71,6 +74,7 @@ function BoundPersonCard({
   label,
   unavailableLabel = "Person unavailable",
   className,
+  decoration = "underline",
   viewerId,
 }: PersonCardPopoverProps & { viewerId: string }) {
   const suspended = useWorkspaceInteractionSuspended();
@@ -188,11 +192,19 @@ function BoundPersonCard({
         onPointerEnter={prepare}
         onFocus={prepare}
         className={cn(
-          "text-primary focus-visible:outline-ring relative z-10 inline-flex min-h-11 max-w-full min-w-11 items-center rounded-sm text-left break-words underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2",
+          "text-primary focus-visible:outline-ring relative z-10 inline-flex min-h-11 max-w-full min-w-11 items-center gap-2 rounded-sm text-left break-words focus-visible:outline-2 focus-visible:outline-offset-2",
           className,
         )}
       >
-        {name}
+        <PersonAvatar name={name} avatarUrl={current?.data.avatar_url} />
+        <span
+          className={cn(
+            "min-w-0",
+            decoration === "underline" && "underline underline-offset-4",
+          )}
+        >
+          {name}
+        </span>
       </PopoverTrigger>
       <PopoverContent
         aria-label="Person card"

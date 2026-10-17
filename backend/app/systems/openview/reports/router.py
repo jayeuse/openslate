@@ -23,12 +23,14 @@ from app.common.dependencies import (
 )
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.database import get_db
+from app.core.database.organization_scope import session_organization
 from app.systems.access.policy.checks import (
     module_filter,
     require_fresh_module_access,
     require_module_access,
 )
 from app.systems.access.policy.models import AccessLevel
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.openview.reports.eligibility import capture_run_eligible_users
 from app.systems.openview.reports.models import Report, ReportRun, ReportRunRow
@@ -164,6 +166,7 @@ def create_report(
     require_module_access(db, user, payload.module_id, AccessLevel.MANAGE)
     validate_report_recipe(db, payload.module_id, payload.recipe, reader=user)
     report = Report(
+        org_id=bound_organization(db),
         module_id=payload.module_id,
         name=payload.name,
         subtitle=payload.subtitle,
@@ -300,7 +303,9 @@ def create_report_run(
     bind = db.get_bind()
     engine = bind if isinstance(bind, Engine) else bind.engine
     db.rollback()
-    snapshot = capture_report_snapshot(engine, report_id, actor_id)
+    snapshot = capture_report_snapshot(
+        engine, report_id, actor_id, org_id=session_organization(db)
+    )
 
     # Report writes lock the recipe before access rows; keep the same order
     # when finalizing a run so a concurrent edit cannot invert the lock graph.
@@ -339,6 +344,7 @@ def create_report_run(
         db, report.module_id, ReportRecipe.model_validate(report.recipe), reader=fresh_actor
     )
     run = ReportRun(
+        org_id=report.org_id,
         report_id=report.id,
         module_id=snapshot.module_id,
         idempotency_key=idempotency_key,
@@ -355,6 +361,7 @@ def create_report_run(
         for position, (record_id, cells) in enumerate(snapshot.rows):
             db.add(
                 ReportRunRow(
+                    org_id=run.org_id,
                     run_id=run.id,
                     position=position,
                     record_id=record_id,

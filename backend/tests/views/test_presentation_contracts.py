@@ -306,7 +306,6 @@ def test_name_only_noop_preserves_legacy_presentation_without_timeline_keys(monk
     user = User(
         id=user_id,
         status="active",
-        role="member",
         is_deleted=False,
     )
     database = Mock()

@@ -19,47 +19,51 @@ from app.core.integrations.supabase_auth import (
 from app.systems.access.identity import mfa, provider_actions, provider_login, provider_sessions
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.users import sessions_router
-from app.systems.access.users.models import User
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.access.users.models import Membership
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
+from tests.conftest import create_member
 
 
 @pytest.fixture(autouse=True)
-def unit_workspace_policy(request, monkeypatch: pytest.MonkeyPatch) -> WorkspaceProfile | None:
+def unit_platform_policy(request, monkeypatch: pytest.MonkeyPatch) -> PlatformSettings | None:
     """Unit identity fakes now include the persisted workspace policy boundary.
 
     Provider integration journeys always load the actual singleton through PostgreSQL.
     """
     if request.node.get_closest_marker("integration") is not None:
         return
-    profile = WorkspaceProfile(
+    # Independent budget persistence and cleanup use the signed PostgreSQL journeys.
+    monkeypatch.setattr(provider_login.rate_limits, "_login_budget", lambda *_a, **_kw: None)
+    monkeypatch.setattr(provider_login.rate_limits, "clear_login_account_budget", lambda *_a: None)
+    monkeypatch.setattr(provider_login.rate_limits, "cleanup_expired_buckets", lambda **_kw: 0)
+    profile = PlatformSettings(
         session_timeout_minutes=60,
         password_min_length=12,
         password_require_mixed_case=True,
         password_require_number=False,
-        mfa_require_admin=False,
-        mfa_require_member=False,
-        mfa_require_guest=False,
-        mfa_grace_days=0,
         session_absolute_lifetime_minutes=None,
         session_concurrent_limit=None,
         login_failed_attempt_threshold=5,
         login_window_minutes=15,
         login_cooldown_minutes=15,
-        ip_allow_list=[],
     )
-    monkeypatch.setattr(
-        provider_actions, "load_workspace_policy", lambda _db: profile, raising=False
-    )
-    monkeypatch.setattr(
-        provider_sessions, "load_workspace_policy", lambda _db: profile, raising=False
-    )
-    monkeypatch.setattr(sessions_router, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(mfa, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(provider_login, "load_workspace_policy", lambda _db: profile)
-    monkeypatch.setattr(
-        auth_dependencies, "load_workspace_policy", lambda _db: profile, raising=False
-    )
+    for module in (provider_actions, provider_sessions, sessions_router, mfa, provider_login,
+                   auth_dependencies):
+        monkeypatch.setattr(module, "load_platform_policy", lambda _db: profile)
 
+    return profile
+
+
+@pytest.fixture(autouse=True)
+def unit_workspace_policy(request, monkeypatch: pytest.MonkeyPatch) -> WorkspaceProfile | None:
+    if request.node.get_closest_marker("integration") is not None:
+        return
+    profile = WorkspaceProfile(
+        id=uuid4(), mfa_require_admin=False, mfa_require_member=False,
+        mfa_require_guest=False, mfa_grace_days=0, ip_allow_list=[],
+    )
+    for module in (provider_sessions, mfa):
+        monkeypatch.setattr(module, "load_workspace_policy", lambda _db, **_kwargs: profile)
     return profile
 
 
@@ -88,7 +92,7 @@ def mfa_context(monkeypatch):
     key = Fernet.generate_key()
     cipher = Fernet(key)
     provider_id, provider_session, factor_id = uuid4(), uuid4(), uuid4()
-    user = User(
+    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
         id=uuid4(),
         supabase_user_id=provider_id,
         email="mfa@example.test",
@@ -110,11 +114,15 @@ def mfa_context(monkeypatch):
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db = Mock(spec=Session)
+    db.dirty = set()
     db.scalar.side_effect = lambda query: (
         None if query.column_descriptions[0]["entity"] is IdentityMfaObservation else user
     )
     db.get.return_value = session
-    db.scalars.return_value = [session]
+    db.scalars.side_effect = lambda query: (
+        Mock(all=lambda: [membership])
+        if query.column_descriptions[0]["entity"] is Membership else [session]
+    )
     auth, mfa_client = Mock(), Mock()
     auth.get_user.return_value = ProviderUser(
         provider_id, None, user.email, factors=(ProviderFactor(factor_id, "totp", "unverified"),)
@@ -131,6 +139,7 @@ def mfa_context(monkeypatch):
         service=service,
         db=db,
         user=user,
+        membership=membership,
         session=session,
         auth=auth,
         mfa=mfa_client,
@@ -152,5 +161,8 @@ def mfa_context(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(service, "SupabaseMfaClient", lambda _auth: mfa_client, raising=False)
+    # Durable admission is exercised with real PostgreSQL in test_mfa_budget_integration.
+    monkeypatch.setattr(service.rate_limits, "mfa_verification_retry_after", lambda *_a, **_k: None)
+    monkeypatch.setattr(service.rate_limits, "lock_bucket", lambda *_a: None)
     monkeypatch.setattr(service, "append_security_event", lambda *_args: None, raising=False)
     return context

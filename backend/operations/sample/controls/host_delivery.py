@@ -103,7 +103,7 @@ def execute_host_control(
             "host_promote",
         )
         with production_topology(runtime, on_substep), ExitStack() as stack:
-            acting = stack.enter_context(https_client(runtime))
+            acting = stack.enter_context(https_client(runtime, run.admin.organization_id))
             for step, path in (("host_health", "/api/health"), ("host_readiness", "/api/ready")):
                 response = run.request(action.actor_key, step, "GET", path, client=acting)
                 require(
@@ -269,12 +269,13 @@ def execute_host_control(
     )
 
 
-def https_client(runtime: HostControlRuntime) -> SampleClient:
+def https_client(runtime: HostControlRuntime, organization_id: str | None) -> SampleClient:
     context = ssl.create_default_context(cafile=runtime.ca_file)
     return SampleClient(
         runtime.origin,
         runtime.origin,
         runtime.journal_path,
+        organization_id,
         transport=httpx.HTTPTransport(verify=context, trust_env=False),
     )
 

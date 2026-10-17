@@ -63,6 +63,7 @@ import {
 } from "./security-dialogs";
 import { SecurityPanel, SecurityPolicyForm } from "./security-panel";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 
 function policySummary(
   fields: SecuritySettingsFormFields,
@@ -144,6 +145,14 @@ export function SecurityView({
   const securityDenied = isAccessSecurityDenied(queryClient, "policy");
   const sessionsDenied = isAccessSecurityDenied(queryClient, "sessions");
   const eventsDenied = isAccessSecurityDenied(queryClient, "events");
+  const identity = useQuery(authMeOptions());
+  // Read-only until /auth/me confirms the owner flags; the server enforces them.
+  const editable = {
+    organization: Boolean(
+      identity.data?.organizationOwner || identity.data?.operator,
+    ),
+    installation: Boolean(identity.data?.operator),
+  };
   const securityQuery = useQuery({
     ...accessSecurityOptions(queryClient),
     enabled: active && admitted && !securityDenied,
@@ -778,7 +787,7 @@ export function SecurityView({
               setPolicyOpen(true);
             }}
           >
-            Edit policy
+            {editable.organization ? "Edit policy" : "View policy"}
           </Button>
         </div>
         <SecurityPanel
@@ -841,8 +850,9 @@ export function SecurityView({
               </Button>
             </div>
             <DialogDescription>
-              Set the account policy enforced by your organization. Closing
-              keeps your unsaved changes.
+              {editable.organization
+                ? "Set the account policy enforced by your organization. Closing keeps your unsaved changes."
+                : "Review the account policy enforced by your organization."}
             </DialogDescription>
           </DialogHeader>
           <fieldset
@@ -899,6 +909,7 @@ export function SecurityView({
                   clearDraft,
                   changeSetting,
                 }}
+                editable={editable}
                 onManageMfa={() => {
                   setPolicyOpen(false);
                   openMfa();

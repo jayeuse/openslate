@@ -18,7 +18,7 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.live_session_support import with_live_session
-from tests.rbac.support import add_user, make_group_access
+from tests.rbac.support import add_user, make_group_access, organization
 
 _ACTORS_KEY = "dashboard_test_actors"
 
@@ -39,7 +39,7 @@ def _client(db: Session, actor: User) -> TestClient:
 
 
 def _department(db: Session, name: str = "Dashboards") -> Department:
-    department = Department(department_name=f"{name} {uuid7().hex}")
+    department = Department(org_id=organization(db).id, department_name=f"{name} {uuid7().hex}")
     db.add(department)
     db.flush()
     for actor, level in db.info.get(_ACTORS_KEY, []):
@@ -52,12 +52,14 @@ def _module(
 ) -> tuple[Module, Field]:
     department = department or _department(db, name)
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=name,
     )
     db.add(module)
     db.flush()
     dimension = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Status",
         type=FieldType.TEXT,

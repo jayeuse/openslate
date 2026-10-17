@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.boards.models import Board, BoardGroup
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
@@ -31,11 +31,17 @@ def card(world):
 
 @pytest.fixture
 def person_world(avatar_world):
-    """Temporarily remove company sharing only in the runner-owned disposable fixture."""
+    """Create owned company sharing, initially hidden, in the explicit actor organization."""
     world = avatar_world
     owned = []
     with Session(world.owner) as db:
-        company = db.scalar(select(Board).where(Board.scope == "company"))
+        world.person_org_id = db.scalars(
+            select(Membership.org_id).where(Membership.user_id == world.actor_id)
+        ).one()
+        company = Board(org_id=world.person_org_id, scope="company", name="Owned company")
+        db.add(company)
+        db.flush()
+        owned.append((Board, company.id))
         saved = company.is_deleted, company.deleted_at
         company.is_deleted = True
         target = db.get(User, world.target_id)
@@ -69,20 +75,31 @@ def shared(world, mode):
             return row
 
         if mode == "admin":
-            db.get(User, world.actor_id).role = "admin"
+            membership = db.scalars(
+                select(Membership).where(Membership.user_id == world.actor_id)
+            ).one()
+            membership.role = "admin"
         elif mode == "company":
-            db.scalar(select(Board).where(Board.scope == "company")).is_deleted = False
+            db.scalar(select(Board).where(
+                Board.org_id == world.person_org_id, Board.scope == "company"
+            )).is_deleted = False
         else:
-            left = add(Group(name=f"card-left-{uuid4()}"))
-            right = left if mode == "group" else add(Group(name=f"card-right-{uuid4()}"))
-            add(GroupMember(group_id=left.id, user_id=world.actor_id))
-            add(GroupMember(group_id=right.id, user_id=world.target_id))
+            left = add(Group(org_id=world.person_org_id, name=f"card-left-{uuid4()}"))
+            right = left if mode == "group" else add(
+                Group(org_id=world.person_org_id, name=f"card-right-{uuid4()}")
+            )
+            add(GroupMember(org_id=left.org_id, group_id=left.id, user_id=world.actor_id))
+            add(GroupMember(org_id=right.org_id, group_id=right.id, user_id=world.target_id))
             if mode == "module":
-                department = add(Department(department_name=f"card-{uuid4()}"))
-                module = add(Module(department_id=department.id, module_name="Shared module"))
+                department = add(Department(
+                    org_id=left.org_id, department_name=f"card-{uuid4()}"
+                ))
+                module = add(Module(org_id=department.org_id, department_id=department.id,
+                                    module_name="Shared module"))
                 for group in (left, right):
                     add(
                         GroupAccess(
+                            org_id=group.org_id,
                             group_id=group.id,
                             department_id=department.id,
                             module_id=module.id,
@@ -91,15 +108,19 @@ def shared(world, mode):
                     )
             elif mode in ("project_board", "department_board"):
                 if mode == "project_board":
-                    board = add(Board(scope="project", name=f"card-{uuid4()}"))
+                    board = add(Board(org_id=left.org_id, scope="project", name=f"card-{uuid4()}"))
                     for group in (left, right):
-                        add(BoardGroup(board_id=board.id, group_id=group.id, level="read"))
+                        add(BoardGroup(org_id=board.org_id, board_id=board.id,
+                                       group_id=group.id, level="read"))
                 else:
-                    department = add(Department(department_name=f"card-{uuid4()}"))
-                    add(Board(scope="department", department_id=department.id, name="Department"))
+                    department = add(Department(org_id=left.org_id,
+                                                department_name=f"card-{uuid4()}"))
+                    add(Board(org_id=department.org_id, scope="department",
+                              department_id=department.id, name="Department"))
                     for group in (left, right):
                         add(
                             GroupAccess(
+                                org_id=group.org_id,
                                 group_id=group.id, department_id=department.id, level="read"
                             )
                         )
@@ -176,8 +197,11 @@ def test_ineligible_target_is_hidden_even_to_admin(person_world, defect):
         elif defect == "deleted":
             target.is_deleted = True
         else:
-            target.invitation_sent_at = world.clock
-            target.invitation_accepted_at = None
+            membership = db.scalars(
+                select(Membership).where(Membership.user_id == target.id)
+            ).one()
+            membership.invitation_sent_at = world.clock
+            membership.invitation_accepted_at = None
         db.commit()
     assert card(world).status_code == 404
     assert (

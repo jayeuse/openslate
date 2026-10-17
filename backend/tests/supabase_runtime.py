@@ -362,6 +362,7 @@ class DisposablePostgres:
             "SUPABASE_PUBLISHABLE_KEY": self.keys["SUPABASE_PUBLISHABLE_KEY"],
             "SUPABASE_SECRET_KEY": self.keys["SUPABASE_SECRET_KEY"],
             "SUPABASE_SESSION_ENCRYPTION_KEY": self.keys["SUPABASE_SESSION_ENCRYPTION_KEY"],
+            "REALTIME_TOKEN_SIGNING_KEY": self.keys["REALTIME_TOKEN_SIGNING_KEY"],
             "SMTP_HOST": "mailpit",
             "SMTP_PORT": "1025",
             "SMTP_ADMIN_EMAIL": "noreply@openslate.test",

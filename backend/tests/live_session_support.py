@@ -20,6 +20,7 @@ from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.context import set_audit_actor
+from tests.organization_scope_support import scoped_override
 
 
 def with_live_session(
@@ -52,6 +53,6 @@ def with_live_session(
 
     app = client.app
     assert isinstance(app, FastAPI)
-    app.dependency_overrides[get_current_user] = lambda: actor
-    app.dependency_overrides[get_current_identity] = identity
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
+    app.dependency_overrides[get_current_identity] = scoped_override(identity)
     return client

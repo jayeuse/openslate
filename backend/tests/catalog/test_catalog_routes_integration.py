@@ -9,16 +9,19 @@ from fastapi.testclient import TestClient
 from uuid6 import uuid7
 
 from app.core.database import get_db
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import router as records_router
-from tests.catalog.auth_support import override_catalog_authorization
+from tests.catalog.auth_support import catalog_actor_dependencies, override_catalog_authorization
 from tests.catalog.dynamic_field_support import (
     _seed_committed_module,
     _seed_committed_record,
     _set_request,
 )
+from tests.conftest import create_member
 
 pytestmark = pytest.mark.integration
 pytest_plugins = ("tests.catalog.dynamic_field_support",)
@@ -28,7 +31,7 @@ pytest_plugins = ("tests.catalog.dynamic_field_support",)
 def catalog_client(integration_db: AuditSession) -> Iterator[TestClient]:
     app = FastAPI()
     app.include_router(records_router, prefix="/api")
-    override_catalog_authorization(app)
+    override_catalog_authorization(app, integration_db)
     app.dependency_overrides[get_db] = lambda: integration_db
     _set_request(integration_db, uuid7(), "/api/catalog-contract")
     with TestClient(app) as client:
@@ -44,6 +47,12 @@ def test_record_delete_restore_and_invalid_restore_preserve_stored_state(
     )
     field_id = seeded.fields["Title"]
     record_id = _seed_committed_record(owned_ids, seeded.module_id, {str(field_id): "kept"})
+    # The committed seed has its own organization; the catalog actor works in it.
+    actor = catalog_client.app.dependency_overrides[catalog_actor_dependencies()[0]]()
+    create_member(
+        integration_db, integration_db.get(WorkspaceProfile, seeded.org_id), "admin", user=actor
+    )
+    scope_session(integration_db, seeded.org_id)
     path = f"/api/records/{record_id}"
     deleted = catalog_client.delete(path)
     assert deleted.status_code == 204 and deleted.content == b""

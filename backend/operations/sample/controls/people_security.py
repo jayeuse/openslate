@@ -234,7 +234,7 @@ def execute_people_security_control(
     owner = _dto(read("/api/auth/me", None, "people_owner"), AuthMeResponse, "people_owner")
     _require(
         str(owner.id) == admin
-        and owner.role.value == "admin"
+        and owner.role is not None and owner.role.value == "admin"
         and owner.status.value == "active"
         and not owner.is_deleted,
         "people_owner",

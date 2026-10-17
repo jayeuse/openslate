@@ -19,6 +19,7 @@ from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.rules import _field_key
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.relationships.models import RelationshipEdge
+from tests.rbac.support import organization
 from tests.sandbox_publications.support import (
     binding,
     bound_department,
@@ -42,6 +43,7 @@ def test_close_plan_blocks_unbound_children_records_and_live_relationships(
     relationship = bound_field(integration_owner_db, "relationship", "sample-uses")
     integration_owner_db.add(
         Module(
+            org_id=department.org_id,
             department_id=department.id,
             module_name="Unmanaged module",
         )
@@ -61,12 +63,12 @@ def test_close_plan_blocks_unbound_children_records_and_live_relationships(
     unmanaged = integration_owner_db.scalar(select(Module).where(Module.module_name == "Unmanaged module"))
     assert unmanaged is not None
     unmanaged.is_deleted = True
-    source = Record(module_id=requests.id, data={})
-    target = Record(module_id=bound_module(integration_owner_db, "sample-equipment").id, data={})
+    source = Record(org_id=requests.org_id, module_id=requests.id, data={})
+    target = Record(org_id=requests.org_id, module_id=bound_module(integration_owner_db, "sample-equipment").id, data={})
     integration_owner_db.add_all([source, target])
     integration_owner_db.flush()
     integration_owner_db.add(
-        RelationshipEdge(field_id=relationship.id, source_record_id=source.id, target_record_id=target.id)
+        RelationshipEdge(org_id=relationship.org_id, field_id=relationship.id, source_record_id=source.id, target_record_id=target.id)
     )
     integration_owner_db.flush()
     targets = {
@@ -134,7 +136,7 @@ def test_preview_blocks_schema_and_live_data_incompatible_changes(
     requests = bound_module(integration_owner_db, "sample-requests")
     request_number = bound_field(integration_owner_db, "field", "sample-requests:sample-field-requests-request-number")
     title = bound_field(integration_owner_db, "field", "sample-requests:sample-field-requests-title")
-    integration_owner_db.add(Record(module_id=requests.id, data={str(request_number.id): "REQ-1", str(title.id): "long existing title"}))
+    integration_owner_db.add(Record(org_id=requests.org_id, module_id=requests.id, data={str(request_number.id): "REQ-1", str(title.id): "long existing title"}))
     integration_owner_db.flush()
     narrowed = document.model_copy(deep=True)
     next(field for module in narrowed.design.modules if module.id == "sample-requests" for field in module.fields if field.id == "sample-field-requests-title").config.max_length = 3
@@ -158,7 +160,7 @@ def test_preview_blocks_a_required_field_added_to_a_module_with_live_records(
         "field",
         "sample-requests:sample-field-requests-request-number",
     )
-    integration_owner_db.add(Record(module_id=module.id, data={str(request_number.id): "REQ-1"}))
+    integration_owner_db.add(Record(org_id=module.org_id, module_id=module.id, data={str(request_number.id): "REQ-1"}))
     integration_owner_db.flush()
     changed = document.model_copy(deep=True)
     added = DesignField.model_validate(
@@ -189,7 +191,7 @@ def test_inactive_new_required_fields_do_not_block_existing_records(
         "sample-requests:sample-field-requests-request-number",
     )
     integration_owner_db.add(
-        Record(module_id=module.id, data={str(request_number.id): "REQ-1"})
+        Record(org_id=module.org_id, module_id=module.id, data={str(request_number.id): "REQ-1"})
     )
     integration_owner_db.flush()
     added = DesignField.model_validate(
@@ -276,9 +278,10 @@ def test_preview_blocks_names_already_used_by_unbound_live_structure(
 ) -> None:
     _publisher, document = publish_structure(integration_owner_db)
     operations = bound_department(integration_owner_db, "sample-operations")
-    integration_owner_db.add(Department(department_name="External department"))
+    integration_owner_db.add(Department(org_id=operations.org_id, department_name="External department"))
     integration_owner_db.add(
         Module(
+            org_id=operations.org_id,
             department_id=operations.id,
             module_name="External module",
         )
@@ -298,7 +301,7 @@ def test_preview_preserves_order_and_duplicate_live_name_blockers(
 ) -> None:
     _publisher, document = publish_structure(integration_owner_db)
     collision_name = "External duplicate department"
-    integration_owner_db.add(Department(department_name=collision_name))
+    integration_owner_db.add(Department(org_id=organization(integration_owner_db).id, department_name=collision_name))
     integration_owner_db.flush()
 
     duplicate = document.design.departments[0].model_copy(deep=True)
@@ -359,12 +362,12 @@ def test_preview_blocks_relationship_target_and_cardinality_changes_with_live_ed
     relationship = bound_field(integration_owner_db, "relationship", "sample-uses")
     request_number = bound_field(integration_owner_db, "field", "sample-requests:sample-field-requests-request-number")
     asset_tag = bound_field(integration_owner_db, "field", "sample-equipment:sample-field-equipment-asset-tag")
-    first = Record(module_id=requests.id, data={str(request_number.id): "REQ-1"})
-    second = Record(module_id=requests.id, data={str(request_number.id): "REQ-2"})
-    target = Record(module_id=equipment.id, data={str(asset_tag.id): "EQ-1"})
+    first = Record(org_id=requests.org_id, module_id=requests.id, data={str(request_number.id): "REQ-1"})
+    second = Record(org_id=requests.org_id, module_id=requests.id, data={str(request_number.id): "REQ-2"})
+    target = Record(org_id=equipment.org_id, module_id=equipment.id, data={str(asset_tag.id): "EQ-1"})
     integration_owner_db.add_all([first, second, target])
     integration_owner_db.flush()
-    integration_owner_db.add_all([RelationshipEdge(field_id=relationship.id, source_record_id=first.id, target_record_id=target.id), RelationshipEdge(field_id=relationship.id, source_record_id=second.id, target_record_id=target.id)])
+    integration_owner_db.add_all([RelationshipEdge(org_id=relationship.org_id, field_id=relationship.id, source_record_id=first.id, target_record_id=target.id), RelationshipEdge(org_id=relationship.org_id, field_id=relationship.id, source_record_id=second.id, target_record_id=target.id)])
     integration_owner_db.flush()
     changed = document.model_copy(deep=True)
     changed.design.relationships[0].target_module_id = "sample-customers"
@@ -388,7 +391,7 @@ def test_publish_keeps_active_positions_contiguous_after_closing_an_earlier_fiel
 def test_preview_blocks_active_unmanaged_fields(integration_owner_db: Session) -> None:
     _publisher, document = publish_structure(integration_owner_db)
     module = bound_module(integration_owner_db, "sample-requests")
-    integration_owner_db.add(Field(module_id=module.id, name="Outside Sandbox", type="text", position=99, required=False, config={}))
+    integration_owner_db.add(Field(org_id=module.org_id, module_id=module.id, name="Outside Sandbox", type="text", position=99, required=False, config={}))
     integration_owner_db.flush()
     assert ("module_has_unmanaged_fields", "sample-requests") in {(item.code, item.target_id) for item in publication_plan(integration_owner_db, document).blockers}
 
@@ -400,7 +403,7 @@ def test_publish_rejects_workspace_and_audit_drift_after_preview(integration_own
     current = read_document(integration_owner_db)
     saved = replace_document(integration_owner_db, actor_id=publisher.id, expected_revision=current.revision, document=edited)
     preview = publication_plan(integration_owner_db, saved.document)
-    profile = integration_owner_db.scalar(select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True)))
+    profile = integration_owner_db.get(WorkspaceProfile, bound_module(integration_owner_db, "sample-requests").org_id)
     assert profile is not None
     profile.timezone = "Asia/Manila" if profile.timezone != "Asia/Manila" else "UTC"
     integration_owner_db.flush()
@@ -421,16 +424,18 @@ def test_publish_rejects_record_data_drift_in_an_unbound_module(
     integration_owner_db: Session,
 ) -> None:
     publisher, _document = publish_structure(integration_owner_db)
-    department = Department(department_name="Unbound record department")
+    department = Department(org_id=organization(integration_owner_db).id, department_name="Unbound record department")
     integration_owner_db.add(department)
     integration_owner_db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name="Unbound record module",
     )
     integration_owner_db.add(module)
     integration_owner_db.flush()
     record = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={
             "unicode": "Māori 🟦",

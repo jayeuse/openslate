@@ -26,6 +26,7 @@ from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 
@@ -86,6 +87,7 @@ def world(
     operations: list[tuple[str, UUID, UUID]] = []
 
     def capture_outcome(
+        _db: Session,
         event_type: str,
         outcome: SecurityEventOutcome,
         operation_id: UUID,
@@ -118,10 +120,10 @@ def world(
     app.include_router(collection_sessions_router, prefix="/api")
     app.include_router(access_policy_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
-    app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor[0])
+    app.dependency_overrides[get_current_identity] = scoped_override(lambda: CurrentIdentity(
         actor[0], uuid7(), False, False
-    )
+    ))
     with TestClient(app) as client:
         yield UserAdminWorld(
             db=db,

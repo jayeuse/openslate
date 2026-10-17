@@ -12,13 +12,15 @@ import app.systems.access.users.acceptance as invitation_acceptance
 import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser, SupabaseAuthUnavailable
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 
 def _resend(monkeypatch):
     actor_id = uuid7()
-    profile = User(
+    profile, membership = create_member(None, WorkspaceProfile(id=uuid7()),
         id=uuid7(),
         email="pending@example.test",
         username="pending",
@@ -34,7 +36,7 @@ def _resend(monkeypatch):
         profile.email,
         {
             "openslate_user_id": str(profile.id),
-            "openslate_invitation_operation_id": str(profile.provider_invitation_operation_id),
+            "openslate_invitation_operation_id": str(membership.provider_invitation_operation_id),
         },
     )
     client = Mock()
@@ -43,17 +45,24 @@ def _resend(monkeypatch):
     monkeypatch.setattr(user_service, "require_fresh_exact_admin", lambda *_args: None)
     # The profile lock and the reload after commit both read the profile.
     db = Mock(spec=Session)
-    db.scalar.return_value = profile
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [Membership(
+        user_id=actor_id, org_id=membership.org_id, role="admin", status="active",
+    )]
+    db.scalars.return_value.one_or_none.return_value = membership
+    db.scalar.side_effect = lambda query: (
+        profile if query.column_descriptions[0]["entity"] is User else membership
+    )
     events = []
     monkeypatch.setattr(user_service, "_security_event", lambda **event: events.append(event))
     monkeypatch.setattr(
         user_service, "append_security_event", lambda _db, event: events.append(event.model_dump())
     )
-    return db, actor_id, profile, client, events
+    return db, actor_id, profile, membership, client, events
 
 
 def test_email_resend_records_attempt_and_commits_correlated_success(monkeypatch):
-    db, actor, profile, client, events = _resend(monkeypatch)
+    db, actor, profile, _membership, client, events = _resend(monkeypatch)
     result = user_service.resend_invitation(db, profile.id, actor_id=actor, client=client)
     assert result is profile
     assert [event["outcome"] for event in events] == [
@@ -67,8 +76,8 @@ def test_email_resend_records_attempt_and_commits_correlated_success(monkeypatch
 
 
 def test_provider_resend_failure_records_failure_without_advancing_local_delivery(monkeypatch):
-    db, actor, profile, client, events = _resend(monkeypatch)
-    original_delivery = profile.invitation_sent_at
+    db, actor, profile, membership, client, events = _resend(monkeypatch)
+    original_delivery = membership.invitation_sent_at
     client.admin_send_invitation.side_effect = SupabaseAuthUnavailable("offline")
     with pytest.raises(InvitationError, match="Unable to resend invitation"):
         user_service.resend_invitation(db, profile.id, actor_id=actor, client=client)
@@ -77,13 +86,13 @@ def test_provider_resend_failure_records_failure_without_advancing_local_deliver
         SecurityEventOutcome.FAILURE,
     ]
     assert events[0]["operation_id"] == events[1]["operation_id"]
-    assert profile.invitation_sent_at == original_delivery
+    assert membership.invitation_sent_at == original_delivery
     db.rollback.assert_called_once()
     db.commit.assert_not_called()
 
 
 def test_fresh_authorization_denial_is_audited_without_rewriting_http_status(monkeypatch):
-    db, actor, profile, client, events = _resend(monkeypatch)
+    db, actor, profile, _membership, client, events = _resend(monkeypatch)
     denied = HTTPException(status_code=403, detail="Forbidden")
     monkeypatch.setattr(user_service, "require_fresh_exact_admin", Mock(side_effect=denied))
     with pytest.raises(HTTPException) as error:

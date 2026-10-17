@@ -20,6 +20,7 @@ export function SettingSelect({
   onChange,
   description,
   error,
+  disabled = false,
 }: {
   id: string;
   label: string;
@@ -29,15 +30,17 @@ export function SettingSelect({
   onChange: (value: string) => void;
   description?: string;
   error?: string;
+  disabled?: boolean;
 }) {
   const descriptionId = description ? `${id}-description` : undefined;
   const errorId = error ? `${id}-error` : undefined;
 
   return (
-    <Field data-invalid={Boolean(error)}>
+    <Field data-invalid={Boolean(error)} disabled={disabled}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Select
         id={id}
+        disabled={disabled}
         value={options.includes(value) ? value : ""}
         placeholder={
           options.includes(value) ? undefined : "Choose a valid option"

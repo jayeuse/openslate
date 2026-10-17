@@ -1,4 +1,7 @@
 import {
+  eventStreamUrl,
+  appearanceUrl,
+  authMeBody,
   expect,
   heldResponse,
   test,
@@ -72,17 +75,25 @@ async function installProfile(page: Page): Promise<Api> {
           json: {
             authenticated: true,
             user_id: api.userId,
+            default_organization_blocked: null,
             setup_required: false,
           },
         }),
   );
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: { id: api.userId, role: api.role, access: [] } }),
+    route.fulfill({
+      json: authMeBody({
+        id: api.userId,
+        role: api.role,
+        access: [],
+        default_organization_blocked: null,
+      }),
+    }),
   );
-  await page.route("**/api/workspace/appearance", (route) =>
+  await page.route(appearanceUrl, (route) =>
     route.fulfill({ json: { theme: api.workspace.theme } }),
   );
-  await page.route("**/api/events", (route) => route.fulfill({ status: 503 }));
+  await page.route(eventStreamUrl, (route) => route.fulfill({ status: 503 }));
   await page.route("**/api/workspace", async (route) => {
     if (route.request().method() === "GET")
       return api.onGet

@@ -13,6 +13,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.listing.query import _escape_like
+from app.systems.access.users.membership import bound_organization
 from app.systems.sandbox.designs.models import SandboxDocument as SandboxDocumentRow
 from app.systems.sandbox.designs.models import SandboxVersion
 from app.systems.sandbox.designs.schemas import (
@@ -293,7 +294,10 @@ def export_bundle(db: Session, *, include_versions: bool) -> PortableBundle:
 
 
 def _document_row(db: Session, *, lock: bool) -> SandboxDocumentRow:
-    statement = select(SandboxDocumentRow).where(SandboxDocumentRow.singleton_key.is_(True))
+    statement = select(SandboxDocumentRow).where(
+        SandboxDocumentRow.singleton_key.is_(True),
+        SandboxDocumentRow.org_id == bound_organization(db),
+    )
     if lock:
         statement = statement.with_for_update()
     row = db.scalar(statement)
@@ -367,6 +371,7 @@ def _append_version(
     )
     snapshot, content_hash, byte_count = canonical_document(document)
     version = SandboxVersion(
+        org_id=row.org_id,
         document_id=row.id,
         sequence=sequence,
         kind=kind,

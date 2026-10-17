@@ -21,7 +21,9 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import apply_connection_scope
 from app.systems.access.policy.checks import module_hidden
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -265,9 +267,11 @@ def export_context(
 
 
 def export_snapshot(
-    engine: Engine, payload: ExportRequest, *, reader_id: UUID
+    engine: Engine, payload: ExportRequest, *, reader_id: UUID, org_id: UUID | None
 ) -> tuple[bytes, int, str]:
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+        if org_id is not None:
+            apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:
@@ -275,9 +279,10 @@ def export_snapshot(
             fields = validate_definition(
                 snapshot, payload.module_id, payload.definition, reader=reader
             )
-            profile = snapshot.scalar(
-                select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
-            )
+            profile = snapshot.scalars(
+                select(WorkspaceProfile).join(Module, Module.org_id == WorkspaceProfile.id)
+                .where(Module.id == payload.module_id)
+            ).one_or_none()
             if profile is None:
                 raise HTTPException(503, detail="Workspace configuration is unavailable")
             if not payload.definition.columns and not payload.include_record_id:
@@ -341,6 +346,7 @@ def commit_export_event(db: Session, actor_id: UUID, payload: ExportRequest, row
                     ],
                 },
             ),
+            org_id=bound_organization(db),
         )
         db.commit()
     except SQLAlchemyError as error:

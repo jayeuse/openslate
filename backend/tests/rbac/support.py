@@ -19,10 +19,20 @@ from app.common.dependencies.auth import (
 from app.common.listing import ListQueryResult, PaginationMetadata
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
+from tests.conftest import create_member, create_organization
+from tests.organization_scope_support import scoped_override
+
+
+def organization(db: Session) -> WorkspaceProfile:
+    """The explicitly created organization shared by this test's RBAC builders."""
+    if "rbac_organization" not in db.info:
+        db.info["rbac_organization"] = create_organization(db)
+    return db.info["rbac_organization"]
 
 
 def _persisted(entity: Any, *, deleted: bool = False) -> Any:
@@ -42,7 +52,8 @@ def make_user(
     role: str = UserRole.ADMIN,
     status: str = "active",
     deleted: bool = False,
-) -> User:
+    db: Session | None = None,
+) -> tuple[User, Membership]:
     """Build an unpersisted user for route tests whose database is a mock.
 
     Route tests that use a mock session act as an administrator by default:
@@ -51,17 +62,22 @@ def make_user(
     """
 
     guest = role == UserRole.GUEST
-    user = User(
+    now = datetime.now(UTC)
+    user, membership = create_member(
+        db, organization(db) if db is not None else WorkspaceProfile(id=uuid7()), str(role),
         id=uuid7(),
         email=f"{name}@example.com",
         username=name,
-        role=str(role),
         status=status,
         sponsor_user_id=uuid7() if guest else None,
         expires_at=datetime.now(UTC) + timedelta(days=30) if guest else None,
         is_deleted=deleted,
+        created_at=now,
+        updated_at=now,
+        deleted_at=now if deleted else None,
     )
-    return _persisted(user, deleted=deleted)
+    membership.is_deleted = False
+    return user, membership
 
 
 def add_user(
@@ -79,28 +95,28 @@ def add_user(
     if role == UserRole.GUEST:
         sponsor = sponsor or add_user(db, role=UserRole.MEMBER)
         expires_at = expires_at or datetime.now(UTC) + timedelta(days=30)
-    user = User(
+    user, _membership = create_member(
+        db, organization(db), str(role),
         email=f"{label}-{uuid7().hex[-12:]}@example.com",
         username=f"{label}-{uuid7().hex[-12:]}"[:100],
-        role=str(role),
         status=str(status),
         sponsor_user_id=sponsor.id if sponsor is not None else None,
         expires_at=expires_at,
     )
-    db.add(user)
-    db.flush()
     return user
 
 
 def add_department(db: Session, name: str | None = None) -> Department:
-    department = Department(department_name=name or f"Department {uuid7().hex[-12:]}")
+    department = Department(org_id=organization(db).id,
+                            department_name=name or f"Department {uuid7().hex[-12:]}")
     db.add(department)
     db.flush()
     return department
 
 
 def add_module(db: Session, department: Department, name: str | None = None) -> Module:
-    module = Module(department_id=department.id, module_name=name or f"Module {uuid7().hex[-12:]}")
+    module = Module(org_id=department.org_id, department_id=department.id,
+                    module_name=name or f"Module {uuid7().hex[-12:]}")
     db.add(module)
     db.flush()
     return module
@@ -118,12 +134,13 @@ def make_group_access(
     """Persist one group access row, creating the group and its members when needed."""
 
     if group is None:
-        group = Group(name=f"Group {uuid7().hex}")
+        group = Group(org_id=department.org_id, name=f"Group {uuid7().hex}")
         db.add(group)
         db.flush()
     for member in members:
-        db.add(GroupMember(group_id=group.id, user_id=member.id))
+        db.add(GroupMember(org_id=department.org_id, group_id=group.id, user_id=member.id))
     grant = GroupAccess(
+        org_id=department.org_id,
         group_id=group.id,
         department_id=department.id,
         module_id=module.id if module is not None else None,
@@ -217,8 +234,21 @@ def api() -> Generator[FastAPI, None, None]:
     application.dependency_overrides.clear()
 
 
-def _client(application: FastAPI, user: User, db: Session | None = None) -> TestClient:
+def _client(
+    application: FastAPI, user: User | tuple[User, Membership], db: Session | None = None,
+) -> TestClient:
     database = db or Mock(spec=Session)
-    application.dependency_overrides[get_current_user] = lambda: user
+    if isinstance(user, tuple):
+        user, membership = user
+        if isinstance(database, Mock):
+            database.dirty = set()
+            original = database.scalars.side_effect
+            result = database.scalars.return_value
+            database.scalars.side_effect = lambda query: (
+                Mock(all=lambda: [membership], one=result.one, one_or_none=result.one_or_none)
+                if query.column_descriptions[0]["entity"] is Membership
+                else original(query) if callable(original) else result
+            )
+    application.dependency_overrides[get_current_user] = scoped_override(lambda: user)
     application.dependency_overrides[get_db] = lambda: database
     return TestClient(application)

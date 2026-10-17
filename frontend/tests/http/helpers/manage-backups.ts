@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { Page, Route } from "./test";
 import { installOpenViewEventSource } from "./openview-event-source";
 import { pageOf } from "../../helpers/pagination";
+import { authMeBody } from "./test";
 
 type RunState = "queued" | "running" | "succeeded" | "failed" | "interrupted";
 type Schedule = "disabled" | "daily" | "weekly";
@@ -478,7 +479,12 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
 
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: { id: state.actorId, role: state.role, access: [] },
+      json: authMeBody({
+        id: state.actorId,
+        role: state.role,
+        access: [],
+        default_organization_blocked: null,
+      }),
     }),
   );
   await page.route("**/api/auth/session", async (route) => {
@@ -495,6 +501,7 @@ export async function mockManageBackupExports(page: Page, baseURL: string) {
         : {
             authenticated: true,
             user_id: state.actorId,
+            default_organization_blocked: null,
             setup_required: false,
           },
     });

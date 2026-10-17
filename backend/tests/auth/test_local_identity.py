@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -20,9 +20,10 @@ from app.systems.access.auth.router import auth_router
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import revoke_provider_refresh_session
 from app.systems.access.identity.rate_limits import cleanup_expired_buckets, login_fingerprint
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import UserRole, UserStatus
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.local_identity_support import request as _request
+from tests.conftest import create_member
 
 
 def _settings():
@@ -46,10 +47,16 @@ def test_rate_limit_cleanup_removes_only_expired_buckets() -> None:
     stale = Mock()
     db.scalars.return_value = [stale]
 
-    removed = cleanup_expired_buckets(db, now_value=datetime.now(UTC))
+    with (
+        patch("app.systems.access.identity.rate_limits.get_engine"),
+        patch("app.systems.access.identity.rate_limits.AuditSession") as sessions,
+    ):
+        sessions.return_value.__enter__.return_value = db
+        removed = cleanup_expired_buckets(now_value=datetime.now(UTC))
 
     assert removed == 1
     db.delete.assert_called_once_with(stale)
+    db.commit.assert_called_once_with()
 
 
 def test_browser_session_cookies_reach_all_api_routes_and_origin_is_exact(
@@ -85,7 +92,7 @@ def test_registered_logout_returns_204_clears_cookies_and_revokes_session(
         csrf_token_digest="csrf-digest",
         expires_at=datetime.now(UTC) + timedelta(days=1),
     )
-    user = User(
+    user, _membership = create_member(None, WorkspaceProfile(id=uuid7()),
         id=user_id,
         email="logout@example.com",
         username="logout",

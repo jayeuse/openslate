@@ -1,10 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { ApiContractError } from "../../../src/lib/api";
 
 import {
   completeRecovery,
   completeInvitation,
   getAuthMe,
   getSessionStatus,
+  probeEmailConfirmationSession,
   requestRecovery,
   signIn,
   signOut,
@@ -13,30 +15,121 @@ import {
 const userId = "2cb24e31-8b78-4ec2-b33a-807a14b1f9e8";
 const departmentId = "b4f0b2e8-16da-4d91-aef2-57ff72b19f90";
 const moduleId = "c5a1c3f9-27eb-4ea2-bf03-68ac83c2af01";
+const orgId = "00000000-0000-4000-8000-000000000102";
+const accountFields = {
+  username: "ada",
+  display_name: null,
+  avatar_file_id: null,
+  memberships: [],
+  pending_invitations: [],
+  current_organization: null,
+};
+
+test("account adapters preserve a blocked default without treating it as failed authentication", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) =>
+    Response.json(
+      input === "/api/auth/me"
+        ? {
+            ...accountFields,
+            id: userId,
+            role: null,
+            access: [],
+            default_organization_blocked: "mfa_required",
+          }
+        : {
+            authenticated: true,
+            user_id: userId,
+            setup_required: false,
+            default_organization_blocked: "ip_not_allowed",
+          },
+    );
+  try {
+    await expect(getAuthMe()).resolves.toMatchObject({
+      role: null,
+      defaultOrganizationBlocked: "mfa_required",
+    });
+    await expect(getSessionStatus()).resolves.toMatchObject({
+      authenticated: true,
+      default_organization_blocked: "ip_not_allowed",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+for (const reason of [undefined, "unknown-policy"])
+  test(`account adapters reject an invalid blocked-default reason ${String(reason)}`, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      Response.json({
+        ...accountFields,
+        id: userId,
+        role: null,
+        access: [],
+        authenticated: true,
+        user_id: userId,
+        setup_required: false,
+        default_organization_blocked: reason,
+      });
+    try {
+      await expect(getAuthMe()).rejects.toBeInstanceOf(ApiContractError);
+      await expect(probeEmailConfirmationSession()).rejects.toBeInstanceOf(
+        ApiContractError,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 
 test("loads the authenticated user's role and compact access levels", async () => {
   const originalFetch = globalThis.fetch;
   const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
   globalThis.fetch = async (input, init) => {
     requests.push({ input, init });
-    return Response.json({
-      id: userId,
-      username: "ada",
+    const access = [
+      { department_id: departmentId, module_id: null, level: "read" },
+      { department_id: departmentId, module_id: moduleId, level: "write" },
+    ];
+    const organization = {
+      org_id: orgId,
+      name: "Harbor",
+      slug: "harbor",
       role: "member",
-      access: [
-        { department_id: departmentId, module_id: null, level: "read" },
-        { department_id: departmentId, module_id: moduleId, level: "write" },
-      ],
+    };
+    return Response.json({
+      ...accountFields,
+      id: userId,
+      role: "member",
+      default_organization_blocked: null,
+      access,
+      memberships: [organization],
+      current_organization: { ...organization, access },
     });
   };
   try {
+    const organization = {
+      orgId,
+      name: "Harbor",
+      slug: "harbor",
+      role: "member",
+    };
     await expect(getAuthMe()).resolves.toEqual({
       id: userId,
+      username: "ada",
+      displayName: null,
+      avatarFileId: null,
       role: "member",
+      defaultOrganizationBlocked: null,
       access: [
         { departmentId, moduleId: null, level: "read" },
         { departmentId, moduleId, level: "write" },
       ],
+      memberships: [organization],
+      pendingInvitations: [],
+      currentOrganization: organization,
+      organizationOwner: false,
+      operator: false,
     });
     expect(requests.map(({ input }) => input)).toEqual(["/api/auth/me"]);
     expect(requests[0]?.init?.cache).toBe("no-store");
@@ -58,6 +151,7 @@ test("authentication actions use direct FastAPI routes without browser tokens", 
         authenticated: true,
         user_id: userId,
         setup_required: false,
+        default_organization_blocked: null,
       });
     if (input === "/api/auth/invitations/complete")
       return new Response(null, { status: 204 });
@@ -234,6 +328,7 @@ test("session status refreshes once before declaring an expired access cookie si
             authenticated: true,
             user_id: userId,
             setup_required: false,
+            default_organization_blocked: null,
           });
     }
     if (input === "/api/auth/refresh")
@@ -245,6 +340,7 @@ test("session status refreshes once before declaring an expired access cookie si
       authenticated: true,
       user_id: userId,
       setup_required: false,
+      default_organization_blocked: null,
     });
     expect(requests).toEqual([
       "/api/auth/session",

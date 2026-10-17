@@ -14,7 +14,7 @@ import httpx
 
 from operations.reset.models import ResetError
 
-_BUCKETS = ("openslate-ready",)
+_BUCKETS = ("openslate-avatars", "openslate-ready")
 _PAGE_SIZE = 100
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 

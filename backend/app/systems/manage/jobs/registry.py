@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import DateTime, Row, Select, String, case, cast, literal, null, select, union_all
 from sqlalchemy.orm import Bundle, Session
 
+from app.common.dependencies import require_platform_operator
 from app.core.base_model import utc_now
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.post_models import BoardPost
@@ -209,6 +210,7 @@ def _retry_work(
 def _retry_backup(
     db: Session, kind: str, job_id: UUID, actor: UUID, key: str | None
 ) -> tuple[UUID, bool]:
+    require_platform_operator(db, actor)
     if key is None:
         raise JobStateError("job_retry_key_required")
     instance = backups.installation_id(db)

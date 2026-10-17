@@ -6,7 +6,7 @@ from app.systems.access.identity.models import (  # noqa: F401
     IdentitySession,
 )
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember  # noqa: F401
-from app.systems.access.users.models import User  # noqa: F401
+from app.systems.access.users.models import Membership, PlatformOperator, User  # noqa: F401
 from app.systems.boards.attachment_models import (  # noqa: F401
     BoardAttachment,
     BoardPostRevisionAttachment,
@@ -26,7 +26,7 @@ from app.systems.manage.backups.models import (  # noqa: F401
     BackupRun,
     UpdateStatus,
 )
-from app.systems.manage.workspace.models import WorkspaceProfile  # noqa: F401
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile  # noqa: F401
 from app.systems.openview.charts.models import Chart  # noqa: F401
 from app.systems.openview.dashboards.models import Dashboard, DashboardWidget  # noqa: F401
 from app.systems.openview.reports.models import (  # noqa: F401

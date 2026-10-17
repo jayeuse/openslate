@@ -26,12 +26,14 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.checks import require_fresh_module_access
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.access.access_race_support import add_race_user, group_etag_of, run_action
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = [
@@ -59,15 +61,18 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], pool_size=3)
     with Session(owner) as db:
-        inventory = Department(department_name=f"Fresh inventory {uuid7().hex}")
-        finance = Department(department_name=f"Fresh finance {uuid7().hex}")
+        organization = create_organization(db)
+        org_id = organization.id
+        inventory = Department(org_id=org_id, department_name=f"Fresh inventory {uuid7().hex}")
+        finance = Department(org_id=org_id, department_name=f"Fresh finance {uuid7().hex}")
         db.add_all([inventory, finance])
         db.flush()
-        module = Module(department_id=inventory.id, module_name=f"Fresh {uuid7().hex[:8]}")
-        group = Group(name=f"Fresh {uuid7().hex}")
+        module = Module(org_id=org_id, department_id=inventory.id,
+                        module_name=f"Fresh {uuid7().hex[:8]}")
+        group = Group(org_id=org_id, name=f"Fresh {uuid7().hex}")
         db.add_all([module, group])
         db.flush()
-        reader = add_race_user(db, "fresh", UserRole.MEMBER.value)
+        reader = add_race_user(db, organization, "fresh", UserRole.MEMBER.value)
         session = IdentitySession(
             user_id=reader,
             refresh_token_digest=uuid7().hex * 2,
@@ -75,16 +80,17 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
             expires_at=datetime.now(UTC) + timedelta(days=1),
         )
         db.add(session)
-        db.add(GroupMember(group_id=group.id, user_id=reader))
+        db.add(GroupMember(org_id=org_id, group_id=group.id, user_id=reader))
         db.add(
-            GroupAccess(group_id=group.id, department_id=inventory.id, level=AccessLevel.READ.value)
+            GroupAccess(org_id=org_id, group_id=group.id, department_id=inventory.id,
+                        level=AccessLevel.READ.value)
         )
         db.flush()
         data = _Seed(
             inventory=inventory.id,
             finance=finance.id,
             module=module.id,
-            admin=add_race_user(db, "fresh", UserRole.ADMIN.value),
+            admin=add_race_user(db, organization, "fresh", UserRole.ADMIN.value),
             reader=reader,
             session=session.id,
             group=group.id,
@@ -104,8 +110,10 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
                     InAppNotification.recipient_id.in_((data.admin, data.reader))
                 )
             )
+            db.execute(delete(Membership).where(Membership.user_id.in_((data.admin, data.reader))))
             db.execute(delete(User).where(User.id.in_((data.admin, data.reader))))
             db.execute(delete(Department).where(Department.id.in_((data.inventory, data.finance))))
+            db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id))
             db.commit()
         runtime.dispose()
         owner.dispose()
@@ -161,9 +169,9 @@ def test_revocation_waits_until_the_fresh_checked_output_commits(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            output = executor.submit(run_action, engine, check_then_commit_output)
+            output = executor.submit(in_context(run_action), engine, check_then_commit_output)
             assert checked.wait(timeout=5)
-            admin = executor.submit(run_action, engine, revoke(data, etag))
+            admin = executor.submit(in_context(run_action), engine, revoke(data, etag))
             try:
                 wait_until_blocked_by(engine, holder[0])
                 assert not admin.done()
@@ -207,9 +215,9 @@ def test_fresh_check_waits_for_a_pending_revocation_and_is_then_refused(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            admin = executor.submit(run_action, engine, revoke(data, etag))
+            admin = executor.submit(in_context(run_action), engine, revoke(data, etag))
             assert admin_at_commit.wait(timeout=5)
-            output = executor.submit(run_action, engine, _fresh_check(data))
+            output = executor.submit(in_context(run_action), engine, _fresh_check(data))
             try:
                 wait_until_blocked_by(engine, holder[0])
                 assert not output.done()

@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from defusedxml import ElementTree
-from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -22,6 +21,7 @@ from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.views.models import SavedView
 from app.systems.sandbox.fields.models import Field
+from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records import export as exporter
 from app.systems.sandbox.records import export_xlsx, query_router
 from app.systems.sandbox.records.models import Record
@@ -146,8 +146,8 @@ def test_export_rechecks_exact_authority_after_generation(
     original = query_router.export_snapshot
     completed = []
 
-    def revoke_after_snapshot(engine, payload, *, reader_id: UUID):
-        result = original(engine, payload, reader_id=reader_id)
+    def revoke_after_snapshot(engine, payload, *, reader_id: UUID, org_id: UUID | None):
+        result = original(engine, payload, reader_id=reader_id, org_id=org_id)
         with Session(export_world.owner) as db:
             if lost == "module_access":
                 db.get(GroupAccess, export_world.grant_id).is_deleted = True
@@ -211,6 +211,7 @@ def test_xlsx_keeps_typed_cells_and_untrusted_text_without_precision_loss(
         fields = []
         for index, (name, kind, value, config) in enumerate(values, start=2):
             field = Field(
+                org_id=record.org_id,
                 module_id=export_world.module_id,
                 name=name,
                 type=kind,
@@ -221,7 +222,7 @@ def test_xlsx_keeps_typed_cells_and_untrusted_text_without_precision_loss(
             db.flush()
             record.data = {**record.data, str(field.id): value}
             fields.append({"field_id": str(field.id), "expected_type": kind})
-        timezone = db.scalar(select(WorkspaceProfile.timezone))
+        timezone = db.get(WorkspaceProfile, record.org_id).timezone
         db.commit()
     payload = export_world.payload(format="xlsx", include_details=False)
     payload["definition"]["columns"] = [payload["definition"]["columns"][0], *fields]
@@ -349,8 +350,6 @@ def test_module_reader_scope_is_required_for_export(export_world: ExportWorld, r
 
 @pytest.mark.parametrize("state", ["missing", "foreign", "deleted"])
 def test_export_view_metadata_is_scoped_and_current(export_world: ExportWorld, state: str) -> None:
-    from app.systems.sandbox.modules.models import Module
-
     view_id = export_world.view_id
     foreign_id = None
     with Session(export_world.owner) as db:
@@ -358,7 +357,11 @@ def test_export_view_metadata_is_scoped_and_current(export_world: ExportWorld, s
         if state == "missing":
             view_id = uuid7()
         elif state == "foreign":
-            foreign = Module(department_id=export_world.department_id, module_name="Private view")
+            foreign = Module(
+                org_id=view.org_id,
+                department_id=export_world.department_id,
+                module_name="Private view",
+            )
             db.add(foreign)
             db.flush()
             foreign_id = foreign.id
@@ -391,7 +394,8 @@ def test_xlsx_theme_header_matches_the_light_css(export_world: ExportWorld, them
     action = re.search(r"--action:\s*(#[a-fA-F0-9]{6})", css.read_text())
     assert action is not None
     with Session(export_world.owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        org_id = db.get(Module, export_world.module_id).org_id
+        profile = db.get(WorkspaceProfile, org_id)
         original = profile.theme
         profile.theme = theme
         db.commit()
@@ -413,7 +417,7 @@ def test_xlsx_theme_header_matches_the_light_css(export_world: ExportWorld, them
             assert font.find("s:color", NS).get("rgb") == "FFFFFFFF"
     finally:
         with Session(export_world.owner) as db:
-            db.scalar(select(WorkspaceProfile)).theme = original
+            db.get(WorkspaceProfile, org_id).theme = original
             db.commit()
 
 

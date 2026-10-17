@@ -14,7 +14,8 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.audit.snapshots import REDACTED
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
+from tests.conftest import membership_of, workspace_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -47,20 +48,27 @@ def security_workspace(fake_provider_account):
         user = db.get(User, local_id)
         assert user is not None
         user.supabase_user_id = provider_id
-        user.role = "admin"
-        profile = db.scalar(select(WorkspaceProfile))
+        membership = membership_of(db, local_id)
+        membership.role = "admin"
+        profile = db.get(WorkspaceProfile, membership.org_id)
+        platform = db.scalar(select(PlatformSettings))
         assert profile is not None
-        original = {field: getattr(profile, field) for field in _FIELDS}
-        profile.session_timeout_minutes = 60
-        profile.session_retention_days = profile.security_event_retention_days = 365
-        profile.password_min_length = 12
-        profile.password_require_mixed_case = True
-        profile.password_require_number = False
+        original = {
+            field: getattr(platform if field in PlatformSettings.__table__.columns
+                           and field != "revision" else profile, field)
+            for field in _FIELDS
+        }
+        platform_revision = platform.revision
+        platform.session_timeout_minutes = 60
+        platform.session_retention_days = platform.security_event_retention_days = 365
+        platform.password_min_length = 12
+        platform.password_require_mixed_case = True
+        platform.password_require_number = False
         profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = False
         profile.mfa_grace_days = 0
-        profile.session_absolute_lifetime_minutes = profile.session_concurrent_limit = None
-        profile.login_failed_attempt_threshold = 5
-        profile.login_window_minutes = profile.login_cooldown_minutes = 15
+        platform.session_absolute_lifetime_minutes = platform.session_concurrent_limit = None
+        platform.login_failed_attempt_threshold = 5
+        platform.login_window_minutes = platform.login_cooldown_minutes = 15
         profile.ip_allow_list = []
         db.commit()
     settings = get_settings()
@@ -80,10 +88,13 @@ def security_workspace(fake_provider_account):
     finally:
         client.close()
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.get(WorkspaceProfile, membership_of(db, local_id).org_id)
+            platform = db.scalar(select(PlatformSettings))
             assert profile is not None
             for field, value in original.items():
-                setattr(profile, field, value)
+                setattr(platform if field in PlatformSettings.__table__.columns
+                        and field != "revision" else profile, field, value)
+            platform.revision = platform_revision
             db.commit()
 
 
@@ -130,7 +141,7 @@ def test_workspace_security_saves_canonical_settings_with_audit_and_stale_protec
     public = client.get("/api/workspace").json()
     assert not (set(_FIELDS) - {"revision"}) & set(public)
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, local_id)
         assert profile is not None
         assert profile.performed_by == local_id
         audit = db.scalar(
@@ -211,7 +222,7 @@ def test_workspace_security_denies_demoted_admin_for_read_and_write(security_wor
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None
-        user.role = "member"
+        membership_of(db, local_id).role = "member"
         db.commit()
     assert client.get("/api/workspace/security").status_code == 403
     assert client.get("/api/workspace/security/caller-ip").status_code == 403
@@ -226,10 +237,11 @@ def test_workspace_security_denies_demoted_admin_for_read_and_write(security_wor
         == 403
     )
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, local_id)
         assert profile is not None
         assert profile.revision == initial["revision"]
-        assert profile.session_timeout_minutes == initial["session_timeout_minutes"]
+        platform = db.scalar(select(PlatformSettings))
+        assert platform.session_timeout_minutes == initial["session_timeout_minutes"]
 
 
 @pytest.mark.parametrize("minimum,mixed,number", [(13, False, True), (128, True, False)])
@@ -474,11 +486,11 @@ def test_retention_defaults_independent_updates_and_omissions_preserve_policy(se
         assert client.get("/api/workspace/security").json() == second.json()
         assert not set(fields) & client.get("/api/workspace").json().keys()
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.scalar(select(PlatformSettings))
             assert profile.performed_by == actor_id
     finally:
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.scalar(select(PlatformSettings))
             for field in fields:
                 setattr(profile, field, before[field])
             db.commit()

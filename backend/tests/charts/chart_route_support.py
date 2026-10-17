@@ -17,8 +17,16 @@ from app.systems.manage.audit.models import AuditLog
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from tests.live_session_support import with_live_session
-from tests.rbac.support import _client, add_department, add_module, add_user, make_group_access
+from tests.rbac.support import (
+    _client,
+    add_department,
+    add_module,
+    add_user,
+    make_group_access,
+    organization,
+)
 from tests.route_app_support import route_app
+from tests.sandbox_designs.fixtures import create_document
 
 
 @dataclass
@@ -73,12 +81,14 @@ class ChartWorld:
 @pytest.fixture
 def chart_world(integration_owner_db: Session) -> ChartWorld:
     db = integration_owner_db
+    create_document(db, organization(db))
     department = add_department(db, "Chart source " + uuid7().hex)
     other_department = add_department(db, "Other source " + uuid7().hex)
     module = add_module(db, department)
     other_module = add_module(db, other_department)
     fields = [
-        Field(module_id=module.id, name=name, type=kind, position=position, config={})
+        Field(org_id=module.org_id, module_id=module.id,
+              name=name, type=kind, position=position, config={})
         for position, (name, kind) in enumerate(
             [
                 ("Label", FieldType.TEXT),

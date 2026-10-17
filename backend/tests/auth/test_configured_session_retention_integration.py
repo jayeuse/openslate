@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentityMfaObservation
 from app.systems.access.identity.session_retention import retain_terminal_sessions
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings
 from tests.auth.session_retention_support import world as world
 
 pytestmark = pytest.mark.integration
@@ -22,13 +22,13 @@ FIELDS = ("session_retention_days", "security_event_retention_days")
 @pytest.fixture
 def configured_world(world):
     with Session(world.owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = db.scalar(select(PlatformSettings))
         before = {field: getattr(profile, field) for field in FIELDS}
     try:
         yield world
     finally:
         with Session(world.owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.scalar(select(PlatformSettings))
             for field, value in before.items():
                 setattr(profile, field, value)
             db.commit()
@@ -36,7 +36,7 @@ def configured_world(world):
 
 def _policy(world, **fields):
     with Session(world.owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = db.scalar(select(PlatformSettings))
         for field, value in fields.items():
             setattr(profile, field, value)
         db.commit()
@@ -119,7 +119,7 @@ def test_session_cleanup_and_policy_writer_serialize(configured_world, first, mo
         with world.owner.connect() as writer:
             transaction = writer.begin()
             holder_pid = writer.scalar(text("SELECT pg_backend_pid()"))
-            writer.execute(text("UPDATE public.workspace_profiles SET session_retention_days=1"))
+            writer.execute(text("UPDATE public.platform_settings SET session_retention_days=1"))
             with ThreadPoolExecutor(max_workers=1) as pool:
                 pending = pool.submit(_retain, world)
                 try:

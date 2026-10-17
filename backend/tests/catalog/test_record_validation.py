@@ -693,11 +693,16 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
     db.get.side_effect = lambda model, *_args, **_kwargs: module if model is Module else record
     db.scalar.return_value = module
     db.scalars.return_value.all.return_value = [closed]
+    actor, membership = make_user("record_writer")
+    db.dirty = set()
+    db.scalars.side_effect = lambda query: Mock(all=lambda: (
+        [membership] if query.column_descriptions[0]["entity"] is type(membership) else [closed]
+    ))
 
     update_record(
         record.id,
         RecordUpdate(data={str(closed.id): 1}),
-        make_user("record_writer"),
+        actor,
         db,
         if_match=record.updated_at.isoformat(),
     )
@@ -707,7 +712,7 @@ def test_record_patch_rejects_type_changed_closed_integer_value() -> None:
         update_record(
             record.id,
             RecordUpdate(data={str(closed.id): True}),
-            make_user("record_writer"),
+            actor,
             db,
             if_match=record.updated_at.isoformat(),
         )

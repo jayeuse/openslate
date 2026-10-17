@@ -27,10 +27,10 @@ from app.systems.sandbox.records.query_schemas import (
 )
 
 
-def _workspace_timezone(db: Session) -> str:
-    timezone_name = db.scalar(
-        select(WorkspaceProfile.timezone).where(WorkspaceProfile.singleton_key.is_(True))
-    )
+def _workspace_timezone(db: Session, org_id: UUID) -> str:
+    timezone_name = db.scalars(
+        select(WorkspaceProfile.timezone).where(WorkspaceProfile.id == org_id)
+    ).one_or_none()
     if not timezone_name:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
     try:
@@ -90,7 +90,7 @@ def query_window_records(
         extra_references=references,
     )
     timezone_name = (
-        _workspace_timezone(db)
+        _workspace_timezone(db, next(iter(fields.values())).org_id)
         if any(
             fields[reference.field_id].type == FieldType.DATETIME
             for reference in (*references, *payload.definition.columns)

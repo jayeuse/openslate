@@ -141,53 +141,30 @@ def test_provider_availability_and_commit_failure_do_not_claim_sign_in(event_wor
     assert {r.id for r in world.records("identity.sign_in", actor_id=world.actor_id)} == before
 
 
-def test_ip_denials_are_separate_source_hour_rows_with_only_verified_attribution(
-    event_world, monkeypatch
-):
+def test_ip_denials_gate_organization_entry_with_verified_attribution(event_world):
+    """Owner decision (2026-10-16): the allow list gates organization entry, not sign-in."""
     world = event_world
     world.policy(ip_allow_list=["127.0.0.1/32"])
     anonymous_address, verified_address = source(), source()
-    provider = get_supabase_auth_client()
-    calls = []
-    original = provider.password_grant
-
-    def grant(*args):
-        calls.append(True)
-        return original(*args)
-
-    monkeypatch.setattr(provider, "password_grant", grant)
     with world.anonymous(anonymous_address) as client:
-        for forwarded in ["192.0.2.1", "192.0.2.2"]:
-            response = client.post(
-                "/api/auth/login",
-                headers={"X-Forwarded-For": forwarded},
-                json={"email": "unknown@example.test", "password": "not-recorded"},
-            )
-            assert (
-                response.status_code == 403
-                and response.json()["detail"]["code"] == "ip_not_allowed"
-            )
-    assert not calls
+        response = client.post(
+            "/api/auth/login",
+            json={"email": "unknown@example.test", "password": "not-recorded"},
+        )
+        assert "ip_not_allowed" not in response.text
     with world.anonymous(verified_address) as client:
         client.cookies.update(world.client.cookies)
-        result = client.get("/api/auth/me")
-        assert result.status_code == 403
+        entered = client.get("/api/workspace")
+        assert entered.status_code == 403, entered.text
+        assert entered.json()["detail"]["code"] == "ip_not_allowed"
     rows = [
         r
         for r in world.records("identity.ip_blocked")
         if r.event_metadata.get("ip_address") in [anonymous_address, verified_address]
     ]
-    assert len(rows) == 2
-    anonymous = next(r for r in rows if r.event_metadata["ip_address"] == anonymous_address)
-    verified = next(r for r in rows if r.event_metadata["ip_address"] == verified_address)
-    assert anonymous.actor_id is None and anonymous.subject_id is None
-    assert verified.actor_id == world.actor_id and verified.subject_id == world.actor_id
-    assert all(r.outcome == "denied" for r in rows)
-    assert not [
-        r
-        for r in world.records("identity.sign_in_failure")
-        if r.event_metadata.get("ip_address") in [anonymous_address, verified_address]
-    ]
+    assert [r.event_metadata["ip_address"] for r in rows] == [verified_address]
+    assert rows[0].actor_id == world.actor_id and rows[0].subject_id == world.actor_id
+    assert rows[0].outcome == "denied"
 
 
 def test_lowered_login_threshold_commits_one_lockout_but_recovery_budget_does_not(event_world):

@@ -307,6 +307,7 @@ test("blurring during the first session check does not strand an unverified work
         body: JSON.stringify({
           authenticated: true,
           user_id: userA,
+          default_organization_blocked: null,
           setup_required: false,
         }),
       });
@@ -355,6 +356,7 @@ test("a returning tab conceals the old account before revalidation and ignores d
       body: JSON.stringify({
         authenticated: true,
         user_id: requestedUser,
+        default_organization_blocked: null,
         setup_required: false,
       }),
     });
@@ -461,7 +463,12 @@ test("a returning tab with a revoked session hides the workspace and redirects t
       contentType: "application/json",
       body: JSON.stringify(
         authenticated
-          ? { authenticated: true, user_id: userA, setup_required: false }
+          ? {
+              authenticated: true,
+              user_id: userA,
+              setup_required: false,
+              default_organization_blocked: null,
+            }
           : { authenticated: false },
       ),
     });
@@ -502,6 +509,7 @@ test("a same-account recheck preserves an in-progress workspace input behind the
       body: JSON.stringify({
         authenticated: true,
         user_id: userA,
+        default_organization_blocked: null,
         setup_required: false,
       }),
     });
@@ -536,6 +544,7 @@ test("an unavailable returning-tab check stays private through Escape and recove
         ? JSON.stringify({
             authenticated: true,
             user_id: userA,
+            default_organization_blocked: null,
             setup_required: false,
           })
         : JSON.stringify({ detail: "Temporary error" }),
@@ -577,6 +586,7 @@ test("a returning tab starts a new identity check while an old refresh remains p
           : {
               authenticated: true,
               user_id: activeUser,
+              default_organization_blocked: null,
               setup_required: false,
             },
       ),
@@ -630,6 +640,7 @@ test("Retry starts a fresh check when the current session request never settles"
         body: JSON.stringify({
           authenticated: true,
           user_id: userA,
+          default_organization_blocked: null,
           setup_required: false,
         }),
       });
@@ -670,7 +681,12 @@ for (const transition of [
     await page.route("**/api/auth/session", (route) =>
       route.fulfill({
         json: activeUser
-          ? { authenticated: true, user_id: activeUser, setup_required: false }
+          ? {
+              authenticated: true,
+              user_id: activeUser,
+              setup_required: false,
+              default_organization_blocked: null,
+            }
           : { authenticated: false },
       }),
     );

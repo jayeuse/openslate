@@ -10,13 +10,13 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from uuid6 import uuid7
 
 from app.core.config import get_settings
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.database.session import AuditSession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.platform.files.models import File
 from app.systems.platform.files.supabase_storage import SupabaseStorage
@@ -24,7 +24,13 @@ from app.systems.sandbox.departments.models import Department
 from operations.reset import models as reset_models
 from operations.reset.storage import ResetStorage
 from tests import fullstack_runner
-from tests.conftest import _guard_integration_database, guarded_create_engine
+from tests.conftest import (
+    _guard_integration_database,
+    create_member,
+    create_organization,
+    guarded_create_engine,
+    make_operator,
+)
 from tests.reset_application_data.provider_reset_cli import dry_run_digest, tty_reset
 
 pytestmark = pytest.mark.integration
@@ -133,7 +139,8 @@ def _create_reset_fixture(
     admin_id: UUID,
     storage_objects: SupabaseStorage,
 ) -> tuple[tuple[str, str], tuple[bytes, bytes]]:
-    uploading_key, ready_key = uuid4().hex, uuid4().hex
+    # Organization file keys (D17); the reset removes every object in both buckets.
+    uploading_key, ready_key = (f"org/{uuid4()}/{uuid4().hex}" for _ in range(2))
     uploading_bytes = b"reset-acceptance-uploading-object"
     ready_bytes = b"reset-acceptance-ready-object"
     storage_objects.upload(uploading_key, uploading_bytes, "application/octet-stream")
@@ -147,13 +154,22 @@ def _create_reset_fixture(
                 request_method="POST",
                 request_path="/api/test/provider-reset-acceptance",
             )
+            admin = database.get(User, admin_id)
+            membership = database.scalar(select(Membership).where(Membership.user_id == admin_id))
+            if admin is None or membership is None:
+                raise RuntimeError("The seeded administrator has no organization")
+            # The reset preserves the installation operator, so the seeded admin becomes one.
+            make_operator(database, admin)
             # Library documents belong to a department since files gained department_id.
-            department = Department(department_name=f"Reset {uuid4().hex}")
+            department = Department(
+                org_id=membership.org_id, department_name=f"Reset {uuid4().hex}"
+            )
             database.add(department)
             database.flush()
             database.add_all(
                 (
                     File(
+                        org_id=membership.org_id,
                         purpose="library_document",
                         department_id=department.id,
                         creator_id=admin_id,
@@ -164,6 +180,7 @@ def _create_reset_fixture(
                         state="uploading",
                     ),
                     File(
+                        org_id=membership.org_id,
                         purpose="library_document",
                         department_id=department.id,
                         creator_id=admin_id,
@@ -177,6 +194,10 @@ def _create_reset_fixture(
                     ),
                 )
             )
+            # The install holds two organizations; the reset must remove both.
+            second = create_organization(database, display_name="Second reset organization")
+            create_member(database, second, role="admin", status="active")
+            database.add(Department(org_id=second.id, department_name=f"Reset {uuid4().hex}"))
             database.commit()
     finally:
         engine.dispose()
@@ -274,23 +295,19 @@ def _assert_after_reset(
     try:
         with engine.connect() as connection:
             queries = {
-                "admin": "SELECT u.id, u.email, u.supabase_user_id, u.status, u.role "
+                "admin": "SELECT u.id, u.email, u.supabase_user_id, u.status "
                 "FROM public.users AS u",
-                "invitations": "SELECT invitation_expiry_days, guest_duration_days "
-                "FROM public.workspace_profiles",
-                "workspace": "SELECT logo_file_id FROM public.workspace_profiles",
-                "sandbox": "SELECT singleton_key, schema_version, revision, performed_by, "
-                "deleted_at, is_deleted FROM public.sandbox_documents",
+                "operator": "SELECT user_id FROM public.platform_operators",
             }
             state = {name: _row(connection, query) for name, query in queries.items()}
     finally:
         engine.dispose()
-    if state["admin"] != (admin_id, admin_email, admin_provider_id, "active", "admin"):
+    if counts["organizations"] != 0:
+        pytest.fail("The CLI left an organization or recreated one")
+    if state["admin"] != (admin_id, admin_email, admin_provider_id, "active"):
         pytest.fail("The CLI did not preserve exactly the configured administrator profile")
-    if state["invitations"] != (7, 30):
-        pytest.fail("The CLI did not restore the invitation settings")
-    if state["workspace"] != (None,) or state["sandbox"] != (True, 4, 1, None, None, False):
-        pytest.fail("The CLI did not restore the workspace and Sandbox defaults")
+    if state["operator"] != (admin_id,):
+        pytest.fail("The CLI did not preserve exactly the administrator's operator row")
     if provider_state != (True, False):
         pytest.fail("The CLI did not retain only the administrator Auth identity")
     if objects:
@@ -332,7 +349,12 @@ def test_reset_cli_dry_run_confirmation_and_execute_against_fresh_provider() -> 
         tables = {name: count for name, count, _digest in before[0]}
         if tables["identity_sessions"] != 1:
             raise RuntimeError("The real administrator login did not create one local session")
-        if tables["files"] != 2 or tables["departments"] != 1:
+        if (
+            tables["files"] != 2
+            or tables["departments"] != 2
+            or tables["organizations"] != 2
+            or tables["platform_operators"] != 1
+        ):
             raise RuntimeError(
                 "The disposable reset fixture did not create app rows and file metadata"
             )

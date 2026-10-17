@@ -11,7 +11,6 @@ from sqlalchemy import select
 
 from app.common.dependencies import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import User
 from app.systems.boards.attachment_models import (
     BoardAttachment,
     BoardPostRevisionAttachment,
@@ -30,7 +29,10 @@ from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as generic_file_router
 from app.systems.platform.files.storage import get_storage
 from tests.boards.support import board_group
+from tests.conftest import create_member
 from tests.files.test_integration import Store
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -41,7 +43,7 @@ def _client(db, actor, store) -> TestClient:
     app.include_router(content_router, prefix="/api")
     app.include_router(generic_file_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     app.dependency_overrides[get_storage] = lambda: store
 
     @app.middleware("http")
@@ -57,11 +59,12 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    board = Board(scope="project", name="Operations", status="active")
-    other = Board(scope="project", name="Other", status="active")
+    board = Board(org_id=organization(db).id, scope="project", name="Operations", status="active")
+    other = Board(org_id=board.org_id, scope="project", name="Other", status="active")
     db.add_all((board, other))
     db.flush()
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id, author_id=actor.id, title="Author only", all_day=True,
         start_date=date(2026, 9, 24), end_date=date(2026, 9, 24),
         timezone_name="Asia/Manila",
@@ -70,6 +73,7 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
     db.flush()
     content = b"private board bytes"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=actor.id, filename="notice.pdf", expected_size=len(content),
         actual_size=len(content), digest=sha256(content).hexdigest(),
@@ -82,7 +86,8 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
     store.objects[file.object_key] = content
     events = []
     monkeypatch.setattr(
-        "app.systems.boards.attachment_router.append_committed_security_event", events.append
+        "app.systems.boards.attachment_router.append_committed_security_event",
+        lambda event, **_kwargs: events.append(event)
     )
     with _client(db, actor, store) as client:
         assert client.get(f"/api/files/{file.id}").status_code == 403
@@ -103,7 +108,7 @@ def test_event_file_context_hides_bare_id_other_board_and_outsiders(
     assert len(events) == 1
 
     reader_id = uuid4()
-    reader = User(
+    reader, _reader_membership = create_member(db, organization(db),
         id=reader_id, email=f"excluded-{reader_id.hex}@example.test",
         username=f"excluded_{reader_id.hex[:12]}", status="active", role="member",
     )
@@ -125,25 +130,28 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
 ):
     db = guarded_db
     reader_id = uuid4()
-    reader = User(
+    reader, _reader_membership = create_member(db, organization(db),
         id=reader_id, email=f"eligible-{reader_id.hex}@example.test",
         username=f"eligible_{reader_id.hex[:12]}", status="active", role="member",
     )
-    outsider = User(
+    outsider, _outsider_membership = create_member(db, organization(db),
         id=uuid4(), email=f"outsider-{uuid4().hex}@example.test",
         username=f"outsider_{uuid4().hex[:12]}", status="active", role="member",
     )
-    board = Board(scope="project", name="Private notice", status="active")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Private notice", status="active")
     db.add_all((reader, outsider, board))
     db.flush()
     board_group(db, board, [reader], "read")
     notice = BoardPost(
+        org_id=board.org_id,
         board_id=board.id, author_id=actor.id, title="Draft for author",
         body="Previous publication", status="published",
         displayed_publication_number=1,
     )
     content = b"published attachment"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=actor.id, filename="published.pdf", expected_size=len(content),
         actual_size=len(content), digest=sha256(content).hexdigest(),
@@ -153,6 +161,7 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
     db.add_all((notice, file))
     db.flush()
     revision = BoardPostRevision(
+        org_id=notice.org_id,
         post_id=notice.id, publication_number=1, publication_key=uuid4(),
         content_fingerprint=publication_content_fingerprint(
             author_id=actor.id, title="Published for reader", body="Previous publication",
@@ -163,16 +172,19 @@ def test_published_post_file_uses_the_published_snapshot_for_readers(
     db.add(revision)
     db.flush()
     db.add(BoardAttachment(
+        org_id=board.org_id,
         board_id=board.id, file_id=file.id, post_id=notice.id, is_linked=False
     ))
     db.flush()
-    db.add(BoardPostRevisionAttachment(revision_id=revision.id, file_id=file.id))
+    db.add(BoardPostRevisionAttachment(org_id=revision.org_id,
+                                       revision_id=revision.id, file_id=file.id))
     db.commit()
     store = Store(db)
     store.objects[file.object_key] = content
     logged = []
     monkeypatch.setattr(
-        "app.systems.boards.attachment_router.append_committed_security_event", logged.append
+        "app.systems.boards.attachment_router.append_committed_security_event",
+        lambda event, **_kwargs: logged.append(event)
     )
     path = f"/api/boards/{board.id}/posts/{notice.id}/attachments"
     with _client(db, outsider, store) as client:
@@ -195,18 +207,20 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
 ):
     db = guarded_db
     reader_role = "member"
-    viewer = User(
+    viewer, _membership = create_member(db, organization(db),
         id=uuid4(),
         email=f"archived-viewer-{uuid4().hex}@example.test",
         username=f"archived_viewer_{uuid4().hex[:12]}",
         status="active",
         role=reader_role,
     )
-    board = Board(scope="project", name="Archived Board", status=BoardStatus.ACTIVE)
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Archived Board", status=BoardStatus.ACTIVE)
     db.add_all((viewer, board))
     db.flush()
     board_group(db, board, [viewer], "read")
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Retained event",
@@ -217,6 +231,7 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
     )
     content = b"retained event attachment"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -231,13 +246,14 @@ def test_viewer_can_read_linked_event_attachment_after_board_archive_but_cannot_
     )
     db.add_all((event, file))
     db.flush()
-    db.add(BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
+    db.add(BoardAttachment(org_id=board.org_id,
+                           board_id=board.id, file_id=file.id, event_id=event.id))
     db.commit()
     store = Store(db)
     store.objects[file.object_key] = content
     monkeypatch.setattr(
         "app.systems.boards.attachment_router.append_committed_security_event",
-        lambda _event: None,
+        lambda _event, **_kwargs: None,
     )
 
     with _client(db, viewer, store) as client:
@@ -271,10 +287,12 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
     guarded_db, actor, monkeypatch
 ):
     db = guarded_db
-    board = Board(scope="project", name="Archived audience Board", status=BoardStatus.ACTIVE)
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Archived audience Board", status=BoardStatus.ACTIVE)
     db.add(board)
     db.flush()
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Author only",
@@ -284,6 +302,7 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
         timezone_name="Asia/Manila",
     )
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -298,11 +317,12 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
     )
     db.add_all((event, file))
     db.flush()
-    db.add(BoardAttachment(board_id=board.id, file_id=file.id, event_id=event.id))
+    db.add(BoardAttachment(org_id=board.org_id,
+                           board_id=board.id, file_id=file.id, event_id=event.id))
     db.commit()
     board.status = BoardStatus.ARCHIVED
     db.commit()
-    excluded = User(
+    excluded, _membership = create_member(db, organization(db),
         id=uuid4(),
         email=f"archived-excluded-{uuid4().hex}@example.test",
         username=f"archived_excluded_{uuid4().hex[:12]}",
@@ -315,7 +335,7 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
     store.objects[file.object_key] = b"own"
     monkeypatch.setattr(
         "app.systems.boards.attachment_router.append_committed_security_event",
-        lambda _event: None,
+        lambda _event, **_kwargs: None,
     )
 
     with _client(db, excluded, store) as client:
@@ -331,11 +351,13 @@ def test_archived_board_attachment_stays_hidden_from_outsiders(
 def test_a_detached_file_cannot_move_to_other_content(guarded_db, actor):
     """One lifetime owner per file: sample runs upload a second file for the event."""
     db = guarded_db
-    board = Board(scope="project", name="Single owner", status=BoardStatus.ACTIVE)
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Single owner", status=BoardStatus.ACTIVE)
     db.add(board)
     db.flush()
     first, second = (
         BoardEvent(
+            org_id=board.org_id,
             board_id=board.id, author_id=actor.id, title=title, all_day=True,
             start_date=date(2026, 9, 24), end_date=date(2026, 9, 24),
             timezone_name="Asia/Manila",
@@ -344,6 +366,7 @@ def test_a_detached_file_cannot_move_to_other_content(guarded_db, actor):
     )
     content = b"single owner bytes"
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment", board_id=board.id, record_id=None,
         creator_id=actor.id, filename="owner.pdf", expected_size=len(content),
         actual_size=len(content), digest=sha256(content).hexdigest(),

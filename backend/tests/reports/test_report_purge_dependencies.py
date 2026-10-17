@@ -16,6 +16,8 @@ from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
 
@@ -24,12 +26,16 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
     db = integration_db
     now = datetime.now(UTC)
     owner = actor(db)
+    org = organization(db)
+    create_document(db, org)
     department = Department(
+        org_id=org.id,
         department_name=f"Retained Report {uuid7()}", is_deleted=True, deleted_at=now
     )
     db.add(department)
     db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name="Retained source",
         is_deleted=True,
@@ -37,8 +43,10 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
     )
     db.add(module)
     db.flush()
-    record = Record(module_id=module.id, data={}, is_deleted=True, deleted_at=now)
+    record = Record(org_id=module.org_id,
+                    module_id=module.id, data={}, is_deleted=True, deleted_at=now)
     report = Report(
+        org_id=module.org_id,
         module_id=module.id,
         name="Archived report",
         recipe={"version": 1},
@@ -48,6 +56,7 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
     db.add_all([record, report])
     db.flush()
     run = ReportRun(
+        org_id=report.org_id,
         report_id=report.id,
         module_id=module.id,
         idempotency_key=uuid7(),
@@ -62,6 +71,7 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
     db.add(run)
     db.flush()
     row = ReportRunRow(
+        org_id=run.org_id,
         run_id=run.id,
         position=0,
         record_id=record.id,
@@ -102,6 +112,7 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
 
     stale_plan = plan_lifecycle(db, "record", record.id, "purge", owner.id)
     later_run = ReportRun(
+        org_id=report.org_id,
         report_id=report.id,
         module_id=module.id,
         idempotency_key=uuid7(),
@@ -114,6 +125,7 @@ def test_retained_archived_run_blocks_record_module_and_department_purge(integra
     db.add(later_run)
     db.flush()
     later_row = ReportRunRow(
+        org_id=later_run.org_id,
         run_id=later_run.id,
         position=0,
         record_id=record.id,
@@ -130,10 +142,13 @@ def test_archived_report_recipe_blocks_empty_module_purge(integration_db) -> Non
     db = integration_db
     now = datetime.now(UTC)
     owner = actor(db)
-    department = Department(department_name=f"Empty Report {uuid7()}")
+    org = organization(db)
+    create_document(db, org)
+    department = Department(org_id=org.id, department_name=f"Empty Report {uuid7()}")
     db.add(department)
     db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name="Empty source",
         is_deleted=True,
@@ -142,6 +157,7 @@ def test_archived_report_recipe_blocks_empty_module_purge(integration_db) -> Non
     db.add(module)
     db.flush()
     report = Report(
+        org_id=module.org_id,
         module_id=module.id,
         name="Archived empty report",
         recipe={"version": 1},

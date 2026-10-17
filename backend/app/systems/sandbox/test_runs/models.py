@@ -5,7 +5,15 @@ from __future__ import annotations
 from typing import ClassVar
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,6 +25,11 @@ class SandboxTestRun(BaseModel):
 
     __tablename__ = "sandbox_test_runs"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_sandbox_test_runs_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "document_id"], ["sandbox_documents.org_id", "sandbox_documents.id"],
+            name="fk_sandbox_test_runs_document_id_sandbox_documents", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "document_revision > 0", name="ck_sandbox_test_runs_document_revision_positive"
         ),
@@ -29,9 +42,10 @@ class SandboxTestRun(BaseModel):
         {"input_values", "event", "result"}
     )
 
-    document_id: Mapped[UUID] = mapped_column(
-        ForeignKey("sandbox_documents.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
+    document_id: Mapped[UUID] = mapped_column(nullable=False)
     document_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     document_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     module_id: Mapped[str] = mapped_column(String(1_000), nullable=False)

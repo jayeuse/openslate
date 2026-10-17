@@ -14,6 +14,7 @@ from app.main import create_app
 from app.systems.platform.files import service
 from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.storage import get_storage
+from tests.organization_scope_support import scoped_override
 
 
 @pytest.mark.parametrize("blocking_stage", ["provider", "dependency"])
@@ -64,7 +65,7 @@ def test_interrupted_file_requests_keep_capacity_until_actual_work_finishes(
     monkeypatch.setattr(main.asyncio, "timeout", timeout_after_admission)
     app = create_app()
     app.dependency_overrides[get_db] = lambda: object()
-    app.dependency_overrides[get_current_user] = actor
+    app.dependency_overrides[get_current_user] = scoped_override(actor)
     app.dependency_overrides[get_storage] = lambda: object()
 
     async def scenario():

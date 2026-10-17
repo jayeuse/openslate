@@ -161,7 +161,16 @@ class MfaServer:
             factor_id = path.split("/")[5]
             factor = next(f for f in self.factors[user_id] if f["id"] == factor_id)
             if method == "POST":
-                assert body == {"code": OTP}
+                if body != {"code": OTP} and self.fault != "wrong_code_accepted":
+                    return self.response(
+                        {
+                            "detail": {
+                                "code": "mfa_verification_failed",
+                                "message": "Verification code was not accepted",
+                            }
+                        },
+                        400,
+                    )
                 factor["status"] = "verified"
                 return self.response(
                     {"verified": True, "access_token": None},
@@ -355,6 +364,7 @@ def test_mfa_success_requires_real_step_up_revocation_and_exact_restoration(
     original_groups = deepcopy(server.groups)
     result = execute_mfa_control(action, dataset, context)
     assert result["status"] == "complete" and result["target_id"] == server.target
+    assert sum(row["status_code"] == 400 for row in result["request_evidence"]) == 2
     assert len(result["target_session_ids"]) >= 2
     assert all(s not in server.sessions for s in result["target_session_ids"])
     assert all(s not in server.sessions for s in result["actor_session_ids"])
@@ -433,7 +443,7 @@ def test_mfa_refuses_existing_factor_before_promoting_or_enrolling(setup_mfa):
     "fault",
     (
         "aal1_accept denial_mutates no_aal2 receipt_count "
-        "target_factor_remains target_session_remains actor_cleanup"
+        "target_factor_remains target_session_remains actor_cleanup wrong_code_accepted"
     ).split(),
 )
 def test_mfa_cannot_complete_false_security_or_cleanup_evidence(setup_mfa, fault):

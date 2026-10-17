@@ -6,19 +6,24 @@ from sqlalchemy import and_, or_
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.base_model import utc_now
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 
 
-def is_identity_eligible(user: User, *, now: datetime | None = None) -> bool:
+def is_identity_eligible(
+    user: User, membership: Membership, *, now: datetime | None = None
+) -> bool:
     """Return whether a non-deleted account has not reached its expiry boundary."""
 
     timestamp = now or utc_now()
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
-    expires_at = user.expires_at
+    expires_at = membership.expires_at
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=UTC)
-    return not user.is_deleted and (expires_at is None or expires_at > timestamp)
+    return (
+        not user.is_deleted and not membership.is_deleted
+        and (expires_at is None or expires_at > timestamp)
+    )
 
 
 def identity_eligible_clause(*, now: datetime | None = None) -> ColumnElement[bool]:
@@ -27,5 +32,6 @@ def identity_eligible_clause(*, now: datetime | None = None) -> ColumnElement[bo
     timestamp = now or utc_now()
     return and_(
         User.is_deleted.is_(False),
-        or_(User.expires_at.is_(None), User.expires_at > timestamp),
+        Membership.is_deleted.is_(False),
+        or_(Membership.expires_at.is_(None), Membership.expires_at > timestamp),
     )

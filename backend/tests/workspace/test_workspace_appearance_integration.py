@@ -14,6 +14,7 @@ from app.main import create_app
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member, membership_of, workspace_of
 
 pytest_plugins = ("tests.fake_provider_support",)
 pytestmark = pytest.mark.integration
@@ -33,7 +34,7 @@ def _client() -> TestClient:
     )
 
 
-def test_public_appearance_is_anonymous_theme_only_and_no_store():
+def test_public_appearance_is_anonymous_theme_only_and_no_store(fake_provider_account):
     client = _client()
     try:
         assert client.get("/api/workspace").status_code == 401
@@ -59,8 +60,9 @@ def appearance_workspace(fake_provider_account):
         user = db.get(User, local_id)
         assert user is not None
         user.supabase_user_id = provider_id
-        user.role = "admin"
-        profile = db.scalar(select(WorkspaceProfile))
+        membership = membership_of(db, local_id)
+        membership.role = "admin"
+        profile = db.get(WorkspaceProfile, membership.org_id)
         assert profile is not None
         original = {field: getattr(profile, field) for field in _FIELDS}
         profile.theme = "slate"
@@ -82,7 +84,7 @@ def appearance_workspace(fake_provider_account):
     finally:
         client.close()
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, local_id)
             assert profile is not None
             for field, value in original.items():
                 setattr(profile, field, value)
@@ -99,9 +101,12 @@ def test_admin_theme_save_is_audited_revision_guarded_and_public(appearance_work
     assert after["theme"] == theme
     assert after["revision"] == before["revision"] + 1
     assert client.get("/api/workspace").json() == after
+    with Session(owner) as db:
+        org_id = workspace_of(db, actor_id).id
     anonymous = _client()
     try:
-        public = anonymous.get("/api/workspace/appearance")
+        # The sign-in page asks for the browser's last organization (owner decision 3).
+        public = anonymous.get("/api/workspace/appearance", params={"org": str(org_id)})
         assert public.status_code == 200
         assert public.json() == {"theme": theme}
         assert public.headers["Cache-Control"] == "no-store"
@@ -113,7 +118,7 @@ def test_admin_theme_save_is_audited_revision_guarded_and_public(appearance_work
     assert stale.status_code == 409
     assert client.get("/api/workspace").json() == after
     with Session(owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = workspace_of(db, actor_id)
         assert profile is not None and profile.theme == theme
         audit = db.scalar(
             select(AuditLog)
@@ -139,8 +144,10 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
     with Session(owner) as db:
         user = db.get(User, actor_id)
         assert user is not None
+        membership = membership_of(db, actor_id)
         if role == "guest":
-            sponsor = User(
+            sponsor, _membership = create_member(db, db.get(WorkspaceProfile,
+                membership_of(db, actor_id).org_id),
                 email=f"appearance-sponsor-{uuid4().hex}@example.test",
                 username=f"appearance-sponsor-{uuid4().hex[:12]}",
                 status="active",
@@ -149,9 +156,9 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
             db.add(sponsor)
             db.flush()
             sponsor_id = sponsor.id
-            user.sponsor_user_id = sponsor_id
-            user.expires_at = datetime.now(UTC) + timedelta(days=1)
-        user.role = role
+            membership.sponsor_user_id = sponsor_id
+            membership.expires_at = datetime.now(UTC) + timedelta(days=1)
+        membership.role = role
         db.commit()
     try:
         denied = client.patch(
@@ -166,12 +173,15 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
             with Session(owner) as db:
                 user = db.get(User, actor_id)
                 assert user is not None
-                user.role = "admin"
-                user.sponsor_user_id = None
-                user.expires_at = None
+                membership = membership_of(db, actor_id)
+                membership.role = "admin"
+                membership.sponsor_user_id = None
+                membership.expires_at = None
                 db.flush()
                 sponsor = db.get(User, sponsor_id)
                 assert sponsor is not None
+                db.delete(membership_of(db, sponsor_id))
+                db.flush()
                 db.delete(sponsor)
                 db.commit()
 
@@ -180,12 +190,12 @@ def test_current_admin_role_loss_cannot_save_theme(appearance_workspace, role):
 def test_public_appearance_failure_is_generic_no_store(monkeypatch, failure):
     from app.systems.manage.workspace import router
 
-    def unavailable(_db):
+    def unavailable(_db, _org=None):
         if failure == "missing":
             raise router._workspace_unavailable()
         raise SQLAlchemyError("Sensitive database diagnostics must stay private")
 
-    monkeypatch.setattr(router, "_workspace", unavailable)
+    monkeypatch.setattr(router, "_signed_out_theme", unavailable)
     client = _client()
     try:
         response = client.get("/api/workspace/appearance")

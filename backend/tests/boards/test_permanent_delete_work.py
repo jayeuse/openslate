@@ -11,7 +11,6 @@ from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
-from app.systems.access.users.models import User
 from app.systems.boards import lifecycle_router
 from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
@@ -25,6 +24,9 @@ from app.systems.platform.scheduling.models import (
     WorkState,
 )
 from tests.boards.provider_accounts import create_password_account
+from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -39,7 +41,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     actor_id = uuid7()
     email = f"board-work-purge-{actor_id.hex}@example.test"
     provider_user_id = create_password_account(db, email=email, password=password)
-    actor = User(
+    actor, _membership = create_member(db, organization(db),
         id=actor_id,
         email=email,
         supabase_user_id=provider_user_id,
@@ -50,10 +52,12 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     db.add(actor)
     db.flush()
     set_audit_actor(db, actor.id)
-    board = Board(scope="project", name="Purge work board", status="archived")
+    board = Board(org_id=organization(db).id,
+                  scope="project", name="Purge work board", status="archived")
     db.add(board)
     db.flush()
     post = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Private draft title",
@@ -64,6 +68,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     db.flush()
     now = datetime.now(UTC)
     revision = BoardPostRevision(
+        org_id=post.org_id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -76,6 +81,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     db.add(revision)
     db.flush()
     work = ScheduledWork(
+        org_id=post.org_id,
         kind=WorkKind.POST_PUBLISH,
         post_id=post.id,
         source_revision=1,
@@ -88,6 +94,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     db.add(work)
     db.flush()
     notification = InAppNotification(
+        org_id=work.org_id,
         work_id=work.id,
         recipient_id=actor.id,
         kind="post-publish",
@@ -96,6 +103,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     )
     db.add(notification)
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Reminder Event",
@@ -106,10 +114,12 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     )
     db.add(event)
     db.flush()
-    reminder = BoardEventReminder(board_id=board.id, event_id=event.id, timing="start")
+    reminder = BoardEventReminder(org_id=board.org_id,
+                                  board_id=board.id, event_id=event.id, timing="start")
     db.add(reminder)
     db.flush()
     reminder_work = ScheduledWork(
+        org_id=reminder.org_id,
         kind=WorkKind.EVENT_REMINDER,
         reminder_id=reminder.id,
         occurrence_start_at=now,
@@ -120,6 +130,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     db.add(reminder_work)
     db.flush()
     reminder_notification = InAppNotification(
+        org_id=reminder_work.org_id,
         work_id=reminder_work.id,
         recipient_id=actor.id,
         kind="event-reminder",
@@ -137,7 +148,7 @@ def test_board_purge_challenges_and_deletes_content_work_dependencies(
     app = FastAPI()
     app.include_router(lifecycle_router.router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     client = TestClient(app)
     path = f"/api/boards/{board.id}/purge"
     preview = client.post(f"{path}/preview")

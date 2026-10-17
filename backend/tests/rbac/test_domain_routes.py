@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from secrets import token_urlsafe
+from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.auth.router as auth_router
@@ -187,17 +189,22 @@ def test_users_invitations_and_audit_are_administrator_only(
     payload: dict[str, object] | None,
     route_group: str,
 ) -> None:
+    database = Mock(spec=Session)
     if route_group == "users":
         monkeypatch.setattr(
             users_router,
             "directory_list",
-            lambda *_args: UserListResponse(items=[], pagination=_empty_list_result().pagination),
+            lambda *_args, **_kwargs: UserListResponse(
+                items=[], pagination=_empty_list_result().pagination
+            ),
         )
     elif route_group == "invitations":
+        invited, invited_membership = make_user("invited")
+        database.scalars.return_value.one.return_value = invited_membership
         monkeypatch.setattr(
             auth_router,
             "invite_user",
-            lambda *_args, **_kwargs: make_user("invited"),
+            lambda *_args, **_kwargs: invited,
         )
     else:
         monkeypatch.setattr(
@@ -207,9 +214,9 @@ def test_users_invitations_and_audit_are_administrator_only(
         )
 
     admin = make_user("admin", role=UserRole.ADMIN)
-    response = _client(api, admin).request(method, path, json=payload)
+    response = _client(api, admin, database).request(method, path, json=payload)
     assert response.status_code in {200, 201}
 
     member = make_user("member", role=UserRole.MEMBER)
-    response = _client(api, member).request(method, path, json=payload)
+    response = _client(api, member, database).request(method, path, json=payload)
     assert response.status_code == 403

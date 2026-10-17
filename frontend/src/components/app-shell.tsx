@@ -27,6 +27,10 @@ import {
 } from "react";
 
 import { useUserPreferences } from "@/components/theme-provider";
+import { useOrganizationTheme } from "@/components/organization-theme-provider";
+import { OrganizationMenu } from "@/components/organization-menu";
+import { PersonAvatar } from "@/components/person-avatar";
+import { authMeOptions } from "@/components/systems/openview/adapters/openview-queries";
 import { NotificationBell } from "@/components/systems/platform/components/notification-bell";
 import { AppNavigation } from "@/components/app-navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
@@ -89,10 +93,14 @@ function clampSidebarWidth(width: number) {
 export function AppShell({
   children,
   verifiedUserId,
+  organizationId,
+  onSwitchOrganization,
   onSignOutAccepted,
 }: {
   children: ReactNode;
   verifiedUserId: string | null;
+  organizationId: string | null;
+  onSwitchOrganization: (orgId: string) => Promise<void>;
   onSignOutAccepted: () => void;
 }) {
   const { device } = useUserPreferences();
@@ -153,6 +161,17 @@ export function AppShell({
       void queryClient.invalidateQueries({ queryKey: manageKeys.brand() });
   }, [savedLogoQuery.error, suspended, queryClient]);
   const brand = suspended || brandDenied ? undefined : brandQuery.data;
+  // The signed-in organization's look replaces the public (signed-out) one.
+  const { hold: holdTheme, releaseHold: releaseTheme } = useOrganizationTheme();
+  const themeOwner = useRef(Symbol("signed-in-organization"));
+  const brandTheme = brand?.theme;
+  useEffect(() => {
+    if (brandTheme) holdTheme(themeOwner.current, brandTheme);
+  }, [brandTheme, holdTheme]);
+  useEffect(() => {
+    const owner = themeOwner.current;
+    return () => releaseTheme(owner);
+  }, [releaseTheme]);
   const logoBlob =
     suspended || brandDenied || brandQuery.isError || savedLogoQuery.isError
       ? undefined
@@ -357,6 +376,8 @@ export function AppShell({
           >
             <AppSidebarHeader
               collapsed={sidebarCollapsed}
+              organizationId={organizationId}
+              onSwitchOrganization={onSwitchOrganization}
               brand={brand}
               blob={logoBlob}
               concealed={suspended || brandDenied}
@@ -458,11 +479,12 @@ export function AppShell({
               className="flex h-full w-72 max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0"
             >
               <SheetTitle className="sr-only">OpenSlate navigation</SheetTitle>
-              <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
+              <div className="flex h-14 shrink-0 items-center justify-between gap-1 border-b px-4">
                 <GuardedWorkspaceLink
                   href={"/openview" as Route}
+                  aria-label={`${brand?.display_name ?? "OpenSlate"} workspace`}
                   onAcceptedNavigate={closeMobileNavigation}
-                  className="flex min-w-0 flex-1 items-center gap-2.5 font-semibold"
+                  className="flex shrink-0 items-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
                 >
                   <WorkspaceLogo
                     blob={logoBlob}
@@ -470,10 +492,14 @@ export function AppShell({
                     mark={brand?.mark ?? "OS"}
                     hidden={suspended || brandDenied}
                   />
-                  <span className="truncate">
-                    {brand?.display_name ?? "OpenSlate"}
-                  </span>
                 </GuardedWorkspaceLink>
+                <OrganizationMenu
+                  name={brand?.display_name ?? "OpenSlate"}
+                  organizationId={organizationId}
+                  onSwitchOrganization={onSwitchOrganization}
+                  onAccepted={closeMobileNavigation}
+                  compact
+                />
                 {logoFailed ? (
                   <Button
                     type="button"
@@ -562,6 +588,8 @@ export function AppShell({
 
 function AppSidebarHeader({
   collapsed,
+  organizationId,
+  onSwitchOrganization,
   brand,
   blob,
   concealed,
@@ -569,6 +597,8 @@ function AppSidebarHeader({
   onRetry,
 }: {
   collapsed: boolean;
+  organizationId: string | null;
+  onSwitchOrganization: (orgId: string) => Promise<void>;
   brand: WorkspaceBrand | undefined;
   blob: Blob | undefined;
   concealed: boolean;
@@ -578,25 +608,31 @@ function AppSidebarHeader({
   const name = brand?.display_name ?? "OpenSlate";
   return (
     <SidebarHeader className="shrink-0 gap-4 px-4 pt-4 pb-2">
-      <GuardedWorkspaceLink
-        href={"/openview" as Route}
-        aria-label={`${name} workspace`}
+      <div
         className={cn(
-          "flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2",
+          "flex min-w-0 items-center gap-1",
+          collapsed && "flex-col",
         )}
       >
-        <WorkspaceLogo
-          blob={blob}
+        <GuardedWorkspaceLink
+          href={"/openview" as Route}
+          aria-label={`${name} workspace`}
+          className="flex shrink-0 items-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2"
+        >
+          <WorkspaceLogo
+            blob={blob}
+            name={name}
+            mark={brand?.mark ?? "OS"}
+            hidden={concealed}
+          />
+        </GuardedWorkspaceLink>
+        <OrganizationMenu
           name={name}
-          mark={brand?.mark ?? "OS"}
-          hidden={concealed}
+          organizationId={organizationId}
+          onSwitchOrganization={onSwitchOrganization}
+          iconOnly={collapsed}
         />
-        {!collapsed ? (
-          <span className="truncate text-lg font-semibold tracking-tight">
-            {name}
-          </span>
-        ) : null}
-      </GuardedWorkspaceLink>
+      </div>
       {failed ? (
         <Button
           type="button"
@@ -733,6 +769,12 @@ function AppHeaderActions({
   onLogout: () => Promise<void>;
 }) {
   const requestNavigation = useWorkspaceNavigationRequest();
+  const suspended = useWorkspaceInteractionSuspended();
+  const identity = useQuery({ ...authMeOptions(), enabled: !suspended });
+  const self =
+    !suspended && identity.data?.id === verifiedUserId
+      ? identity.data
+      : undefined;
 
   function requestLogout() {
     const logout = () => {
@@ -766,7 +808,17 @@ function AppHeaderActions({
             />
           }
         >
-          <UserCircle className="size-5" aria-hidden="true" />
+          {self ? (
+            <PersonAvatar
+              name={self.displayName ?? self.username}
+              avatarUrl={
+                self.avatarFileId ? `/api/users/${self.id}/avatar` : null
+              }
+              size="default"
+            />
+          ) : (
+            <UserCircle className="size-5" aria-hidden="true" />
+          )}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" aria-label="Account">
           <DropdownMenuGroup>

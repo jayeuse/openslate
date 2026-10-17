@@ -8,6 +8,7 @@ from uuid6 import uuid7
 
 from app.common.listing import ListQuerySpec, StandardListRequest, execute_standard_list
 from app.systems.sandbox.departments.models import Department
+from tests.conftest import create_organization
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = [
@@ -25,11 +26,12 @@ class DepartmentSortField(StrEnum):
 
 def test_standard_list_executes_against_postgresql(integration_db: Session) -> None:
     token = str(uuid7())
+    organization = create_organization(integration_db)
     integration_db.add_all(
         [
-            Department(department_name=f"{token} Alpha"),
-            Department(department_name=f"{token} Beta"),
-            Department(department_name=f"{token} Deleted", is_deleted=True),
+            Department(org_id=organization.id, department_name=f"{token} Alpha"),
+            Department(org_id=organization.id, department_name=f"{token} Beta"),
+            Department(org_id=organization.id, department_name=f"{token} Deleted", is_deleted=True),
         ]
     )
     integration_db.flush()

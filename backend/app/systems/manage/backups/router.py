@@ -20,6 +20,7 @@ from app.common.dependencies import (
     get_current_identity,
     get_current_user,
     require_fresh_exact_admin,
+    require_platform_operator,
 )
 from app.common.listing import ListQuerySpec, StandardListResponse, execute_standard_list
 from app.core.base_model import utc_now
@@ -123,6 +124,7 @@ def _error(code: str, status: int = 409) -> HTTPException:
 )
 def get_status(actor: Actor, db: Database, response: Response) -> BackupStatusResponse:
     require_fresh_exact_admin(db, actor.id)
+    require_platform_operator(db, actor.id)
     response.headers["Cache-Control"] = "no-store"
     try:
         return service.status_response(db, service.installation_id(db))
@@ -138,6 +140,7 @@ def update_policy(
     payload: BackupPolicyUpdate, actor: Actor, db: Database, response: Response
 ) -> BackupStatusResponse:
     require_fresh_exact_admin(db, actor.id)
+    require_platform_operator(db, actor.id)
     try:
         instance = service.installation_id(db)
         policy = service.lock_policy(db, instance)
@@ -145,7 +148,7 @@ def update_policy(
             raise service.BackupStateError("stale_revision")
         # Read before any assignment: a query would autoflush a disabled schedule
         # that still has its old due time and break ck_backup_policies_disabled_due.
-        timezone = service.workspace(db).timezone
+        timezone = policy.timezone
         for field in payload.model_fields_set - {"revision"}:
             setattr(policy, field, getattr(payload, field))
         policy.timezone = timezone
@@ -187,6 +190,7 @@ def queue_backup(
     ],
 ) -> BackupRunResponse:
     require_fresh_exact_admin(db, actor.id)
+    require_platform_operator(db, actor.id)
     try:
         instance = service.installation_id(db)
         run = service.queue_manual(db, instance, actor.id, payload.name, idempotency_key)
@@ -211,6 +215,7 @@ def list_backups(
     params: Annotated[BackupListRequest, Query()], actor: Actor, db: Database, response: Response
 ) -> StandardListResponse[BackupRunResponse]:
     require_fresh_exact_admin(db, actor.id)
+    require_platform_operator(db, actor.id)
     try:
         instance = service.installation_id(db)
         statement = select(BackupRun)
@@ -242,6 +247,7 @@ def get_version(
     request: Request, actor: Actor, db: Database, response: Response
 ) -> VersionResponse:
     require_fresh_exact_admin(db, actor.id)
+    require_platform_operator(db, actor.id)
     try:
         result = service.version_status(db, request.app.version)
     except SQLAlchemyError as error:
@@ -268,6 +274,7 @@ def queue_backup_export(
     ],
 ) -> BackupExportResponse:
     require_fresh_exact_admin(db, actor.id)
+    require_platform_operator(db, actor.id)
     try:
         instance = service.installation_id(db)
         row = exports.queue_export(db, instance, actor.id, payload, idempotency_key)
@@ -294,6 +301,7 @@ def get_backup_export(
     export_id: UUID, actor: Actor, db: Database, response: Response
 ) -> BackupExportResponse:
     require_fresh_exact_admin(db, actor.id)
+    require_platform_operator(db, actor.id)
     try:
         instance = service.installation_id(db)
         row = db.scalar(
@@ -328,6 +336,7 @@ def admit_backup_export_download(
     if not identity.cookie_authenticated:
         raise downloads.error("export_admission_required", 403)
     actor = require_fresh_exact_admin(db, identity.user.id)
+    require_platform_operator(db, actor.id)
     actor_id, email = actor.id, actor.email
     db.rollback()
     try:

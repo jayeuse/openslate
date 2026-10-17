@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import UserStatus
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleClosedAncestorError,
@@ -25,6 +25,7 @@ from app.systems.sandbox.relationships.schemas import (
     RelationshipListRequest,
 )
 from tests.lifecycle_integration.lifecycle_integration_support import LifecycleGraph
+from tests.rbac.support import add_user
 
 pytestmark = [
     pytest.mark.integration,
@@ -66,9 +67,7 @@ def test_department_close_cascades_only_owned_rows_and_commits_once(
 def _external_link_state(db: Session, graph: LifecycleGraph) -> list[tuple[object, str, list[str]]]:
     """List the X -> Y field for an administrator, in hidden and available state."""
 
-    reader = User(
-        email="lifecycle-reader@example.test", role="admin", status=UserStatus.ACTIVE.value
-    )
+    reader = add_user(db, "lifecycle-reader", role="admin", status=UserStatus.ACTIVE)
     field = graph.field_external
     items, _pagination = list_relationships(
         db,
@@ -147,6 +146,7 @@ def test_field_close_reports_same_module_records_and_department_label(
     blank_target = lifecycle_graph.deleted_target
     option_id = str(uuid7())
     title_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Work order title",
         type=FieldType.SELECT,
@@ -215,13 +215,15 @@ def test_ancestor_reopen_preserves_independent_closures_and_deleted_records(
     source = lifecycle_graph.source
     manually_deleted = lifecycle_graph.deleted_target
     manually_deleted.is_deleted = True
-    independent = Module(department_id=module.department_id, module_name="Independent closure")
+    independent = Module(org_id=module.org_id, department_id=module.department_id,
+                         module_name="Independent closure")
     independent_field = Field(
+        org_id=module.org_id,
         module_id=module.id, name="Independently closed", type=FieldType.TEXT, position=2
     )
     integration_db.add_all([independent, independent_field])
     integration_db.flush()
-    nested_record = Record(module_id=independent.id, data={})
+    nested_record = Record(org_id=independent.org_id, module_id=independent.id, data={})
     integration_db.add(nested_record)
     integration_db.commit()
     close_lifecycle(integration_db, "module", independent.id, None)
@@ -316,6 +318,7 @@ def test_reopen_rejects_closed_nearest_ancestor_and_names_active_conflict(
 
     department.is_deleted = False
     active_conflict = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=module.module_name,
     )

@@ -6,13 +6,16 @@ from threading import Event
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 import app.systems.access.users.account_operations as account_operations
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import UserUpdate
-from tests.conftest import guarded_create_engine
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member, create_organization, guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import backend_pid, wait_until_blocked_by
 
 pytestmark = [
@@ -30,15 +33,16 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
     engine = guarded_create_engine(os.environ["TEST_DATABASE_URL"], pool_size=3)
     first_id, second_id = uuid7(), uuid7()
     with Session(engine) as db:
+        organization = create_organization(db)
+        org_id = organization.id
         for user_id in (first_id, second_id):
-            db.add(
-                User(
+            create_member(
+                    db, organization,
                     id=user_id,
                     email=f"admin-{user_id.hex}@example.com",
                     username=f"admin_{user_id.hex[:16]}",
                     role=UserRole.ADMIN.value,
                     status=UserStatus.ACTIVE.value,
-                )
             )
         db.commit()
 
@@ -49,17 +53,21 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
     original_projection = account_operations.ensure_projected_admin_remains
     original_disable = account_operations._disable_user
 
-    def observe_projection(db: Session, user: User, **kwargs: object) -> None:
-        original_projection(db, user, **kwargs)
+    def observe_projection(
+        db: Session, user: User, membership: Membership, **kwargs: object
+    ) -> None:
+        original_projection(db, user, membership, **kwargs)
         if user.id == second_id:
             second_projection_done.set()
 
-    def pause_first_disable(db: Session, user: User, **kwargs: object) -> User:
+    def pause_first_disable(
+        db: Session, user: User, membership: Membership, **kwargs: object
+    ) -> User:
         if user.id == first_id:
             holder.append(backend_pid(db))
             first_at_commit.set()
             assert release_first.wait(timeout=5)
-        return original_disable(db, user, **kwargs)
+        return original_disable(db, user, membership, **kwargs)
 
     monkeypatch.setattr(account_operations, "ensure_projected_admin_remains", observe_projection)
     monkeypatch.setattr(account_operations, "_disable_user", pause_first_disable)
@@ -81,9 +89,9 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            first = executor.submit(disable_self, first_id)
+            first = executor.submit(in_context(disable_self), first_id)
             assert first_at_commit.wait(timeout=5)
-            second = executor.submit(disable_self, second_id)
+            second = executor.submit(in_context(disable_self), second_id)
             try:
                 wait_until_blocked_by(engine, holder[0])
                 assert not second_projection_done.is_set()
@@ -98,8 +106,15 @@ def test_concurrent_self_disable_leaves_one_usable_administrator(
         release_first.set()
         with Session(engine) as db:
             for user_id in (first_id, second_id):
+                for membership in db.scalars(
+                    select(Membership).where(Membership.user_id == user_id)
+                ):
+                    db.delete(membership)
+                db.flush()
                 user = db.get(User, user_id)
                 if user is not None:
                     db.delete(user)
+            db.flush()
+            db.delete(db.get(WorkspaceProfile, org_id))
             db.commit()
         engine.dispose()

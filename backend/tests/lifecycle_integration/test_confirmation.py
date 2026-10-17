@@ -116,7 +116,11 @@ def other_actor(lifecycle_api_client):
     """A second administrator; requesting the lifecycle client first keeps its guards."""
 
     owner_url = os.environ["MIGRATION_DATABASE_URL"]
-    actor = create_owned_admin(os.environ["TEST_DATABASE_URL"], owner_url, "lifecycle-other")
+    # Same organization: the actors differ, the organization does not.
+    actor = create_owned_admin(
+        os.environ["TEST_DATABASE_URL"], owner_url, "lifecycle-other",
+        org_id=lifecycle_api_client().org_id,
+    )
     try:
         yield actor
     finally:

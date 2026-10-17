@@ -126,6 +126,18 @@ class NotificationServer:
                 "performed_by": ADMIN,
                 "access": [],
             }
+            # The S05 /auth/me shape: the account plus its organization context.
+            organization = {"org_id": str(UUID(int=900)), "name": "Sample", "slug": "sample",
+                            "role": "member"}
+            self.profiles[actor_id].update({
+                "account": {key: value for key, value in self.profiles[actor_id].items()
+                            if key not in {"role", "access", "sponsor_user_id", "expires_at",
+                                           "invitation_sent_at"}},
+                "memberships": [organization],
+                "pending_invitations": [],
+                "current_organization": {**organization, "access": []},
+                "default_organization_blocked": None,
+            })
             assigned = [record for record in dataset.records if record.assignee_key == key][:2]
             ids = []
             for index, record in enumerate(assigned):

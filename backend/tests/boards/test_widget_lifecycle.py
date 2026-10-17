@@ -17,10 +17,15 @@ from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.schemas import LifecycleBlockerCode
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 
 
 def _closed_module(db) -> Module:
+    org = organization(db)
+    create_document(db, org)
     department = Department(
+        org_id=org.id,
         department_name=f"Widget purge {uuid7().hex}",
         is_deleted=True,
         deleted_at=datetime.now(UTC),
@@ -28,6 +33,7 @@ def _closed_module(db) -> Module:
     db.add(department)
     db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=f"Widget source {uuid7().hex}",
         is_deleted=True,
@@ -65,6 +71,7 @@ def test_field_purge_blocks_retained_board_widget_references_and_detects_drift(
     module = _closed_module(integration_db)
     now = datetime.now(UTC)
     target = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Source",
         type=field_type,
@@ -74,9 +81,10 @@ def test_field_purge_blocks_retained_board_widget_references_and_detects_drift(
         deleted_at=now,
     )
     other = Field(
+        org_id=module.org_id,
         module_id=module.id, name="Other", type=field_type, position=1, config={}
     )
-    board = Board(scope="project",
+    board = Board(org_id=module.org_id, scope="project",
         name="Retained Board",
         status=BoardStatus.ARCHIVED if location == "filters" else BoardStatus.ACTIVE,
         is_deleted=location == "metric",
@@ -85,6 +93,7 @@ def test_field_purge_blocks_retained_board_widget_references_and_detects_drift(
     integration_db.add_all([target, other, board])
     integration_db.flush()
     widget = BoardWidget(
+        org_id=board.org_id,
         board_id=board.id,
         module_id=module.id,
         name="Source widget",
@@ -131,8 +140,10 @@ def test_parent_purge_blocks_archived_and_deleted_board_widgets(
 ) -> None:
     owner = actor(integration_db)
     module = _closed_module(integration_db)
-    board = Board(scope="project", name="Archived Board", status=BoardStatus.ARCHIVED)
+    board = Board(org_id=module.org_id, scope="project",
+                  name="Archived Board", status=BoardStatus.ARCHIVED)
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Source",
         type=FieldType.TEXT,
@@ -145,6 +156,7 @@ def test_parent_purge_blocks_archived_and_deleted_board_widgets(
     integration_db.flush()
     now = datetime.now(UTC)
     active = BoardWidget(
+        org_id=board.org_id,
         board_id=board.id,
         module_id=module.id,
         name="Archived source",
@@ -153,6 +165,7 @@ def test_parent_purge_blocks_archived_and_deleted_board_widgets(
         config=_config(field, "fields"),
     )
     deleted = BoardWidget(
+        org_id=board.org_id,
         board_id=board.id,
         module_id=module.id,
         name="Deleted widget",

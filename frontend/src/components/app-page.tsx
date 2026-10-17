@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { AppQueryProvider } from "@/components/query-provider";
 import {
@@ -11,17 +12,36 @@ import {
   clearVerifiedWorkspaceSessionSnapshot,
   keepAccessDraftsForVerifiedWorkspaceUser,
   VerifiedWorkspaceIdentityProvider,
+  WorkspaceSignOutProvider,
 } from "@/components/systems/shared/runtime/workspace-identity";
 import {
+  acceptOrganizationInvitation,
+  getAuthMe,
   getSessionStatus,
   requestSessionRecheck,
+  selectOrganization,
   sessionRecheckEvent,
   signOut,
+  type OrganizationMembership,
+  type PendingInvitation,
 } from "@/lib/auth-api";
-import { ApiError, refreshBrowserSession } from "@/lib/api";
+import {
+  ApiError,
+  refreshBrowserSession,
+  resetBrowserSessionRefresh,
+} from "@/lib/api";
+import {
+  currentOrganizationId,
+  setCurrentOrganizationId,
+} from "@/lib/organization-context";
+import { OrganizationGate } from "@/components/organization-gate";
 import { toast } from "@/components/ui/toast";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  WorkspaceNavigationGuardProvider,
+  GuardedWorkspaceLink,
+} from "@/components/workspace-navigation-guard";
 import { getMfaStatus, type MfaStatus } from "@/lib/mfa-api";
 import {
   MfaFlowContext,
@@ -36,6 +56,13 @@ type AppPageProps = {
 
 type SessionCheck =
   "valid" | "setup" | "invalid" | "unavailable" | "mfa" | "network";
+type GateCheck = SessionCheck | "organization";
+
+/** The account's organizations when the session has none to open. */
+type OrganizationChoice = {
+  memberships: OrganizationMembership[];
+  invitations: PendingInvitation[];
+};
 
 // The shortest persisted workspace idle policy is fifteen minutes. Renewal
 // is initiated by trusted input, never by a timer or background request.
@@ -153,10 +180,19 @@ export function AppPage({ children }: AppPageProps) {
   const [unavailable, setUnavailable] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [networkDenied, setNetworkDenied] = useState(false);
+  const [accountProfileAvailable, setAccountProfileAvailable] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
   const [draftCleanupFailed, setDraftCleanupFailed] = useState(false);
   const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const verifiedUserIdRef = useRef<string | null>(null);
+  // The organization the mounted workspace belongs to. The workspace (its
+  // query cache, preferences owner and event stream) is keyed by account and
+  // organization, so a switch starts from an empty cache.
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [accountOnly, setAccountOnly] = useState(false);
+  const organizationIdRef = useRef<string | null>(null);
+  const [organizationChoice, setOrganizationChoice] =
+    useState<OrganizationChoice | null>(null);
   const signOutAccepted = useRef(false);
   const activityAttempt = useRef<{ userId: string; at: number } | null>(null);
   const stopActivityRenewal = useRef<(() => void) | null>(null);
@@ -326,11 +362,35 @@ export function AppPage({ children }: AppPageProps) {
         const requestId = ++current.requestId;
         const controller = new AbortController();
         current.controller = controller;
-        let result: SessionCheck = "unavailable";
+        let result: GateCheck = "unavailable";
         let responseUserId: string | null = null;
         let mfaStatus: MfaStatus | null = null;
+        let responseOrganizationId: string | null = null;
+        let responseAccountOnly = false;
+        let choice: OrganizationChoice | null = null;
         try {
-          const body = await getSessionStatus(controller.signal);
+          const body = await getSessionStatus(controller.signal).catch(
+            (error: unknown) => {
+              if (
+                !mounted.current ||
+                current.requestId !== requestId ||
+                current.nextVersion > requested.version ||
+                requested.pathname !== "/profile" ||
+                currentOrganizationId() === null ||
+                !(
+                  error instanceof ApiError &&
+                  error.status === 403 &&
+                  (error.code === "ip_not_allowed" ||
+                    error.code === "mfa_required")
+                )
+              )
+                throw error;
+              // A refused tab organization cannot strand account settings. Retry
+              // the account's default; account-wide MFA still refuses this read.
+              setCurrentOrganizationId(null);
+              return getSessionStatus(controller.signal);
+            },
+          );
           if (
             !mounted.current ||
             current.requestId !== requestId ||
@@ -339,6 +399,58 @@ export function AppPage({ children }: AppPageProps) {
             return;
           result = classifySessionResponse({ ok: true, status: 200 }, body);
           responseUserId = sessionUserId(body);
+          // The session reports whether its default organization may be
+          // entered; an explicit tab organization is refused with a 403.
+          const blocked = body.authenticated
+            ? body.default_organization_blocked
+            : null;
+          if (
+            result === "valid" &&
+            requested.pathname === "/profile" &&
+            (blocked || (body.authenticated && body.organization_id === null))
+          ) {
+            const me = await getAuthMe(controller.signal);
+            if (me.id !== responseUserId) result = "unavailable";
+            else {
+              responseOrganizationId = me.currentOrganization?.orgId ?? null;
+              responseAccountOnly = me.currentOrganization === null;
+            }
+          } else if (result === "valid" && blocked === "mfa_required") {
+            result = "mfa";
+            try {
+              mfaStatus = await getMfaStatus(controller.signal);
+            } catch {
+              mfaStatus = null;
+            }
+          } else if (result === "valid" && blocked === "ip_not_allowed")
+            result = "network";
+          else if (result === "valid") {
+            responseOrganizationId = currentOrganizationId();
+            const sessionOrganization = body.authenticated
+              ? body.organization_id
+              : undefined;
+            // First check in this tab: open the session's organization, or
+            // let the person choose (or see that there is none yet).
+            if (responseOrganizationId === null && sessionOrganization)
+              responseOrganizationId = sessionOrganization;
+            else if (
+              responseOrganizationId === null &&
+              (sessionOrganization === null ||
+                blocked === "organization_required")
+            ) {
+              const me = await getAuthMe(controller.signal);
+              if (me.id !== responseUserId) result = "unavailable";
+              else if (me.currentOrganization)
+                responseOrganizationId = me.currentOrganization.orgId;
+              else {
+                result = "organization";
+                choice = {
+                  memberships: me.memberships,
+                  invitations: me.pendingInvitations,
+                };
+              }
+            }
+          }
         } catch (caught) {
           if (
             !mounted.current ||
@@ -372,6 +484,19 @@ export function AppPage({ children }: AppPageProps) {
         // Do not let a response for an older pathname or retry affect the UI;
         // the loop will immediately process the newest queued request.
         if (current.nextVersion > requested.version) continue;
+        // A refused tab organization may still permit account settings. This
+        // offers navigation only; Profile must pass its own session recheck.
+        setAccountProfileAvailable(
+          responseUserId !== null ||
+            (currentOrganizationId() !== null &&
+              (result === "mfa" || result === "network")),
+        );
+        if (result === "invalid" || result === "setup") {
+          setCurrentOrganizationId(null);
+          organizationIdRef.current = null;
+          setOrganizationChoice(null);
+          resetBrowserSessionRefresh();
+        }
         if (result === "invalid") {
           toast.clearWorkspace();
           clearMfa();
@@ -426,18 +551,28 @@ export function AppPage({ children }: AppPageProps) {
           router.replace("/auth/setup");
           return;
         }
-        if (result === "valid") {
+        if (result === "valid" || result === "organization") {
           if (responseUserId === null) {
             setUnavailable(true);
             continue;
           }
           const previousUserId = verifiedUserIdRef.current;
-          if (previousUserId !== null && previousUserId !== responseUserId)
+          const accountChanged =
+            previousUserId !== null && previousUserId !== responseUserId;
+          // Another organization's drafts and notices never carry over.
+          const contextChanged =
+            accountChanged ||
+            ((result === "valid" || requested.pathname === "/profile") &&
+              previousUserId !== null &&
+              organizationIdRef.current !== null &&
+              organizationIdRef.current !== responseOrganizationId);
+          if (contextChanged) {
             toast.clearWorkspace();
-          const draftsCleared =
-            previousUserId !== null && previousUserId !== responseUserId
-              ? clearAccessDraftsForAccountChange()
-              : keepAccessDraftsForVerifiedWorkspaceUser(responseUserId);
+            resetBrowserSessionRefresh();
+          }
+          const draftsCleared = contextChanged
+            ? clearAccessDraftsForAccountChange()
+            : keepAccessDraftsForVerifiedWorkspaceUser(responseUserId);
           if (!draftsCleared) {
             current.queued = null;
             setVerifiedUserId(null);
@@ -445,7 +580,7 @@ export function AppPage({ children }: AppPageProps) {
             setDraftCleanupFailed(true);
             break;
           }
-          if (previousUserId !== null && previousUserId !== responseUserId) {
+          if (contextChanged) {
             const cleanup =
               clearVerifiedWorkspaceSessionSnapshot(previousUserId);
             verifiedUserIdRef.current = null;
@@ -459,6 +594,38 @@ export function AppPage({ children }: AppPageProps) {
               break;
             }
           }
+          if (result === "organization") {
+            if (requested.pathname === "/profile") {
+              // Verified account-only route, with a fresh cache and no shell reads.
+              responseOrganizationId = null;
+              responseAccountOnly = true;
+            } else {
+              // Keep a still-verified workspace concealed behind the choice.
+              try {
+                if (curtain.current && !curtain.current.open)
+                  curtain.current.showModal();
+              } catch {
+                setForceFallback(true);
+              }
+              if (accountChanged) {
+                organizationIdRef.current = null;
+                setOrganizationId(null);
+              }
+              hideMfa();
+              setMfaRequired(false);
+              setNetworkDenied(false);
+              setOrganizationChoice(choice);
+              setDraftCleanupFailed(false);
+              setUnavailable(false);
+              setChecking(true);
+              continue;
+            }
+          }
+          setCurrentOrganizationId(responseOrganizationId);
+          organizationIdRef.current = responseOrganizationId;
+          setOrganizationId(responseOrganizationId);
+          setAccountOnly(responseAccountOnly);
+          setOrganizationChoice(null);
           verifiedUserIdRef.current = responseUserId;
           bindMfa(responseUserId, "workspace");
           setMfaRequired(false);
@@ -476,6 +643,7 @@ export function AppPage({ children }: AppPageProps) {
             setForceFallback(true);
           }
           bindMfa(mfaStatus.user_id, "gate", mfaStatus);
+          setOrganizationChoice(null);
           setMfaRequired(true);
           setNetworkDenied(false);
           setUnavailable(false);
@@ -488,6 +656,7 @@ export function AppPage({ children }: AppPageProps) {
             setForceFallback(true);
           }
           hideMfa();
+          setOrganizationChoice(null);
           setMfaRequired(true);
           setNetworkDenied(false);
           setUnavailable(true);
@@ -500,6 +669,7 @@ export function AppPage({ children }: AppPageProps) {
             setForceFallback(true);
           }
           hideMfa();
+          setOrganizationChoice(null);
           setMfaRequired(false);
           setNetworkDenied(true);
           setUnavailable(false);
@@ -535,11 +705,60 @@ export function AppPage({ children }: AppPageProps) {
       return;
     }
     signOutAccepted.current = true;
+    forgetOrganization();
     void clearVerifiedWorkspaceSessionSnapshot(verifiedUserIdRef.current);
     verifiedUserIdRef.current = null;
     setVerifiedUserId(null);
     setChecking(true);
     router.replace("/login");
+  }
+
+  function forgetOrganization() {
+    setCurrentOrganizationId(null);
+    organizationIdRef.current = null;
+    setOrganizationChoice(null);
+    resetBrowserSessionRefresh();
+  }
+
+  /** Opens `orgId` in this tab. A gated organization still opens its gate. */
+  async function openOrganization(orgId: string) {
+    try {
+      await selectOrganization(orgId);
+    } catch (caught) {
+      // A refused entry (MFA, network) still opens: the gate explains it.
+      if (!(caught instanceof ApiError && caught.status === 403)) throw caught;
+    }
+    setCurrentOrganizationId(orgId);
+  }
+
+  async function chooseOrganization(organization: OrganizationMembership) {
+    await openOrganization(organization.orgId);
+    retrySessionCheck();
+  }
+
+  async function joinOrganization(invitation: PendingInvitation) {
+    await acceptOrganizationInvitation(invitation.id);
+    try {
+      await openOrganization(invitation.orgId);
+    } catch {
+      // Joined; the next check offers the organization to choose.
+    }
+    retrySessionCheck();
+  }
+
+  /**
+   * Switches this tab to another organization of the same account. The
+   * caller has already passed the navigation guard for unsaved work.
+   */
+  async function switchOrganization(orgId: string): Promise<void> {
+    if (
+      signOutAccepted.current ||
+      verifiedUserIdRef.current === null ||
+      orgId === organizationIdRef.current
+    )
+      return;
+    await openOrganization(orgId);
+    requestSessionRecheck();
   }
 
   async function signOutFromGate() {
@@ -552,88 +771,106 @@ export function AppPage({ children }: AppPageProps) {
     }
   }
 
-  const verification =
-    mfaRequired && mfa.mode === "gate" ? (
-      <section
-        className="w-full max-w-lg px-6 py-8"
-        aria-label="Two-step verification"
-      >
-        <h2 className="text-xl font-semibold">
-          Complete two-step verification
-        </h2>
-        <p className="text-muted-foreground mt-2 text-sm">
-          Verify this account before continuing to your workspace.
-        </p>
-        <MfaPresentation flow={mfa} gate />
-        <div className="mt-2 flex flex-wrap gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={retrySessionCheck}
-          >
-            Check again
+  const verification = organizationChoice ? (
+    <OrganizationGate
+      memberships={organizationChoice.memberships}
+      invitations={organizationChoice.invitations}
+      onChoose={chooseOrganization}
+      onJoin={joinOrganization}
+      onCheckAgain={retrySessionCheck}
+      onSignOut={() => void signOutFromGate()}
+      signOutError={signOutError}
+    />
+  ) : mfaRequired && mfa.mode === "gate" ? (
+    <section
+      className="w-full max-w-lg px-6 py-8"
+      aria-label="Two-step verification"
+    >
+      <h2 className="text-xl font-semibold">Complete two-step verification</h2>
+      <p className="text-muted-foreground mt-2 text-sm">
+        Verify this account before continuing to your workspace.
+      </p>
+      <MfaPresentation flow={mfa} gate />
+      <div className="mt-2 flex flex-wrap gap-3">
+        {accountProfileAvailable && (
+          <Button asChild variant="outline" className="min-h-11">
+            <Link href="/profile">Your profile</Link>
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={() => void signOutFromGate()}
-          >
-            Sign out
-          </Button>
-        </div>
-        {signOutError && (
-          <Alert variant="destructive" className="mt-3">
-            Sign-out could not finish. Try again.
-          </Alert>
         )}
-      </section>
-    ) : networkDenied ? (
-      <div className="mx-auto max-w-sm px-6">
-        <Alert variant="destructive">
-          Access from this address is not allowed. Use an allowed network, or
-          contact your administrator.
-        </Alert>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={retrySessionCheck}
-          >
-            Retry
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={() => void signOutFromGate()}
-          >
-            Sign out
-          </Button>
-        </div>
-        {signOutError && (
-          <Alert variant="destructive" className="mt-3">
-            Sign-out could not finish. Try again.
-          </Alert>
-        )}
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={retrySessionCheck}
+        >
+          Check again
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={() => void signOutFromGate()}
+        >
+          Sign out
+        </Button>
       </div>
-    ) : (
-      <SessionVerificationMessage
-        draftCleanupFailed={draftCleanupFailed}
-        unavailable={unavailable}
-        onRetry={retrySessionCheck}
-        onSignOut={mfaRequired ? () => void signOutFromGate() : undefined}
-        signOutError={signOutError}
-      />
-    );
+      {signOutError && (
+        <Alert variant="destructive" className="mt-3">
+          Sign-out could not finish. Try again.
+        </Alert>
+      )}
+    </section>
+  ) : networkDenied ? (
+    <div className="mx-auto max-w-sm px-6">
+      <Alert variant="destructive">
+        Access from this address is not allowed. Use an allowed network, or
+        contact your administrator.
+      </Alert>
+      <div className="mt-5 flex flex-wrap justify-center gap-3">
+        {accountProfileAvailable && (
+          <Button asChild variant="outline" className="min-h-11">
+            <Link href="/profile">Your profile</Link>
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={retrySessionCheck}
+        >
+          Retry
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={() => void signOutFromGate()}
+        >
+          Sign out
+        </Button>
+      </div>
+      {signOutError && (
+        <Alert variant="destructive" className="mt-3">
+          Sign-out could not finish. Try again.
+        </Alert>
+      )}
+    </div>
+  ) : (
+    <SessionVerificationMessage
+      draftCleanupFailed={draftCleanupFailed}
+      unavailable={unavailable}
+      onRetry={retrySessionCheck}
+      onSignOut={mfaRequired ? () => void signOutFromGate() : undefined}
+      signOutError={signOutError}
+    />
+  );
 
   function acceptSignOut() {
     if (signOutAccepted.current) return;
     // The server has accepted sign-out. The shell owns cleanup/recovery now;
     // focus checks and responses started earlier must not replace that screen.
     signOutAccepted.current = true;
+    forgetOrganization();
     stopActivityRenewal.current?.();
     supersedeSessionCheck(queue.current);
     curtain.current?.close();
@@ -661,18 +898,42 @@ export function AppPage({ children }: AppPageProps) {
         ref={protectedWorkspace}
       >
         <VerifiedWorkspaceIdentityProvider
-          key={verifiedUserId}
+          key={`${verifiedUserId}:${organizationId}`}
           userId={verifiedUserId}
           suspended={checking}
         >
           <AppQueryProvider>
-            <AppShell
-              verifiedUserId={verifiedUserId}
-              onSignOutAccepted={acceptSignOut}
-            >
-              <MfaCleanupNotice flow={mfa} />
-              {children}
-            </AppShell>
+            {accountOnly ? (
+              <WorkspaceNavigationGuardProvider
+                onAcceptedNavigation={() => undefined}
+              >
+                <WorkspaceSignOutProvider
+                  complete={async () => finishFactorRemoval()}
+                >
+                  <main className="bg-background text-foreground min-h-screen px-4 py-6 sm:px-8">
+                    <div className="mx-auto max-w-5xl space-y-6">
+                      <Button asChild variant="outline" className="min-h-11">
+                        <GuardedWorkspaceLink href="/boards">
+                          Your organizations
+                        </GuardedWorkspaceLink>
+                      </Button>
+                      <MfaCleanupNotice flow={mfa} />
+                      {pathname === "/profile" ? children : null}
+                    </div>
+                  </main>
+                </WorkspaceSignOutProvider>
+              </WorkspaceNavigationGuardProvider>
+            ) : (
+              <AppShell
+                verifiedUserId={verifiedUserId}
+                organizationId={organizationId}
+                onSwitchOrganization={switchOrganization}
+                onSignOutAccepted={acceptSignOut}
+              >
+                <MfaCleanupNotice flow={mfa} />
+                {children}
+              </AppShell>
+            )}
           </AppQueryProvider>
           {unavailable && !checking && (
             <div

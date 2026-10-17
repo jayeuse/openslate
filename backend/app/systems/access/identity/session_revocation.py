@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings
 from app.systems.manage.workspace.security_policy import session_expiry_expression
 
 
@@ -68,7 +68,7 @@ def reconcile_session_cap(
     db: Session,
     user_id: UUID,
     current_session_id: UUID,
-    policy: WorkspaceProfile,
+    policy: PlatformSettings,
     *,
     now: datetime,
 ) -> None:

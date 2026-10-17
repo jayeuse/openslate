@@ -3,19 +3,22 @@ import io
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records import export as exporter
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_schemas import ExportRequest
-from tests.rbac.support import add_department, add_module, add_user
+from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import add_department, add_module, add_user, organization
 from tests.record_queries.support import request_for, setup_rows
 
 
@@ -30,6 +33,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         assignee.display_name = "Avery Person"
         option_id = str(uuid7())
         select_field = Field(
+            org_id=module.org_id,
             module_id=module.id,
             name="Status",
             type=FieldType.SELECT,
@@ -38,6 +42,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
             config={"options": [{"id": option_id, "label": "Pending"}]},
         )
         user_field = Field(
+            org_id=module.org_id,
             module_id=module.id,
             name="Assignee",
             type="user",
@@ -48,6 +53,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         setup.add_all((select_field, user_field))
         setup.flush()
         record = Record(
+            org_id=module.org_id,
             module_id=module.id,
             data={str(select_field.id): option_id, str(user_field.id): str(assignee.id)},
         )
@@ -55,6 +61,7 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         setup.commit()
         record_id, select_id, user_field_id = record.id, select_field.id, user_field.id
         module_id, department_id = module.id, department.id
+        org_id = department.org_id
         actor_id, assignee_id = actor.id, assignee.id
 
     payload = ExportRequest(
@@ -68,7 +75,9 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
         },
     )
     try:
-        first, count, _ = exporter.export_snapshot(engine, payload, reader_id=actor_id)
+        first, count, _ = exporter.export_snapshot(
+            engine, payload, reader_id=actor_id, org_id=org_id
+        )
         assert count == 1
         assert list(csv.reader(io.StringIO(first.decode()))) == [
             ["Record ID", "Status", "Assignee"],
@@ -79,7 +88,9 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
             assert field is not None
             field.config = {"options": [{"id": option_id, "label": "Awaiting review"}]}
             writer.commit()
-        renamed, count, _ = exporter.export_snapshot(engine, payload, reader_id=actor_id)
+        renamed, count, _ = exporter.export_snapshot(
+            engine, payload, reader_id=actor_id, org_id=org_id
+        )
         assert count == 1
         assert list(csv.reader(io.StringIO(renamed.decode())))[1] == [
             str(record_id),
@@ -93,6 +104,9 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
                 (Field, [select_id, user_field_id]),
                 (Module, [module_id]),
                 (Department, [department_id]),
+                (Membership, list(cleanup.scalars(select(Membership.id).where(
+                    Membership.user_id.in_([actor_id, assignee_id])
+                )))),
                 (User, [actor_id, assignee_id]),
             ):
                 for identifier in ids:
@@ -101,6 +115,11 @@ def test_export_resolves_select_and_active_user_ids_at_snapshot_time(query_db) -
                         cleanup.delete(row)
                 cleanup.flush()
             cleanup.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
 
 
 @pytest.mark.integration
@@ -112,6 +131,7 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
         reader_id = add_user(setup, "export-reader", role="admin").id
         setup.commit()
         module_id, field_id, department_id = module.id, field.id, module.department_id
+        org_id = module.org_id
         row_ids = [row.id for row in rows]
         payload = request_for(module, field)
         payload.limit = 1
@@ -128,7 +148,9 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
 
     monkeypatch.setattr(exporter, "encode_csv", update_after_snapshot_started)
     try:
-        content, count, _ = exporter.export_snapshot(engine, payload, reader_id=reader_id)
+        content, count, _ = exporter.export_snapshot(
+            engine, payload, reader_id=reader_id, org_id=org_id
+        )
         parsed = list(csv.reader(io.StringIO(content.decode())))
         assert count == 2
         assert [row[1] for row in parsed[1:]] == ["original", "second"]
@@ -141,12 +163,20 @@ def test_export_uses_one_real_repeatable_snapshot_and_ignores_page(query_db, mon
                 (Field, [field_id]),
                 (Module, [module_id]),
                 (Department, [department_id]),
+                (Membership, list(cleanup.scalars(select(Membership.id).where(
+                    Membership.user_id == reader_id
+                )))),
                 (User, [reader_id]),
             ):
                 for identifier in ids:
                     cleanup.delete(cleanup.get(model, identifier))
                 cleanup.flush()
             cleanup.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
 
 
 @pytest.mark.integration
@@ -168,15 +198,14 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
     with AuditSession(engine) as setup:
         role = "admin"
         assert role is not None
-        actor = User(
+        actor, membership = create_member(
+            setup, organization(setup),
             id=actor_id,
             email=f"p7-export-{actor_id}@example.com",
             username=f"p7_export_{actor_id.hex[:12]}",
             role=role,
             status="active",
         )
-        setup.add(actor)
-        setup.flush()
         identity_session = IdentitySession(
             user_id=actor_id,
             refresh_token_digest=uuid7().hex * 2,
@@ -187,6 +216,7 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
         module, field, records = setup_rows(setup, "decimal", ["2", "10"])
         setup.commit()
         module_id, field_id, department_id = module.id, field.id, module.department_id
+        org_id, membership_id = module.org_id, membership.id
         session_id = identity_session.id
         row_ids = [record.id for record in records]
         payload = request_for(
@@ -196,16 +226,16 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
                 {"field_id": field.id, "expected_type": "decimal", "operator": "gt", "value": "2"}
             ],
         )
-        _ = actor.role
+        _ = actor.id
         setup.expunge(actor)
 
     def database():
         with AuditSession(engine) as db:
             yield db
 
-    app.dependency_overrides[get_current_identity] = lambda: CurrentIdentity(
+    app.dependency_overrides[get_current_identity] = scoped_override(lambda: CurrentIdentity(
         actor, session_id, False, False
-    )
+    ))
     app.dependency_overrides[get_db] = database
     try:
         with TestClient(app) as client:
@@ -221,6 +251,7 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
         with Session(engine) as observer:
             event = observer.scalar(select(SecurityEvent).where(SecurityEvent.actor_id == actor_id))
             assert event is not None and event.event_type == "records.export.authorized"
+            assert event.org_id == org_id
             assert event.event_metadata["row_count"] == 1
             assert event.event_metadata["format"] == "csv"
     finally:
@@ -238,6 +269,15 @@ def test_registered_query_and_export_share_rows_and_commit_event(query_db):
                 cleanup.flush()
             cleanup.delete(cleanup.get(IdentitySession, session_id))
             cleanup.flush()
+            cleanup.delete(cleanup.get(Membership, membership_id))
+            cleanup.flush()
             cleanup.delete(cleanup.get(User, actor_id))
             cleanup.flush()
             cleanup.commit()
+        with engine.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.security_events WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})

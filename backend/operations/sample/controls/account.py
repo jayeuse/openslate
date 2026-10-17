@@ -10,6 +10,7 @@ import httpx
 
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient, SampleClientError
+from operations.sample.controls.account_partner import join_partner
 from operations.sample.packs.phase_types import PhaseAction
 from operations.sample.phases.actions import (
     PhaseExecutionContext,
@@ -26,6 +27,9 @@ CONTROL_ROUTES = frozenset(
     {
         ("GET", "/api/auth/session"),
         ("POST", "/api/auth/refresh"),
+        ("POST", "/api/auth/invitations"),
+        ("POST", "/api/auth/invitations/{invitation_id}/accept"),
+        ("POST", "/api/auth/session/organization"),
         ("POST", "/api/auth/password/change"),
         ("POST", "/api/auth/recovery/request"),
         ("POST", "/api/auth/recovery/complete"),
@@ -37,6 +41,10 @@ CONTROL_ROUTES = frozenset(
 )
 
 _WRITES = {
+    # The path continues with the accepted invitation ID and "/accept".
+    "accept_partner_invitation": ("POST", "/api/auth/invitations/", 204),
+    "select_partner_organization": ("POST", "/api/auth/session/organization", 200),
+    "select_organization": ("POST", "/api/auth/session/organization", 200),
     "refresh_session": ("POST", "/api/auth/refresh", 200),
     "login_end_target": ("POST", "/api/auth/login", 200),
     "end_current_session": ("DELETE", "/api/auth/sessions/", 204),
@@ -201,6 +209,29 @@ def execute_account_control(
             baseline = (
                 mailbox.snapshot()
             )  # Refuse an unavailable mailbox before changing a password.
+            identity = _read_json(
+                request(primary, "read_organization", "GET", "/api/auth/me"),
+                step="read_organization",
+            )
+            organization = identity.get("current_organization")
+            if identity.get("id") != actor_id or not isinstance(organization, Mapping):
+                raise SamplePhaseActionError(
+                    "Account has no selected organization", step="read_organization"
+                )
+            org_id = _uuid(organization.get("org_id"), "read_organization")
+            partner_id, invitation_id = join_partner(
+                action, dataset, private.get("partner_admin"), credential.email,
+                actor_id, primary, request,
+            )
+            selected = _read_json(request(
+                primary, "select_organization", "POST", "/api/auth/session/organization",
+                body={"org_id": org_id},
+            ), step="select_organization")
+            if (selected.get("id") != actor_id
+                    or selected.get("current_organization") != organization):
+                raise SamplePhaseActionError(
+                    "Organization selection readback differs", step="select_organization"
+                )
             current = _read_json(
                 request(primary, "read_session", "GET", "/api/auth/session"), step="read_session"
             )
@@ -309,6 +340,8 @@ def execute_account_control(
         "original_password_restored": True,
         "primary_session_authenticated": True,
         "ended_session_ids": ended,
+        "partner_organization_id": partner_id,
+        "partner_invitation_id": invitation_id,
         "sse_resyncs": stream["resyncs"],
         "request_evidence": evidence,
         "mappings": [],
@@ -348,6 +381,7 @@ def verify_account_controls(
         or result.get("original_password_restored") is not True
         or result.get("primary_session_authenticated") is not True
         or result.get("sse_resyncs") != 1
+        or result.get("partner_organization_id") != manifest.get("partner_organization_id")
     ):
         return counts, ["account control end-state evidence differs from the planned non-admin"]
     evidence = result.get("request_evidence")
@@ -365,6 +399,8 @@ def verify_account_controls(
             method, path, status = _WRITES[row["step"]]
             if row["step"] == "end_current_session":
                 path += ended[1]
+            if row["step"] == "accept_partner_invitation":
+                path += f"{UUID(str(result.get('partner_invitation_id')))}/accept"
             request_id = str(UUID(row.get("request_id", "")))
             if (
                 request_id in seen

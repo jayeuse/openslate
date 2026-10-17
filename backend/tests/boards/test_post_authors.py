@@ -12,6 +12,8 @@ from app.systems.boards.post_author_router import router
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from tests.boards.support import client as board_client
 from tests.boards.support import grant, member, writable_board
+from tests.conftest import create_member, membership_of
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -26,6 +28,7 @@ def _published(
     published_at: datetime | None = None,
 ) -> BoardPost:
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="Private post title",
@@ -37,6 +40,7 @@ def _published(
     db.flush()
     db.add(
         BoardPostRevision(
+            org_id=item.org_id,
             post_id=item.id,
             publication_number=1,
             publication_key=uuid7(),
@@ -125,7 +129,7 @@ def test_inactive_deleted_or_unestablished_authors_are_not_choices(
     disabled.status = UserStatus.DISABLED.value
     deleted.is_deleted = True
     deleted.deleted_at = datetime.now(UTC)
-    unestablished.invitation_sent_at = datetime.now(UTC)
+    membership_of(db, unestablished.id).invitation_sent_at = datetime.now(UTC)
     db.commit()
 
     response = board_client(db, viewer, router).get(f"/api/boards/{board.id}/post-authors")
@@ -161,7 +165,7 @@ def test_author_choices_page_every_visible_author_without_a_global_cap(
     db.flush()
     for index in range(501):
         author_id = uuid7()
-        author = User(
+        author, _membership = create_member(db, organization(db),
             id=author_id,
             email=f"authors-bounded-{author_id.hex}@example.test",
             username=f"authors_bounded_{index:03d}",
@@ -300,11 +304,13 @@ def test_author_ids_intersect_visible_eligible_authors_before_search_and_paging(
             status="archived" if state == "archived" else "published",
             expires_at=past if state == "expired-post" else None,
         )
-    unavailable["expired-user"].expires_at = past
+    membership_of(db, unavailable["expired-user"].id).expires_at = past
     unavailable["disabled"].status = UserStatus.DISABLED.value
     unavailable["deleted"].is_deleted = True
     unavailable["deleted"].deleted_at = datetime.now(UTC)
-    unavailable["unestablished"].invitation_sent_at = datetime.now(UTC)
+    membership_of(db, unavailable["unestablished"].id).invitation_sent_at = datetime.now(
+        UTC,
+    )
     db.commit()
     client = board_client(db, viewer, router)
     endpoint = f"/api/boards/{board.id}/post-authors"

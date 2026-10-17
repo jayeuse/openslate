@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_fresh_exact_admin
 from app.core.database import get_db
+from app.systems.access.users.membership import bound_organization, require_current_membership
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.manage.workspace.schemas import (
@@ -76,13 +77,13 @@ def _workspace(
     shared_lock: bool = False,
     nowait: bool = False,
 ) -> WorkspaceProfile:
-    statement = select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+    statement = select(WorkspaceProfile).where(WorkspaceProfile.id == bound_organization(db))
     if lock:
         statement = statement.with_for_update(read=shared_lock, nowait=nowait)
-    profile = db.scalar(statement.execution_options(populate_existing=True))
-    if not isinstance(profile, WorkspaceProfile):
+    profiles = db.scalars(statement.execution_options(populate_existing=True)).all()
+    if len(profiles) != 1:
         raise _workspace_unavailable()
-    return profile
+    return profiles[0]
 
 
 def _ready_logo(
@@ -115,14 +116,29 @@ def _ready_logo(
 def get_workspace_appearance(
     response: Response,
     db: Annotated[Session, Depends(get_db)],
+    org: UUID | None = None,
 ) -> WorkspaceAppearanceResponse:
     response.headers["Cache-Control"] = "no-store"
     try:
-        profile = _workspace(db)
+        theme = _signed_out_theme(db, org)
     except SQLAlchemyError as error:
         db.rollback()
         raise _workspace_unavailable() from error
-    return WorkspaceAppearanceResponse.model_validate({"theme": profile.theme})
+    return WorkspaceAppearanceResponse.model_validate({"theme": theme})
+
+
+def _signed_out_theme(db: Session, org: UUID | None = None) -> str:
+    """The sign-in page theme: the browser's last organization, else the only one.
+
+    Only the theme is returned, so naming an organization reveals nothing else.
+    """
+    statement = select(WorkspaceProfile.theme).where(WorkspaceProfile.is_deleted.is_(False))
+    if org is not None:
+        remembered = db.scalar(statement.where(WorkspaceProfile.id == org))
+        if remembered is not None:
+            return remembered
+    themes = db.scalars(statement.limit(2)).all()
+    return themes[0] if len(themes) == 1 else "slate"
 
 
 @router.get("", response_model=WorkspaceResponse | WorkspaceGuestResponse)
@@ -131,7 +147,7 @@ def get_workspace(
     db: Annotated[Session, Depends(get_db)],
 ) -> WorkspaceResponse | WorkspaceGuestResponse:
     profile = _workspace(db)
-    if actor.role == "guest":
+    if require_current_membership(db, actor).role == "guest":
         return WorkspaceGuestResponse.model_validate(profile)
     return WorkspaceResponse.model_validate(profile)
 

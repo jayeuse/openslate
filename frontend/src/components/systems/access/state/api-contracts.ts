@@ -48,6 +48,8 @@ export const userSchema = z.strictObject({
 
 /** GET /api/users only: local inventory and recorded identity observations. */
 export const directoryUserSchema = userSchema.extend({
+  /** The account's `/api/users/{id}/avatar` URL, or null without one. */
+  avatar_url: z.string().nullable().default(null),
   active_session_count: z.number().int().nonnegative(),
   mfa_verified_totp: z.boolean().nullable(),
   mfa_observed_at: dateTime.nullable(),
@@ -69,7 +71,7 @@ export const userSummarySchema = z.strictObject({
 /** `users/schemas.py` InvitationResponse. */
 export const invitationSchema = z.strictObject({
   user: userSchema,
-  delivery: z.literal("email"),
+  delivery: z.enum(["email", "in_app"]),
 });
 
 /** `users/schemas.py` InvitationCreate (= UserCreate). */

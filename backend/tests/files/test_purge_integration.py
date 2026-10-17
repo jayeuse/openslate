@@ -2,7 +2,6 @@
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
 
 from app.systems.access.users.models import User
 from app.systems.platform.files import service
@@ -69,14 +68,15 @@ def test_purge_rejects_active_or_current_logo_and_deletes_only_archived_inventor
     impact = purge_impact(db, actor_id, file_id)
     assert impact.rows[0].state_fingerprint
     assert "object_key" not in impact.model_dump_json()
-    profile = db.scalar(select(WorkspaceProfile))
+    profile_id = db.get(File, file_id).org_id
+    profile = db.get(WorkspaceProfile, profile_id)
     profile.logo_file_id = file_id
     db.commit()
     with pytest.raises(HTTPException) as caught:
         purge_impact(db, actor_id, file_id)
     assert caught.value.detail["code"] == "file_current_logo"
     db.rollback()
-    profile = db.scalar(select(WorkspaceProfile))
+    profile = db.get(WorkspaceProfile, profile_id)
     profile.logo_file_id = None
     db.commit()
     result = purge_confirmed(

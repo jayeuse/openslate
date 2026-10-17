@@ -27,8 +27,8 @@ def _linked_departments(db: Session) -> tuple[Department, Department, Record, Re
     finance = add_department(db)
     items = add_module(db, inventory)
     accounts = add_module(db, finance)
-    item = Record(module_id=items.id, data={})
-    account = Record(module_id=accounts.id, data={})
+    item = Record(org_id=items.org_id, module_id=items.id, data={})
+    account = Record(org_id=accounts.org_id, module_id=accounts.id, data={})
     db.add_all([item, account])
     db.flush()
     return inventory, finance, item, account
@@ -36,6 +36,7 @@ def _linked_departments(db: Session) -> tuple[Department, Department, Record, Re
 
 def _link(db: Session, source: Record, target: Record, position: int) -> RelationshipEdge:
     field = Field(
+        org_id=source.org_id,
         module_id=source.module_id,
         name=f"Link {position}",
         type=FieldType.RELATIONSHIP,
@@ -47,6 +48,7 @@ def _link(db: Session, source: Record, target: Record, position: int) -> Relatio
     db.add(field)
     db.flush()
     edge = RelationshipEdge(
+        org_id=field.org_id,
         field_id=field.id, source_record_id=source.id, target_record_id=target.id
     )
     db.add(edge)
@@ -61,7 +63,8 @@ def test_department_audit_lists_a_link_only_for_readers_of_both_modules(
 
     api = create_app()
     inventory, finance, item, account = _linked_departments(integration_db)
-    shelf = Record(module_id=add_module(integration_db, inventory).id, data={})
+    shelf = Record(org_id=inventory.org_id,
+                   module_id=add_module(integration_db, inventory).id, data={})
     integration_db.add(shelf)
     integration_db.flush()
     local = _link(integration_db, item, shelf, 0)

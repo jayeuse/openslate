@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.access.users.router import router as users_router
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -43,7 +44,7 @@ def api(integration_owner_db: Session) -> Iterator[_Api]:
     app = FastAPI()
     app.include_router(users_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: integration_owner_db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor[0])
     with TestClient(app) as client:
         yield _Api(integration_owner_db, client, actor)
 

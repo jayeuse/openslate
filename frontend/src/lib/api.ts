@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { currentOrganizationId } from "@/lib/organization-context";
+
 export type Pagination = {
   limit: number;
   offset: number;
@@ -344,7 +346,19 @@ function requestHeaders(init: RequestInit): Headers {
     const token = csrfToken();
     if (token) headers.set("X-CSRF-Token", token);
   }
+  // Each tab works in one organization; without it the session's active
+  // organization applies.
+  const organization = currentOrganizationId();
+  if (organization && !headers.has("X-Org")) headers.set("X-Org", organization);
   return headers;
+}
+
+/**
+ * Forgets a shared refresh started for the previous account or organization,
+ * so later work starts its own session check.
+ */
+export function resetBrowserSessionRefresh(): void {
+  refreshInFlight = null;
 }
 
 function navigateToLogin(): void {

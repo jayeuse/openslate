@@ -30,6 +30,7 @@ def notices(db, record_id):
 def test_http_assignments_deduplicate_fields_and_reassignment_but_preserve_archived_reads(world):
     db = world.db
     second = Field(
+        org_id=world.module.org_id,
         module_id=world.module.id,
         name="Second owner",
         type="user",

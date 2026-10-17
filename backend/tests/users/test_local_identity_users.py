@@ -13,9 +13,17 @@ import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.policy.models import GroupMember
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate, UserCreate, UserResponse, UserUpdate
 from tests.users.user_support import local_user
+
+
+@pytest.fixture(autouse=True)
+def _single_organization_accounts(monkeypatch):
+    """These mock-database cases cover one organization; shared accounts have their own tests."""
+    monkeypatch.setattr(account_operations, "shares_another_organization", lambda db, user: False)
+    # Owner protection (PR #52 review) is owned by test_user_admin_http_integration.py.
+    monkeypatch.setattr(account_operations, "_protect_owners", lambda db, user: None)
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
 
@@ -32,12 +40,14 @@ def test_profile_create_defaults_to_a_member_without_groups() -> None:
 
 
 def test_user_response_exposes_the_role_and_no_department_membership() -> None:
-    user = local_user(UserRole.GUEST)
+    user, membership = local_user(UserRole.GUEST)
     user.display_name = "Guest"
     invitation_sent_at = datetime.now(UTC)
-    user.invitation_sent_at = invitation_sent_at
+    membership.invitation_sent_at = invitation_sent_at
 
-    response = UserResponse.model_validate(user)
+    response = UserResponse(**{key: getattr(
+        user if key in User.__table__.columns else membership, key
+    ) for key in UserResponse.model_fields})
 
     assert response.role is UserRole.GUEST
     assert response.display_name == "Guest"
@@ -63,18 +73,19 @@ def test_guest_invitation_rejects_missing_sponsor_before_creating_credentials() 
 
 
 def test_guest_cannot_receive_administrator_role_during_profile_update() -> None:
-    actor = local_user(UserRole.ADMIN)
-    guest = local_user(UserRole.GUEST)
+    actor, actor_membership = local_user(UserRole.ADMIN)
+    guest, membership = local_user(UserRole.GUEST)
     db = Mock(spec=Session)
     db.scalar.side_effect = [actor, guest]
     # A promotion first reads the groups to lock; a guest is in none here.
-    db.scalars.return_value.all.return_value = []
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[actor_membership], [], [membership]]
 
     with pytest.raises(HTTPException) as error:
         account_operations.update_user(guest.id, UserUpdate(role=UserRole.ADMIN), actor, db)
 
     assert error.value.status_code == 409
-    assert guest.role == UserRole.GUEST.value
+    assert membership.role == UserRole.GUEST.value
     db.commit.assert_not_called()
 
 
@@ -97,7 +108,10 @@ def test_guest_invitation_rejects_ineligible_sponsor(
         expires_at=datetime.now(UTC) + timedelta(days=365),
     )
     db = Mock(spec=Session)
-    db.scalar.side_effect = [sponsor()]
+    user, membership = sponsor()
+    db.scalar.side_effect = [user]
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
 
     with pytest.raises(InvitationError, match="sponsor"):
         user_service.invite_user(db, payload, bootstrap=True)
@@ -154,7 +168,7 @@ def _capture_profile(db: Mock, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guest_invitation_gets_the_configured_guest_duration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sponsor = local_user()
+    sponsor, sponsor_membership = local_user()
     payload = InvitationCreate(
         email="guest@example.com",
         username="guest",
@@ -163,22 +177,27 @@ def test_guest_invitation_gets_the_configured_guest_duration(
     )
     db = Mock(spec=Session)
     db.scalar.side_effect = [45, sponsor, None]
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [sponsor_membership]
     _capture_profile(db, monkeypatch)
     provider, _ = _provider_for(payload)
     before = datetime.now(UTC)
 
-    user = user_service.invite_user(db, payload, bootstrap=True, client=provider)
+    user_service.invite_user(db, payload, bootstrap=True, client=provider)
 
-    assert user.role == UserRole.GUEST.value
-    assert user.sponsor_user_id == sponsor.id
-    assert user.expires_at is not None
-    assert before + timedelta(days=45) <= user.expires_at <= datetime.now(UTC) + timedelta(days=45)
+    membership = next(call.args[0] for call in db.add.call_args_list
+                      if isinstance(call.args[0], Membership))
+    assert membership.role == UserRole.GUEST.value
+    assert membership.sponsor_user_id == sponsor.id
+    assert membership.expires_at is not None
+    assert (before + timedelta(days=45) <= membership.expires_at
+            <= datetime.now(UTC) + timedelta(days=45))
 
 
 def test_guest_invitation_persists_profile_and_deduplicated_group_memberships(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sponsor = local_user()
+    sponsor, sponsor_membership = local_user()
     group_a = uuid7()
     group_b = uuid7()
     payload = InvitationCreate(
@@ -193,16 +212,19 @@ def test_guest_invitation_persists_profile_and_deduplicated_group_memberships(
     )
     db = Mock(spec=Session)
     db.scalar.side_effect = [sponsor, None]
-    db.scalars.return_value.all.return_value = [group_a, group_b]
+    db.dirty = set()
+    db.scalars.return_value.all.side_effect = [[sponsor_membership], [group_a, group_b]]
     _capture_profile(db, monkeypatch)
     provider, provider_id = _provider_for(payload)
 
     user = user_service.invite_user(db, payload, bootstrap=True, client=provider)
 
     assert user.display_name == "Guest person"
-    assert user.role == UserRole.GUEST.value
+    membership = next(call.args[0] for call in db.add.call_args_list
+                      if isinstance(call.args[0], Membership))
+    assert membership.role == UserRole.GUEST.value
     assert user.job_title == "Observer"
-    assert user.sponsor_user_id == sponsor.id
+    assert membership.sponsor_user_id == sponsor.id
     memberships = [
         call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], GroupMember)
     ]
@@ -213,10 +235,12 @@ def test_guest_invitation_persists_profile_and_deduplicated_group_memberships(
 
 def test_expired_member_cannot_sponsor_a_guest(monkeypatch: pytest.MonkeyPatch) -> None:
     now = datetime(2026, 9, 22, tzinfo=UTC)
-    sponsor = local_user()
-    sponsor.expires_at = now
+    sponsor, membership = local_user()
+    membership.expires_at = now
     db = Mock(spec=Session)
     db.scalar.side_effect = [sponsor]
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
     monkeypatch.setattr(user_service, "utc_now", lambda: now)
     monkeypatch.setattr("app.systems.access.users.coordination.utc_now", lambda: now)
     payload = InvitationCreate(

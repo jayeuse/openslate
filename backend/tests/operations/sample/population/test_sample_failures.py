@@ -20,13 +20,15 @@ from operations.sample.population.run import SamplePopulationError
 from operations.sample.verification.core import failure_report
 
 
-def _preflight() -> tuple[dict[str, object], str, str]:
+def _preflight(*_args: object) -> tuple[dict[str, object], str, str]:
     return (
         {
             "instance": "local-test-instance",
             "alembic_head": "head",
             "admin_eligible": True,
             "admin_id": "admin-id",
+            "organization_id": "0190a000-0000-7000-8000-0000000000aa",
+            "partner_organization_id": "0190a000-0000-7000-8000-0000000000ab",
             "storage_objects": 0,
             "provider_accounts": 0,
         },
@@ -112,14 +114,14 @@ def test_failure_report_keeps_the_stage_and_step() -> None:
 def test_cli_displays_only_safe_operator_failure_messages(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def fail_preflight() -> tuple[dict[str, object], str, str]:
+    def fail_preflight(*_args: object) -> tuple[dict[str, object], str, str]:
         raise SampleContentError("GET /api/boards returned HTTP 503")
 
     monkeypatch.setattr(seed_operator, "_local_preflight", fail_preflight)
     assert seed_operator.main(["plan", "--anchor-date", "2026-09-30"]) == 2
     assert "GET /api/boards returned HTTP 503" in capsys.readouterr().err
 
-    def fail_unexpectedly() -> tuple[dict[str, object], str, str]:
+    def fail_unexpectedly(*_args: object) -> tuple[dict[str, object], str, str]:
         raise RuntimeError("password=private-password server body")
 
     monkeypatch.setattr(seed_operator, "_local_preflight", fail_unexpectedly)
@@ -192,7 +194,9 @@ def test_populate_uses_one_generated_seed_for_plan_and_population(
 
     def populate(**kwargs: Any) -> object:
         populated.append(kwargs["seed"])
-        return SimpleNamespace(status="complete", run_directory=tmp_path, issues=())
+        return SimpleNamespace(
+            status="complete", run_directory=tmp_path, issues=(), observed={}
+        )
 
     from operations.sample.population import run as sample_population
 

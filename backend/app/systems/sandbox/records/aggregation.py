@@ -11,6 +11,7 @@ from sqlalchemy import Date, Engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.database.organization_scope import apply_connection_scope
 from app.systems.access.policy.checks import module_hidden
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -41,10 +42,10 @@ from app.systems.sandbox.records.query_schemas import (
 )
 
 
-def _workspace_timezone(db: Session) -> tuple[str, ZoneInfo]:
-    timezone_name = db.scalar(
-        select(WorkspaceProfile.timezone).where(WorkspaceProfile.singleton_key.is_(True))
-    )
+def _workspace_timezone(db: Session, org_id: UUID) -> tuple[str, ZoneInfo]:
+    timezone_name = db.scalars(
+        select(WorkspaceProfile.timezone).where(WorkspaceProfile.id == org_id)
+    ).one_or_none()
     if not timezone_name:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
     try:
@@ -53,10 +54,10 @@ def _workspace_timezone(db: Session) -> tuple[str, ZoneInfo]:
         raise HTTPException(503, detail="Workspace timezone is unavailable") from error
 
 
-def _workspace_week_start(db: Session) -> str:
-    value = db.scalar(
-        select(WorkspaceProfile.week_start).where(WorkspaceProfile.singleton_key.is_(True))
-    )
+def _workspace_week_start(db: Session, org_id: UUID) -> str:
+    value = db.scalars(
+        select(WorkspaceProfile.week_start).where(WorkspaceProfile.id == org_id)
+    ).one_or_none()
     if value not in {"monday", "sunday"}:
         raise HTTPException(503, detail="Workspace configuration is unavailable")
     return str(value)
@@ -96,7 +97,7 @@ def _date_window_predicates(
     if field.type == FieldType.DATE:
         return (date_expression >= from_date, date_expression <= to_date)
 
-    timezone_name, workspace_timezone = _workspace_timezone(db)
+    timezone_name, workspace_timezone = _workspace_timezone(db, field.org_id)
     bucket_expression = func.timezone(timezone_name, date_expression).cast(Date())
     lower = datetime.combine(from_date, time.min, tzinfo=workspace_timezone)
     if to_date == date.max:
@@ -168,9 +169,9 @@ def _date_series_aggregate(
     local_date = (
         date_expression
         if field.type == FieldType.DATE
-        else func.timezone(_workspace_timezone(db)[0], date_expression).cast(Date())
+        else func.timezone(_workspace_timezone(db, field.org_id)[0], date_expression).cast(Date())
     )
-    week_start = _workspace_week_start(db) if payload.bucket == "week" else "monday"
+    week_start = _workspace_week_start(db, field.org_id) if payload.bucket == "week" else "monday"
     try:
         starts = calendar_buckets(payload.from_date, payload.to_date, payload.bucket, week_start)
     except ValueError as error:
@@ -346,13 +347,15 @@ def aggregate_snapshot_records(
 
 
 def aggregate_snapshot(
-    engine: Engine, payload: AggregateSnapshotQuery, *, reader_id: UUID
+    engine: Engine, payload: AggregateSnapshotQuery, *, reader_id: UUID, org_id: UUID | None
 ) -> tuple[bytes, int]:
     """Materialize a complete JSON result inside one independent read snapshot.
 
     The reader's module level is checked inside the same snapshot.
     """
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+        if org_id is not None:
+            apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:
@@ -365,10 +368,12 @@ def aggregate_snapshot(
 
 
 def aggregate_snapshots(
-    engine: Engine, payload: AggregateSnapshotsRequest, *, reader_id: UUID
+    engine: Engine, payload: AggregateSnapshotsRequest, *, reader_id: UUID, org_id: UUID | None
 ) -> tuple[bytes, int]:
     """Materialize the ordered batch in one read snapshot with combined limits."""
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+        if org_id is not None:
+            apply_connection_scope(connection, org_id)
         with Session(bind=connection) as snapshot:
             reader = snapshot.get(User, reader_id)
             if reader is None:

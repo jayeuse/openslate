@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { authMeBody, expect, test, type Page } from "./helpers/test";
 import { person } from "./helpers/access-api";
 import { profilePreferences } from "./helpers/profile-api";
 import { deferredMfaResponse, mfaUserA, mfaUserB } from "./helpers/mfa";
@@ -1128,8 +1128,14 @@ test("Audit awaits a current-account role and refuses failed or mismatched ident
   const state = await mockSecurityEvents(page);
   await mockAuditHistory(page);
   const role = deferredMfaResponse();
-  let response: { id: string; role: string; access: unknown[] } = {
+  let response: {
+    id: string;
+    role: string;
+    access: unknown[];
+    default_organization_blocked: null;
+  } = {
     id: mfaUserA,
+    default_organization_blocked: null,
     role: "admin",
     access: [],
   };
@@ -1142,7 +1148,10 @@ test("Audit awaits a current-account role and refuses failed or mismatched ident
     }
     await route.fulfill({
       status,
-      json: status === 200 ? response : { detail: "Controlled unavailable" },
+      json:
+        status === 200
+          ? authMeBody(response)
+          : { detail: "Controlled unavailable" },
     });
   });
   try {
@@ -1155,7 +1164,12 @@ test("Audit awaits a current-account role and refuses failed or mismatched ident
     hold = false;
     role.release();
     await expect(feed(page)).toBeVisible();
-    response = { id: mfaUserB, role: "admin", access: [] };
+    response = {
+      id: mfaUserB,
+      role: "admin",
+      access: [],
+      default_organization_blocked: null,
+    };
     await page.reload();
     await expect(
       page.getByRole("heading", { name: "Audit", exact: true }),

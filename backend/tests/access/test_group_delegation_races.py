@@ -24,12 +24,14 @@ import app.systems.access.users.service as user_service
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
 from app.systems.access.users.coordination import InvitationConflict
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import InvitationCreate
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.access.access_race_support import add_race_user, group_etag_of, run_action
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine, membership_of
+from tests.organization_scope_support import in_context
 from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 
 pytestmark = [
@@ -55,11 +57,13 @@ class _Seed:
 
 
 def _group(db: Session, department_id: UUID, level: AccessLevel, member_id: UUID) -> UUID:
-    group = Group(name=f"Race {uuid7().hex}")
+    org_id = db.get(Department, department_id).org_id
+    group = Group(org_id=org_id, name=f"Race {uuid7().hex}")
     db.add(group)
     db.flush()
-    db.add(GroupMember(group_id=group.id, user_id=member_id))
-    db.add(GroupAccess(group_id=group.id, department_id=department_id, level=level.value))
+    db.add(GroupMember(org_id=org_id, group_id=group.id, user_id=member_id))
+    db.add(GroupAccess(org_id=org_id, group_id=group.id,
+                       department_id=department_id, level=level.value))
     db.flush()
     return group.id
 
@@ -69,21 +73,23 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], pool_size=3)
     with Session(owner) as db:
-        inventory = Department(department_name=f"Race inventory {uuid7().hex}")
-        finance = Department(department_name=f"Race finance {uuid7().hex}")
+        organization = create_organization(db)
+        org_id = organization.id
+        inventory = Department(org_id=org_id, department_name=f"Race inventory {uuid7().hex}")
+        finance = Department(org_id=org_id, department_name=f"Race finance {uuid7().hex}")
         db.add_all([inventory, finance])
         db.flush()
-        manager = add_race_user(db, "race", UserRole.MEMBER.value)
-        member = add_race_user(db, "race", UserRole.MEMBER.value)
+        manager = add_race_user(db, organization, "race", UserRole.MEMBER.value)
+        member = add_race_user(db, organization, "race", UserRole.MEMBER.value)
         data = _Seed(
             inventory=inventory.id,
             finance=finance.id,
-            admin=add_race_user(db, "race", UserRole.ADMIN.value),
+            admin=add_race_user(db, organization, "race", UserRole.ADMIN.value),
             manager=manager,
             member=member,
             manager_group=_group(db, inventory.id, AccessLevel.MANAGE, manager),
             target=_group(db, inventory.id, AccessLevel.READ, member),
-            outsider=add_race_user(db, "race", UserRole.MEMBER.value),
+            outsider=add_race_user(db, organization, "race", UserRole.MEMBER.value),
         )
         db.commit()
     try:
@@ -103,8 +109,10 @@ def seed() -> Iterator[tuple[_Seed, Engine]]:
                     InAppNotification.subject_id == InAppNotification.recipient_id,
                 )
             )
+            db.execute(delete(Membership).where(Membership.user_id.in_(users)))
             db.execute(delete(User).where(User.id.in_(users)))
             db.execute(delete(Department).where(Department.id.in_((data.inventory, data.finance))))
+            db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id))
             db.commit()
         runtime.dispose()
         owner.dispose()
@@ -150,8 +158,7 @@ def test_manager_waits_for_a_widening_of_the_group_and_is_then_refused(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            admin = executor.submit(
-                run_action,
+            admin = executor.submit(in_context(run_action),
                 engine,
                 lambda db: policy_service.replace_group_access(
                     db, data.target, widened, etag, data.admin
@@ -159,7 +166,8 @@ def test_manager_waits_for_a_widening_of_the_group_and_is_then_refused(
             )
             assert admin_at_commit.wait(timeout=5)
             manager = executor.submit(
-                run_action, engine, _replace_as(data.manager, data.target, [], etag)
+                in_context(run_action), engine,
+                _replace_as(data.manager, data.target, [], etag),
             )
             try:
                 wait_until_blocked_by(engine, holder[0])
@@ -208,13 +216,14 @@ def test_revoking_the_managers_authority_waits_for_the_managers_change(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            manager = executor.submit(
-                run_action,
+            manager = executor.submit(in_context(run_action),
                 engine,
                 _replace_as(data.manager, data.target, [data.member, data.manager], target_etag),
             )
             assert manager_decided.wait(timeout=5)
-            admin = executor.submit(run_action, engine, revoke(data, manager_group_etag))
+            admin = executor.submit(
+                in_context(run_action), engine, revoke(data, manager_group_etag)
+            )
             try:
                 wait_until_blocked_by(engine, holder[0])
                 assert not admin.done()
@@ -239,8 +248,7 @@ def test_adding_an_administrator_is_refused_without_waiting_for_their_row(
     etag = group_etag_of(engine, data.target)
     with Session(engine) as publisher, ThreadPoolExecutor(max_workers=1) as executor:
         publisher.scalar(select(User.id).where(User.id == data.admin).with_for_update(read=True))
-        refused = executor.submit(
-            run_action,
+        refused = executor.submit(in_context(run_action),
             engine,
             _replace_as(data.manager, data.target, [data.member, data.admin], etag),
         )
@@ -273,7 +281,7 @@ def test_an_invitation_that_reuses_an_administrators_email_does_not_wait_for_the
 
     with Session(engine) as publisher, ThreadPoolExecutor(max_workers=1) as executor:
         publisher.scalar(select(User.id).where(User.id == data.admin).with_for_update(read=True))
-        refused = executor.submit(invite)
+        refused = executor.submit(in_context(invite))
         try:
             assert refused.result(timeout=WAIT) is InvitationConflict
         finally:
@@ -301,8 +309,7 @@ def test_a_user_promoted_between_the_two_administrator_checks_is_not_added(
 
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
-            manager = executor.submit(
-                run_action,
+            manager = executor.submit(in_context(run_action),
                 engine,
                 _replace_as(data.manager, data.target, [data.member, data.outsider], etag),
             )
@@ -311,7 +318,7 @@ def test_a_user_promoted_between_the_two_administrator_checks_is_not_added(
             with Session(engine) as db:
                 outsider = db.get(User, data.outsider)
                 assert outsider is not None
-                outsider.role = UserRole.ADMIN.value
+                membership_of(db, outsider.id).role = UserRole.ADMIN.value
                 db.commit()
             release_manager.set()
             assert manager.result(timeout=WAIT) == 409

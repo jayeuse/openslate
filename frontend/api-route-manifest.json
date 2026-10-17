@@ -1686,6 +1686,18 @@
     "path": "/api/auth/logout"
   },
   {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "acceptOrganizationInvitation",
+    "method": "POST",
+    "path": "/api/auth/invitations/{param}/accept"
+  },
+  {
+    "adapter": "frontend/src/lib/auth-api.ts",
+    "function": "selectOrganization",
+    "method": "POST",
+    "path": "/api/auth/session/organization"
+  },
+  {
     "adapter": "frontend/src/lib/mfa-api.ts",
     "function": "cancelMfaEnrollment",
     "method": "DELETE",

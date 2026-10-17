@@ -1,10 +1,5 @@
 """Independent sample MFA receipt, security-event and final-state verification."""
 
-import base64
-import binascii
-import hashlib
-import hmac
-import struct
 from collections.abc import Mapping
 from typing import Any, cast
 from uuid import UUID
@@ -41,19 +36,6 @@ def _uuid(value: object, step: str) -> str:
 def _require(valid: bool, step: str) -> None:
     if not valid:
         raise SamplePhaseActionError("MFA control state differs from its contract", step=step)
-
-
-def _totp(secret: str, timestamp: float) -> str:
-    try:
-        key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
-        digest = hmac.new(key, struct.pack(">Q", int(timestamp) // 30), hashlib.sha1).digest()
-        index = digest[-1] & 15
-        number = (struct.unpack(">I", digest[index : index + 4])[0] & 0x7FFFFFFF) % 1_000_000
-        return f"{number:06d}"
-    except (ValueError, binascii.Error):
-        raise SamplePhaseActionError(
-            "MFA enrollment material is invalid", step="mfa_verify"
-        ) from None
 
 
 def _factor_inventory(
@@ -251,6 +233,12 @@ def mfa_request_contract(
             204,
         ),
         "actor_enroll": (actor, "POST", "/api/auth/mfa/factors", 201),
+        "actor_wrong_code": (
+            actor,
+            "POST",
+            f"/api/auth/mfa/factors/{result['actor_factor_id']}/verification",
+            400,
+        ),
         "actor_verify": (
             actor,
             "POST",
@@ -259,6 +247,12 @@ def mfa_request_contract(
         ),
         "login_target": (target, "POST", "/api/auth/login", 200),
         "target_enroll": (target, "POST", "/api/auth/mfa/factors", 201),
+        "target_wrong_code": (
+            target,
+            "POST",
+            f"/api/auth/mfa/factors/{result['target_factor_id']}/verification",
+            400,
+        ),
         "target_verify": (
             target,
             "POST",

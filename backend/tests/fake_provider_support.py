@@ -28,17 +28,18 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from jwt.algorithms import ECAlgorithm
-from sqlalchemy import select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.config.provider_instance import assert_provider_instance
 from app.core.integrations.supabase_auth import SupabaseAuthClient, get_supabase_auth_client
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.provider_jwt_support import signed_access
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine
 
 # Long enough that a browser refresh keeps the current access token (its fast path).
 ACCESS_LIFETIME = timedelta(hours=1)
@@ -85,8 +86,14 @@ class RealSessionPool:
         self._created.append(provider_id)
         # A separate client: the shared one may already route to a fake.
         real = SupabaseAuthClient(get_settings())
+        # Only the session ids are needed; admission later checks each against
+        # auth.sessions. The verifier compares `iat` with this host's clock at zero
+        # leeway, and Auth's clock in the Docker VM can lead it by milliseconds.
         sessions = tuple(
-            real.verify_access_token(real.password_grant(email, password).access_token).session_id
+            UUID(jwt.decode(
+                real.password_grant(email, password).access_token,
+                options={"verify_signature": False},
+            )["session_id"])
             for _ in range(SESSIONS_PER_USER)
         )
         return provider_id, sessions
@@ -308,7 +315,9 @@ def fake_provider(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureReques
     return install_fake_provider(monkeypatch, real_session_pool(request.config))
 
 
-def owned_account(fake: FakeProvider, *, prefix: str = "auth-journey") -> Iterator[tuple]:
+def owned_account(
+    fake: FakeProvider, *, prefix: str = "auth-journey", organization_id: UUID | None = None,
+) -> Iterator[tuple]:
     """``(email, password, provider_id, local_id, owner)``, like the real ``fake_provider_account``.
 
     The local row starts unbound: tests bind ``supabase_user_id`` themselves.
@@ -321,13 +330,19 @@ def owned_account(fake: FakeProvider, *, prefix: str = "auth-journey") -> Iterat
     local_id = None
     try:
         with Session(owner) as db:
-            user = User(
+            organization = (
+                create_organization(db) if organization_id is None
+                else db.get(WorkspaceProfile, organization_id)
+            )
+            user, _membership = create_member(db, organization,
                 email=email,
                 username=f"journey-{uuid4().hex[:16]}",
                 status=UserStatus.ACTIVE.value,
                 role="member",
             )
-            db.add(user)
+            if organization_id is None:
+                # The account that creates the organization owns the installation (on-prem).
+                db.add(PlatformOperator(user_id=user.id))
             db.commit()
             local_id = user.id
         yield email, password, provider_id, local_id, owner
@@ -343,9 +358,23 @@ def owned_account(fake: FakeProvider, *, prefix: str = "auth-journey") -> Iterat
                 ):
                     db.delete(notice)
                 db.flush()
+                membership = db.scalar(select(Membership).where(Membership.user_id == local_id))
+                organization = db.get(WorkspaceProfile, membership.org_id)
+                if organization_id is None:
+                    for table in ("audit_logs", "security_events"):
+                        db.connection().execute(
+                            text(f"DELETE FROM public.{table} WHERE org_id = :org_id"),
+                            {"org_id": organization.id},
+                        )
+                db.delete(membership)
+                db.flush()
+                db.execute(delete(PlatformOperator).where(PlatformOperator.user_id == local_id))
                 user = db.get(User, local_id)
                 if user is not None:
                     db.delete(user)
+                db.flush()
+                if organization_id is None:
+                    db.delete(organization)
                 db.commit()
         owner.dispose()
 

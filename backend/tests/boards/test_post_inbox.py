@@ -23,6 +23,7 @@ from app.systems.platform.scheduling.post_execution import (
 from app.systems.platform.scheduling.service import list_current_user_notifications
 from tests.boards.test_post_routes import _actor, _board, _client, _create_payload, _grant
 from tests.boards.test_post_schedule_work import _create, _schedule, _subject
+from tests.conftest import membership_of
 
 pytestmark = pytest.mark.integration
 
@@ -79,13 +80,16 @@ def test_manual_publication_inbox_snapshots_only_current_board_readers(
     viewer = _actor(db, "inbox-viewer")
     manager = _actor(db, "inbox-manager")
     expired_viewer = _actor(db, "inbox-expired-viewer")
-    expired_viewer.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    membership_of(db, expired_viewer.id).expires_at = (
+        datetime.now(UTC) - timedelta(seconds=1)
+    )
     outsider = _actor(db, "inbox-outsider")
     board = _board(db, owner)
     _grant(db, board, viewer, "view")
     _grant(db, board, manager, "manage")
     _grant(db, board, expired_viewer, "view")
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Publication inbox test",

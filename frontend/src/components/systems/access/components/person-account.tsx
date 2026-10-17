@@ -69,7 +69,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
       return {
         button: "Resend invitation",
         title: "Resend the invitation?",
-        description: `${person.email} gets a new invitation email.`,
+        description: `Renew the invitation for ${person.email}. Existing accounts accept when signed in; new accounts get an email.`,
         confirm: "Resend",
         done: "Invitation sent again",
         destructive: false,
@@ -79,7 +79,7 @@ function actionCopy(action: AccountAction, person: AccessUser): ActionCopy {
         button: "Revoke invitation",
         title: "Revoke the invitation?",
         description:
-          "The link in the invitation email stops working. You can invite this email address again later.",
+          "This invitation can no longer be accepted, in the app or by email link.",
         confirm: "Revoke",
         done: "Invitation revoked",
         destructive: true,

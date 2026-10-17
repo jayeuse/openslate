@@ -25,6 +25,7 @@ def test_compound_pair_saves_one_complete_record_and_event_beside_both_single_fo
 ):
     world = batch_world
     world.fields["end"] = Field(
+        org_id=world.module.org_id,
         module_id=world.module.id, name="End", type=kind, position=20, config={}
     )
     world.db.add(world.fields["end"])
@@ -87,6 +88,7 @@ def test_invalid_second_change_rolls_back_both_fields_while_other_items_commit(
     first, rejected, last = [create(world, name) for name in ("First", "Rejected", "Last")]
     if bad_field in {"closed", "foreign", "relationship"}:
         second = Field(
+            org_id=world.module.org_id,
             module_id=world.module.id, name="Unsupported", type="text", position=20, config={}
         )
         if bad_field == "closed":
@@ -279,8 +281,9 @@ def test_compound_invalid_envelope_is_422_before_even_valid_items_write(batch_wo
 def test_compound_hidden_wrong_module_and_missing_results_reveal_only_input_ids(batch_world):
     world = batch_world
     own = create(world, "Own")
+    other_module = add_module(world.db, add_department(world.db))
     hidden = Record(
-        module_id=add_module(world.db, add_department(world.db)).id, data={"private": "canary"}
+        org_id=other_module.org_id, module_id=other_module.id, data={"private": "canary"}
     )
     world.db.add(hidden)
     world.db.commit()

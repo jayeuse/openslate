@@ -18,9 +18,11 @@ from app.core.config import get_settings
 from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import SecurityEvent
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.provider_jwt_support import signed_access
+from tests.conftest import create_member, membership_of
 
 
 @dataclass
@@ -74,15 +76,16 @@ def open_security_world(fake_provider_account, monkeypatch):
     with Session(owner) as db:
         actor = db.get(User, actor_id)
         actor.supabase_user_id = provider_id
-        actor.role = "admin"
-        target = User(
+        membership = membership_of(db, actor_id)
+        membership.role = "admin"
+        target, _target_membership = create_member(
+            db, db.get(WorkspaceProfile, membership.org_id),
             username=f"security-target-{uuid4().hex[:16]}",
             email=f"security-target-{uuid4().hex}@example.test",
             status="active",
             role="member",
             supabase_user_id=uuid4(),
         )
-        db.add(target)
         db.commit()
         target_id, target_provider_id, target_email = (
             target.id,
@@ -177,6 +180,9 @@ def open_security_world(fake_provider_account, monkeypatch):
             ):
                 db.delete(session)
             target = db.get(User, target_id)
+            for membership in db.scalars(select(Membership).where(Membership.user_id == target_id)):
+                db.delete(membership)
+            db.flush()
             if target is not None:
                 db.delete(target)
             db.commit()

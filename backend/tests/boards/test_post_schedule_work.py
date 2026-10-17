@@ -25,6 +25,8 @@ from app.systems.platform.scheduling.post_execution import (
 )
 from tests.boards.support import board_group
 from tests.boards.support import client as board_client
+from tests.conftest import create_member
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +34,7 @@ pytestmark = pytest.mark.integration
 def _subject(db: Session) -> tuple[TestClient, Board, User]:
     role = "member"
     actor_id = uuid7()
-    actor = User(
+    actor, _membership = create_member(db, organization(db),
         id=actor_id,
         email=f"post-scheduler-{actor_id.hex}@example.test",
         username=f"post_scheduler_{actor_id.hex[:12]}",
@@ -41,7 +43,8 @@ def _subject(db: Session) -> tuple[TestClient, Board, User]:
     )
     db.add(actor)
     db.flush()
-    board = Board(scope="project", name=f"Post schedule {uuid7().hex[:8]}")
+    board = Board(org_id=organization(db).id, scope="project",
+                  name=f"Post schedule {uuid7().hex[:8]}")
     db.add(board)
     db.flush()
     board_group(db, board, [actor], "write")
@@ -170,7 +173,7 @@ def test_stale_schedule_denial_does_not_create_or_cancel_work(
     assert denied.status_code == 409
     assert denied.json()["detail"]["code"] == "stale_post_revision"
     outsider_id = uuid7()
-    outsider = User(
+    outsider, _membership = create_member(db, organization(db),
         id=outsider_id,
         email=f"post-outsider-{outsider_id.hex}@example.test",
         username=f"post_outsider_{outsider_id.hex[:12]}",

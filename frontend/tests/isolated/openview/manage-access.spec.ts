@@ -15,7 +15,28 @@ function member(
   access: AuthMe["access"],
   role: AuthMe["role"] = "member",
 ): AuthMe {
-  return { id: "00000000-0000-4000-8000-000000000001", role, access };
+  const organization = role
+    ? {
+        orgId: "00000000-0000-4000-8000-000000000102",
+        name: "OpenSlate",
+        slug: "openslate",
+        role,
+      }
+    : null;
+  return {
+    id: "00000000-0000-4000-8000-000000000001",
+    username: "member",
+    displayName: null,
+    avatarFileId: null,
+    role,
+    access,
+    defaultOrganizationBlocked: null,
+    memberships: organization ? [organization] : [],
+    pendingInvitations: [],
+    currentOrganization: organization,
+    organizationOwner: false,
+    operator: false,
+  };
 }
 
 test("only manage on the department or the module shows OpenView change controls", () => {

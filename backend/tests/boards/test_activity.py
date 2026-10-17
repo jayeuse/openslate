@@ -12,13 +12,17 @@ from app.systems.boards.activity_router import router
 from app.systems.boards.models import BoardWidget
 from app.systems.manage.audit.context import set_audit_actor
 from tests.boards.support import board_group, client, member, project_board
+from tests.conftest import membership_of
 from tests.rbac.support import add_department, add_module
 
 pytestmark = pytest.mark.integration
 
 
-def _widget(board_id: UUID, module_id: UUID, name: str, position: int) -> BoardWidget:
+def _widget(
+    board_id: UUID, module_id: UUID, name: str, position: int, *, org_id: UUID,
+) -> BoardWidget:
     return BoardWidget(
+        org_id=org_id,
         board_id=board_id,
         module_id=module_id,
         name=name,
@@ -39,8 +43,8 @@ def test_board_activity_lists_metadata_groups_and_tiles_without_content(
     module = add_module(db, add_department(db))
     group_row = board_group(db, board, [reader], AccessLevel.READ)
     first, second = (
-        _widget(board.id, module.id, "First tile", 0),
-        _widget(board.id, module.id, "Second tile", 1),
+        _widget(board.id, module.id, "First tile", 0, org_id=board.org_id),
+        _widget(board.id, module.id, "Second tile", 1, org_id=board.org_id),
     )
     db.add_all([first, second])
     db.flush()
@@ -94,7 +98,10 @@ def test_board_activity_lists_metadata_groups_and_tiles_without_content(
     )
 
 
-def test_board_activity_hides_the_labels_of_inactive_actors(integration_owner_db: Session) -> None:
+@pytest.mark.parametrize("actor_state", ["disabled", "unaccepted"])
+def test_board_activity_hides_the_labels_of_inactive_actors(
+    integration_owner_db: Session, actor_state: str,
+) -> None:
     db = integration_owner_db
     author, viewer = member(db), member(db)
     board = project_board(db)
@@ -102,7 +109,10 @@ def test_board_activity_hides_the_labels_of_inactive_actors(integration_owner_db
     set_audit_actor(db, author.id)
     board.name = "Renamed"
     db.commit()
-    author.status = "disabled"
+    if actor_state == "disabled":
+        author.status = "disabled"
+    else:
+        membership_of(db, author.id).invitation_sent_at = author.created_at
     db.commit()
 
     result = client(db, viewer, router).get(f"/api/boards/{board.id}/activity").json()

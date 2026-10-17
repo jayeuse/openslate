@@ -25,6 +25,9 @@ type OrganizationThemeState = {
   confirm: (theme: OrganizationTheme) => void;
   preview: (owner: symbol, theme: OrganizationTheme) => void;
   release: (owner: symbol) => void;
+  /** The signed-in organization's look; the public read waits until released. */
+  hold: (owner: symbol, theme: OrganizationTheme) => void;
+  releaseHold: (owner: symbol) => void;
 };
 const OrganizationThemeContext = createContext<OrganizationThemeState | null>(
   null,
@@ -36,7 +39,12 @@ export function useOrganizationTheme(): OrganizationThemeState {
   return value;
 }
 
-/** The installation's public palette and one owner-local unsaved preview. */
+/**
+ * The organization look. Before sign-in it is the look cached in this browser
+ * (the last organization seen here), else Slate, reconciled with the public
+ * read. A signed-in shell holds its organization's look; the cache keeps it
+ * for the next signed-out visit.
+ */
 export function OrganizationThemeProvider({
   children,
 }: {
@@ -50,6 +58,7 @@ export function OrganizationThemeProvider({
   const request = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const live = useRef(false);
+  const holder = useRef<symbol | null>(null);
 
   // Stable methods let an editor own its preview without effect cleanup caused
   // by a committed value changing. Async commands read the current baseline.
@@ -71,6 +80,21 @@ export function OrganizationThemeProvider({
     preview.current = null;
     applyOrganizationTheme(committed.current);
   }, []);
+  const hold = useCallback(
+    (owner: symbol, next: OrganizationTheme) => {
+      holder.current = owner;
+      if (next !== committed.current) confirm(next);
+      else {
+        // Also stop a public read that started before the hold.
+        generation.current += 1;
+        request.current?.abort();
+      }
+    },
+    [confirm],
+  );
+  const releaseHold = useCallback((owner: symbol) => {
+    if (holder.current === owner) holder.current = null;
+  }, []);
 
   useLayoutEffect(() => {
     const cached = readBrowserOrganizationTheme();
@@ -82,6 +106,7 @@ export function OrganizationThemeProvider({
   useEffect(() => {
     live.current = true;
     const refresh = () => {
+      if (holder.current) return;
       const epoch = ++generation.current;
       request.current?.abort();
       const controller = new AbortController();
@@ -90,6 +115,7 @@ export function OrganizationThemeProvider({
         .then((appearance) => {
           if (
             live.current &&
+            !holder.current &&
             generation.current === epoch &&
             !controller.signal.aborted
           )
@@ -122,6 +148,8 @@ export function OrganizationThemeProvider({
         confirm,
         preview: showPreview,
         release,
+        hold,
+        releaseHold,
       }}
     >
       {children}

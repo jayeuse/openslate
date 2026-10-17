@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -40,6 +41,11 @@ class Board(BaseModel):
     __tablename__ = "boards"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"description"})
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_boards_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "department_id"], ["departments.org_id", "departments.id"],
+            name="fk_boards_department_id_departments", ondelete="RESTRICT",
+        ),
         CheckConstraint("length(btrim(name)) > 0", name="ck_boards_name_nonempty"),
         CheckConstraint("revision > 0", name="ck_boards_revision_positive"),
         CheckConstraint(
@@ -56,6 +62,7 @@ class Board(BaseModel):
         ),
         Index(
             "uq_boards_company",
+            "org_id",
             "scope",
             unique=True,
             postgresql_where=text("scope = 'company' AND NOT is_deleted"),
@@ -68,9 +75,12 @@ class Board(BaseModel):
         ),
     )
 
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
     scope: Mapped[BoardScope] = mapped_column(String(20), nullable=False)
     department_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
+        nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -90,6 +100,15 @@ class BoardGroup(BaseModel):
 
     __tablename__ = "board_groups"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_board_groups_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "board_id"], ["boards.org_id", "boards.id"],
+            name="fk_board_groups_board_id_boards", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "group_id"], ["groups.org_id", "groups.id"],
+            name="fk_board_groups_group_id_groups", ondelete="RESTRICT",
+        ),
         CheckConstraint("level IN ('read', 'write', 'manage')", name="ck_board_groups_level"),
         Index(
             "uq_board_groups_board_group_active",
@@ -101,12 +120,11 @@ class BoardGroup(BaseModel):
         Index("ix_board_groups_group_id", "group_id"),
     )
 
-    board_id: Mapped[UUID] = mapped_column(
-        ForeignKey("boards.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    group_id: Mapped[UUID] = mapped_column(
-        ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False
-    )
+    board_id: Mapped[UUID] = mapped_column(nullable=False)
+    group_id: Mapped[UUID] = mapped_column(nullable=False)
     level: Mapped[str] = mapped_column(String(10), nullable=False)
 
 
@@ -116,6 +134,19 @@ class BoardWidget(BaseModel):
     __tablename__ = "board_widgets"
     __audit_redacted_fields__: ClassVar[frozenset[str]] = frozenset({"config"})
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_board_widgets_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "board_id"], ["boards.org_id", "boards.id"],
+            name="fk_board_widgets_board_id_boards", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_board_widgets_module_id_modules", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "chart_id"], ["charts.org_id", "charts.id"],
+            name="fk_board_widgets_chart_id_charts", ondelete="RESTRICT",
+        ),
         CheckConstraint("length(btrim(name)) > 0", name="ck_board_widgets_name_nonempty"),
         CheckConstraint(
             "widget_type IN ('summary', 'workload', 'records', 'chart')",
@@ -135,12 +166,11 @@ class BoardWidget(BaseModel):
         Index("ix_board_widgets_chart_id", "chart_id"),
     )
 
-    board_id: Mapped[UUID] = mapped_column(
-        ForeignKey("boards.id", ondelete="RESTRICT"), nullable=False
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    module_id: Mapped[UUID] = mapped_column(
-        ForeignKey("modules.id", ondelete="RESTRICT"), nullable=False
-    )
+    board_id: Mapped[UUID] = mapped_column(nullable=False)
+    module_id: Mapped[UUID] = mapped_column(nullable=False)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     widget_type: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -150,9 +180,7 @@ class BoardWidget(BaseModel):
     pinned: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
-    chart_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("charts.id", ondelete="RESTRICT"), nullable=True
-    )
+    chart_id: Mapped[UUID | None] = mapped_column(nullable=True)
     config: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )

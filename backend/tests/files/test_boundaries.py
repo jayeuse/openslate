@@ -1,6 +1,7 @@
 """Primitive validation and authorization regressions independent of external services."""
 
 from io import BytesIO
+from unittest.mock import Mock
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -9,21 +10,20 @@ from fastapi import HTTPException
 from PIL import Image, PngImagePlugin
 from pydantic import ValidationError
 
-from app.systems.access.users.models import User
+from app.systems.access.users.models import UserRole
 from app.systems.platform.files.access import authorize
 from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.validation import validate_content
+from tests.users.user_support import local_user
 
 
 def user(role="member"):
-    return User(
-        id=uuid4(),
-        status="active",
-        is_deleted=False,
-        role=role,
-        invitation_accepted_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
-    )
+    actor, membership = local_user(UserRole(role))
+    db = Mock()
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
+    return actor, db
 
 
 def png():
@@ -110,19 +110,20 @@ def test_reservation_rejects_parent_forgery_limits_and_provider_keys(payload):
 
 @pytest.mark.parametrize("purpose", ["workspace_logo"])
 def test_members_do_not_get_admin_documents(purpose):
-    actor = user()
+    actor, db = user()
     with pytest.raises(HTTPException) as caught:
-        authorize(None, actor, purpose)
+        authorize(db, actor, purpose)
     assert caught.value.status_code == 403
 
 
 def test_disabled_admin_is_denied():
-    actor = user(role="admin")
+    actor, db = user(role="admin")
     actor.status = "disabled"
     with pytest.raises(HTTPException):
-        authorize(None, actor, "library_document")
+        authorize(db, actor, "library_document")
 
 
 def test_unknown_file_purpose_fails_closed_even_for_admin():
+    actor, db = user(role="admin")
     with pytest.raises(HTTPException):
-        authorize(None, user(role="admin"), "unknown")
+        authorize(db, actor, "unknown")

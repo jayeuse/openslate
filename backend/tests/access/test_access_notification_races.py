@@ -17,12 +17,14 @@ from app.systems.access.policy import delegation, service
 from app.systems.access.policy.configuration_router import router as access_router
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.schemas import GroupAccessEntry
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.manage.audit.models import AuditLog
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
+from tests.organization_scope_support import in_context, scoped_override
 from tests.rbac.support import add_department, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -35,6 +37,7 @@ def audience():
     with Session(owner) as db:
         admin, member = add_user(db, role=UserRole.ADMIN), add_user(db)
         department = add_department(db)
+        org_id = department.org_id
         grants = [make_group_access(db, [member], department) for _ in range(2)]
         group_ids = [g.group_id for g in grants]
         ids = admin.id, member.id, department.id, group_ids
@@ -47,9 +50,11 @@ def audience():
             db.execute(delete(GroupMember).where(GroupMember.group_id.in_(group_ids)))
             db.execute(delete(GroupAccess).where(GroupAccess.group_id.in_(group_ids)))
             db.execute(delete(Group).where(Group.id.in_(group_ids)))
-            db.execute(delete(AuditLog).where(AuditLog.performed_by.in_(ids[:2])))
+            db.execute(delete(AuditLog).where(AuditLog.org_id == org_id))
+            db.execute(delete(Membership).where(Membership.user_id.in_(ids[:2])))
             db.execute(delete(User).where(User.id.in_(ids[:2])))
             db.execute(delete(Department).where(Department.id == ids[2]))
+            db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id))
             db.commit()
         engine.dispose()
         owner.dispose()
@@ -100,8 +105,7 @@ def test_locked_recipient_refuses_atomically_then_retry_succeeds(audience, opera
     group_id = ids[3][0]
     with Session(engine) as holder, ThreadPoolExecutor(max_workers=1) as pool:
         holder.scalar(select(User).where(User.id == ids[1]).with_for_update())
-        refused = pool.submit(
-            _write,
+        refused = pool.submit(in_context(_write),
             engine,
             ids,
             group_id,
@@ -143,9 +147,9 @@ def test_cross_group_writer_refuses_stale_snapshot_and_retries_under_current_aut
     monkeypatch.setattr(service, "commit", pause)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(_write, engine, ids, ids[3][0])
+            first = pool.submit(in_context(_write), engine, ids, ids[3][0])
             assert at_commit.wait(5)
-            second = pool.submit(_write, engine, ids, ids[3][1], level=None)
+            second = pool.submit(in_context(_write), engine, ids, ids[3][1], level=None)
             try:
                 assert second.result(timeout=5) == 503
             finally:
@@ -178,6 +182,7 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
         actor_ids = [actor.id for actor in actors]
         member_ids = [u1.id, u3.id]
         department_ids = [department.id for department in departments]
+        org_id = departments[0].org_id
         group_ids = [grant.group_id for grant in grants]
         db.commit()
 
@@ -211,7 +216,7 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
             app = FastAPI()
             app.include_router(access_router, prefix="/api")
             app.dependency_overrides[get_db] = lambda: db
-            app.dependency_overrides[get_current_user] = lambda: actor
+            app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
             with TestClient(app) as client:
                 response = client.put(
                     f"/api/access/groups/{group_id}/members",
@@ -227,8 +232,8 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
     event.listen(engine, "handle_error", observe_database_error)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(request_members, actor_ids[0], group_ids[0])
-            second = pool.submit(request_members, actor_ids[1], group_ids[1])
+            first = pool.submit(in_context(request_members), actor_ids[0], group_ids[0])
+            second = pool.submit(in_context(request_members), actor_ids[1], group_ids[1])
             outcomes = [first.result(timeout=15), second.result(timeout=15)]
         # The result contract admits a prompt NOWAIT refusal as well as two
         # serial successes. A database deadlock is never that refusal.
@@ -254,9 +259,11 @@ def test_opposite_membership_additions_do_not_deadlock_after_recipient_admission
             db.execute(delete(GroupMember).where(GroupMember.group_id.in_(group_ids)))
             db.execute(delete(GroupAccess).where(GroupAccess.group_id.in_(group_ids)))
             db.execute(delete(Group).where(Group.id.in_(group_ids)))
-            db.execute(delete(AuditLog).where(AuditLog.performed_by.in_(actor_ids)))
+            db.execute(delete(AuditLog).where(AuditLog.org_id == org_id))
+            db.execute(delete(Membership).where(Membership.user_id.in_(owned_users)))
             db.execute(delete(User).where(User.id.in_(owned_users)))
             db.execute(delete(Department).where(Department.id.in_(department_ids)))
+            db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id))
             db.commit()
         engine.dispose()
         owner.dispose()

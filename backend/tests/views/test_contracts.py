@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -5,11 +7,12 @@ from uuid6 import uuid7
 
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import EffectiveAccess
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.snapshots import REDACTED, build_update_snapshot
 from app.systems.openview.views.models import SavedView
 from app.systems.openview.views.schemas import ViewCreate, ViewPresentation, ViewUpdate
 from app.systems.platform.events.models import event_for_entity
+from tests.rbac.support import make_user
 
 
 def test_presentation_uses_bounded_field_id_wire_projection() -> None:
@@ -140,14 +143,19 @@ def test_stale_saved_view_conflict_includes_current_revision() -> None:
         is_deleted=False,
     )
     # An administrator needs no database lookup for the module level.
-    user = User(
-        id=user_id,
-        status="active",
-        role="admin",
-        is_deleted=False,
-    )
+    user, membership = make_user("view-admin")
+    user.id = user_id
+    membership.user_id = user_id
 
     class ViewResultSession:
+
+        def flush(self) -> None:
+
+            pass  # the access function flushes before reading memberships
+
+        dirty = set()
+        def scalars(self, _statement):
+            return SimpleNamespace(all=lambda: [membership])
         def scalar(self, _statement: object) -> object:
             return view
 
@@ -180,12 +188,26 @@ def test_view_mutation_rejects_owner_audience_and_empty_patch():
         ViewUpdate.model_validate({"revision": 1, "visibility": "workspace"})
 
 
-def _admin() -> User:
+def _admin() -> tuple[User, Membership]:
     # An administrator needs no database lookup for the module level.
-    return User(id=uuid7(), status="active", role="admin", is_deleted=False)
+    return make_user("view-admin")
 
 
 class _NoRowSession:
+
+
+    def flush(self) -> None:
+
+
+        pass  # the access function flushes before reading memberships
+
+    def __init__(self, membership=None):
+        self.dirty = set()
+        self.membership = membership
+
+    def scalars(self, _statement):
+        return SimpleNamespace(all=lambda: [self.membership])
+
     def scalar(self, _statement: object) -> None:
         return None
 
@@ -193,8 +215,9 @@ class _NoRowSession:
 def test_missing_or_hidden_view_reads_as_not_found() -> None:
     from app.systems.openview.views.router import read_view
 
+    admin, membership = _admin()
     with pytest.raises(HTTPException) as error:
-        read_view(uuid7(), _admin(), _NoRowSession())
+        read_view(uuid7(), admin, _NoRowSession(membership))
 
     assert error.value.status_code == 404
     assert error.value.detail == "View not found"
@@ -251,10 +274,18 @@ def test_saved_view_definition_refuses_a_deleted_field(column_deleted: bool, ref
     column = Field(id=uuid7(), module_id=module.id, type=FieldType.TEXT, is_deleted=column_deleted)
 
     class ModuleFieldSession:
+
+        def flush(self) -> None:
+
+            pass  # the access function flushes before reading memberships
+
+        dirty = set()
         def get(self, model: type, ident: object) -> object:
             return module if model is Module and ident == module.id else None
 
         def scalars(self, _statement: object) -> list[Field]:
+            if _statement.column_descriptions[0]["entity"] is Membership:
+                return SimpleNamespace(all=lambda: [membership])
             return [active, column]
 
     definition = QueryDefinition(
@@ -263,11 +294,12 @@ def test_saved_view_definition_refuses_a_deleted_field(column_deleted: bool, ref
     )
 
     session = ModuleFieldSession()
+    admin, membership = _admin()
     if not refused:
-        _validate_definition(session, _admin(), module.id, definition)
+        _validate_definition(session, admin, module.id, definition)
         return
     with pytest.raises(HTTPException) as error:
-        _validate_definition(session, _admin(), module.id, definition)
+        _validate_definition(session, admin, module.id, definition)
     assert error.value.status_code == 409
     assert error.value.detail == {
         "code": "view_invalid",

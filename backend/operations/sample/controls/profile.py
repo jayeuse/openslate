@@ -153,7 +153,7 @@ def execute_profile_control(
             ) from None
         _require(
             str(parsed.id) == actor_id
-            and parsed.role.value == person.role
+            and parsed.role is not None and parsed.role.value == person.role
             and parsed.status.value == "active"
             and not parsed.is_deleted,
             step,

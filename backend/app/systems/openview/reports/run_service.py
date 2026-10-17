@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import Engine, literal, select
 from sqlalchemy.orm import Session
 
+from app.core.database.organization_scope import apply_connection_scope
 from app.systems.access.policy.checks import forbidden
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -143,7 +144,7 @@ def validate_report_recipe(
 
 
 def capture_report_snapshot(
-    engine: Engine, report_id: UUID, actor_id: UUID | None
+    engine: Engine, report_id: UUID, actor_id: UUID | None, *, org_id: UUID | None
 ) -> ReportSnapshot:
     """Freeze source values, formatting, ordering and CSV before any write.
 
@@ -153,6 +154,8 @@ def capture_report_snapshot(
     """
 
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+        if org_id is not None:
+            apply_connection_scope(connection, org_id)
         with Session(bind=connection) as db:
             actor = db.get(User, actor_id) if actor_id is not None else None
             if actor_id is not None and actor is None:
@@ -182,7 +185,7 @@ def capture_report_snapshot(
                 [*fields, *([group_field] if group_field is not None else [])],
             )
             profile = db.scalar(
-                select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+                select(WorkspaceProfile).where(WorkspaceProfile.id == report.org_id)
             )
             if profile is None:
                 raise HTTPException(503, detail="Workspace configuration is unavailable")

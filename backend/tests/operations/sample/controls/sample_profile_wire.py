@@ -74,6 +74,13 @@ class ProfileWire:
         }
         if self.defect == "missing_private_read":
             result.pop("phone")
+        account = {key: value for key, value in result.items() if key not in {
+            "role", "access", "sponsor_user_id", "expires_at", "invitation_sent_at",
+        }}
+        org = {"org_id": self.admin_id, "name": "Example", "slug": "example", "role": self.role}
+        result.update(account=account, memberships=[org], pending_invitations=[],
+                      current_organization={**org, "access": [], "owner": False},
+                      default_organization_blocked=None, operator=False)
         return result
 
     def handle(self, request):

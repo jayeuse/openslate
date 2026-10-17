@@ -23,8 +23,8 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_user_cache import forget_provider_user
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
-from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.totp_support import totp
+from tests.conftest import workspace_of
 
 pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
@@ -159,7 +159,7 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
             assert db.scalar(event_count) == events_before
         assert browser.get("/api/auth/me").status_code == 200
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, local_id)
             profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
                 True
             )
@@ -171,17 +171,25 @@ def test_real_totp_cancellation_upgrade_refresh_and_concurrent_removal(
         assert missing.status_code == 200
         assert missing.json()["assurance_level"] == "aal2"
         assert missing.json()["required"] is True and missing.json()["factors"] == []
-        denied = browser.get("/api/auth/session")
-        assert denied.status_code == 403
-        assert denied.json()["detail"]["code"] == "mfa_required"
-        assert browser.get("/api/auth/me").status_code == 403
+        status = browser.get("/api/auth/session")
+        assert status.status_code == 200
+        assert status.json()["default_organization_blocked"] == "mfa_required"
+        me = browser.get("/api/auth/me")
+        assert me.status_code == 200 and me.json()["current_organization"] is None
+        assert me.json()["default_organization_blocked"] == "mfa_required"
+        with Session(owner) as db:
+            org_id = workspace_of(db, local_id).id
+        for path in ("/api/auth/session", "/api/auth/me", "/api/boards"):
+            denied = browser.get(path, headers={"X-Org": str(org_id)})
+            assert denied.status_code == 403
+            assert denied.json()["detail"]["code"] == "mfa_required"
         enrollment = browser.post("/api/auth/mfa/factors", json={})
         assert enrollment.status_code == 201
         factor_id, seed = enrollment.json()["id"], enrollment.json()["totp"]["secret"]
         verification = f"/api/auth/mfa/factors/{factor_id}/verification"
         assert browser.post(verification, json={"code": totp(seed)}).status_code == 200
         with Session(owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = workspace_of(db, local_id)
             profile.mfa_require_admin = profile.mfa_require_member = profile.mfa_require_guest = (
                 False
             )

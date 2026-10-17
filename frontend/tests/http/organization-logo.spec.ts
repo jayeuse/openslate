@@ -418,7 +418,12 @@ test("Logo retained-candidate refusal rechecks the session before any further pu
   api.onSession = async (route) => {
     await gate.released;
     await route.fulfill({
-      json: { authenticated: true, user_id: api.actor, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: api.actor,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     });
   };
   api.onFileRead = (route) =>
@@ -809,7 +814,12 @@ test("Logo privacy curtain conceals a selected preview and restores only the sam
     requested.release();
     await gate.released;
     await route.fulfill({
-      json: { authenticated: true, user_id: api.actor, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: api.actor,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     });
   };
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));

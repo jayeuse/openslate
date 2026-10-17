@@ -1,4 +1,7 @@
-"""Safely reset local OpenSlate application data while preserving one administrator."""
+"""Safely reset local OpenSlate application data: remove every organization, keep one operator.
+
+The reset recreates no organization; run ``operations/create_organization.py`` afterwards.
+"""
 
 from __future__ import annotations
 
@@ -187,8 +190,9 @@ def _print_plan(plan: ResetPlan) -> None:
     print("target=guarded local OpenSlate PostgreSQL, Supabase Auth and Storage")
     print(f"admin_email={plan.sample_email}")
     print(f"admin_id={plan.preserved_admin_id}")
+    print(f"organizations_to_delete={plan.counts['organizations']}")
     print(f"profiles_to_delete={plan.profiles_to_delete}")
-    print(f"inactive_admin_profiles_to_delete={plan.inactive_admin_profiles_to_delete}")
+    print(f"inactive_operator_profiles_to_delete={plan.inactive_operator_profiles_to_delete}")
     print(f"provider_accounts_to_delete={len(plan.provider_account_ids)}")
     linked_ids = {
         provider_id for _, provider_id in plan.provider_subjects if provider_id is not None
@@ -275,8 +279,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 noninteractive_environment=values if args.confirm_digest is not None else None,
             )
             print(
-                "Application data reset completed; the administrator account was preserved "
-                "and local sessions were revoked. Sign in again."
+                "Application data reset completed; the administrator account was preserved, "
+                "no organization remains, and local sessions were revoked. "
+                "Run operations/create_organization.py to create an organization."
             )
     except SystemExit:
         raise

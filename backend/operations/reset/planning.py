@@ -25,18 +25,18 @@ from operations.reset.backups import read_backup_snapshot
 from operations.reset.models import (
     _ALEMBIC_HEAD_STATEMENT,
     _COUNT_STATEMENTS,
-    _EFFECTIVE_ADMIN_PROFILES_STATEMENT,
+    _EFFECTIVE_OPERATOR_PROFILES_STATEMENT,
+    _OPERATOR_STATEMENT,
+    _ORGANIZATIONS_STATEMENT,
     _PROFILE_DELETE_COUNTS_STATEMENT,
     _PROFILE_STATEMENT,
     _PROVIDER_SUBJECTS_STATEMENT,
     _PUBLIC_TABLES_STATEMENT,
-    _WORKSPACE_STATEMENT,
     APPLICATION_TABLES,
     EXPECTED_DATABASE_USER,
     ProfileSnapshot,
     ResetError,
     ResetPlan,
-    WorkspaceSnapshot,
     stable_snapshot_payload,
 )
 
@@ -171,13 +171,13 @@ def _read_profile(connection: Any, user_id: UUID) -> ProfileSnapshot:
         supabase_user_id=_as_uuid(row[7]) if row[7] is not None else None,
         username=row[8],
         status=row[9],
-        role=row[10],
-        display_name=row[11],
-        job_title=row[12],
-        sponsor_user_id=_as_uuid(row[13]) if row[13] is not None else None,
-        expires_at=row[14],
-        invitation_sent_at=row[15],
-        invitation_accepted_at=row[16],
+        display_name=row[10],
+        job_title=row[11],
+        phone=row[12],
+        bio=row[13],
+        theme_preference=row[14],
+        appearance=row[15],
+        avatar_file_id=row[16],
         tokens_valid_after=row[17],
     )
 
@@ -209,35 +209,25 @@ def _read_provider_subjects(
     return tuple(sorted(subjects, key=lambda item: str(item[0])))
 
 
-def _read_workspace(connection: Any) -> WorkspaceSnapshot:
-    rows = _fetchall(connection, _WORKSPACE_STATEMENT)
-    if len(rows) != 1 or len(rows[0]) != 22:
-        raise ResetError("The workspace singleton is missing or ambiguous")
-    row = rows[0]
-    return WorkspaceSnapshot(
-        id=_as_uuid(row[0]),
-        singleton_key=row[1],
-        display_name=row[2],
-        legal_name=row[3],
-        description=row[4],
-        contact_email=row[5],
-        contact_phone=row[6],
-        postal_address=row[7],
-        logo_file_id=row[8],
-        timezone=row[9],
-        locale=row[10],
-        revision=row[11],
-        deleted_at=row[12],
-        is_deleted=row[13],
-        performed_by=row[14],
-        invitation_expiry_days=row[15],
-        guest_duration_days=row[16],
-        currency=row[17],
-        week_start=row[18],
-        business_hours=row[19],
-        mark=row[20],
-        theme=row[21],
-    )
+def _read_operator(connection: Any, admin_id: UUID) -> UUID:
+    rows = _fetchall(connection, _OPERATOR_STATEMENT, (admin_id,))
+    if len(rows) != 1 or len(rows[0]) != 1:
+        raise ResetError("The preserved account must be one installation operator")
+    return _as_uuid(rows[0][0])
+
+
+def _read_organizations(connection: Any) -> tuple[str, ...]:
+    """Freeze every organization row the reset deletes, without reporting its values."""
+    serialized: list[str] = []
+    for row in _fetchall(connection, _ORGANIZATIONS_STATEMENT):
+        if len(row) != 1 or not isinstance(row[0], dict):
+            raise ResetError("Unable to snapshot the organizations")
+        try:
+            _as_uuid(row[0]["id"])
+        except KeyError:
+            raise ResetError("Unable to snapshot the organizations") from None
+        serialized.append(json.dumps(row[0], sort_keys=True, separators=(",", ":")))
+    return tuple(sorted(serialized))
 
 
 def _read_profile_delete_counts(connection: Any, preserved_id: UUID) -> tuple[int, int]:
@@ -275,6 +265,9 @@ def _expected_snapshot_payload(snapshot: object, preserved_admin_id: UUID) -> di
                 payload["performed_by"] = None
         except ResetError:
             payload["performed_by"] = None
+    if "avatar_file_id" in payload:
+        # Every file row and Storage object goes, so the avatar reference clears.
+        payload["avatar_file_id"] = None
     return payload
 
 
@@ -283,7 +276,7 @@ def _impact_digest(plan: ResetPlan) -> str:
         "sample_email": plan.sample_email,
         "counts": dict(plan.counts),
         "profiles_to_delete": plan.profiles_to_delete,
-        "inactive_admin_profiles_to_delete": plan.inactive_admin_profiles_to_delete,
+        "inactive_operator_profiles_to_delete": plan.inactive_operator_profiles_to_delete,
         "profile": stable_snapshot_payload(plan.profile_snapshot),
         "preserved_admin_provider_id": str(plan.preserved_admin_provider_id),
         "provider_subjects": [
@@ -291,7 +284,8 @@ def _impact_digest(plan: ResetPlan) -> str:
             for app_id, provider_id in plan.provider_subjects
         ],
         "provider_account_ids": [str(user_id) for user_id in plan.provider_account_ids],
-        "workspace": stable_snapshot_payload(plan.workspace_snapshot),
+        "preserved_operator_id": str(plan.preserved_operator_id),
+        "organizations": list(plan.organization_snapshot),
         "storage_object_keys": list(plan.storage_object_keys),
         "alembic_head": plan.alembic_head,
         "backup_snapshot": stable_snapshot_payload(plan.backup_snapshot),
@@ -346,42 +340,36 @@ def build_reset_plan(
             or len(set(provider_account_ids)) != len(provider_account_ids)
         ):
             raise ResetError("The provider Auth inventory is invalid")
-        if (
-            profile.role != "admin"
-            or profile.sponsor_user_id is not None
-            or profile.expires_at is not None
-        ):
-            raise ResetError("The preserved profile must be a durable administrator")
-        workspace = _read_workspace(connection)
-        if workspace.singleton_key is not True or workspace.is_deleted is not False:
-            raise ResetError("The workspace singleton is invalid")
+        operator_id = _read_operator(connection, admin_id)
+        organizations = _read_organizations(connection)
         if (
             any(not isinstance(key, str) or not key for key in storage_object_keys)
             or tuple(sorted(storage_object_keys)) != storage_object_keys
             or len(set(storage_object_keys)) != len(storage_object_keys)
         ):
             raise ResetError("The private storage inventory is invalid")
-        if _fetchall(connection, _EFFECTIVE_ADMIN_PROFILES_STATEMENT, (admin_id,)):
-            raise ResetError("Another effective administrator profile exists")
+        if _fetchall(connection, _EFFECTIVE_OPERATOR_PROFILES_STATEMENT, (admin_id,)):
+            raise ResetError("Another active installation operator exists")
         delete_counts = _read_profile_delete_counts(connection, admin_id)
         if len(provider_subjects) != delete_counts[0]:
             raise ResetError("The provider subject inventory does not match the profiles")
         counts = dict(_read_counts(connection))
         counts.update(
             profiles_to_delete=delete_counts[0],
-            inactive_admin_profiles_to_delete=delete_counts[1],
+            inactive_operator_profiles_to_delete=delete_counts[1],
         )
         plan = ResetPlan(
             sample_email=email,
             counts=MappingProxyType(counts),
             profiles_to_delete=delete_counts[0],
-            inactive_admin_profiles_to_delete=delete_counts[1],
+            inactive_operator_profiles_to_delete=delete_counts[1],
             impact_digest="",
             preserved_admin_id=admin_id,
             preserved_admin_provider_id=profile.supabase_user_id,
+            preserved_operator_id=operator_id,
             provider_subjects=provider_subjects,
             profile_snapshot=profile,
-            workspace_snapshot=workspace,
+            organization_snapshot=organizations,
             storage_object_keys=storage_object_keys,
             alembic_head=alembic_head,
             backup_snapshot=backup_snapshot,

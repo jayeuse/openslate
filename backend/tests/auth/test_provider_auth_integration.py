@@ -19,8 +19,10 @@ from app.core.integrations.supabase_auth import SupabaseAuthUnavailable, get_sup
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_user_cache import forget_provider_user
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member, create_organization, membership_of
 
 pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
@@ -98,21 +100,21 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
     email, password, provider_id, local_id, owner = provider_account
     settings = get_settings()
     with Session(owner) as db:
-        other = User(
+        membership = membership_of(db, local_id)
+        organization = db.get(WorkspaceProfile, membership.org_id)
+        other, _other_membership = create_member(db, organization,
             email=f"theme-other-{uuid4().hex}@example.test",
             username=f"theme-other-{uuid4().hex[:16]}",
             status="active",
             role="member",
         )
-        db.add(other)
-        db.flush()
         other_id = other.id
         user = db.get(User, local_id)
         assert user is not None
         user.supabase_user_id = provider_id
-        user.role = role
-        user.sponsor_user_id = other_id if role == "guest" else None
-        user.expires_at = datetime.now(UTC) + timedelta(days=30) if role == "guest" else None
+        membership.role = role
+        membership.sponsor_user_id = other_id if role == "guest" else None
+        membership.expires_at = datetime.now(UTC) + timedelta(days=30) if role == "guest" else None
         db.commit()
     client = TestClient(create_app(), base_url=settings.public_origin)
     client.headers["Origin"] = settings.public_origin
@@ -156,7 +158,7 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             assert before_user is not None
             # Only safe profile values; credential/token fields are never asserted or logged.
             account = (
-                before_user.role,
+                membership_of(db, before_user.id).role,
                 before_user.status,
                 before_user.email,
                 before_user.tokens_valid_after,
@@ -185,7 +187,10 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
             assert user is not None and other is not None
             assert user.theme_preference == "dark"
             assert other.theme_preference == "system"
-            assert (user.role, user.status, user.email, user.tokens_valid_after) == account
+            assert (
+                membership_of(db, user.id).role,
+                user.status, user.email, user.tokens_valid_after,
+            ) == account
             assert (
                 list(
                     db.execute(
@@ -230,10 +235,15 @@ def test_self_theme_preferences_persist_audited_changes_without_account_side_eff
         with Session(owner) as db:
             user = db.get(User, local_id)
             if user is not None:
-                user.role, user.sponsor_user_id, user.expires_at = "member", None, None
+                membership = membership_of(db, user.id)
+                membership.role, membership.sponsor_user_id, membership.expires_at = (
+                    "member", None, None,
+                )
                 db.flush()
             other = db.get(User, other_id)
             if other is not None:
+                db.delete(db.scalar(select(Membership).where(Membership.user_id == other_id)))
+                db.flush()
                 db.delete(other)
             db.commit()
 
@@ -242,13 +252,12 @@ def test_user_theme_storage_has_a_system_default_and_rejects_invalid_values(
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
-    user = User(
+    user, _membership = create_member(db, create_organization(db),
         email=f"theme-default-{uuid4().hex}@example.test",
         username=f"theme-{uuid4().hex[:16]}",
         role="member",
         status="active",
     )
-    db.add(user)
     db.commit()
     assert (
         db.connection().scalar(

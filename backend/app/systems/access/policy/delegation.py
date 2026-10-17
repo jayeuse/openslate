@@ -43,6 +43,7 @@ from app.systems.access.policy.service import (
     require_match,
     unavailable,
 )
+from app.systems.access.users.membership import require_current_membership
 from app.systems.access.users.models import User, UserRole
 
 
@@ -105,7 +106,7 @@ def replace_members(
     not reveal the group's revision.
     """
 
-    if actor.role == UserRole.ADMIN.value:
+    if require_current_membership(db, actor).role == UserRole.ADMIN.value:
         require_fresh_exact_admin(db, actor.id)
         row = lock_group(db, group_id)
     else:

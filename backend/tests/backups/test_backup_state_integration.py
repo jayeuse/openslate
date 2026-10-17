@@ -9,8 +9,11 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.main import create_app
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
+from tests.conftest import make_operator, membership_of
 from tests.platform_scheduling.support import assert_notice_hidden, notification_client
 from tests.rbac.support import _client, add_user
 
@@ -19,7 +22,7 @@ NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
 
 
 def _queue(db: Session, name: str = "Boundary backup"):
-    actor = add_user(db, role=UserRole.ADMIN)
+    actor = make_operator(db, add_user(db, role=UserRole.ADMIN))
     response = _client(create_app(), actor, db).post(
         "/api/backups", json={"name": name}, headers={"Idempotency-Key": uuid4().hex}
     )
@@ -164,11 +167,36 @@ def test_foreign_history_is_not_claimed_and_inherited_policy_requires_adoption(
     assert foreign.state == "running" and foreign.installation_id == "old-installation"
 
 
-def test_due_schedule_catches_up_once_and_timezone_rebases_cursor(integration_db: Session) -> None:
+@pytest.mark.parametrize(
+    ("organization_count", "expected_timezone"),
+    [(0, "UTC"), (1, "Asia/Manila"), (2, "Asia/Manila")],
+)
+def test_backup_timezone_initializes_from_the_owners_organization(
+    integration_db: Session, organization_count: int, expected_timezone: str,
+) -> None:
+    from app.systems.manage.backups import service
+    from tests.conftest import create_organization
+
+    # The owner configures backups inside their organization (the bound one); with
+    # none bound the policy starts in UTC.
+    for _ in range(organization_count):
+        create_organization(integration_db, timezone="Asia/Manila")
+    instance = _identity(integration_db)
+    assert service.policy_response(integration_db, instance).timezone == expected_timezone
+    policy = service.lock_policy(integration_db, instance)
+    integration_db.flush()
+    integration_db.refresh(policy)
+    assert policy.timezone == expected_timezone
+
+
+def test_due_schedule_catches_up_once_and_policy_timezone_is_independent(
+    integration_db: Session,
+) -> None:
     from app.systems.manage.backups import service
     from app.systems.manage.backups.models import BackupPolicy, BackupRun
-    from app.systems.manage.workspace.models import WorkspaceProfile
+    from tests.conftest import create_organization
 
+    profile = create_organization(integration_db, timezone="UTC")
     instance = _identity(integration_db)
     policy = BackupPolicy(
         installation_id=instance,
@@ -184,16 +212,16 @@ def test_due_schedule_catches_up_once_and_timezone_rebases_cursor(integration_db
     assert policy.next_due_at > NOW
     assert len(integration_db.scalars(select(BackupRun)).all()) == 1
     policy.timezone, policy.next_due_at = "Asia/Manila", NOW - timedelta(days=1)
-    profile = integration_db.scalar(select(WorkspaceProfile))
-    profile.timezone = "UTC"
+    profile.timezone = "America/New_York"
     pending = service.policy_response(integration_db, instance, now=NOW)
-    assert pending.timezone == "UTC" and pending.next_due_at > NOW
+    assert pending.timezone == "Asia/Manila" and pending.next_due_at == NOW - timedelta(days=1)
     assert policy.timezone == "Asia/Manila" and policy.next_due_at < NOW
     claimed.finished_at, claimed.reconciled_at, claimed.state = NOW, NOW, "failed"
     claimed.failure_code = "backup_failed"
+    policy.next_due_at = NOW + timedelta(days=1)
     integration_db.flush()
     assert service.claim_run(integration_db, instance, uuid4(), now=NOW) is None
-    assert policy.timezone == "UTC" and policy.next_due_at > NOW
+    assert policy.timezone == "Asia/Manila" and policy.next_due_at > NOW
     assert len(integration_db.scalars(select(BackupRun)).all()) == 1
 
 
@@ -388,8 +416,10 @@ def test_reconciled_backup_failure_notifies_authoritative_audience_atomically(
     db = integration_db
     run = _queue(db)
     requester = db.get(User, run.requester_id)
-    fallback = add_user(db, role=UserRole.ADMIN)
-    excluded = add_user(db, role=UserRole.ADMIN, status=UserStatus.DISABLED)
+    fallback = make_operator(db, add_user(db, role=UserRole.ADMIN))
+    excluded = make_operator(db, add_user(db, role=UserRole.ADMIN, status=UserStatus.DISABLED))
+    # Backups cover the installation: its owner's organization hears about them.
+    db.get(WorkspaceProfile, bound_organization(db)).owner_user_id = fallback.id
     current = _after_database_now(db)
     if audience == "scheduled":
         run.provenance, run.requester_id, run.idempotency_hash = "scheduled", None, None
@@ -456,6 +486,6 @@ def test_reconciled_backup_failure_notifies_authoritative_audience_atomically(
     assert item["subject_id"] == str(run.id) and item["kind"] == "backup-failed"
     assert item["scheduled_for"] is None and "work_id" not in item
     assert client.get("/api/notifications/unread-count").json() == {"unread_count": 1}
-    recipient.role = UserRole.MEMBER.value
+    membership_of(db, recipient.id).role = UserRole.MEMBER.value
     db.commit()
     assert_notice_hidden(client, notices[0].id)

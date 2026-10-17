@@ -21,10 +21,13 @@ from uuid6 import uuid7
 import app.systems.access.users.service as user_service
 from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.users.coordination import InvitationError, lock_user
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
 from app.systems.access.users.schemas import InvitationCreate
+from app.systems.manage.audit.models import AuditLog, SecurityEvent
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.access.access_race_support import add_race_user
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_organization, guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
@@ -35,15 +38,24 @@ def engines() -> Iterator[tuple[Engine, Engine, UUID, str]]:
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"], pool_size=3)
     with Session(owner) as db:
-        admin = add_race_user(db, "race", UserRole.ADMIN.value)
+        organization = create_organization(db)
+        org_id = organization.id
+        admin = add_race_user(db, organization, "race", UserRole.ADMIN.value)
         db.commit()
     email = f"invited-{uuid7().hex}@example.com"
     try:
         yield owner, runtime, admin, email
     finally:
         with Session(owner) as db:
+            owned_ids = select(User.id).where((User.email == email) | (User.id == admin))
+            db.execute(delete(SecurityEvent).where(
+                SecurityEvent.actor_id.in_(owned_ids) | SecurityEvent.subject_id.in_(owned_ids)
+            ))
+            db.execute(delete(AuditLog).where(AuditLog.org_id == org_id))
+            db.execute(delete(Membership).where(Membership.org_id == org_id))
             db.execute(delete(User).where(User.email == email))
             db.execute(delete(User).where(User.id == admin))
+            db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id))
             db.commit()
         runtime.dispose()
         owner.dispose()
@@ -87,7 +99,7 @@ def test_a_delete_that_commits_while_the_invitation_email_is_sent_is_kept(
             except InvitationError as error:
                 outcome.append(error)
 
-    inviter = Thread(target=invite)
+    inviter = Thread(target=in_context(invite))
     inviter.start()
     try:
         assert sending.wait(WAIT)
@@ -109,7 +121,11 @@ def test_a_delete_that_commits_while_the_invitation_email_is_sent_is_kept(
 
     assert len(outcome) == 1 and isinstance(outcome[0], InvitationError), outcome
     with Session(owner) as db:
-        stored = db.scalar(select(User).where(User.email == email))
+        stored = db.execute(select(
+            User.supabase_user_id, User.is_deleted, Membership.invitation_sent_at,
+        ).join(Membership, Membership.user_id == User.id).where(
+            User.email == email, Membership.status == "pending",
+        )).one_or_none()
         assert stored is not None
         assert stored.is_deleted is True
         assert (stored.supabase_user_id, stored.invitation_sent_at) == (None, None)

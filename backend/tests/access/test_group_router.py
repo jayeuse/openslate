@@ -16,24 +16,16 @@ import app.systems.access.policy.schemas as schemas
 from app.common.listing import ListQueryResult, PaginationMetadata
 from app.systems.access.policy.models import AccessLevel, Group
 from app.systems.access.policy.scope import EffectiveAccess
-from app.systems.access.users.models import User, UserRole, UserStatus
-
-
-def _admin() -> User:
-    return User(
-        id=uuid7(),
-        email="admin@example.test",
-        username="admin",
-        role=UserRole.ADMIN.value,
-        status=UserStatus.ACTIVE.value,
-        is_deleted=False,
-    )
+from app.systems.access.users.models import User, UserRole
+from tests.users.user_support import local_user
 
 
 def _fresh_admin(database: Mock) -> User:
     """The real fresh administrator check reloads this administrator from the database."""
 
-    admin = _admin()
+    admin, membership = local_user(UserRole.ADMIN)
+    database.dirty = set()
+    database.scalars.return_value.all.return_value = [membership]
     database.scalar.return_value = admin
     return admin
 
@@ -277,10 +269,10 @@ def test_a_non_administrator_reads_only_groups_inside_departments_they_manage(
     expected: list[object],
 ) -> None:
     group = _group()
-    user = User(
-        id=uuid7(), role=UserRole.MEMBER.value, status=UserStatus.ACTIVE.value, is_deleted=False
-    )
+    user, membership = local_user(UserRole.MEMBER)
     database = Mock(spec=Session)
+    database.dirty = set()
+    database.scalars.return_value.all.return_value = [membership]
     database.get.side_effect = _stored_groups(group)
     levels = {user.id: EffectiveAccess(departments=departments)}
     reaches = {group.id: frozenset(reach)}
@@ -325,10 +317,10 @@ def test_a_database_failure_while_deciding_a_managers_visibility_answers_503(
     monkeypatch: pytest.MonkeyPatch, failing: str, read: str
 ) -> None:
     group = _group()
-    user = User(
-        id=uuid7(), role=UserRole.MEMBER.value, status=UserStatus.ACTIVE.value, is_deleted=False
-    )
+    user, membership = local_user(UserRole.MEMBER)
     database = Mock(spec=Session)
+    database.dirty = set()
+    database.scalars.return_value.all.return_value = [membership]
     database.get.side_effect = _stored_groups(group)
     monkeypatch.setattr(
         policy_router,

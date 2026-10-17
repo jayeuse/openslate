@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 from starlette.requests import Request
 from uuid6 import uuid7
 
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 
 def request(origin: str) -> Request:
@@ -53,10 +55,12 @@ def contract_role(kind: UserRole = UserRole.MEMBER) -> str:
     return kind.value
 
 
-def contract_user(*, status: UserStatus = UserStatus.ACTIVE, role: str | None = None) -> User:
+def contract_user(
+    *, status: UserStatus = UserStatus.ACTIVE, role: str | None = None
+) -> tuple[User, Membership]:
     selected_role = role or contract_role()
     now = datetime.now(UTC)
-    return User(
+    return create_member(None, WorkspaceProfile(id=uuid7()),
         id=uuid7(),
         email="person@example.test",
         username="person",

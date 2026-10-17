@@ -502,6 +502,7 @@ test("Profile avatar refusal rechecks once and stays usable until explicit reloa
       json: {
         authenticated: true,
         user_id: profileUserA,
+        default_organization_blocked: null,
         setup_required: false,
       },
     });

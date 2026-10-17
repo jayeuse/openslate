@@ -24,6 +24,7 @@ def _client(db: Session, actor: User) -> TestClient:
 def _series(db: Session, board: Board, author: User, title: str) -> BoardEvent:
     day = date(2026, 9, 14)
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title=title,

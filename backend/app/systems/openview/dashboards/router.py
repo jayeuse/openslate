@@ -223,6 +223,7 @@ def _replace_widgets(
             continue
         db.add(
             DashboardWidget(
+                org_id=dashboard.org_id,
                 dashboard_id=dashboard.id,
                 position=position,
                 widget_type=widget_type,
@@ -279,6 +280,7 @@ def create_dashboard(
             raise _conflict("dashboard_invalid", "The department is unavailable")
         _require_manager(db, actor, department.id)
         dashboard = Dashboard(
+            org_id=department.org_id,
             department_id=department.id,
             position=payload.position,
             name=payload.name,
@@ -290,6 +292,7 @@ def create_dashboard(
             for position, widget in enumerate(payload.widgets):
                 db.add(
                     DashboardWidget(
+                        org_id=dashboard.org_id,
                         dashboard_id=dashboard.id,
                         position=position,
                         widget_type=widget.widget_type,

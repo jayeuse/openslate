@@ -29,6 +29,7 @@ from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.mutation_validation import RecordValidationError
 from app.systems.sandbox.records.router import create_record, update_record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
+from tests.conftest import membership_of
 from tests.rbac.support import add_user, make_group_access
 from tests.record_versions import record_version
 from tests.sandbox_record_triggers.support import option_id, publish_trigger
@@ -78,9 +79,9 @@ def _remove_publisher_access(db: Session, actor: User, change: str) -> None:
     if change == "disabled":
         actor.status = UserStatus.DISABLED.value
     elif change == "expired":
-        actor.expires_at = utc_now() - timedelta(seconds=1)
+        membership_of(db, actor.id).expires_at = utc_now() - timedelta(seconds=1)
     elif change == "demoted":
-        actor.role = UserRole.MEMBER.value
+        membership_of(db, actor.id).role = UserRole.MEMBER.value
     else:
         raise AssertionError(change)
 
@@ -121,6 +122,7 @@ def test_delayed_person_assignment_rechecks_reader_and_rolls_back_prior_action(
     assignee = add_user(db, "delayed-assignee", role=UserRole.MEMBER)
     make_group_access(db, [assignee], module.department, module)
     person_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Assignee",
         type="user",
@@ -132,6 +134,7 @@ def test_delayed_person_assignment_rechecks_reader_and_rolls_back_prior_action(
     db.flush()
     db.add(
         RecordTriggerAction(
+            org_id=definition.org_id,
             trigger_id=definition.id,
             target_field_id=person_field.id,
             position=1,

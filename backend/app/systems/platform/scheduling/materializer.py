@@ -215,6 +215,7 @@ def materialize_event_reminders(
                     cursor = due + timedelta(microseconds=1)
                     continue
                 work = ScheduledWork(
+                    org_id=event.org_id,
                     kind=WorkKind.EVENT_REMINDER,
                     reminder_id=reminder_id,
                     occurrence_start_at=start,

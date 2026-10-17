@@ -31,11 +31,16 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
     database = MagicMock()
     database.__enter__.return_value = database
     existing = profile if existing_profile else None
-    database.scalar.side_effect = [None, existing, existing, admin_count]
+    org = SimpleNamespace(id=uuid7(), slug="openslate")
+    database.scalar.side_effect = (
+        [None, None, existing, existing, org, profile, None] if existing_profile else
+        [None, None, None, None, None, None, admin_count, profile, None]
+    )
+    database.scalars.return_value.all.return_value = [profile] if existing_profile else []
     monkeypatch.setattr(bootstrap, "AuditSession", lambda _: database)
     monkeypatch.setattr(bootstrap, "get_engine", lambda: object())
-    invite = Mock(return_value=profile)
-    monkeypatch.setattr(bootstrap, "invite_user", invite)
+    invite = Mock(return_value=org)
+    monkeypatch.setattr(bootstrap, "provision", invite)
     reconcile = Mock(return_value=profile)
     monkeypatch.setattr(bootstrap, "reconcile_invitation", reconcile, raising=False)
     if admin_count:
@@ -50,8 +55,12 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
             email=profile.email,
             username=profile.username,
             status=profile.status,
+            org_id=org.id,
+            slug=org.slug,
         )
-        reconcile.assert_called_once_with(database, profile.id, actor_id=None, bootstrap=True)
+        invite.assert_called_once_with(database, name="OpenSlate", slug="openslate",
+                                       invitation=invitation, provider_user_id=None)
+        reconcile.assert_not_called()
     else:
         result = bootstrap._provision(Mock(spec=Settings), invitation)
         assert result == bootstrap.BootstrapResult(
@@ -59,13 +68,16 @@ def test_bootstrap_invites_once_and_recovers_the_exact_pending_reservation(
             email=profile.email,
             username=profile.username,
             status=profile.status,
+            org_id=org.id,
+            slug=org.slug,
         )
-        assert invite.call_args.kwargs["bootstrap"] is True
-        assert invite.call_args.args[1].role == UserRole.ADMIN
+        assert invite.call_args.kwargs["invitation"].role == UserRole.ADMIN
+        assert invite.call_args.kwargs["provider_user_id"] is None
     assert profile.role == (admin if existing_profile else member)
     assert profile.status == "pending"
-    if not existing_profile:
-        database.commit.assert_not_called()
+    if not existing_profile and not admin_count:
+        # Bootstrap now commits the first operator after the durable invitation reservation.
+        database.commit.assert_called_once()
 
 
 def test_bootstrap_requires_explicit_confirmation_outside_local_environments() -> None:

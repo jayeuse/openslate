@@ -274,7 +274,7 @@ def create_board_widget(
         widgets = _active_widgets(db, board.id, lock=True, nowait=True)
         if len(widgets) >= 12:
             raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
-        widget = BoardWidget(board_id=board.id, position=len(widgets))
+        widget = BoardWidget(org_id=board.org_id, board_id=board.id, position=len(widgets))
         _write(widget, payload.widget)
         db.add(widget)
         board.revision += 1
@@ -346,7 +346,7 @@ def duplicate_board_widget(
             )
         if len(widgets) >= 12:
             raise _conflict("widget_limit", "A Board can contain at most 12 widgets")
-        duplicate = BoardWidget(board_id=board.id, position=len(widgets))
+        duplicate = BoardWidget(org_id=board.org_id, board_id=board.id, position=len(widgets))
         _write(duplicate, source_spec)
         db.add(duplicate)
         board.revision += 1

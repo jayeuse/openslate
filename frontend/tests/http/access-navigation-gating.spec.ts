@@ -1,4 +1,10 @@
-import { expect, test, type Page, isEventStream } from "./helpers/test";
+import {
+  authMeBody,
+  expect,
+  test,
+  type Page,
+  isEventStream,
+} from "./helpers/test";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 const departmentId = "00000000-0000-4000-8000-0000000000d1";
@@ -14,10 +20,17 @@ async function signIn(page: Page, identity: Identity) {
     const { pathname } = new URL(route.request().url());
     if (pathname === "/api/auth/session")
       return route.fulfill({
-        json: { authenticated: true, user_id: userId, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: userId,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       });
     if (pathname === "/api/auth/me")
-      return route.fulfill({ json: { id: userId, ...identity } });
+      return route.fulfill({
+        json: authMeBody({ id: userId, ...identity }),
+      });
     return route.fulfill({ status: 404, json: {} });
   });
 }
@@ -135,11 +148,12 @@ test("a different identity response cannot admit Security and offers a fresh Ret
   });
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: matching ? userId : "00000000-0000-4000-8000-000000000999",
+        default_organization_blocked: null,
         role: "admin",
         access: [],
-      },
+      }),
     }),
   );
   await page.goto("/access?view=security");

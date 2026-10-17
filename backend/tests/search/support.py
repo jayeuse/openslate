@@ -13,6 +13,7 @@ from app.systems.access.users.models import User
 from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module
 
 
@@ -20,7 +21,7 @@ def client(db: Session | Mock, actor: User | None) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_db] = lambda: db
     if actor is not None:
-        app.dependency_overrides[get_current_user] = lambda: actor
+        app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     return TestClient(app, base_url=get_settings().public_origin)
 
 
@@ -39,11 +40,13 @@ def titled_module(
     db: Session, titles: list[object], *, kind: str = "text"
 ) -> tuple[Module, Field, list[Record]]:
     module = add_module(db, add_department(db), "Search assets")
-    field = Field(module_id=module.id, name="Title", type=kind, position=0, config={})
+    field = Field(org_id=module.org_id, module_id=module.id,
+                  name="Title", type=kind, position=0, config={})
     db.add(field)
     db.flush()
     module.title_field_id = field.id
-    rows = [Record(module_id=module.id, data={str(field.id): title}) for title in titles]
+    rows = [Record(org_id=module.org_id, module_id=module.id, data={str(field.id): title})
+            for title in titles]
     db.add_all(rows)
     db.flush()
     return module, field, rows

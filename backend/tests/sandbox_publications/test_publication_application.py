@@ -22,6 +22,7 @@ from app.systems.sandbox.records.query import query_records
 from app.systems.sandbox.records.query_schemas import GroupedRecordQuery, RecordQuery
 from app.systems.sandbox.records.router import create_record
 from app.systems.sandbox.records.schemas import RecordCreate
+from tests.rbac.support import organization
 from tests.sandbox_designs.fixtures import sample_option_id
 from tests.sandbox_publications.support import (
     binding,
@@ -214,6 +215,7 @@ def test_retired_trigger_children_do_not_block_field_closure(
     )
     assert publication is not None
     record_trigger = RecordTrigger(
+        org_id=publication.org_id,
         publication_id=publication.id,
         published_version_id=publication.version_id,
         publisher_id=publisher.id,
@@ -231,6 +233,7 @@ def test_retired_trigger_children_do_not_block_field_closure(
     integration_owner_db.add_all(
         [
             RecordTriggerCondition(
+                org_id=record_trigger.org_id,
                 trigger_id=record_trigger.id,
                 field_id=field.id,
                 position=0,
@@ -239,6 +242,7 @@ def test_retired_trigger_children_do_not_block_field_closure(
                 literal_value={"value": "High"},
             ),
             RecordTriggerAction(
+                org_id=record_trigger.org_id,
                 trigger_id=record_trigger.id,
                 target_field_id=field.id,
                 position=0,
@@ -265,6 +269,7 @@ def test_retired_trigger_children_do_not_block_field_closure(
 
     integration_owner_db.add(
         SandboxBinding(
+            org_id=record_trigger.org_id,
             kind="trigger",
             sandbox_id="retired-dependency-check",
             trigger_id=record_trigger.id,
@@ -410,7 +415,9 @@ def test_reused_schedule_adopts_the_current_workspace_timezone(
     assert trigger_id is not None
     definition = integration_owner_db.get(RecordTrigger, trigger_id)
     profile = integration_owner_db.scalar(
-        select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+        select(WorkspaceProfile).where(
+            WorkspaceProfile.id == organization(integration_owner_db).id
+        )
     )
     assert definition is not None
     assert profile is not None

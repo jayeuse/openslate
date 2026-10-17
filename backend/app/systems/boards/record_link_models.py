@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
@@ -11,6 +11,27 @@ from app.core.base_model import BaseModel
 class BoardRecordLink(BaseModel):
     __tablename__ = "board_record_links"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_board_record_links_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "board_id"], ["boards.org_id", "boards.id"],
+            name="fk_board_record_links_board_id_boards", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"], ["board_events.org_id", "board_events.id"],
+            name="fk_board_record_links_event_id_board_events", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "post_id"], ["board_posts.org_id", "board_posts.id"],
+            name="fk_board_record_links_post_id_board_posts", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "record_id"], ["records.org_id", "records.id"],
+            name="fk_board_record_links_record_id_records", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_board_record_links_module_id_modules", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "(event_id IS NOT NULL AND post_id IS NULL) OR "
             "(event_id IS NULL AND post_id IS NOT NULL)",
@@ -23,27 +44,41 @@ class BoardRecordLink(BaseModel):
         Index("ix_board_record_links_module_id", "module_id"),
     )
 
-    board_id: Mapped[UUID] = mapped_column(ForeignKey("boards.id", ondelete="RESTRICT"))
-    event_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("board_events.id", ondelete="RESTRICT"), nullable=True
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    post_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("board_posts.id", ondelete="RESTRICT"), nullable=True
-    )
-    record_id: Mapped[UUID] = mapped_column(ForeignKey("records.id", ondelete="RESTRICT"))
-    module_id: Mapped[UUID] = mapped_column(ForeignKey("modules.id", ondelete="RESTRICT"))
+    board_id: Mapped[UUID] = mapped_column(nullable=False)
+    event_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    post_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    record_id: Mapped[UUID] = mapped_column(nullable=False)
+    module_id: Mapped[UUID] = mapped_column(nullable=False)
 
 
 class BoardPostRevisionRecordLink(BaseModel):
     __tablename__ = "board_post_revision_record_links"
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_board_post_revision_record_links_org_id_id"),
+        ForeignKeyConstraint(
+            ["org_id", "revision_id"], ["board_post_revisions.org_id", "board_post_revisions.id"],
+            name="fk_board_revision_record_links_revision",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "record_id"], ["records.org_id", "records.id"],
+            name="fk_board_post_revision_record_links_record_id_records", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "module_id"], ["modules.org_id", "modules.id"],
+            name="fk_board_post_revision_record_links_module_id_modules", ondelete="RESTRICT",
+        ),
         UniqueConstraint("revision_id", "record_id", name="uq_board_revision_record_link"),
         Index("ix_board_revision_record_links_record_id", "record_id"),
         Index("ix_board_revision_record_links_module_id", "module_id"),
     )
 
-    revision_id: Mapped[UUID] = mapped_column(
-        ForeignKey("board_post_revisions.id", ondelete="RESTRICT")
+    org_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
     )
-    record_id: Mapped[UUID] = mapped_column(ForeignKey("records.id", ondelete="RESTRICT"))
-    module_id: Mapped[UUID] = mapped_column(ForeignKey("modules.id", ondelete="RESTRICT"))
+    revision_id: Mapped[UUID] = mapped_column(nullable=False)
+    record_id: Mapped[UUID] = mapped_column(nullable=False)
+    module_id: Mapped[UUID] = mapped_column(nullable=False)

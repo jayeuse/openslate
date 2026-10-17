@@ -38,6 +38,7 @@ def test_conjunctive_filters_count_page_and_historical_person_boundaries(event_w
                 subject_id=subject,
                 occurred_at=start + timedelta(hours=offset),
                 identity=UUID(int=tie_base + (2 if index == 1 else 1)) if index in [1, 2] else None,
+                org_id=world.org_id,
             )
         )
     params = {
@@ -82,6 +83,7 @@ def test_privileged_collection_detail_and_export_are_not_cached(event_world):
         outcome="success",
         source="feed.fixture",
         operation_id=world.operation_id,
+        org_id=world.org_id,
     )
     for path in [
         "/api/security-events",
@@ -97,9 +99,12 @@ def test_privileged_collection_detail_and_export_are_not_cached(event_world):
 def test_real_account_without_admin_role_cannot_read_filtered_feed_detail_or_export(
     event_world, role
 ):
+    from sqlalchemy import select
     from sqlalchemy.orm import Session
 
-    from app.systems.access.users.models import User
+    from app.systems.access.users.models import Membership, User
+    from app.systems.manage.workspace.models import WorkspaceProfile
+    from tests.conftest import create_member, membership_of
 
     world = event_world
     identity = append_committed(
@@ -111,21 +116,21 @@ def test_real_account_without_admin_role_cannot_read_filtered_feed_detail_or_exp
     sponsor_id = uuid4()
     with Session(world.owner) as db:
         actor = db.get(User, world.actor_id)
+        membership = membership_of(db, actor.id)
         if role == "guest":
-            db.add(
-                User(
+            create_member(
+                    db, db.get(WorkspaceProfile, membership.org_id),
                     id=sponsor_id,
                     email=f"sponsor-{sponsor_id}@example.test",
                     username=f"sponsor-{sponsor_id.hex}",
                     status="active",
                     role="member",
                     supabase_user_id=uuid4(),
-                )
             )
             db.flush()
-            actor.sponsor_user_id = sponsor_id
-            actor.expires_at = datetime.now(UTC) + timedelta(days=1)
-        actor.role = role
+            membership.sponsor_user_id = sponsor_id
+            membership.expires_at = datetime.now(UTC) + timedelta(days=1)
+        membership.role = role
         db.commit()
     try:
         for path in [
@@ -138,9 +143,13 @@ def test_real_account_without_admin_role_cannot_read_filtered_feed_detail_or_exp
             assert "private.fixture" not in response.text
     finally:
         with Session(world.owner) as db:
-            actor = db.get(User, world.actor_id)
-            actor.role, actor.sponsor_user_id, actor.expires_at = "admin", None, None
+            membership = membership_of(db, world.actor_id)
+            membership.role, membership.sponsor_user_id, membership.expires_at = "admin", None, None
             db.flush()
             if role == "guest":
+                db.delete(db.scalar(select(Membership).where(
+                    Membership.user_id == sponsor_id
+                )))
+                db.flush()
                 db.delete(db.get(User, sponsor_id))
             db.commit()

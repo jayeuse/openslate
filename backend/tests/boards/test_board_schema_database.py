@@ -21,7 +21,7 @@ from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.platform.files.models import File
 from app.systems.sandbox.records.models import Record
-from tests.boards.support import department_board, member, project_board
+from tests.boards.support import company_board, department_board, member, project_board
 from tests.rbac.support import add_department, add_module
 
 pytestmark = pytest.mark.integration
@@ -62,6 +62,7 @@ def _rejects(db: Session, change: object) -> None:
 
 def _file(db: Session, board: Board, creator: User) -> File:
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         record_id=None,
@@ -77,7 +78,8 @@ def _file(db: Session, board: Board, creator: User) -> File:
 
 
 def _post(db: Session, board: Board, author: User) -> BoardPost:
-    item = BoardPost(board_id=board.id, author_id=author.id, title="Title", body="Body")
+    item = BoardPost(org_id=board.org_id,
+                     board_id=board.id, author_id=author.id, title="Title", body="Body")
     db.add(item)
     db.flush()
     return item
@@ -85,6 +87,7 @@ def _post(db: Session, board: Board, author: User) -> BoardPost:
 
 def _revision(db: Session, item: BoardPost, number: int = 1) -> BoardPostRevision:
     revision = BoardPostRevision(
+        org_id=item.org_id,
         post_id=item.id,
         publication_number=number,
         publication_key=uuid7(),
@@ -155,17 +158,22 @@ def test_board_scope_constraints(integration_owner_db: Session) -> None:
     db = integration_owner_db
     department = add_department(db)
     department_board(db, department)
+    company_board(db)
 
-    _rejects(db, Board(scope="team", name="Unknown scope"))
-    _rejects(db, Board(scope=BoardScope.COMPANY.value, name="Second company"))
-    _rejects(db, Board(scope=BoardScope.DEPARTMENT.value, name="No department"))
+    _rejects(db, Board(org_id=department.org_id, scope="team", name="Unknown scope"))
+    _rejects(db, Board(org_id=department.org_id,
+                       scope=BoardScope.COMPANY.value, name="Second company"))
+    _rejects(db, Board(org_id=department.org_id,
+                       scope=BoardScope.DEPARTMENT.value, name="No department"))
     _rejects(
         db,
-        Board(scope=BoardScope.PROJECT.value, department_id=department.id, name="Project"),
+        Board(org_id=department.org_id,
+              scope=BoardScope.PROJECT.value, department_id=department.id, name="Project"),
     )
     _rejects(
         db,
-        Board(scope=BoardScope.DEPARTMENT.value, department_id=department.id, name="Second"),
+        Board(org_id=department.org_id,
+              scope=BoardScope.DEPARTMENT.value, department_id=department.id, name="Second"),
     )
 
 
@@ -176,18 +184,20 @@ def test_board_groups_allow_one_active_row_for_each_group_and_a_known_level(
 
     db = integration_owner_db
     board = project_board(db)
-    group = Group(name=f"Group {uuid7().hex}")
+    group = Group(org_id=board.org_id, name=f"Group {uuid7().hex}")
     db.add(group)
     db.flush()
-    first = BoardGroup(board_id=board.id, group_id=group.id, level="write")
+    first = BoardGroup(org_id=board.org_id, board_id=board.id, group_id=group.id, level="write")
     db.add(first)
     db.flush()
 
-    _rejects(db, BoardGroup(board_id=board.id, group_id=group.id, level="read"))
-    _rejects(db, BoardGroup(board_id=board.id, group_id=uuid7(), level="owner"))
+    _rejects(db, BoardGroup(org_id=board.org_id,
+                            board_id=board.id, group_id=group.id, level="read"))
+    _rejects(db, BoardGroup(org_id=board.org_id,
+                            board_id=board.id, group_id=uuid7(), level="owner"))
     first.is_deleted = True
     db.flush()
-    db.add(BoardGroup(board_id=board.id, group_id=group.id, level="manage"))
+    db.add(BoardGroup(org_id=board.org_id, board_id=board.id, group_id=group.id, level="manage"))
     db.flush()
 
 
@@ -199,10 +209,12 @@ def test_published_post_revisions_and_revision_attachments_are_immutable(
     board = project_board(db)
     item = _post(db, board, author)
     file = _file(db, board, author)
-    db.add(BoardAttachment(board_id=board.id, file_id=file.id, post_id=item.id))
+    db.add(BoardAttachment(org_id=board.org_id,
+                           board_id=board.id, file_id=file.id, post_id=item.id))
     db.flush()
     revision = _revision(db, item)
-    snapshot = BoardPostRevisionAttachment(revision_id=revision.id, file_id=file.id)
+    snapshot = BoardPostRevisionAttachment(org_id=revision.org_id,
+                                            revision_id=revision.id, file_id=file.id)
     db.add(snapshot)
     db.flush()
 
@@ -225,9 +237,12 @@ def test_attachments_must_match_the_board_of_their_file_and_their_post(
     item, other_item = _post(db, board, author), _post(db, other, author)
     file, other_file = _file(db, board, author), _file(db, other, author)
 
-    _rejects(db, BoardAttachment(board_id=board.id, file_id=other_file.id, post_id=item.id))
-    _rejects(db, BoardAttachment(board_id=board.id, file_id=file.id, post_id=other_item.id))
-    owner = BoardAttachment(board_id=board.id, file_id=file.id, post_id=item.id)
+    _rejects(db, BoardAttachment(org_id=board.org_id,
+                                 board_id=board.id, file_id=other_file.id, post_id=item.id))
+    _rejects(db, BoardAttachment(org_id=board.org_id,
+                                 board_id=board.id, file_id=file.id, post_id=other_item.id))
+    owner = BoardAttachment(org_id=board.org_id,
+                            board_id=board.id, file_id=file.id, post_id=item.id)
     db.add(owner)
     db.flush()
     second = _post(db, board, author)
@@ -246,11 +261,13 @@ def test_a_revision_attachment_needs_the_file_of_its_post(integration_owner_db: 
     board = project_board(db)
     item, other_item = _post(db, board, author), _post(db, board, author)
     file = _file(db, board, author)
-    db.add(BoardAttachment(board_id=board.id, file_id=file.id, post_id=other_item.id))
+    db.add(BoardAttachment(org_id=board.org_id,
+                           board_id=board.id, file_id=file.id, post_id=other_item.id))
     db.flush()
     revision = _revision(db, item)
 
-    _rejects(db, BoardPostRevisionAttachment(revision_id=revision.id, file_id=file.id))
+    _rejects(db, BoardPostRevisionAttachment(org_id=revision.org_id,
+                                            revision_id=revision.id, file_id=file.id))
 
 
 def test_record_links_must_match_their_board_post_and_record(
@@ -260,7 +277,7 @@ def test_record_links_must_match_their_board_post_and_record(
     author = member(db)
     department = add_department(db)
     module, other_module = add_module(db, department), add_module(db, department)
-    record = Record(module_id=module.id, data={})
+    record = Record(org_id=module.org_id, module_id=module.id, data={})
     db.add(record)
     db.flush()
     board, other = project_board(db), project_board(db)
@@ -269,6 +286,7 @@ def test_record_links_must_match_their_board_post_and_record(
     _rejects(
         db,
         BoardRecordLink(
+            org_id=board.org_id,
             board_id=board.id,
             post_id=other_item.id,
             record_id=record.id,
@@ -278,6 +296,7 @@ def test_record_links_must_match_their_board_post_and_record(
     _rejects(
         db,
         BoardRecordLink(
+            org_id=board.org_id,
             board_id=board.id,
             post_id=item.id,
             record_id=record.id,
@@ -285,6 +304,7 @@ def test_record_links_must_match_their_board_post_and_record(
         ),
     )
     link = BoardRecordLink(
+        org_id=board.org_id,
         board_id=board.id, post_id=item.id, record_id=record.id, module_id=module.id
     )
     db.add(link)
@@ -298,10 +318,12 @@ def test_record_links_must_match_their_board_post_and_record(
     _rejects(
         db,
         BoardPostRevisionRecordLink(
+            org_id=revision.org_id,
             revision_id=revision.id, record_id=record.id, module_id=other_module.id
         ),
     )
     snapshot = BoardPostRevisionRecordLink(
+        org_id=revision.org_id,
         revision_id=revision.id, record_id=record.id, module_id=module.id
     )
     db.add(snapshot)
@@ -315,6 +337,7 @@ def test_record_links_must_match_their_board_post_and_record(
     _rejects(
         db,
         BoardPostRevisionRecordLink(
+            org_id=unrelated.org_id,
             revision_id=unrelated.id, record_id=record.id, module_id=module.id
         ),
     )

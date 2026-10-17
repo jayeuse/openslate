@@ -51,10 +51,12 @@ def world(relationship_http_fixture: RelationshipHTTPFixture) -> Iterator[_World
 
     fixture = relationship_http_fixture
     with Session(fixture.owner_engine) as database:
-        board = Board(scope=BoardScope.PROJECT.value, name=f"Race {fixture.actor_id.hex[:12]}")
+        board = Board(org_id=fixture.org_id, scope=BoardScope.PROJECT.value,
+                      name=f"Race {fixture.actor_id.hex[:12]}")
         database.add(board)
         database.flush()
-        item = BoardPost(board_id=board.id, author_id=fixture.actor_id, title=_TITLE, body=_BODY)
+        item = BoardPost(org_id=board.org_id, board_id=board.id,
+                         author_id=fixture.actor_id, title=_TITLE, body=_BODY)
         database.add(item)
         database.commit()
         board_id, post_id = board.id, item.id

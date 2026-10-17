@@ -67,3 +67,18 @@ Wrong: `Toolbar still overflows. Trying a third and fourth variation.`
 ## Impeccable hook
 
 The impeccable design hook runs after each Edit/Write on UI files and again at Stop (configured in `.claude/settings.json`). Treat its findings with the triage rules in `.agents/skills/impeccable/reference/hooks.md`: fix real problems, never add an ignore to skip a fix, and ask before `ignore-file` or `ignore-rule`.
+
+## PR review findings
+
+When you fix findings from the Codex reviewer (`chatgpt-codex-connector`) or another reviewer on the active PR, close each thread after the fix is pushed:
+
+1. Push the fix to the PR branch first. Never reply on or resolve a thread for a fix that is only local.
+2. Reply on the thread with one brief line: the commit SHA, what changed, and the test that covers it. Use `gh api repos/<owner>/<repo>/pulls/<pr>/comments/<comment_id>/replies`.
+3. Resolve the thread with the GraphQL `resolveReviewThread` mutation (find thread ids with `reviewThreads`).
+4. If you did not fix a finding, or you fixed it in a different way than it suggests, say so and why in the reply. Leave the thread unresolved if the user must decide.
+
+SEC-R1 still applies: describe only problems in the PR's unmerged changes.
+
+Correct: `Fixed in f7637283: owners can no longer be deleted, disabled, or demoted (409); covered by test_another_administrator_cannot_remove_disable_or_demote_an_owner.` Then resolve the thread.
+Wrong: Push the fix and leave the thread open with no reply, or resolve it with no reply.
+Wrong: `Thanks for the review! I took a careful look and made several improvements to the code, which should address the concern.`

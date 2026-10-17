@@ -11,9 +11,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine
 from tests.operations.migration_support import guarded_migration_environment
 
 
@@ -39,30 +40,28 @@ def test_report_recipe_schema_constraints_and_runtime_access_on_active_baseline(
 
 
 def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
+    with Session(engine) as db:
+        organization = create_organization(db)
+        ids["org"] = organization.id
+        create_member(db, organization, id=ids["audit_actor"],
+                      email=f"report-baseline-{ids['audit_actor'].hex}@example.test",
+                      username=f"report_baseline_{ids['audit_actor'].hex}")
+        db.commit()
     with engine.begin() as connection:
-        for key in ("audit_actor",):
-            connection.execute(
-                text(
-                    "INSERT INTO public.users (id, email, username, status, role) "
-                    "VALUES (:id, :email, :username, 'active', 'member')"
-                ),
-                {
-                    "id": ids[key],
-                    "email": f"report-baseline-{ids[key].hex}@example.test",
-                    "username": f"report_baseline_{ids[key].hex}",
-                },
-            )
         connection.execute(
-            text("INSERT INTO public.departments (id, department_name) VALUES (:id, :name)"),
-            {"id": ids["department"], "name": f"Report baseline {ids['department'].hex}"},
+            text("INSERT INTO public.departments (id, org_id, department_name) "
+                 "VALUES (:id, :org, :name)"),
+            {"id": ids["department"], "org": ids["org"],
+             "name": f"Report baseline {ids['department'].hex}"},
         )
         connection.execute(
             text(
-                "INSERT INTO public.modules (id, department_id, module_name) "
-                "VALUES (:id, :department_id, :name)"
+                "INSERT INTO public.modules (id, org_id, department_id, module_name) "
+                "VALUES (:id, :org, :department_id, :name)"
             ),
             {
                 "id": ids["module"],
+                "org": ids["org"],
                 "department_id": ids["department"],
                 "name": f"Report baseline {ids['module'].hex}",
             },
@@ -82,6 +81,7 @@ def _assert_report_schema(connection: Connection) -> None:
     }
     assert set(columns) == {
         "id",
+        "org_id",
         "created_at",
         "deleted_at",
         "is_deleted",
@@ -114,6 +114,8 @@ def _assert_report_schema(connection: Connection) -> None:
         "ck_reports_revision_positive": "c",
         "fk_reports_module_id_modules": "f",
         "fk_reports_performed_by_users": "f",
+        "fk_reports_org_id_organizations": "f",
+        "uq_reports_org_id_id": "u",
     }
     assert {name: constraints[name]["contype"] for name in constraints} == expected
     assert constraints["fk_reports_module_id_modules"]["confdeltype"] == "r"
@@ -128,7 +130,7 @@ def _assert_report_schema(connection: Connection) -> None:
             )
         ).mappings()
     }
-    assert set(indexes) == {"reports_pkey", "ix_reports_module"}
+    assert set(indexes) == {"reports_pkey", "ix_reports_module", "uq_reports_org_id_id"}
     assert "(module_id)" in indexes["ix_reports_module"]
 
 
@@ -144,11 +146,12 @@ def _assert_runtime_insert_and_read(
     with runtime_engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO public.reports (id, module_id, name, recipe, performed_by) "
-                "VALUES (:id, :module_id, :name, CAST(:recipe AS jsonb), :actor_id)"
+                "INSERT INTO public.reports (id, org_id, module_id, name, recipe, performed_by) "
+                "VALUES (:id, :org, :module_id, :name, CAST(:recipe AS jsonb), :actor_id)"
             ),
             {
                 "id": ids["report"],
+                "org": ids["org"],
                 "module_id": ids["module"],
                 "name": "Monthly report",
                 "recipe": json.dumps({"version": 1, "fields": []}),
@@ -181,11 +184,12 @@ def _assert_report_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
                     connection.execute(
                         text(
                             "INSERT INTO public.reports "
-                            "(id, module_id, name, revision, recipe) "
-                            "VALUES (:id, :module_id, :name, :revision, '{}'::jsonb)"
+                            "(id, org_id, module_id, name, revision, recipe) "
+                            "VALUES (:id, :org, :module_id, :name, :revision, '{}'::jsonb)"
                         ),
                         {
                             "id": uuid7(),
+                            "org": ids["org"],
                             "module_id": ids["module"],
                             "name": name,
                             "revision": revision,
@@ -198,6 +202,9 @@ def _assert_report_constraints(engine: Engine, ids: dict[str, UUID]) -> None:
                 connection.execute(
                     text("DELETE FROM public.modules WHERE id = :id"), {"id": ids["module"]}
                 )
+        connection.execute(
+            text("DELETE FROM public.memberships WHERE user_id=:id"), {"id": ids["audit_actor"]}
+        )
         connection.execute(
             text("DELETE FROM public.users WHERE id = :id"), {"id": ids["audit_actor"]}
         )
@@ -218,6 +225,12 @@ def _delete_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
             text("DELETE FROM public.departments WHERE id = :id"), {"id": ids["department"]}
         )
         connection.execute(
+            text("DELETE FROM public.memberships WHERE user_id=:id"), {"id": ids["audit_actor"]}
+        )
+        connection.execute(
             text("DELETE FROM public.users WHERE id = ANY(:ids)"),
             {"ids": [ids["audit_actor"]]},
+        )
+        connection.execute(
+            text("DELETE FROM public.organizations WHERE id=:id"), {"id": ids["org"]}
         )

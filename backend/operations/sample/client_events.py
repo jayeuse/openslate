@@ -16,6 +16,7 @@ def check_event_stream(
     client: httpx.Client,
     origin: str,
     append: Callable[[Mapping[str, object]], None],
+    organization_id: str | None = None,
 ) -> dict[str, object]:
     # Imported at execution time because SampleClient exposes this helper.
     from operations.sample.client import SampleAuthenticationError, SampleClientError, _request_id
@@ -36,6 +37,8 @@ def check_event_stream(
         with client.stream(
             "GET",
             "/api/events",
+            # The stream names its organization in the query, as the browser does.
+            params={"org": organization_id} if organization_id else None,
             headers={
                 "Origin": origin,
                 "Accept": "text/event-stream",

@@ -23,6 +23,7 @@ from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.models import Board, BoardGroup
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.dashboards.models import Dashboard
 from app.systems.sandbox.fields.models import Field, FieldType
 from tests.boards.support import client as board_client
@@ -30,8 +31,10 @@ from tests.boards.support import grant, project_board
 from tests.charts.chart_route_support import ChartWorld
 from tests.conftest import _assert_alembic_head, guarded_create_engine
 from tests.live_session_support import with_live_session
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 from tests.route_app_support import route_app
+from tests.sandbox_designs.fixtures import create_document
 
 
 def client(db: Session, actor: User, *routers: APIRouter) -> TestClient:
@@ -65,6 +68,7 @@ class ReferenceRaceWorld:
             other_department = add_department(db)
             module = add_module(db, department)
             field = Field(
+                org_id=module.org_id,
                 module_id=module.id, name="Label", type=FieldType.TEXT, position=0, config={}
             )
             db.add(field)
@@ -72,8 +76,10 @@ class ReferenceRaceWorld:
             member = add_user(db, role="member")
             access = make_group_access(db, [member], department, level=AccessLevel.MANAGE)
             board = project_board(db)
-            db.add(BoardGroup(board_id=board.id, group_id=access.group_id, level="manage"))
-            dashboard = Dashboard(department_id=department.id, name="Race Dashboard " + uuid7().hex)
+            db.add(BoardGroup(org_id=board.org_id, board_id=board.id,
+                              group_id=access.group_id, level="manage"))
+            dashboard = Dashboard(org_id=department.org_id, department_id=department.id,
+                                  name="Race Dashboard " + uuid7().hex)
             db.add(dashboard)
             now = utc_now()
             for key, actor in (("admin", admin), ("member", member)):
@@ -89,6 +95,8 @@ class ReferenceRaceWorld:
                 db.flush()
                 self.actors[key], self.sessions[key] = actor.id, live.id
             self.department_id, self.other_department_id = department.id, other_department.id
+            self.organization_id = department.org_id
+            create_document(db, db.get(WorkspaceProfile, self.organization_id))
             self.module_id, self.field_id = module.id, field.id
             self.group_id, self.board_id, self.dashboard_id = (
                 access.group_id,
@@ -113,7 +121,7 @@ class ReferenceRaceWorld:
             return CurrentIdentity(actor, self.sessions[key], False, False)
 
         self.app.dependency_overrides[get_db] = database
-        self.app.dependency_overrides[get_current_identity] = identity
+        self.app.dependency_overrides[get_current_identity] = scoped_override(identity)
         with self.client("admin") as client:
             for name in ("First", "Second"):
                 response = client.post(
@@ -208,7 +216,11 @@ class ReferenceRaceWorld:
                 ("modules", "id", [self.module_id]),
                 ("departments", "id", [self.department_id, self.other_department_id]),
                 ("audit_logs", "performed_by", list(self.actors.values())),
+                ("memberships", "user_id", list(self.actors.values())),
                 ("users", "id", list(self.actors.values())),
+                ("sandbox_documents", "org_id", [self.organization_id]),
+                ("audit_logs", "org_id", [self.organization_id]),
+                ("organizations", "id", [self.organization_id]),
             ):
                 connection.execute(
                     text(f"DELETE FROM public.{table} WHERE {column} = ANY(:ids)"), {"ids": ids}

@@ -3,14 +3,14 @@
 import copy
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Event
 from uuid import UUID
 
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -19,13 +19,17 @@ from app.common.dependencies import get_current_user
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.core.middleware.request_context import get_request_context
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.models import AuditLog
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.designs.models import SandboxDocument, SandboxVersion
 from app.systems.sandbox.designs.service import _append_version, create_version, read_document
-from tests.conftest import guarded_create_engine
-from tests.rbac.support import make_user
+from tests.conftest import create_member, guarded_create_engine
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import add_user, organization
 from tests.route_app_support import route_app
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
 
@@ -34,16 +38,18 @@ pytestmark = pytest.mark.integration
 def prune_world():
     owner = guarded_create_engine(os.environ["MIGRATION_DATABASE_URL"])
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"])
-    actor = make_user("prune-" + uuid7().hex)
     owned = set()
     with AuditSession(owner, expire_on_commit=False) as db:
+        org = organization(db)
+        org_id = org.id
+        create_document(db, org)
+        actor = add_user(db, "prune-" + uuid7().hex, role="admin")
         row = db.scalar(select(SandboxDocument))
         assert row is not None
         assert not list(
             db.scalars(select(SandboxVersion).where(SandboxVersion.is_deleted.is_(False)))
         )
         initial = (row.revision, row.performed_by)
-        db.add(actor)
         db.commit()
     reached = Event()
 
@@ -61,13 +67,14 @@ def prune_world():
 
     app = route_app()
     app.dependency_overrides[get_db] = database
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     try:
         with TestClient(app) as client:
             yield {
                 "owner": owner,
                 "runtime": runtime,
                 "actor": actor,
+                "organization": org_id,
                 "client": client,
                 "owned": owned,
                 "reached": reached,
@@ -82,10 +89,19 @@ def prune_world():
                     db.delete(version)
             row = db.scalar(select(SandboxDocument))
             row.revision, row.performed_by = initial
+            for membership in db.scalars(select(Membership).where(Membership.user_id == actor.id)):
+                db.delete(membership)
+            db.flush()
             user = db.get(type(actor), actor.id)
             if user is not None:
                 db.delete(user)
+            db.delete(row)
             db.commit()
+        with owner.begin() as cleanup:
+            cleanup.execute(text("DELETE FROM public.audit_logs WHERE org_id = :id"),
+                            {"id": org_id})
+            cleanup.execute(text("DELETE FROM public.organizations WHERE id = :id"),
+                            {"id": org_id})
         runtime.dispose()
         owner.dispose()
 
@@ -238,12 +254,31 @@ def test_prune_request_validation_cannot_mutate_history(prune_world, payload):
 def test_prune_remains_administrator_only(prune_world, role):
     revision, _ = _seed(prune_world, 41)
     before = _rows(prune_world)
-    prune_world["actor"].role = role
-    response = prune_world["client"].post(
-        "/api/sandbox/versions/prune", json={"expectedRevision": revision}
-    )
-    assert response.status_code == 403, response.text
-    assert _rows(prune_world) == before
+    with AuditSession(prune_world["owner"]) as db:
+        org = db.get(WorkspaceProfile, prune_world["organization"])
+        denied, membership = create_member(
+            db, org, role, email=f"prune-{uuid7().hex}@example.test",
+            username=f"prune-{uuid7().hex}",
+            sponsor_user_id=prune_world["actor"].id if role == "guest" else None,
+            expires_at=datetime.now(UTC) + timedelta(days=30) if role == "guest" else None,
+        )
+        denied_id, membership_id = denied.id, membership.id
+        db.commit()
+        db.refresh(denied)
+        db.expunge(denied)
+    prune_world["app"].dependency_overrides[get_current_user] = scoped_override(lambda: denied)
+    try:
+        response = prune_world["client"].post(
+            "/api/sandbox/versions/prune", json={"expectedRevision": revision}
+        )
+        assert response.status_code == 403, response.text
+        assert _rows(prune_world) == before
+    finally:
+        with AuditSession(prune_world["owner"]) as db:
+            db.delete(db.get(Membership, membership_id))
+            db.flush()
+            db.delete(db.get(User, denied_id))
+            db.commit()
 
 
 def test_prune_requires_the_existing_authenticated_identity_boundary(prune_world):

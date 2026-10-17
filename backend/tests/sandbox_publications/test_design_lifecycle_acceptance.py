@@ -36,6 +36,9 @@ from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.rules import _field_key
 from app.systems.sandbox.records.models import Record
+from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import organization
 from tests.sandbox_publications.support import bound_field, bound_module, publish_structure
 
 pytestmark = pytest.mark.integration
@@ -82,7 +85,7 @@ def api(integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch) -> Itera
                 return user.id
 
         monkeypatch.setattr(publication_router, "ProviderPasswordGrantClient", PasswordGrant)
-        app.dependency_overrides[get_current_identity] = state.current
+        app.dependency_overrides[get_current_identity] = scoped_override(state.current)
         app.dependency_overrides[get_db] = lambda: integration_owner_db
         yield state
     app.dependency_overrides.clear()
@@ -177,7 +180,7 @@ def test_restoring_an_earlier_published_version_then_publishing_matches_it_live(
 
 
 def test_member_is_forbidden_from_publication_preview_and_publish(api: Api) -> None:
-    member = User(
+    member, _membership = create_member(api.db, organization(api.db),
         email="design-lifecycle-member@example.test",
         username="design-lifecycle-member",
         status=UserStatus.ACTIVE.value,
@@ -248,7 +251,7 @@ def test_closing_a_module_with_active_records_is_blocked_and_changes_nothing(
     customer_id = bound_field(
         api.db, "field", "sample-customers:sample-field-customers-customer-id"
     )
-    record = Record(module_id=module.id, data={str(customer_id.id): "CUS-1"})
+    record = Record(org_id=module.org_id, module_id=module.id, data={str(customer_id.id): "CUS-1"})
     api.db.add(record)
     api.db.flush()
     api.db.commit()

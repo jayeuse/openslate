@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.policy.scope import allowed_module_ids, effective_levels, level_for
-from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.access.users.models import Membership, UserRole, UserStatus
+from tests.conftest import create_member, create_organization, membership_of
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -110,9 +111,11 @@ def test_inactive_accounts_get_nothing(integration_db: Session, state: str) -> N
     )
     if state == "pending":
         user.status = UserStatus.PENDING.value
-        user.invitation_sent_at = utc_now()
+        membership_of(integration_db, user.id).invitation_sent_at = utc_now()
     if state == "expired":
-        user.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        membership_of(integration_db, user.id).expires_at = (
+            datetime.now(UTC) - timedelta(minutes=1)
+        )
     if state == "deleted":
         user.is_deleted = True
         user.deleted_at = utc_now()
@@ -147,3 +150,71 @@ def test_deleted_groups_memberships_and_rows_give_nothing(integration_db: Sessio
     integration_db.flush()
 
     assert level_for(integration_db, member, inventory.id, products.id) is None
+
+
+@pytest.mark.parametrize("removed", ["access", "membership"])
+def test_resolution_sees_access_removed_in_the_same_transaction(
+    integration_db: Session, removed: str,
+) -> None:
+    member = add_user(integration_db)
+    department = add_department(integration_db)
+    module = add_module(integration_db, department)
+    grant = make_group_access(integration_db, [member], department, level=READ)
+    membership = membership_of(integration_db, member.id)
+    assert effective_levels(integration_db, member).module_ids(READ) == frozenset({module.id})
+
+    if removed == "access":
+        integration_db.delete(grant)
+    else:
+        membership.status = UserStatus.DISABLED.value
+
+    assert effective_levels(integration_db, member).module_ids(READ) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "state", ["none", "pending", "disabled", "deleted", "multiple", "unaccepted", "demoted"]
+)
+def test_resolution_refuses_absent_ambiguous_or_stale_authority(integration_owner_db, state):
+    db = integration_owner_db
+    user, membership = create_member(db, create_organization(db), "admin")
+    if state == "multiple":
+        create_member(
+            db, create_organization(db), "member", user=user,
+            expires_at=utc_now() - timedelta(minutes=1),
+        )
+    elif state == "none":
+        db.connection().execute(
+            Membership.__table__.delete().where(Membership.id == membership.id)
+        )
+    else:
+        values = (
+            {"is_deleted": True} if state == "deleted" else
+            {"invitation_sent_at": utc_now()} if state == "unaccepted" else
+            {"role": "member"} if state == "demoted" else {"status": state}
+        )
+        db.connection().execute(
+            Membership.__table__.update().where(Membership.id == membership.id).values(**values)
+        )
+    assert effective_levels(db, user).unrestricted is False
+    assert allowed_module_ids(db, user, READ) == frozenset()
+
+
+@pytest.mark.parametrize("entity", ["account", "membership"])
+def test_resolution_flushes_pending_changes_without_discarding_them(integration_owner_db, entity):
+    db = integration_owner_db
+    user = add_user(db)
+    membership = membership_of(db, user.id)
+    department = add_department(db)
+    module = add_module(db, department)
+    make_group_access(db, [user], department, level=READ)
+    row, field, changed = (
+        (user, "display_name", "Pending profile change") if entity == "account" else
+        (membership, "expires_at", utc_now() + timedelta(days=1))
+    )
+    setattr(row, field, changed)
+    assert allowed_module_ids(db, user, READ) == frozenset({module.id})
+    assert row not in db.dirty
+    assert getattr(row, field) == changed
+    assert db.connection().scalar(
+        select(getattr(type(row), field)).where(type(row).id == row.id)
+    ) == changed

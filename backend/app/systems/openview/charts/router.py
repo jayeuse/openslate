@@ -105,6 +105,7 @@ def create_chart(
         source, actor = service.locked_source(db, identity, payload.module_id)
         query = service.validate_query(db, actor, source.id, payload.chart_type, payload.query)
         chart = Chart(
+            org_id=source.org_id,
             department_id=source.department_id,
             module_id=source.id,
             name=payload.name,

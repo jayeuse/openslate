@@ -10,9 +10,16 @@ from app.systems.sandbox.lifecycle import router as lifecycle
 from app.systems.sandbox.records.models import Record
 from tests.boards.support import client
 from tests.boards.test_permanent_delete import _actor
+from tests.rbac.support import organization
 from tests.reports.test_report_routes import _module
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def sandbox_draft(integration_owner_db):
+    create_document(integration_owner_db, organization(integration_owner_db))
 
 
 @pytest.mark.parametrize("long_title", [False, True])
@@ -28,6 +35,7 @@ def test_record_purge_confirms_displayed_title_without_shortening(
     module.title_field_id = field.id
     title = "Record title " + ("x" * 200 if long_title else "short")
     record = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={str(field.id): title},
         is_deleted=True,
@@ -70,11 +78,13 @@ def test_record_purge_title_definition_drift_does_not_delete(
     field.config = {"options": [{"id": "ready", "label": "Ready"}]}
     module.title_field_id = field.id
     second = Field(
+        org_id=module.org_id,
         module_id=module.id, name="Other title", type=FieldType.TEXT, position=1, config={}
     )
     db.add(second)
     db.flush()
     record = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={str(field.id): "ready", str(second.id): "Ready"},
         is_deleted=True,

@@ -12,7 +12,7 @@ from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.platform.files.models import File
 from app.systems.platform.files.storage import get_storage
 from tests.auth.session_policy_support import policy_world as policy_world
@@ -74,7 +74,7 @@ def avatar_world(policy_world):
 
 def actor_role(world, role):
     with Session(world.owner) as db:
-        actor = db.get(User, world.actor_id)
+        actor = db.scalars(select(Membership).where(Membership.user_id == world.actor_id)).one()
         actor.role = role
         actor.sponsor_user_id = world.target_id if role == "guest" else None
         actor.expires_at = world.clock + timedelta(days=1) if role == "guest" else None
@@ -111,20 +111,22 @@ def ready_avatar(world, *, bind=False, format="PNG"):
     return file_id, stored_file(world, file_id).object_key
 
 
-def native_avatar(world, *, owner_id=None, bind=False):
+def native_avatar(world, *, owner_id=None, bind=False, purpose="user_avatar", org_id=None):
     """Owned valid committed inventory, for a second account without fabricating auth."""
     owner_id = owner_id or world.actor_id
     content = image()
     with Session(world.owner) as db:
         file = File(
-            purpose="user_avatar",
+            purpose=purpose,
+            org_id=org_id,
             creator_id=owner_id,
             filename="avatar.png",
             expected_size=len(content),
             actual_size=len(content),
             media_type="image/png",
             digest=sha256(content).hexdigest(),
-            object_key=uuid4().hex,
+            object_key=f"user/{owner_id}/{uuid4().hex}" if org_id is None
+            else f"org/{org_id}/{uuid4().hex}",
             state="ready",
         )
         db.add(file)

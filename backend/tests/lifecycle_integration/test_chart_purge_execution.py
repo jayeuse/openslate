@@ -42,6 +42,7 @@ def _closed_scope(world, target):
             with AuditSession(world.owner) as db:
                 db.info[AUDIT_CONTEXT_KEY] = _context(world)
                 board = Board(
+                    org_id=world.organization_id,
                     scope=BoardScope.DEPARTMENT,
                     department_id=world.department_id,
                     name="Owned department",

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.common.listing import PaginationMetadata, StandardListResponse
 from app.systems.access.users.schemas import (
+    AuthMeResponse,
     DirectoryRowResponse,
     UserListResponse,
     UserRecoveryResponse,
@@ -85,11 +86,11 @@ def _pages[T: BaseModel](
     raise SamplePhaseActionError("People pagination exceeds its finite bound", step=step)
 
 
-def _person(person: UserResponse, target: str, email: str, step: str) -> None:
+def _person(person: UserResponse | AuthMeResponse, target: str, email: str, step: str) -> None:
     _require(
         str(person.id) == target
         and person.email == email
-        and person.role.value == "member"
+        and person.role is not None and person.role.value == "member"
         and person.status.value == "active"
         and person.is_deleted is False
         and person.deleted_at is None,

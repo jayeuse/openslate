@@ -156,7 +156,7 @@ def create_import_records(db: Session, module_id: UUID, rows: list[PreparedImpor
     for row in rows:
         if row.issues:
             continue
-        record = Record(module_id=module_id, data=row.data)
+        record = Record(org_id=fields[0].org_id, module_id=module_id, data=row.data)
         db.add(record)
         db.flush()
         enqueue_record_event(db, record, previous=None)

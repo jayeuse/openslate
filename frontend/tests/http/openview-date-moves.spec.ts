@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
-import { test, isEventStream } from "./helpers/test";
+import { authMeBody, test, isEventStream } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -207,15 +207,19 @@ async function installDates(
       return json({
         authenticated: true,
         user_id: id(1),
+        default_organization_blocked: null,
         setup_required: false,
       });
     if (path === "/api/auth/me") {
       authReads++;
-      return json({
-        id: id(1),
-        role: "member",
-        access: [{ department_id: departmentId, module_id: moduleId, level }],
-      });
+      return json(
+        authMeBody({
+          id: id(1),
+          role: "member",
+          default_organization_blocked: null,
+          access: [{ department_id: departmentId, module_id: moduleId, level }],
+        }),
+      );
     }
     if (path === "/api/workspace")
       return json({

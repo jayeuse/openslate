@@ -23,40 +23,43 @@ from app.systems.platform.scheduling.post_execution import (
 from app.systems.platform.scheduling.service import WorkClaim, claim_due_work
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
+from tests.conftest import create_member, membership_of
 from tests.platform_scheduling.support import POST_DUE as NOW
 from tests.platform_scheduling.support import post_work_subject
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
 
 def _other_user(db, role: str) -> User:
-    other = User(
+    other, _membership = create_member(
+        db, organization(db),
         email=f"post-other-{uuid7().hex}@example.test",
         username=f"post_other_{uuid7().hex[:16]}",
         status=UserStatus.ACTIVE.value,
         role=role,
     )
-    db.add(other)
-    db.flush()
     return other
 
 
 def test_due_post_claim_publishes_one_immutable_result(integration_owner_db):
     db = integration_owner_db
     actor, _role, board, item, work = post_work_subject(db)
-    department = Department(department_name=f"Post work {uuid7().hex}")
+    department = Department(org_id=board.org_id, department_name=f"Post work {uuid7().hex}")
     db.add(department)
     db.flush()
     module = Module(
+        org_id=board.org_id,
         department_id=department.id,
         module_name=f"Post work {uuid7().hex}",
     )
     db.add(module)
     db.flush()
-    report = Report(module_id=module.id, name="Parallel Report", recipe={})
+    report = Report(org_id=board.org_id, module_id=module.id, name="Parallel Report", recipe={})
     db.add(report)
     db.flush()
     report_work = ScheduledWork(
+        org_id=board.org_id,
         kind="report-run",
         report_id=report.id,
         scheduled_for=NOW,
@@ -160,9 +163,10 @@ def test_current_source_or_actor_denial_cancels_without_publication(integration_
         actor.status = UserStatus.DISABLED.value
     elif change == "write_revoked":
         sponsor = _other_user(db, role)
-        actor.role = "guest"
-        actor.sponsor_user_id = sponsor.id
-        actor.expires_at = datetime.now(UTC) + timedelta(days=30)
+        membership = membership_of(db, actor.id)
+        membership.role = "guest"
+        membership.sponsor_user_id = sponsor.id
+        membership.expires_at = datetime.now(UTC) + timedelta(days=30)
     elif change == "source_changed":
         item.revision += 1
     elif change == "not_due":

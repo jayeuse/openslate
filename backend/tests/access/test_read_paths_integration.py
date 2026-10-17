@@ -6,16 +6,24 @@ case for a guest, who can read but never write.
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Annotated
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
+from app.common.dependencies.auth import (
+    AccountOrganization,
+    get_account_organization,
+    get_account_user,
+    get_current_user,
+)
 from app.core.database import get_db
+from app.core.database.organization_scope import scope_session
+from app.systems.access.auth.organization_router import router as organization_router
 from app.systems.access.auth.router import auth_router
 from app.systems.access.policy.models import AccessLevel, GroupAccess
 from app.systems.access.policy.schemas import GroupAccessEntry, GroupCreate
@@ -33,6 +41,8 @@ from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_router import router as query_router
 from app.systems.sandbox.records.router import router as records_router
+from tests.conftest import membership_of
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -65,6 +75,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     department = add_department(db)
     module = add_module(db, department)
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Label",
         type=FieldType.TEXT,
@@ -74,7 +85,7 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     )
     db.add(field)
     db.flush()
-    record = Record(module_id=module.id, data={str(field.id): "visible"})
+    record = Record(org_id=module.org_id, module_id=module.id, data={str(field.id): "visible"})
     db.add(record)
     admin = add_user(db, "paths-admin", role=UserRole.ADMIN)
     reader = add_user(db, "paths-reader")
@@ -95,10 +106,22 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
         fields_router,
         workspace_router,
         auth_router,
+        organization_router,
     ):
         app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor[0])
+    # /auth/me reads the account and its organization context, not the current user.
+    app.dependency_overrides[get_account_user] = lambda: actor[0]
+
+    def account_organization(
+        request_db: Annotated[Session, Depends(get_db)],
+    ) -> AccountOrganization:
+        membership = membership_of(request_db, actor[0].id)
+        scope_session(request_db, membership.org_id)
+        return AccountOrganization(membership)
+
+    app.dependency_overrides[get_account_organization] = account_organization
     with TestClient(app) as client:
         yield _World(
             db=db,
@@ -274,7 +297,7 @@ def test_group_access_replacement_checks_the_etag_and_the_department_rule(
 
 
 def test_workspace_invitation_settings_are_administrator_only(world: _World) -> None:
-    profile = world.db.scalar(select(WorkspaceProfile))
+    profile = world.db.get(WorkspaceProfile, world.module.org_id)
     assert profile is not None
     payload = {
         "revision": profile.revision,

@@ -44,6 +44,7 @@ def stage_publication_inbox(
         )
     if work is None:
         work = ScheduledWork(
+            org_id=item.org_id,
             id=uuid7(),
             kind=WorkKind.POST_PUBLISH,
             post_id=item.id,
@@ -71,6 +72,7 @@ def stage_publication_inbox(
         recipients = sorted(board_reader_ids(db, board))
     db.add_all(
         InAppNotification(
+            org_id=item.org_id,
             work_id=work.id,
             recipient_id=recipient_id,
             kind=NotificationKind.POST_PUBLISH,

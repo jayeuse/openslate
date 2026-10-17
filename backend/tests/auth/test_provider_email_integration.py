@@ -24,7 +24,8 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.main import create_app
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
+from tests.conftest import membership_of
 
 pytest_plugins = ("tests.auth.provider_account_support",)
 pytestmark = pytest.mark.integration
@@ -122,7 +123,7 @@ def test_invitation_and_recovery_use_provider_emails_and_backend_admission(
     with Session(owner) as db:
         user = db.get(User, local_id)
         user.supabase_user_id = provider_id
-        user.role = "admin"
+        membership_of(db, user.id).role = "admin"
         db.commit()
     admin = TestClient(create_app(), base_url=settings.public_origin)
     recipient = TestClient(create_app(), base_url=settings.public_origin)
@@ -207,5 +208,7 @@ def test_invitation_and_recovery_use_provider_emails_and_backend_admission(
                     select(IdentitySession).where(IdentitySession.user_id == invited_id)
                 ):
                     db.delete(session)
+                db.delete(db.scalar(select(Membership).where(Membership.user_id == invited_id)))
+                db.flush()
                 db.delete(user)
                 db.commit()

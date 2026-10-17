@@ -8,21 +8,117 @@ from secrets import token_urlsafe
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.config import instance as _instance_module
 from app.core.config import provider_instance as _provider_instance_module
 from app.core.database import model_registry  # noqa: F401
+from app.core.database.organization_scope import scope_session, worker_organization
 from app.core.database.session import AuditSession
 from app.systems.access.identity.provider_user_cache import clear_provider_users
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.config_support import settings_environment
 from tests.database_pool import pooled_engine
+from tests.organization_scope_support import (
+    UNIT_ORGANIZATION_ID,
+    bind_test_organization,
+    organization_bindings,
+)
 from tests.postgres_runtime import assert_runner_database_url
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
+
+
+def create_organization(db: Session, **values) -> WorkspaceProfile:
+    """Create owned fixture data without manufacturing application audit actions."""
+    identity = values.pop("id", uuid7())
+    db.connection().execute(
+        WorkspaceProfile.__table__.insert().values(
+            id=identity,
+            **{
+                "slug": f"test-{identity}", "display_name": "Test organization",
+                "timezone": "UTC", "locale": "en-US", **values,
+            },
+        )
+    )
+    organization = db.get(WorkspaceProfile, identity)
+    assert organization is not None
+    # Like the operator command, bind the session to the organization it just created.
+    scope_session(db, identity)
+    # Raw runtime connections and direct worker calls in this test thread use it as well;
+    # request handlers run in TestClient threads and still bind their own organization.
+    bind_test_organization(identity)
+    return organization
+
+
+def membership_of(db: Session, user_id) -> Membership:
+    """The only live membership of a single-organization fixture account."""
+    memberships = db.scalars(select(Membership).where(
+        Membership.user_id == user_id, Membership.is_deleted.is_(False),
+    ).limit(2)).all()
+    assert len(memberships) == 1, "fixture account must belong to exactly one organization"
+    return memberships[0]
+
+
+def workspace_of(db: Session, user_id) -> WorkspaceProfile:
+    """The organization of a single-organization fixture account."""
+    organization = db.get(WorkspaceProfile, membership_of(db, user_id).org_id)
+    assert organization is not None
+    return organization
+
+
+def make_operator(db: Session, user: User) -> User:
+    """Make the account an installation owner (platform operator) in this test."""
+    db.add(PlatformOperator(user_id=user.id))
+    db.flush()
+    return user
+
+
+def create_member(
+    db: Session | None, organization: WorkspaceProfile, role: str = UserRole.MEMBER.value,
+    *, user: User | None = None, **values,
+) -> tuple[User, Membership]:
+    """Build the account and its explicit organization-local fixture membership."""
+    identity = values.pop("id", uuid7())
+    status = values.pop("status", "active")
+    membership_values = {
+        key: values.pop(key)
+        for key in (
+            "sponsor_user_id", "expires_at", "invitation_sent_at", "invitation_accepted_at",
+            "provider_invitation_operation_id", "mfa_required_since",
+        )
+        if key in values
+    }
+    if user is None:
+        account = User(
+            id=identity, email=values.pop("email", f"person-{identity}@example.test"),
+            username=values.pop("username", f"person-{identity}"), status=status, **values,
+        )
+        if db is None:
+            user = account
+        else:
+            db.connection().execute(User.__table__.insert().values(
+                **{column.name: getattr(account, column.name)
+                   for column in User.__table__.columns if column.name in account.__dict__}
+            ))
+            user = db.get(User, identity)
+            assert user is not None
+    membership = Membership(
+        id=uuid7(), org_id=organization.id, user_id=user.id, role=role,
+        status=status, **membership_values,
+    )
+    if db is not None:
+        db.connection().execute(Membership.__table__.insert().values(
+            **{column.name: getattr(membership, column.name)
+               for column in Membership.__table__.columns if column.name in membership.__dict__}
+        ))
+        membership = db.get(Membership, membership.id)
+        assert membership is not None
+    return user, membership
 
 # The runner-owned stack does not change while one pytest process runs, so repeated
 # `docker inspect` answers are memoized per process and Docker endpoint. Each app lifespan
@@ -108,6 +204,17 @@ def _guard_for_test(request, database_url: str) -> None:
         return
     _guard_integration_database(database_url, ownership_cache=_OWNERSHIP_CACHE)
     guarded.add(key)
+
+
+@pytest.fixture(autouse=True)
+def _bound_test_organizations(request):
+    if request.node.get_closest_marker("integration") is None:
+        # A unit test acts in one organization, as a bound request would.
+        with organization_bindings(), worker_organization(UNIT_ORGANIZATION_ID):
+            yield
+        return
+    with organization_bindings():
+        yield
 
 
 @pytest.fixture(autouse=True)

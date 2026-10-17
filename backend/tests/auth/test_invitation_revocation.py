@@ -21,16 +21,19 @@ from app.systems.access.auth.aggregate_router import router as access_router
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users import invitations_router
 from app.systems.access.users.coordination import InvitationConflict, InvitationNotFound
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.models import SecurityEvent
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from tests.auth.test_provider_email_integration import _email_action
+from tests.conftest import create_member
+from tests.organization_scope_support import scoped_override
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
 
 
-def _admin() -> User:
-    return User(
+def _admin() -> tuple[User, Membership]:
+    return create_member(None, WorkspaceProfile(id=uuid7()),
         id=uuid7(),
         email="admin@example.test",
         username="admin",
@@ -46,7 +49,7 @@ def _client(db: Session, identity: CurrentIdentity | None = None) -> TestClient:
     app.include_router(access_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
     if identity is not None:
-        app.dependency_overrides[get_current_identity] = lambda: identity
+        app.dependency_overrides[get_current_identity] = scoped_override(lambda: identity)
     return TestClient(app)
 
 
@@ -59,7 +62,8 @@ def test_invitation_revocation_route_exists_and_requires_authentication() -> Non
 def test_invitation_revocation_rejects_setup_only_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    identity = CurrentIdentity(_admin(), uuid7(), True, True)
+    user, _membership = _admin()
+    identity = CurrentIdentity(user, uuid7(), True, True)
     revoke = Mock()
     monkeypatch.setattr(invitations_router, "revoke_invitation", revoke)
 
@@ -72,7 +76,7 @@ def test_invitation_revocation_rejects_setup_only_identity(
 def test_authorized_invitation_revocation_returns_empty_204(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    admin = _admin()
+    admin, _membership = _admin()
     db = Mock(spec=Session)
     user_id = uuid7()
     revoke = Mock()
@@ -100,7 +104,8 @@ def test_invitation_revocation_maps_missing_and_closed_states(
     expected_status: int,
     expected_detail: str,
 ) -> None:
-    identity = CurrentIdentity(_admin(), uuid7(), True, False)
+    user, _membership = _admin()
+    identity = CurrentIdentity(user, uuid7(), True, False)
     monkeypatch.setattr(invitations_router, "revoke_invitation", Mock(side_effect=error))
 
     response = _client(Mock(spec=Session), identity).delete(f"/api/auth/invitations/{uuid7()}")
@@ -133,7 +138,7 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
     with Session(owner) as db:
         user = db.get(User, local_id)
         user.supabase_user_id = provider_id
-        user.role = "admin"
+        db.scalars(select(Membership).where(Membership.user_id == local_id)).one().role = "admin"
         db.commit()
     source = uuid4().bytes
     client_address = (f"198.18.{source[0]}.{source[1]}", 50000)
@@ -173,7 +178,10 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
         with Session(owner) as db:
             pending = db.scalar(select(User).where(User.email == invite_email))
             assert pending is not None and pending.status == "pending"
-            assert pending.invitation_sent_at is None
+            membership = db.scalars(
+                select(Membership).where(Membership.user_id == pending.id)
+            ).one()
+            assert membership.invitation_sent_at is None
             events = db.scalars(
                 select(SecurityEvent).where(
                     SecurityEvent.event_type == "user.invitation_revocation",
@@ -249,5 +257,10 @@ def test_revoked_provider_invitation_is_denied_and_resend_can_be_accepted(
                     select(IdentitySession).where(IdentitySession.user_id == user.id)
                 ):
                     db.delete(session)
+                for membership in db.scalars(
+                    select(Membership).where(Membership.user_id == user.id)
+                ):
+                    db.delete(membership)
+                db.flush()
                 db.delete(user)
                 db.commit()

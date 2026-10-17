@@ -174,6 +174,7 @@ def link_record(
     assert module is not None
     title = record_title(db, record, module)
     link = BoardRecordLink(
+        org_id=board.org_id,
         board_id=board_id,
         event_id=content_id if kind == "event" else None,
         post_id=content_id if kind == "post" else None,

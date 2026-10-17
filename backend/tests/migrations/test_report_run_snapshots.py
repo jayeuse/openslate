@@ -11,9 +11,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, create_organization, guarded_create_engine
 from tests.operations.migration_support import guarded_migration_environment
 
 
@@ -42,44 +43,44 @@ def test_report_run_catalog_constraints_and_runtime_access_on_active_baseline() 
 
 
 def _seed_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
+    with Session(engine) as db:
+        organization = create_organization(db)
+        ids["org"] = organization.id
+        create_member(db, organization, id=ids["owner"],
+                      email=f"report-run-baseline-{ids['owner'].hex}@example.test",
+                      username=f"report_run_baseline_{ids['owner'].hex}")
+        db.commit()
     with engine.begin() as connection:
         connection.execute(
-            text(
-                "INSERT INTO public.users (id, email, username, status, role) "
-                "VALUES (:id, :email, :username, 'active', 'member')"
-            ),
-            {
-                "id": ids["owner"],
-                "email": f"report-run-baseline-{ids['owner'].hex}@example.test",
-                "username": f"report_run_baseline_{ids['owner'].hex}",
-            },
-        )
-        connection.execute(
-            text("INSERT INTO public.departments (id, department_name) VALUES (:id, :name)"),
-            {"id": ids["department"], "name": f"Report run {ids['department'].hex}"},
+            text("INSERT INTO public.departments (id, org_id, department_name) "
+                 "VALUES (:id, :org, :name)"),
+            {"id": ids["department"], "org": ids["org"],
+             "name": f"Report run {ids['department'].hex}"},
         )
         connection.execute(
             text(
-                "INSERT INTO public.modules (id, department_id, module_name) "
-                "VALUES (:id, :department_id, :name)"
+                "INSERT INTO public.modules (id, org_id, department_id, module_name) "
+                "VALUES (:id, :org, :department_id, :name)"
             ),
             {
                 "id": ids["module"],
+                "org": ids["org"],
                 "department_id": ids["department"],
                 "name": f"Report run {ids['module'].hex}",
             },
         )
         connection.execute(
-            text("INSERT INTO public.records (id, module_id) VALUES (:id, :module_id)"),
-            {"id": ids["record"], "module_id": ids["module"]},
+            text("INSERT INTO public.records (id, org_id, module_id) "
+                 "VALUES (:id, :org, :module_id)"),
+            {"id": ids["record"], "org": ids["org"], "module_id": ids["module"]},
         )
         connection.execute(
             text(
                 "INSERT INTO public.reports "
-                "(id, module_id, name, recipe, is_deleted) "
-                "VALUES (:id, :module_id, 'Archived report', '{}'::jsonb, true)"
+                "(id, org_id, module_id, name, recipe, is_deleted) "
+                "VALUES (:id, :org, :module_id, 'Archived report', '{}'::jsonb, true)"
             ),
-            {"id": ids["report"], "module_id": ids["module"]},
+            {"id": ids["report"], "org": ids["org"], "module_id": ids["module"]},
         )
 
 
@@ -154,6 +155,8 @@ def _assert_report_run_schema(connection: Connection) -> None:
     }
     assert indexes == {
         "report_runs_pkey",
+        "uq_report_runs_org_id_id",
+        "uq_report_run_rows_org_id_id",
         "uq_report_runs_idempotency",
         "ix_report_runs_module",
         "ix_report_runs_report_created",
@@ -178,13 +181,14 @@ def _assert_runtime_write_and_owner_read(
         connection.execute(
             text(
                 "INSERT INTO public.report_runs "
-                "(id, report_id, module_id, idempotency_key, recipe_revision, "
+                "(id, org_id, report_id, module_id, idempotency_key, recipe_revision, "
                 "recipe, headings, row_count, csv_bytes) "
-                "VALUES (:id, :report, :module, :key, 1, '{}'::jsonb, "
+                "VALUES (:id, :org, :report, :module, :key, 1, '{}'::jsonb, "
                 "'[\"Name\"]'::jsonb, 1, :csv)"
             ),
             {
                 "id": ids["run"],
+                "org": ids["org"],
                 "report": ids["report"],
                 "module": ids["module"],
                 "key": uuid7(),
@@ -194,10 +198,10 @@ def _assert_runtime_write_and_owner_read(
         connection.execute(
             text(
                 "INSERT INTO public.report_run_rows "
-                "(id, run_id, position, record_id, cells) "
-                "VALUES (:id, :run, 0, :record, '[\"Ready\"]'::jsonb)"
+                "(id, org_id, run_id, position, record_id, cells) "
+                "VALUES (:id, :org, :run, 0, :record, '[\"Ready\"]'::jsonb)"
             ),
-            {"id": ids["row"], "run": ids["run"], "record": ids["record"]},
+            {"id": ids["row"], "org": ids["org"], "run": ids["run"], "record": ids["record"]},
         )
     with owner_engine.connect() as connection:
         assert (
@@ -242,4 +246,10 @@ def _delete_source_rows(engine: Engine, ids: dict[str, UUID]) -> None:
         connection.execute(
             text("DELETE FROM public.departments WHERE id = :id"), {"id": ids["department"]}
         )
+        connection.execute(
+            text("DELETE FROM public.memberships WHERE user_id=:id"), {"id": ids["owner"]}
+        )
         connection.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": ids["owner"]})
+        connection.execute(
+            text("DELETE FROM public.organizations WHERE id=:id"), {"id": ids["org"]}
+        )

@@ -15,6 +15,7 @@ from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.sandbox.modules.models import Module
 from tests.access.group_delegation_support import DelegationWorld
 from tests.access.group_delegation_support import world as world
+from tests.conftest import membership_of
 from tests.rbac.support import add_user
 
 pytestmark = pytest.mark.integration
@@ -162,9 +163,9 @@ def test_manager_cannot_add_an_administrator(world: DelegationWorld) -> None:
 def test_manager_keeps_members_who_became_disabled_or_expired(world: DelegationWorld) -> None:
     group = world.inventory_group
     expired = add_user(world.db, "delegation-expired", role=UserRole.GUEST)
-    world.db.add(GroupMember(group_id=group.id, user_id=expired.id))
+    world.db.add(GroupMember(org_id=group.org_id, group_id=group.id, user_id=expired.id))
     world.plain.status = UserStatus.DISABLED
-    expired.expires_at = datetime.now(UTC) - timedelta(days=1)
+    membership_of(world.db, expired.id).expires_at = datetime.now(UTC) - timedelta(days=1)
     world.db.commit()
 
     response = _put_members(

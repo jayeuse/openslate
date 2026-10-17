@@ -9,7 +9,8 @@ from app.common.dependencies.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.main import create_app
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, User, UserRole
+from tests.organization_scope_support import scoped_override
 
 from .support import _make_event, _payload_values, _SecurityEventDatabase, _user
 
@@ -35,11 +36,13 @@ def api(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
 def _configure_api(
     application: FastAPI,
     *,
-    user: User | None = None,
+    user: tuple[User, Membership] | None = None,
     database: _SecurityEventDatabase | None = None,
 ) -> TestClient:
     if user is not None:
-        application.dependency_overrides[get_current_user] = lambda: user
+        account, membership = user
+        database.membership = membership
+        application.dependency_overrides[get_current_user] = scoped_override(lambda: account)
     if database is not None:
         application.dependency_overrides[get_db] = lambda: database
     return TestClient(application)

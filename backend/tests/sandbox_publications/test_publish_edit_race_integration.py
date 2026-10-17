@@ -28,6 +28,7 @@ from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import create_record, update_record
 from app.systems.sandbox.records.schemas import RecordCreate, RecordUpdate
+from tests.organization_scope_support import in_context
 from tests.postgres_runtime import assert_runner_database_url
 from tests.race_support import WAIT, StatementPause, wait_until_blocked_by
 from tests.record_versions import record_version
@@ -94,7 +95,10 @@ def test_a_publish_behind_a_record_edit_refuses_its_stale_review_and_writes_noth
             record = db.get(Record, record_id)
             assert record is not None
             edited_data = {**record.data, title_key: "After"}
-            publications_before = db.scalar(select(func.count()).select_from(SandboxPublication))
+            publications_before = db.scalar(
+                select(func.count()).select_from(SandboxPublication)
+                .where(SandboxPublication.org_id == module.org_id)
+            )
 
         outcomes: dict[str, object] = {}
         pause = StatementPause(edit_engine, "UPDATE RECORDS ")
@@ -129,8 +133,8 @@ def test_a_publish_behind_a_record_edit_refuses_its_stale_review_and_writes_noth
                     session.rollback()
                     outcomes["publish"] = error
 
-        editor = threading.Thread(target=edit)
-        publisher = threading.Thread(target=publish)
+        editor = threading.Thread(target=in_context(edit))
+        publisher = threading.Thread(target=in_context(publish))
         try:
             editor.start()
             assert pause.paused.wait(WAIT), "the record edit never reached its update"
@@ -157,10 +161,16 @@ def test_a_publish_behind_a_record_edit_refuses_its_stale_review_and_writes_noth
                 "Requests"
             )
             assert (
-                db.scalar(select(func.count()).select_from(SandboxPublication))
+                db.scalar(
+                    select(func.count()).select_from(SandboxPublication)
+                    .where(SandboxPublication.org_id == module.org_id)
+                )
                 == publications_before
             )
-            assert db.scalar(select(SandboxDocumentRow.revision)) == saved.revision
+            assert db.scalar(
+                select(SandboxDocumentRow.revision)
+                .where(SandboxDocumentRow.org_id == module.org_id)
+            ) == saved.revision
     finally:
         edit_engine.dispose()
         if cleanup is not None:

@@ -18,13 +18,11 @@ from tests.catalog.dynamic_field_support import (
     _seed_committed_module,
     _seed_committed_record,
     _set_request,
+    record_writer,
 )
-from tests.rbac.support import make_user
 from tests.record_versions import record_version
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
-# Record handlers now read the caller's module level; an administrator needs no group.
-RECORD_WRITER = make_user("record_writer")
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -74,7 +72,8 @@ def test_router_persists_jsonb_types_and_canonical_decimal_values(
     }
 
     record = create_record(
-        RecordCreate(module_id=seeded.module_id, data=data), RECORD_WRITER, integration_db
+        RecordCreate(module_id=seeded.module_id, data=data),
+        record_writer(integration_db, seeded.module_id), integration_db
     )
     owned_ids.add(record.id)
     assert record.data[str(field_ids["decimal"])] == "1.23"
@@ -142,7 +141,7 @@ def test_replacement_update_preserves_closed_values_drops_optional_active_values
     updated = update_record(
         record_id,
         RecordUpdate(data={str(keep_id): "new"}),
-        RECORD_WRITER,
+        record_writer(integration_db, seeded.module_id),
         integration_db,
         if_match=record_version(integration_db, record_id),
     )
@@ -188,7 +187,7 @@ def test_record_create_rejects_module_whose_last_active_field_is_closed(
     with pytest.raises(HTTPException) as raised:
         create_record(
             RecordCreate(module_id=seeded.module_id, data={}),
-            RECORD_WRITER,
+            record_writer(integration_db, seeded.module_id),
             integration_db,
         )
     assert raised.value.status_code == 409

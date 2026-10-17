@@ -13,6 +13,7 @@ from app.systems.sandbox.fields.models import Field
 from app.systems.sandbox.modules.router import router as modules_router
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.router import router as records_router
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
 pytestmark = pytest.mark.integration
@@ -23,7 +24,7 @@ def _client(db: Session, actor: User) -> TestClient:
     app.include_router(modules_router, prefix="/api")
     app.include_router(records_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor)
     return TestClient(app)
 
 
@@ -34,6 +35,7 @@ def test_assignable_picker_and_record_writes_follow_current_module_readers(
     department = add_department(db)
     module = add_module(db, department)
     assignee = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Assignee",
         type="user",

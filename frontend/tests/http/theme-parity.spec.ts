@@ -1,4 +1,10 @@
-import { expect, signedInAs, test, type Page } from "./helpers/test";
+import {
+  appearanceUrl,
+  expect,
+  signedInAs,
+  test,
+  type Page,
+} from "./helpers/test";
 
 async function signIn(page: Page) {
   await signedInAs(page, {
@@ -9,7 +15,7 @@ async function signIn(page: Page) {
   // between loading and error, so two looks could be captured in different states.
   let theme = "slate";
   let revision = 4;
-  await page.route("**/api/workspace/appearance", (route) =>
+  await page.route(appearanceUrl, (route) =>
     route.fulfill({ json: { theme } }),
   );
   await page.route("**/api/workspace", (route) => {

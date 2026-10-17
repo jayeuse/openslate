@@ -13,6 +13,7 @@ from app.systems.openview.charts.models import Chart
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from tests.charts.chart_route_support import chart_world as chart_world
+from tests.conftest import membership_of
 from tests.rbac.support import make_group_access, make_user
 
 pytestmark = pytest.mark.integration
@@ -99,6 +100,7 @@ def test_unavailable_current_sources_are_generic_conflicts_without_writes(chart_
         body["query"]["dimension"]["expected_type"] = "number"
     elif defect == "foreign-field":
         foreign = Field(
+            org_id=world.other_module.org_id,
             module_id=world.other_module.id,
             name="Foreign field",
             type=FieldType.TEXT,
@@ -193,9 +195,11 @@ def test_stale_cached_admin_identity_cannot_write_after_role_demotion(chart_worl
     world = chart_world
     actor = world.users["admin"]
     identifier = actor.id
-    actor.role = "member"
+    # Keep the source readable so demotion exercises the unchanged write-denial contract.
+    make_group_access(world.db, [actor], world.module.department, world.module, level="read")
+    membership_of(world.db, identifier).role = "member"
     world.db.commit()
-    stale = make_user("cached-chart-admin", role="admin")
+    stale, _membership = make_user("cached-chart-admin", role="admin")
     stale.id = identifier
     world.users["admin"] = stale
     with world.client("admin") as client:

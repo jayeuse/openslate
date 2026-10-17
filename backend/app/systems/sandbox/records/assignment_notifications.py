@@ -48,6 +48,7 @@ def notify_record_assignments(
     for recipient_id in db.scalars(recipients):
         db.add(
             InAppNotification(
+                org_id=record.org_id,
                 recipient_id=recipient_id,
                 kind=NotificationKind.RECORD_ASSIGNED,
                 subject_type="record",

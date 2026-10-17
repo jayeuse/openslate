@@ -12,8 +12,8 @@ from tests.conftest import alembic_heads
 from tests.reset_application_data.execution_support import apply_confirmed
 
 # Each table the reset counts, locks and clears: whether it is a non-preserved table, and
-# the tables whose rows it must be deleted before. The reset deletes every Board, then
-# restores the one company Board, so `boards` is in the delete order but not non-preserved.
+# the tables whose rows it must be deleted before. The reset deletes every organization
+# and recreates nothing, so Boards and Sandbox documents are non-preserved as well.
 RESET_TABLES = (
     ("identity_mfa_observations", True, ()),
     ("saved_views", True, ()),
@@ -21,7 +21,10 @@ RESET_TABLES = (
     ("board_widgets", True, ("boards",)),
     ("board_posts", True, ("boards", "departments")),
     ("board_attachments", True, ("boards",)),
-    ("boards", False, ("departments",)),
+    ("boards", True, ("departments", "organizations")),
+    ("sandbox_documents", True, ("organizations",)),
+    ("sandbox_versions", True, ("sandbox_documents",)),
+    ("memberships", True, ("organizations",)),
     ("board_post_revisions", True, ("board_posts",)),
     ("board_record_links", True, ("records", "boards")),
     ("board_event_reminders", True, ("boards", "board_events")),

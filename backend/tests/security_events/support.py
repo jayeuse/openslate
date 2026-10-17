@@ -7,8 +7,10 @@ from uuid6 import uuid7
 import app.systems.manage.audit.models as audit_models
 import app.systems.manage.audit.schemas as audit_schemas
 import app.systems.manage.audit.service as audit_service
-from app.systems.access.users.models import User, UserRole
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 
 def _security_event_model() -> type[Any]:
@@ -86,13 +88,12 @@ def _make_event(**overrides: object) -> Any:
     return model(**values)
 
 
-def _user(role: UserRole | str) -> User:
-    return User(
+def _user(role: UserRole | str) -> tuple[User, Membership]:
+    return create_member(None, WorkspaceProfile(id=uuid7()), str(role),
         id=uuid7(),
         email=f"{str(role)}@example.com",
         username=str(role),
         status="active",
-        role=str(role),
     )
 
 
@@ -130,6 +131,8 @@ class _SecurityEventDatabase:
         self.info: dict[str, object] = {}
         self.committed = False
         self.items_statement: Any = None
+        self.dirty = set()
+        self.membership: Membership | None = None
 
     def add(self, event: Any) -> None:
         self.events.append(event)
@@ -146,10 +149,19 @@ class _SecurityEventDatabase:
     def refresh(self, event: Any) -> None:
         pass
 
-    def scalar(self, statement: Any) -> int:
+    def scalar(self, statement: Any) -> Any:
+        entity = statement.column_descriptions[0]["entity"]
+        if entity is _security_event_model():
+            identifiers = statement.compile().params.values()
+            return next((event for event in self.events if event.id in identifiers), None)
+        if entity is PlatformOperator:
+            return None
+        assert entity is None, "Unexpected scalar query"
         return len(self.events)
 
     def scalars(self, statement: Any) -> _ScalarItems:
+        if statement.column_descriptions[0]["entity"] is Membership:
+            return _ScalarItems([] if self.membership is None else [self.membership])
         self.items_statement = statement
         return _ScalarItems(self.events)
 

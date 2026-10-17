@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.core.config import get_instance_settings, get_settings
+from app.systems.access.users.membership import transaction_organization
 from app.systems.manage.backups.models import (
     BackupExportOperation,
     BackupPolicy,
@@ -32,7 +33,7 @@ from app.systems.manage.backups.schemas import (
     RunnerResponse,
     VersionResponse,
 )
-from app.systems.manage.workspace.models import WorkspaceProfile
+from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 from app.systems.platform.scheduling.materializer import next_due_after
 from app.systems.platform.scheduling.notification_creation import notify_backup_failure
 
@@ -54,26 +55,19 @@ def installation_id(db: Session) -> str:
     return cluster
 
 
-def workspace(db: Session, *, lock: bool = False) -> WorkspaceProfile:
-    statement = select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
-    if lock:
-        statement = statement.with_for_update().execution_options(populate_existing=True)
-    row = db.scalar(statement)
-    if row is None:
-        raise BackupStateError("backup_unavailable")
-    return row
-
-
 def lock_policy(db: Session, instance: str, *, now: datetime | None = None) -> BackupPolicy:
     """Serialize absent-singleton creation as well as all policy/queue writers."""
-    profile = workspace(db, lock=True)
+    if db.scalar(select(PlatformSettings.id).where(
+        PlatformSettings.singleton_key.is_(True)
+    ).with_for_update()) is None:
+        raise BackupStateError("backup_unavailable")
     policy = db.scalar(
         select(BackupPolicy).with_for_update().execution_options(populate_existing=True)
     )
     if policy is None:
         policy = BackupPolicy(
             installation_id=instance,
-            timezone=profile.timezone,
+            timezone=_owner_timezone(db),
             schedule="disabled",
             retention_days=30,
             revision=1,
@@ -81,6 +75,17 @@ def lock_policy(db: Session, instance: str, *, now: datetime | None = None) -> B
         db.add(policy)
         db.flush()
     return policy
+
+
+def _owner_timezone(db: Session) -> str:
+    """The installation owner configures backups inside their organization; use its timezone."""
+
+    org_id = transaction_organization(db)
+    timezone = (
+        db.scalar(select(WorkspaceProfile.timezone).where(WorkspaceProfile.id == org_id))
+        if org_id is not None else None
+    )
+    return timezone or "UTC"
 
 
 def future_due(schedule: str, timezone: str, now: datetime) -> datetime | None:
@@ -99,27 +104,24 @@ def future_due(schedule: str, timezone: str, now: datetime) -> datetime | None:
 def policy_response(
     db: Session, instance: str, *, now: datetime | None = None
 ) -> BackupPolicyResponse:
-    profile = workspace(db)
     policy = db.scalar(select(BackupPolicy))
     if policy is None:
         return BackupPolicyResponse(
             schedule="disabled",
             retention_days=30,
             revision=1,
-            timezone=profile.timezone,
+            timezone=_owner_timezone(db),
             next_due_at=None,
             adopted=True,
         )
     adopted = policy.installation_id == instance
     due = policy.next_due_at if adopted else None
-    if adopted and policy.timezone != profile.timezone:
-        due = future_due(policy.schedule, profile.timezone, now or utc_now())
     return BackupPolicyResponse.model_validate(
         {
             "schedule": policy.schedule,
             "retention_days": policy.retention_days,
             "revision": policy.revision,
-            "timezone": profile.timezone,
+            "timezone": policy.timezone,
             "next_due_at": due,
             "adopted": adopted,
         }
@@ -271,12 +273,8 @@ def claim_run(
         raise BackupStateError("backup_recovery_required")
     if policy.installation_id != instance:
         raise BackupStateError("backup_adoption_required")
-    profile = workspace(db)
-    if policy.timezone != profile.timezone or (
-        policy.schedule != "disabled" and policy.next_due_at is None
-    ):
-        policy.timezone = profile.timezone
-        policy.next_due_at = future_due(policy.schedule, profile.timezone, current)
+    if policy.schedule != "disabled" and policy.next_due_at is None:
+        policy.next_due_at = future_due(policy.schedule, policy.timezone, current)
     if policy.next_due_at is not None and policy.next_due_at <= current:
         occurrence = policy.next_due_at
         if (
@@ -416,7 +414,10 @@ def record_expiry(db: Session, instance: str, command: ExpireCommand) -> BackupR
 
 
 def record_release(db: Session, command: ReleaseCommand) -> None:
-    workspace(db, lock=True)
+    if db.scalar(select(PlatformSettings.id).where(
+        PlatformSettings.singleton_key.is_(True)
+    ).with_for_update()) is None:
+        raise BackupStateError("backup_unavailable")
     observed = db.scalar(
         select(UpdateStatus).with_for_update().execution_options(populate_existing=True)
     )
@@ -486,7 +487,7 @@ def adopt_policy(
         return policy
     if unresolved_run(db, instance) is not None:
         raise BackupStateError("backup_recovery_required")
-    policy.installation_id, policy.timezone = instance, workspace(db).timezone
+    policy.installation_id = instance
     policy.next_due_at = future_due(policy.schedule, policy.timezone, now or utc_now())
     policy.runner_last_seen_at = None
     policy.revision += 1

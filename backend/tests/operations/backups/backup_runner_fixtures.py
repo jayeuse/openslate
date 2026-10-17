@@ -26,9 +26,9 @@ MANIFEST = "a" * 64
 SERVICES = (
     "db",
     "auth",
-    "rest",
     "storage",
     "imgproxy",
+    "realtime",
     "meta",
     "studio",
     "api-gw",

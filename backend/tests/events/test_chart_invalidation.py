@@ -36,6 +36,7 @@ def test_real_chart_flushes_publish_one_opaque_hint_only_after_commit_and_none_a
         "app.systems.manage.audit.listeners.publish_invalidations", published.extend
     )
     chart = Chart(
+        org_id=module.org_id,
         module_id=module_id,
         department_id=department.id,
         name="Native event Chart",

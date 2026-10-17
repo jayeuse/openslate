@@ -335,7 +335,8 @@ def usage(
         literal(True)
         if unrestricted
         else (
-            visible_board_clause(actor) & Board.is_deleted.is_(False) & Board.deleted_at.is_(None)
+            visible_board_clause(db, actor)
+            & Board.is_deleted.is_(False) & Board.deleted_at.is_(None)
         )
     )
     dashboard_visible = department_filter(db, actor, Dashboard.department_id)

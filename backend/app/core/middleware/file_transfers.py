@@ -41,7 +41,7 @@ def file_transfer_policy(path: str, method: str) -> FileTransferPolicy | None:
     if board_match and action == "content" and method != "PUT":
         return None
     if action == "content" and method in {"PUT", "GET"}:
-        return FileTransferPolicy(25 * 1024 * 1024 if method == "PUT" else 1024 * 1024, 120)
+        return FileTransferPolicy(10 * 1024 * 1024 if method == "PUT" else 1024 * 1024, 120)
     if action in {"reconcile", "purge"} and method == "POST":
         return FileTransferPolicy(1024 * 1024, 120)
     return None

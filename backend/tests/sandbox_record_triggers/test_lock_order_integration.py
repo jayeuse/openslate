@@ -56,11 +56,13 @@ def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
             db.commit()
             cleanup = (actor.id, module.id, definition.id)
             source_module = Module(
+                org_id=module.org_id,
                 department_id=module.department_id, module_name=f"Lock order {uuid7()}"
             )
             db.add(source_module)
             db.flush()
             link_field = Field(
+                org_id=source_module.org_id,
                 module_id=source_module.id,
                 name="Request",
                 type=FieldType.RELATIONSHIP,
@@ -71,7 +73,7 @@ def test_a_trigger_run_and_a_link_to_its_record_both_commit() -> None:
                 relationship_multiple_targets=True,
                 relationship_multiple_sources=True,
             )
-            source = Record(module_id=source_module.id, data={})
+            source = Record(org_id=source_module.org_id, module_id=source_module.id, data={})
             db.add_all([link_field, source])
             db.commit()
             link_ids = {"module": source_module.id, "field": link_field.id, "source": source.id}

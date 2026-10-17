@@ -14,6 +14,7 @@ from app.systems.boards.event_models import BoardEvent
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from tests.boards.support import department_board, grant, project_board
+from tests.conftest import membership_of
 from tests.rbac.support import add_department, add_module, add_user, make_group_access, make_user
 from tests.search.support import client as _client
 from tests.search.support import ids as _ids
@@ -33,6 +34,7 @@ def _post(
     published: bool = True,
 ) -> BoardPost:
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="Private working text",
@@ -46,6 +48,7 @@ def _post(
         now = datetime.now(UTC)
         db.add(
             BoardPostRevision(
+                org_id=item.org_id,
                 post_id=item.id,
                 publication_number=1,
                 publication_key=uuid7(),
@@ -63,6 +66,7 @@ def _post(
 
 def _event(db: Session, board: Board, author: User, title: str, **changes: object) -> BoardEvent:
     item = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title=title,
@@ -79,7 +83,7 @@ def _event(db: Session, board: Board, author: User, title: str, **changes: objec
 
 def test_empty_search_is_an_empty_standard_page_without_database_queries() -> None:
     database = Mock(spec=Session)
-    api = _client(database, make_user("search-admin"))
+    api = _client(database, make_user("search-admin")[0])
     result = _search(api, "record", "   ", limit=10, offset=20)
     assert result == {
         "items": [],
@@ -98,7 +102,7 @@ def test_empty_search_is_an_empty_standard_page_without_database_queries() -> No
 def test_search_requires_identity_and_rejects_invalid_list_parameters() -> None:
     db = Mock(spec=Session)
     assert _client(db, None).get("/api/search?kind=record&search=test").status_code == 401
-    api = _client(db, make_user("search-admin"))
+    api = _client(db, make_user("search-admin")[0])
     for params in (
         {},
         {"kind": "file"},
@@ -233,7 +237,7 @@ def test_people_are_active_established_readers_of_readable_live_modules_only(
     inactive = add_user(db, status="disabled")
     inactive.display_name = "Indigo person"
     unaccepted = add_user(db)
-    unaccepted.invitation_sent_at = datetime.now(UTC)
+    membership_of(db, unaccepted.id).invitation_sent_at = datetime.now(UTC)
     unaccepted.display_name = "Indigo person"
     expired = add_user(db, role=UserRole.GUEST, expires_at=datetime.now(UTC) - timedelta(days=1))
     expired.display_name = "Indigo person"

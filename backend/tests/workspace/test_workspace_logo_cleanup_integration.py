@@ -13,12 +13,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database.session import AuditSession
+from app.systems.access.users.models import Membership
 from app.systems.manage.workspace import router
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import ProviderUnavailable
 from app.systems.platform.files.storage import get_storage
 from tests.auth.session_policy_support import policy_world as policy_world
+from tests.conftest import workspace_of
 
 pytestmark = pytest.mark.integration
 
@@ -53,7 +55,10 @@ def logo_world(policy_world, monkeypatch):
     world.storage = LogoStore()
     world.file_ids = []
     with Session(world.owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        world.logo_org_id = db.scalars(
+            select(Membership.org_id).where(Membership.user_id == world.actor_id)
+        ).one()
+        profile = db.get(WorkspaceProfile, world.logo_org_id)
         world.profile_snapshot = {
             column.key: getattr(profile, column.key)
             for column in inspect(WorkspaceProfile).column_attrs
@@ -61,13 +66,14 @@ def logo_world(policy_world, monkeypatch):
     world.client.app.dependency_overrides[get_storage] = lambda: world.storage
     monkeypatch.setattr(router, "get_storage", lambda: world.storage)
     monkeypatch.setattr(
-        "app.systems.platform.files.delivery.append_committed_security_event", lambda payload: None
+        "app.systems.platform.files.delivery.append_committed_security_event",
+        lambda payload, **_kwargs: None,
     )
     try:
         yield world
     finally:
         with Session(world.owner) as db:
-            profile = db.scalar(select(WorkspaceProfile))
+            profile = db.get(WorkspaceProfile, world.logo_org_id)
             for field, value in world.profile_snapshot.items():
                 setattr(profile, field, value)
             db.flush()
@@ -83,6 +89,7 @@ def ready_logo(world, *, bind=False, **values):
     identity, key = uuid4(), uuid4().hex
     with Session(world.owner) as db:
         file = File(
+            org_id=world.logo_org_id,
             id=identity,
             purpose="workspace_logo",
             creator_id=world.actor_id,
@@ -98,7 +105,7 @@ def ready_logo(world, *, bind=False, **values):
         db.add(file)
         if bind:
             db.flush()
-            db.scalar(select(WorkspaceProfile)).logo_file_id = identity
+            db.get(WorkspaceProfile, world.logo_org_id).logo_file_id = identity
         db.commit()
     world.file_ids.append(identity)
     world.storage.objects[key] = content
@@ -107,7 +114,7 @@ def ready_logo(world, *, bind=False, **values):
 
 def current(world):
     with Session(world.owner) as db:
-        profile = db.scalar(select(WorkspaceProfile))
+        profile = db.get(WorkspaceProfile, world.logo_org_id)
         return profile.logo_file_id, profile.revision, profile.display_name
 
 
@@ -178,9 +185,10 @@ def test_refused_admission_never_deletes_or_changes_the_old_binding(
             db.commit()
     elif failure == "role":
         with Session(world.owner) as db:
-            from app.systems.access.users.models import User
-
-            db.get(User, world.actor_id).role = "member"
+            membership = db.scalars(
+                select(Membership).where(Membership.user_id == world.actor_id)
+            ).one()
+            membership.role = "member"
             db.commit()
     else:
         original = AuditSession.commit
@@ -267,10 +275,13 @@ def test_admitted_cleanup_finishes_after_actor_role_loss_but_new_reconcile_refus
     def lose_role():
         with Session(world.owner) as db:
             actor = db.get(User, world.actor_id)
-            actor.role = "guest"
-            actor.sponsor_user_id = world.target_id
-            actor.expires_at = world.clock + timedelta(days=1)
-            profile = db.scalar(select(WorkspaceProfile))
+            membership = db.scalars(
+                select(Membership).where(Membership.user_id == actor.id)
+            ).one()
+            membership.role = "guest"
+            membership.sponsor_user_id = world.target_id
+            membership.expires_at = world.clock + timedelta(days=1)
+            profile = workspace_of(db, world.actor_id)
             profile.contact_email = "post-admission-private@example.test"
             db.commit()
 

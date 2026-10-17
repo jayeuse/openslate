@@ -16,13 +16,14 @@ from app.systems.access.users.models import User, UserRole
 from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import transfer_slot
-from app.systems.platform.files.router import router
+from app.systems.platform.files.router import get_create_user, get_upload_user, router
 from app.systems.platform.files.schemas import FileCreate
 from app.systems.platform.files.storage import get_storage
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from tests.rbac.support import add_user, make_group_access
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 
@@ -54,9 +55,10 @@ def _actor_with_record(
     db, *, level: AccessLevel | None = None, role: str = UserRole.MEMBER
 ) -> tuple[User, GroupAccess | None, Record]:
     actor = add_user(db, "attachment-policy", role=role)
-    department = Department(department_name=f"Attachment policy {uuid4()}")
-    module = Module(department=department, module_name="Files")
-    record = Record(module=module, data={})
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Attachment policy {uuid4()}")
+    module = Module(org_id=department.org_id, department=department, module_name="Files")
+    record = Record(org_id=module.org_id, module=module, data={})
     db.add_all([department, module, record])
     db.flush()
     grant = (
@@ -70,6 +72,7 @@ def _actor_with_record(
 
 def _ready_file(db, actor: User, record: Record, content: bytes) -> File:
     file = File(
+        org_id=record.org_id,
         purpose="record_attachment",
         record_id=record.id,
         creator_id=actor.id,
@@ -97,7 +100,8 @@ def _client(db, actor: User, storage: _Store) -> TestClient:
 
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    for dependency in (get_current_user, get_create_user, get_upload_user):
+        app.dependency_overrides[dependency] = scoped_override(lambda: actor)
     app.dependency_overrides[get_storage] = lambda: storage
     return TestClient(app)
 
@@ -107,7 +111,9 @@ def test_record_attachment_routes_allow_a_member_who_can_write_the_module(guarde
     actor, _grant, record = _actor_with_record(db, level=AccessLevel.WRITE)
     content = _png()
     storage = _Store(db)
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda _event, **_kwargs: None
+    )
 
     with _client(db, actor, storage) as client:
         created = client.post(
@@ -214,7 +220,9 @@ def test_attachment_download_reauthorizes_after_storage_latency(guarded_db, monk
 
     storage = _RevokingStore(db)
     storage.objects[file.object_key] = content
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda _event, **_kwargs: None
+    )
 
     with _client(db, actor, storage) as client:
         response = client.get(f"/api/files/{file.id}/content")
@@ -223,9 +231,10 @@ def test_attachment_download_reauthorizes_after_storage_latency(guarded_db, monk
 
 def test_administrator_attaches_to_any_record_without_a_group(guarded_db, actor):
     db = guarded_db
-    department = Department(department_name=f"Administrator attachment {uuid4()}")
-    module = Module(department=department, module_name="Files")
-    record = Record(module=module, data={})
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Administrator attachment {uuid4()}")
+    module = Module(org_id=department.org_id, department=department, module_name="Files")
+    record = Record(org_id=module.org_id, module=module, data={})
     db.add_all([department, module, record])
     db.commit()
 

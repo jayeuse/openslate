@@ -19,16 +19,22 @@ from app.core.config.provider_instance import assert_provider_instance
 from app.core.config.settings import DOTENV_PATH
 from app.core.database import model_registry  # noqa: F401
 from app.core.database.session import AuditSession, get_engine
+from app.systems.access.identity.admin_recovery import OrganizationChoiceRequired
 from app.systems.access.identity.security_recovery import (
     LocalSecurityRecoveryError,
     recover_workspace_security,
 )
-from operations.recover_local_admin import is_elevated
+from operations.recover_local_admin import (
+    add_organization_argument,
+    is_elevated,
+    organization_choice_message,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("user_id", type=UUID)
+    add_organization_argument(parser)
     args = parser.parse_args(argv)
     try:
         if not is_elevated():
@@ -47,8 +53,16 @@ def main(argv: list[str] | None = None) -> None:
         )
         with AuditSession(get_engine()) as db:
             result = recover_workspace_security(
-                db, args.user_id, local_invocation=True, elevated=True
+                db,
+                args.user_id,
+                local_invocation=True,
+                elevated=True,
+                organization=args.organization,
             )
+    except OrganizationChoiceRequired as error:
+        raise SystemExit(
+            organization_choice_message("Workspace security recovery was refused", error)
+        ) from None
     except LocalSecurityRecoveryError as error:
         if error.local_reset_committed is False:
             raise SystemExit("Workspace security recovery was refused") from None

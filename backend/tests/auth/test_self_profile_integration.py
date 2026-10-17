@@ -13,6 +13,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog
 from tests.auth.session_policy_support import policy_world as policy_world
+from tests.conftest import membership_of
 
 pytestmark = pytest.mark.integration
 PATH = "/api/auth/me/profile"
@@ -40,7 +41,7 @@ def audits(world):
 
 def role(world, value):
     with Session(world.owner) as db:
-        user = db.get(User, world.actor_id)
+        user = membership_of(db, world.actor_id)
         user.role = value
         user.sponsor_user_id = world.target_id if value == "guest" else None
         user.expires_at = world.clock + timedelta(days=1) if value == "guest" else None

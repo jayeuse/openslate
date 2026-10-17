@@ -14,6 +14,8 @@ from app.systems.boards.access_preview_router import router
 from app.systems.boards.models import Board
 from tests.boards.support import board_group, project_board
 from tests.boards.support import client as board_client
+from tests.conftest import create_member, membership_of
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -31,7 +33,7 @@ def _user(
     guest = role == "guest"
     sponsor = _user(db) if guest else None
     user_id = uuid7()
-    user = User(
+    user, _membership = create_member(db, organization(db),
         id=user_id,
         email=f"preview-{user_id.hex}@example.test",
         username=username or f"preview_{user_id.hex[:20]}",
@@ -176,7 +178,7 @@ def test_expired_active_identity_is_hidden_from_preview_and_chooser(
     db = integration_owner_db
     manager, board = _board_for_manager(db)
     expired = _user(db, username="choice_expired")
-    expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    membership_of(db, expired.id).expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db.flush()
     client = board_client(db, manager, router)
 
@@ -227,10 +229,13 @@ def test_my_access_hides_invisible_boards(
     assert board_client(db, None, router).get(path).status_code == 401
     missing = board_client(db, outsider, router).get(f"/api/boards/{uuid7()}/my-access")
     assert missing.status_code == 404
-    for actor in (outsider, inactive):
-        hidden = board_client(db, actor, router).get(path)
-        assert hidden.status_code == 404
-        assert hidden.json() == missing.json() == {"detail": "Board not found"}
+    hidden = board_client(db, outsider, router).get(path)
+    assert hidden.status_code == 404
+    assert hidden.json() == missing.json() == {"detail": "Board not found"}
+    # A disabled account is refused before any route runs, as authentication refuses it.
+    refused = board_client(db, inactive, router).get(path)
+    assert refused.status_code == 403
+    assert refused.json()["detail"]["code"] == "organization_required"
 
 
 def test_my_access_keeps_archived_board_readable_but_hides_soft_deleted_board(

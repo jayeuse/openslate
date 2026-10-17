@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.backups.models import BackupRun
+from tests.conftest import make_operator
 from tests.jobs.job_route_support import committed_client, failed_jobs
 from tests.rbac.support import add_user
 from tests.route_app_support import route_app
@@ -25,7 +26,8 @@ def test_backup_retry_isolates_public_preoccupation_and_replays_the_intended_run
     db = integration_owner_db
     original = failed_jobs(db)["backup"]
     assert isinstance(original, BackupRun)
-    admin = add_user(db, role="admin")
+    # Backups belong to the installation owner (owner decision 4).
+    admin = make_operator(db, add_user(db, role="admin"))
     external_key = "owned-retry-linkage"
     ordinary_key = hashlib.sha256(
         f"job.retry:backup:{original.id}:{external_key}".encode("ascii")

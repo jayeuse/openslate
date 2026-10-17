@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from app.systems.access.policy.models import AccessLevel, Group, GroupMember
-from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.access.users.models import Membership, UserRole, UserStatus
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.platform.scheduling.notification_router import router as notification_router
 from tests.access.user_admin_support import world as world
@@ -80,7 +80,10 @@ def test_grants_compare_department_and_module_authority_with_guest_caps(world):
     module = add_module(world.db, world.inventory)
     guest = add_user(world.db, role=UserRole.GUEST)
     pending = add_user(world.db, status=UserStatus.PENDING)
-    world.db.add_all([GroupMember(group_id=world.group.id, user_id=u.id) for u in (guest, pending)])
+    world.db.add_all([
+        GroupMember(org_id=world.group.org_id, group_id=world.group.id, user_id=u.id)
+        for u in (guest, pending)
+    ])
     world.db.commit()
     dep = str(world.inventory.id)
     _access(
@@ -122,6 +125,10 @@ def test_grants_compare_department_and_module_authority_with_guest_caps(world):
 )
 def test_role_combined_activation_and_non_authority_edits(world, initial, payload, expected):
     target = world.member
+    membership = world.db.scalars(select(Membership).where(
+        Membership.org_id == world.inventory.org_id, Membership.user_id == target.id,
+    )).one()
+    membership.status = "pending" if initial == "pending" else "active"
     target.status = initial
     world.db.commit()
     response = world.client(world.admin).patch(f"/api/users/{target.id}", json=payload)

@@ -1,4 +1,10 @@
-import { expect, heldResponse, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  expect,
+  heldResponse,
+  test,
+  type Page,
+} from "./helpers/test";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { regionalDefaults } from "./helpers/profile-api";
@@ -20,6 +26,7 @@ async function installDestination(
   let signedIn = authenticated;
   const identity = {
     id: userId,
+    default_organization_blocked: null,
     role: "admin" as "admin" | "member" | "guest",
     access: [] as {
       department_id: string;
@@ -28,7 +35,7 @@ async function installDestination(
     }[],
   };
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill({ json: identity }),
+    route.fulfill({ json: authMeBody(identity) }),
   );
   const dataSourceRequests: string[] = [];
   const sandboxProbes: string[] = [];
@@ -52,6 +59,7 @@ async function installDestination(
           ? {
               authenticated: true,
               user_id: identity.id,
+              default_organization_blocked: null,
               setup_required: setupRequired,
             }
           : { authenticated: false },
@@ -392,7 +400,12 @@ for (const entry of ["/", "/login"] as const) {
       session.enter();
       await session.released;
       await route.fulfill({
-        json: { authenticated: true, user_id: userId, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: userId,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       });
     });
     await page.route("**/api/sandbox/tests?**", async (route) => {

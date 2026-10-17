@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.common.dependencies import get_current_user, require_non_guest
 from app.core.database import get_db
+from app.core.database.organization_scope import session_organization
 from app.systems.access.users.models import User
 from app.systems.boards.attachment_service import (
     attachment_files,
@@ -136,7 +137,8 @@ def _download(
                     operation_id=uuid4(),
                     actor_id=actor.id,
                     metadata={"file_id": str(file_id)},
-                )
+                ),
+                org_id=session_organization(db),
             )
         except SecurityEventPersistenceError as exc:
             raise error("file_event_unavailable", "Unable to record file access", 503) from exc

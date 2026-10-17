@@ -219,8 +219,10 @@ def _invite_body(
     return body
 
 
-def _new_acceptance_client(api_url: str, origin: str, journal_path: Path) -> SampleClient:
-    return SampleClient(api_url, origin, journal_path)
+def _new_acceptance_client(
+    api_url: str, origin: str, journal_path: Path, organization_id: str | None
+) -> SampleClient:
+    return SampleClient(api_url, origin, journal_path, organization_id)
 
 
 def populate_people(
@@ -232,6 +234,7 @@ def populate_people(
     origin: str,
     roster_path: Path,
     organization: OrganizationPack | None = None,
+    organization_id: str | None = None,
 ) -> SamplePeopleResult:
     """Create the pack-defined identities and access groups."""
     pack = organization or default_pack()
@@ -308,6 +311,7 @@ def populate_people(
                 api_url,
                 origin,
                 roster_path.parent / "invitation-requests.jsonl",
+                organization_id,
             )
             try:
                 completed = acceptance.complete_invitation(token, password)

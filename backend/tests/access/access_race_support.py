@@ -10,7 +10,9 @@ from uuid6 import uuid7
 
 import app.systems.access.policy.service as policy_service
 from app.systems.access.policy.models import Group
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.models import UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
 
 
 def run_action(engine: Engine, action: Callable[[Session], object]) -> int:
@@ -32,13 +34,12 @@ def group_etag_of(engine: Engine, group_id: UUID) -> str:
         return policy_service.group_etag(group)
 
 
-def add_race_user(db: Session, prefix: str, role: str) -> UUID:
-    user = User(
+def add_race_user(db: Session, organization: WorkspaceProfile, prefix: str, role: str) -> UUID:
+    user, _membership = create_member(
+        db, organization,
         email=f"{prefix}-{uuid7().hex}@example.com",
         username=f"{prefix}_{uuid7().hex[:20]}",
         role=role,
         status=UserStatus.ACTIVE.value,
     )
-    db.add(user)
-    db.flush()
     return user.id

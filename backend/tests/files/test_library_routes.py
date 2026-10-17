@@ -12,6 +12,7 @@ from app.systems.platform.files import delivery, service
 from app.systems.platform.files.models import File
 from app.systems.platform.files.validation import ValidatedContent
 from app.systems.sandbox.records.models import Record
+from tests.conftest import membership_of
 from tests.files.test_workspace_policy_integration import _client, _png, _Store
 from tests.rbac.support import add_department, add_module, add_user, make_group_access
 
@@ -56,6 +57,7 @@ def library_file(
 ):
     content = _png()
     file = File(
+        org_id=department.org_id,
         purpose="library_document",
         department_id=department.id,
         creator_id=creator.id,
@@ -112,7 +114,9 @@ def test_library_routes_apply_direct_department_action_levels(
     file = library_file(db, actor, department)
     storage = _Store(db)
     storage.objects[file.object_key] = _png()
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda _event, **_kwargs: None
+    )
     with _client(db, actor, storage) as client:
         path = f"/api/files/{file.id}"
         assert client.get(path).status_code == 200
@@ -193,7 +197,7 @@ def test_inactive_library_accounts_cannot_read_or_reserve(guarded_db, state):
     if state in {"disabled", "pending"}:
         actor.status = state
     elif state == "expired":
-        actor.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        membership_of(db, actor.id).expires_at = datetime.now(UTC) - timedelta(seconds=1)
     else:
         actor.is_deleted = True
     db.commit()
@@ -215,7 +219,9 @@ def test_closed_library_parent_allows_read_download_archive_but_refuses_active_w
     db.commit()
     storage = _Store(db)
     storage.objects[ready.object_key] = _png()
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda _event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda _event, **_kwargs: None
+    )
     with _client(db, actor, storage) as client:
         path = f"/api/files/{ready.id}"
         assert (
@@ -322,7 +328,7 @@ def test_library_missing_department_is_not_found_and_record_envelope_stays_stand
     db = guarded_db
     department = add_department(db)
     module = add_module(db, department)
-    record = Record(module_id=module.id, data={})
+    record = Record(org_id=module.org_id, module_id=module.id, data={})
     db.add(record)
     db.commit()
     with _client(db, actor, _Store(db)) as client:

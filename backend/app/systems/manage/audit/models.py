@@ -3,7 +3,16 @@ from enum import StrEnum
 from typing import Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -31,9 +40,21 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_audit_logs_org_id_id"),
         CheckConstraint(
             "action IN ('create', 'update', 'delete')",
             name="ck_audit_logs_action",
+        ),
+        CheckConstraint(
+            "org_id IS NOT NULL OR entity_type IN ('users','platform_settings',"
+            "'platform_operators','backup_policies','backup_runs','backup_export_operations',"
+            "'update_statuses') OR COALESCE(("
+            "COALESCE(NULLIF(\"after\", 'null'::jsonb), \"before\") -> 'org_id' = 'null'::jsonb "
+            "AND ((entity_type = 'files' AND COALESCE(NULLIF(\"after\", 'null'::jsonb), "
+            "\"before\") ->> 'purpose' = 'user_avatar') OR "
+            "(entity_type = 'in_app_notifications' AND COALESCE(NULLIF(\"after\", 'null'::jsonb), "
+            "\"before\") ->> 'kind' = 'backup-failed'))), false)",
+            name="ck_audit_logs_organization",
         ),
         Index("ix_audit_logs_created_at_id", "created_at", "id"),
         Index("ix_audit_logs_department_created_at_id", "department_id", "created_at", "id"),
@@ -43,6 +64,9 @@ class AuditLog(Base):
         Index("ix_audit_logs_action", "action"),
     )
 
+    org_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True
+    )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -69,6 +93,7 @@ class SecurityEvent(Base):
     __tablename__ = "security_events"
     __audit_enabled__: ClassVar[bool] = False
     __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_security_events_org_id_id"),
         CheckConstraint(
             "outcome IN ('attempt', 'success', 'denied', 'failure', 'partial')",
             name="ck_security_events_outcome",
@@ -77,6 +102,9 @@ class SecurityEvent(Base):
         Index("ix_security_events_operation_id", "operation_id"),
     )
 
+    org_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=True
+    )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid7)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False

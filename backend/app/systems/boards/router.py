@@ -17,6 +17,7 @@ from app.common.listing import (
 from app.core.database import get_db
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.policy.scope import includes
+from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.boards.access import board_level, visible_board_clause
 from app.systems.boards.models import Board, BoardScope, BoardStatus
@@ -142,7 +143,7 @@ def list_boards(
     statement = select(Board).where(
         Board.is_deleted.is_(False),
         Board.deleted_at.is_(None),
-        visible_board_clause(user),
+        visible_board_clause(db, user),
     )
     if params.status is not BoardStatusFilter.ALL:
         statement = statement.where(Board.status == params.status.value)
@@ -168,6 +169,7 @@ def create_board(
     """Administrators create project Boards; company and department Boards are fixed."""
 
     board = Board(
+        org_id=bound_organization(db),
         scope=BoardScope.PROJECT.value,
         name=payload.name,
         description=payload.description,

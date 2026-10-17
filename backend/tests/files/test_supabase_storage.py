@@ -11,7 +11,8 @@ from app.systems.platform.files import storage as storage_module
 from app.systems.platform.files.providers import ProviderRejected, ProviderUnavailable
 from app.systems.platform.files.supabase_storage import SupabaseStorage
 
-KEY = "a" * 32
+ORG = "6f0c2d1e-0000-4000-8000-000000000001"
+KEY = f"org/{ORG}/" + "a" * 32
 CONTENT = b"stored bytes"
 
 
@@ -29,10 +30,8 @@ class StorageAPI:
         assert request.headers["apikey"] == "server-secret"
         assert request.headers["authorization"] == "Bearer server-secret"
         parts = request.url.path.removeprefix("/storage/v1/").split("/")
-        if parts[:2] == ["object", "authenticated"]:
-            bucket, key = parts[2:]
-        else:
-            bucket, key = parts[1:]
+        start = 2 if parts[:2] == ["object", "authenticated"] else 1
+        bucket, key = parts[start], "/".join(parts[start + 1:])
         item = (bucket, key)
         if request.method == "POST":
             assert request.headers.get("x-upsert") != "true"
@@ -130,18 +129,26 @@ def test_redirect_and_oversized_download_fail_closed() -> None:
         storage.download(KEY)
 
     api = StorageAPI()
-    api.objects[("openslate-ready", KEY)] = b"x" * (25 * 1024 * 1024 + 1)
+    api.objects[("openslate-ready", KEY)] = b"x" * (10 * 1024 * 1024 + 1)
     with pytest.raises(ProviderUnavailable):
         make_storage(api).download(KEY)
+
+
+def test_avatars_live_in_their_own_bucket_under_the_account() -> None:
+    api = StorageAPI()
+    key = f"user/{ORG}/" + "b" * 32
+    make_storage(api).upload(key, CONTENT, "image/png")
+    assert api.objects == {("openslate-avatars", key): CONTENT}
 
 
 def test_invalid_key_and_content_size_are_rejected_before_request() -> None:
     api = StorageAPI()
     storage = make_storage(api)
+    for key in ("../secret", "a" * 32, f"org/{ORG}/../" + "a" * 32, f"other/{ORG}/" + "a" * 32):
+        with pytest.raises(ProviderRejected):
+            storage.upload(key, b"data", "application/octet-stream")
     with pytest.raises(ProviderRejected):
-        storage.upload("../secret", b"data", "application/octet-stream")
-    with pytest.raises(ProviderRejected):
-        storage.upload(KEY, b"x" * (25 * 1024 * 1024 + 1), "application/octet-stream")
+        storage.upload(KEY, b"x" * (10 * 1024 * 1024 + 1), "application/octet-stream")
     assert api.requests == []
 
 

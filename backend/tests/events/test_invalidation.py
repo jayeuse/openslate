@@ -22,12 +22,19 @@ from app.systems.platform.events.models import (
 from tests.config_support import settings_values
 from tests.events.test_postgres_integration import _assert_runtime_settings_target
 
+ORGANIZATION = uuid7()
 
-def _viewer(role: str = "member", modules: tuple[object, ...] = (), user_id: object = None):
+
+def _viewer(
+    role: str = "member", modules: tuple[object, ...] = (), user_id: object = None,
+    *, operator: bool = False,
+):
     return EventViewer(
         user_id=user_id or uuid7(),
         role=role,
         module_ids=None if role == "admin" else frozenset(modules),
+        org_id=ORGANIZATION,
+        operator=operator,
     )
 
 
@@ -68,6 +75,19 @@ def test_runtime_settings_target_rejects_an_owner_or_different_database() -> Non
         )
 
 
+def test_operator_authority_never_substitutes_for_a_missing_event_organization() -> None:
+    async def exercise() -> None:
+        hub = EventHub()
+        subscription = await hub.subscribe(_viewer("admin", operator=True))
+        for entity in ("users", "files", "records", "departments", "unclassified"):
+            event = event_for_entity(entity, uuid7())
+            assert event is not None
+            assert not hub.can_receive(subscription, event), entity
+        await hub.unsubscribe(subscription)
+
+    asyncio.run(exercise())
+
+
 def test_listener_fanout_filters_by_readable_module_and_discards_slow_consumers() -> None:
     async def exercise() -> None:
         hub = EventHub(subscriber_queue_size=1)
@@ -77,7 +97,7 @@ def test_listener_fanout_filters_by_readable_module_and_discards_slow_consumers(
         allowed_subscription = await hub.subscribe(allowed)
         denied_subscription = await hub.subscribe(denied)
 
-        event = InvalidationEvent(entity="records", module_id=inventory)
+        event = InvalidationEvent(entity="records", module_id=inventory, org_id=ORGANIZATION)
         await hub.publish(event)
 
         # Every queue read below has a hang guard: a broken dispatch fails, never hangs.
@@ -100,9 +120,11 @@ def test_listener_delivers_a_cross_process_notification_to_local_subscribers() -
         hub = EventHub()
         module_id = uuid7()
         subscription = await hub.subscribe(_viewer(modules=(module_id,)))
-        event = InvalidationEvent(entity="modules", entity_id=module_id, module_id=module_id)
+        event = InvalidationEvent(
+            entity="modules", entity_id=module_id, module_id=module_id, org_id=ORGANIZATION,
+        )
 
-        await hub.publish_notification(event.to_json())
+        await hub.publish_notification(event.to_transport_json())
 
         assert await asyncio.wait_for(subscription.queue.get(), timeout=5) == event
         await hub.unsubscribe(subscription)
@@ -234,12 +256,16 @@ def test_module_and_board_access_with_the_same_identifier_have_distinct_signatur
         hub = EventHub()
         scope_id, user_id = uuid7(), uuid7()
         subscription = await hub.subscribe(_viewer(modules=(scope_id,), user_id=user_id))
-        board_reader = EventViewer(user_id, "member", frozenset(), board_ids=frozenset({scope_id}))
+        board_reader = EventViewer(
+            user_id, "member", frozenset(), board_ids=frozenset({scope_id}), org_id=ORGANIZATION,
+        )
         assert hub.refresh_subscription(subscription, board_reader)
         assert not hub.can_receive(subscription, InvalidationEvent("records", module_id=scope_id))
         assert hub.can_receive(
             subscription,
-            parse_invalidation_payload({"entity": "boards", "board_id": str(scope_id)}),
+            parse_invalidation_payload({
+                "entity": "boards", "board_id": str(scope_id), "org_id": str(ORGANIZATION),
+            }),
         )
         assert not hub.refresh_subscription(subscription, board_reader)
         await hub.unsubscribe(subscription)
@@ -258,7 +284,9 @@ def test_refreshed_access_changes_the_subscription_signature() -> None:
         assert hub.refresh_subscription(
             subscription, _viewer(modules=(module_id,), user_id=user_id)
         )
-        assert hub.can_receive(subscription, InvalidationEvent("records", module_id=module_id))
+        assert hub.can_receive(subscription, InvalidationEvent(
+            "records", module_id=module_id, org_id=ORGANIZATION,
+        ))
         await hub.unsubscribe(subscription)
 
     asyncio.run(exercise())
@@ -292,10 +320,13 @@ def _entity_only(
 ) -> _FanOut:
     row_id = uuid7()
     payload = {"entity": entity, "entity_id": str(row_id)} if keeps_row_id else {"entity": entity}
+    org_id = (
+        None if entity in {"backup_policies", "backup_runs", "update_statuses"} else ORGANIZATION
+    )
     return _FanOut(
-        events=[event_for_entity(entity, row_id)],
+        events=[event_for_entity(entity, row_id, org_id=org_id)],
         payloads=[payload],
-        transports=[payload],
+        transports=[payload if org_id is None else {**payload, "org_id": str(org_id)}],
         audiences=[audience],
         viewers=viewers,
         receives={name: [0] if name in receivers else [] for name in viewers},
@@ -304,7 +335,7 @@ def _entity_only(
 
 
 def _backup_authority(entity: str) -> _FanOut:
-    viewers = {"admin": _viewer(role="admin"), "member": _viewer()}
+    viewers = {"admin": _viewer(role="admin", operator=True), "member": _viewer()}
     return _entity_only(
         entity, viewers, {"admin"}, audience="administrators_only", keeps_row_id=True
     )
@@ -328,11 +359,11 @@ def _saved_views_and_workspace() -> _FanOut:
     ]
     return _FanOut(
         events=[
-            event_for_entity("saved_views", uuid7(), module_id=module_id),
-            event_for_entity("workspace_profiles", uuid7()),
+            event_for_entity("saved_views", uuid7(), module_id=module_id, org_id=ORGANIZATION),
+            event_for_entity("workspace_profiles", uuid7(), org_id=ORGANIZATION),
         ],
         payloads=payloads,
-        transports=payloads,
+        transports=[{**payload, "org_id": str(ORGANIZATION)} for payload in payloads],
         audiences=["neither", "all_authenticated"],
         viewers={"module_reader": _viewer(modules=(module_id,)), "ordinary": _viewer()},
         receives={"module_reader": [0, 1], "ordinary": [1]},
@@ -345,13 +376,19 @@ def _board(entity: str) -> _FanOut:
     scope = frozenset({board_id})
     payload = {"entity": entity, "board_id": str(board_id)}
     return _FanOut(
-        events=[event_for_entity(entity, uuid7(), board_id=board_id, module_id=uuid7())],
+        events=[event_for_entity(
+            entity, uuid7(), board_id=board_id, module_id=uuid7(), org_id=ORGANIZATION,
+        )],
         payloads=[payload],
-        transports=[payload],
+        transports=[{**payload, "org_id": str(ORGANIZATION)}],
         audiences=["neither"],
         viewers={
-            "reader": EventViewer(uuid7(), "member", frozenset(), board_ids=scope),
-            "guest": EventViewer(uuid7(), "guest", frozenset(), board_ids=scope),
+            "reader": EventViewer(
+                uuid7(), "member", frozenset(), board_ids=scope, org_id=ORGANIZATION,
+            ),
+            "guest": EventViewer(
+                uuid7(), "guest", frozenset(), board_ids=scope, org_id=ORGANIZATION,
+            ),
             "outsider": _viewer(modules=(board_id,)),
             "admin": _viewer("admin"),
             "inactive": EventViewer(uuid7(), None, None, board_ids=scope),
@@ -363,9 +400,9 @@ def _board(entity: str) -> _FanOut:
 
 def _dashboard(entity: str) -> _FanOut:
     return _FanOut(
-        events=[event_for_entity(entity, uuid7(), module_id=uuid7())],
+        events=[event_for_entity(entity, uuid7(), module_id=uuid7(), org_id=ORGANIZATION)],
         payloads=[{"entity": "dashboards"}],
-        transports=[{"entity": "dashboards"}],
+        transports=[{"entity": "dashboards", "org_id": str(ORGANIZATION)}],
         audiences=["all_authenticated"],
         viewers={
             "admin": _viewer("admin"),
@@ -399,14 +436,14 @@ def _chart_hint() -> _FanOut:
     module_id = uuid7()
     payload = {"entity": "charts", "module_id": str(module_id)}
     return _FanOut(
-        events=[event_for_entity("charts", uuid7(), module_id=module_id)],
+        events=[event_for_entity("charts", uuid7(), module_id=module_id, org_id=ORGANIZATION)],
         payloads=[payload],
-        transports=[payload],
+        transports=[{**payload, "org_id": str(ORGANIZATION)}],
         audiences=["neither"],
         viewers={
-            "allowed": EventViewer(uuid7(), "member", frozenset({module_id})),
-            "denied": EventViewer(uuid7(), "member", frozenset({uuid7()})),
-            "admin": EventViewer(uuid7(), "admin", None),
+            "allowed": EventViewer(uuid7(), "member", frozenset({module_id}), org_id=ORGANIZATION),
+            "denied": EventViewer(uuid7(), "member", frozenset({uuid7()}), org_id=ORGANIZATION),
+            "admin": EventViewer(uuid7(), "admin", None, org_id=ORGANIZATION),
         },
         receives={"allowed": [0], "denied": [], "admin": [0]},
         through_transport=True,

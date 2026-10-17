@@ -19,13 +19,14 @@ from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
+from tests.conftest import membership_of
 from tests.rbac.support import (
     _client,
     add_department,
     add_module,
     add_user,
     make_group_access,
-    make_user,
+    organization,
 )
 
 UPDATED_RENAMED_CANARY = token_urlsafe(32)
@@ -65,7 +66,8 @@ def audit_rows(session: Session, entity_id) -> list[AuditLog]:
 
 
 def test_crud_changes_are_audited_with_minimal_snapshots(integration_db: Session) -> None:
-    department = Department(department_name="Integration CRUD")
+    department = Department(org_id=organization(integration_db).id,
+                            department_name="Integration CRUD")
     integration_db.add(department)
     integration_db.flush()
 
@@ -82,6 +84,7 @@ def test_crud_changes_are_audited_with_minimal_snapshots(integration_db: Session
         AuditAction.DELETE,
     ]
     assert rows[0].after == {
+        "org_id": str(department.org_id),
         "department_name": "Integration CRUD",
         "lifecycle_close_operation_id": REDACTED,
     }
@@ -93,7 +96,8 @@ def test_crud_changes_are_audited_with_minimal_snapshots(integration_db: Session
 
 
 def test_rollback_does_not_keep_audit_rows(integration_db: Session) -> None:
-    department = Department(department_name="Integration Rollback")
+    department = Department(org_id=organization(integration_db).id,
+                            department_name="Integration Rollback")
     integration_db.add(department)
     integration_db.flush()
     department_id = department.id
@@ -105,7 +109,8 @@ def test_rollback_does_not_keep_audit_rows(integration_db: Session) -> None:
 
 
 def test_hard_delete_records_the_previous_state(integration_db: Session) -> None:
-    department = Department(department_name="Integration Hard Delete")
+    department = Department(org_id=organization(integration_db).id,
+                            department_name="Integration Hard Delete")
     integration_db.add(department)
     integration_db.flush()
     department_id = department.id
@@ -122,30 +127,36 @@ def test_hard_delete_records_the_previous_state(integration_db: Session) -> None
 def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     integration_db: Session,
 ) -> None:
-    department = Department(department_name=f"Audit Redaction {uuid7()}")
+    department = Department(org_id=organization(integration_db).id,
+                            department_name=f"Audit Redaction {uuid7()}")
     module = Module(
+        org_id=department.org_id,
         department=department,
         module_name="Governance export",
     )
     renamed = Field(
+        org_id=module.org_id,
         module=module,
         name="Original secret",
         type=FieldType.TEXT,
         position=0,
     )
     soft_deleted = Field(
+        org_id=module.org_id,
         module=module,
         name="Closed secret",
         type=FieldType.TEXT,
         position=1,
     )
     added = Field(
+        org_id=module.org_id,
         module=module,
         name="Added secret",
         type=FieldType.TEXT,
         position=2,
     )
     clear = Field(
+        org_id=module.org_id,
         module=module,
         name="Visible value",
         type=FieldType.TEXT,
@@ -155,6 +166,7 @@ def test_record_audit_redaction_preserves_data_and_historical_snapshots(
     integration_db.flush()
 
     record = Record(
+        org_id=module.org_id,
         module=module,
         data={
             str(renamed.id): HISTORICAL_RENAMED_CANARY,
@@ -238,7 +250,9 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
     deleted_actor.is_deleted = True
     deleted_actor.deleted_at = datetime.now(UTC)
     unestablished_actor = add_user(integration_db, f"audit-unestablished-{token}")
-    unestablished_actor.invitation_sent_at = datetime.now(UTC)
+    membership_of(integration_db, unestablished_actor.id).invitation_sent_at = (
+        datetime.now(UTC)
+    )
     removed_actor = add_user(integration_db, f"audit-removed-{token}")
 
     entity_id = uuid7()
@@ -254,6 +268,7 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
     ]
     rows = [
         AuditLog(
+            org_id=organization(integration_db).id,
             id=uuid7(),
             created_at=now + timedelta(seconds=index),
             action=AuditAction.UPDATE,
@@ -268,6 +283,8 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
         object.__setattr__(row, "_audit_internal", True)
     integration_db.add_all(rows)
     integration_db.flush()
+    integration_db.delete(membership_of(integration_db, removed_actor.id))
+    integration_db.flush()
     integration_db.delete(removed_actor)
     integration_db.flush()
     integration_db.refresh(rows[-2], attribute_names=["performed_by"])
@@ -275,7 +292,8 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
 
     statements, capture_statement = _statement_collector()
 
-    with _client(api, make_user(f"audit-actor-admin-{token}"), integration_db) as client:
+    with _client(api, add_user(integration_db, f"audit-actor-admin-{token}", role="admin"),
+                 integration_db) as client:
         engine = integration_db.get_bind()
         event.listen(engine, "before_cursor_execute", capture_statement)
         try:
@@ -312,6 +330,7 @@ def test_audit_actor_names_are_batched_and_consistent_for_list_detail_and_export
 
 def _seed_audit_options(session: Session, rows: list[AuditLog]) -> None:
     for row in rows:
+        row.org_id = organization(session).id
         object.__setattr__(row, "_audit_internal", True)
     session.add_all(rows)
     session.flush()
@@ -324,7 +343,8 @@ def test_audit_options_are_empty_bounded_recent_and_registered_before_detail(
 
     api = create_app()
     token = uuid7().hex
-    with _client(api, make_user(f"options-admin-{token}"), integration_db) as client:
+    with _client(api, add_user(integration_db, f"options-admin-{token}", role="admin"),
+                 integration_db) as client:
         # Other tests leave committed audit rows behind, so the empty answer is checked
         # in a department that no audit row names.
         empty = client.get("/api/audit-logs/options", params={"department_id": str(uuid7())})
@@ -332,7 +352,7 @@ def test_audit_options_are_empty_bounded_recent_and_registered_before_detail(
         assert empty.json() == {"entity_types": [], "actors": []}
 
         people = [
-            make_user(f"options-person-{token}-{index}", role=UserRole.MEMBER)
+            add_user(integration_db, f"options-person-{token}-{index}", role=UserRole.MEMBER)
             for index in range(201)
         ]
         people[199].display_name = f"Options display {token}"

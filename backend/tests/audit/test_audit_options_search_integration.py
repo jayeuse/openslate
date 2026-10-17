@@ -9,13 +9,15 @@ from uuid6 import uuid7
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import UserStatus
 from app.systems.manage.audit.models import AuditAction, AuditLog
-from tests.rbac.support import _client, add_department, add_user, make_group_access, make_user
+from tests.conftest import membership_of
+from tests.rbac.support import _client, add_department, add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 
 
 def _seed(db: Session, rows: list[AuditLog]) -> None:
     for row in rows:
+        row.org_id = organization(db).id
         object.__setattr__(row, "_audit_internal", True)
     db.add_all(rows)
     db.flush()
@@ -27,7 +29,7 @@ def test_option_search_precedes_caps_and_matches_current_or_latest_historical_na
     from app.main import create_app
 
     token = uuid7().hex
-    people = [make_user(f"search_{token}_{index}") for index in range(201)]
+    people = [add_user(integration_db, f"search_{token}_{index}") for index in range(201)]
     people[0].display_name = "Amber 100%_team"
     people[1].display_name = "Amber 100XXteam"
     integration_db.add_all(people)
@@ -56,7 +58,8 @@ def test_option_search_precedes_caps_and_matches_current_or_latest_historical_na
         )
     )
     _seed(integration_db, rows)
-    client = _client(create_app(), make_user(f"search_admin_{token}"), integration_db)
+    client = _client(create_app(), add_user(integration_db, f"search_admin_{token}", role="admin"),
+                     integration_db)
     endpoint = "/api/audit-logs/options"
 
     capped = client.get(endpoint).json()
@@ -83,8 +86,9 @@ def test_option_search_precedes_caps_and_matches_current_or_latest_historical_na
     assert obsolete.json() == {"entity_types": [], "actors": []}
 
 
+@pytest.mark.parametrize("actor_state", ["disabled", "unaccepted"])
 def test_option_search_preserves_department_scope_and_inactive_name_redaction(
-    integration_db: Session,
+    integration_db: Session, actor_state: str,
 ) -> None:
     from app.main import create_app
 
@@ -96,7 +100,10 @@ def test_option_search_preserves_department_scope_and_inactive_name_redaction(
     visible_actor.display_name = "Scoped needle"
     hidden_actor.display_name = "Hidden needle"
     inactive_actor.display_name = "Inactive needle"
-    inactive_actor.status = UserStatus.DISABLED.value
+    if actor_state == "disabled":
+        inactive_actor.status = UserStatus.DISABLED.value
+    else:
+        membership_of(db, inactive_actor.id).invitation_sent_at = inactive_actor.created_at
     _seed(
         db,
         [

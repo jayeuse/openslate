@@ -11,7 +11,8 @@ from uuid6 import uuid7
 from app.core.base_model import utc_now
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import UserRole
-from tests.rbac.support import add_department, add_module, add_user, make_group_access
+from tests.conftest import create_member
+from tests.rbac.support import add_department, add_module, add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 
@@ -19,19 +20,11 @@ pytestmark = pytest.mark.integration
 def _insert_user(db: Session, *, role: str, sponsor: bool, expires: bool) -> None:
     sponsor_row = add_user(db, role=UserRole.MEMBER) if sponsor else None
     suffix = uuid7().hex[-12:]
-    db.connection().execute(
-        text(
-            "INSERT INTO users (id, email, username, role, status, sponsor_user_id, expires_at) "
-            "VALUES (:id, :email, :username, :role, 'active', :sponsor, :expires)"
-        ),
-        {
-            "id": uuid7(),
-            "email": f"check-{suffix}@example.com",
-            "username": f"check-{suffix}",
-            "role": role,
-            "sponsor": sponsor_row.id if sponsor_row is not None else None,
-            "expires": datetime.now(UTC) + timedelta(days=3) if expires else None,
-        },
+    create_member(
+        db, organization(db), role,
+        email=f"check-{suffix}@example.com", username=f"check-{suffix}",
+        status="active", sponsor_user_id=sponsor_row.id if sponsor_row is not None else None,
+        expires_at=datetime.now(UTC) + timedelta(days=3) if expires else None,
     )
 
 
@@ -71,18 +64,22 @@ def test_group_access_is_unique_per_active_target_and_rejects_unknown_levels(
         if module_id is not None:
             integration_db.connection().execute(
                 text(
-                    "INSERT INTO group_access (id, group_id, department_id, module_id, level) "
-                    "VALUES (:id, :group, :department, :module, 'write')"
+                    "INSERT INTO group_access "
+                    "(org_id, id, group_id, department_id, module_id, level) "
+                    "VALUES (:org_id, :id, :group, :department, :module, 'write')"
                 ),
-                {"id": uuid7(), "group": group_id, "department": inventory.id, "module": module_id},
+                {"org_id": inventory.org_id, "id": uuid7(), "group": group_id,
+                 "department": inventory.id, "module": module_id},
             )
         with pytest.raises(IntegrityError), integration_db.begin_nested():
             integration_db.connection().execute(
                 text(
-                    "INSERT INTO group_access (id, group_id, department_id, module_id, level) "
-                    "VALUES (:id, :group, :department, :module, 'manage')"
+                    "INSERT INTO group_access "
+                    "(org_id, id, group_id, department_id, module_id, level) "
+                    "VALUES (:org_id, :id, :group, :department, :module, 'manage')"
                 ),
-                {"id": uuid7(), "group": group_id, "department": inventory.id, "module": module_id},
+                {"org_id": inventory.org_id, "id": uuid7(), "group": group_id,
+                 "department": inventory.id, "module": module_id},
             )
 
     department_row.is_deleted = True
@@ -91,16 +88,17 @@ def test_group_access_is_unique_per_active_target_and_rejects_unknown_levels(
     # A retired row does not block a new active row for the same target.
     integration_db.connection().execute(
         text(
-            "INSERT INTO group_access (id, group_id, department_id, level) "
-            "VALUES (:id, :group, :department, 'manage')"
+            "INSERT INTO group_access (org_id, id, group_id, department_id, level) "
+            "VALUES (:org_id, :id, :group, :department, 'manage')"
         ),
-        {"id": uuid7(), "group": group_id, "department": inventory.id},
+        {"org_id": inventory.org_id, "id": uuid7(), "group": group_id, "department": inventory.id},
     )
     with pytest.raises(IntegrityError), integration_db.begin_nested():
         integration_db.connection().execute(
             text(
-                "INSERT INTO group_access (id, group_id, department_id, level) "
-                "VALUES (:id, :group, :department, 'owner')"
+                "INSERT INTO group_access (org_id, id, group_id, department_id, level) "
+                "VALUES (:org_id, :id, :group, :department, 'owner')"
             ),
-            {"id": uuid7(), "group": group_id, "department": inventory.id},
+            {"org_id": inventory.org_id, "id": uuid7(), "group": group_id,
+             "department": inventory.id},
         )

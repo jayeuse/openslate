@@ -27,13 +27,13 @@ from app.systems.access.identity.eligibility import is_identity_eligible
 from app.systems.access.identity.session_revocation import revoke_user_sessions
 from app.systems.access.users.acceptance import accept_verified_invitation
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.eligibility import is_established_user
-from app.systems.access.users.models import User, UserStatus
+from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit import service as audit_service
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.security_failures import canonical_source
-from app.systems.manage.workspace.security_policy import load_workspace_policy, validate_password
+from app.systems.manage.workspace.security_policy import load_platform_policy, validate_password
 
 
 def try_commit_login_denial(db: Session) -> bool:
@@ -163,7 +163,7 @@ def complete_recovery(
 ) -> None:
     """Change a bound active user's provider password without issuing an app session."""
 
-    validate_password(load_workspace_policy(db), password)
+    validate_password(load_platform_policy(db), password)
     tokens, provider_user = _verified_action(client, token_hash, "recovery")
     password_updated = False
     operation_id = None
@@ -178,8 +178,7 @@ def complete_recovery(
             local is None
             or local.email != provider_user.email
             or local.status != UserStatus.ACTIVE.value
-            or not is_identity_eligible(local)
-            or not is_established_user(local)
+            or not is_active_account(db, local)
         ):
             raise ActionTokenInvalid("Recovery token is invalid")
         person_id, operation_id = local.id, uuid7()
@@ -248,7 +247,7 @@ def complete_invitation(
 ) -> None:
     """Activate only the local pending profile explicitly bound to this invite."""
 
-    validate_password(load_workspace_policy(db), password)
+    validate_password(load_platform_policy(db), password)
     try:
         tokens, provider_user = _verified_action(client, token_hash, "invite")
     except ActionTokenInvalid as error:
@@ -257,16 +256,23 @@ def complete_invitation(
         local = db.scalar(
             select(User).where(User.supabase_user_id == provider_user.id).with_for_update(of=User)
         )
+        invitations = db.scalars(select(Membership).where(
+            Membership.user_id == local.id,
+            Membership.status == UserStatus.PENDING.value,
+            Membership.is_deleted.is_(False),
+        ).with_for_update()).all() if local is not None else []
+        membership = invitations[0] if len(invitations) == 1 else None
         if (
             local is None
             or local.email != provider_user.email
             or local.status != UserStatus.PENDING.value
-            or local.invitation_sent_at is None
-            or local.provider_invitation_operation_id is None
-            or not is_identity_eligible(local)
+            or membership is None
+            or membership.invitation_sent_at is None
+            or membership.provider_invitation_operation_id is None
+            or not is_identity_eligible(local, membership)
             or provider_user.app_metadata.get("openslate_user_id") != str(local.id)
             or provider_user.app_metadata.get("openslate_invitation_operation_id")
-            != str(local.provider_invitation_operation_id)
+            != str(membership.provider_invitation_operation_id)
         ):
             raise InvitationError("Invitation token is invalid")
         updated = client.update_password(tokens.access_token, password)
@@ -296,7 +302,7 @@ def change_password(
 ) -> None:
     """Verify the current provider password and retain only this app session."""
 
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     validate_password(policy, new_password)
     timestamp = utc_now()
     person_id = user.id
@@ -306,11 +312,11 @@ def change_password(
     fingerprint = None
     bucket = None
     if enforce_rate_limit:
-        rate_limits.cleanup_expired_buckets(db, now_value=timestamp)
+        rate_limits.cleanup_expired_buckets(now_value=timestamp)
         fingerprint = rate_limits.login_fingerprint(user.email, None)
         bucket = rate_limits.lock_bucket(db, fingerprint)
         retry_after = rate_limits.login_retry_after(
-            db, bucket, timestamp, policy, source=source, actor_id=person_id
+            db, bucket, timestamp, policy, source=source, actor_id=person_id, identifier=user.email
         )
         if retry_after is not None:
             raise IdentityRateLimited("Too many attempts", retry_after=retry_after)
@@ -327,6 +333,7 @@ def change_password(
                 login=True,
                 source=source,
                 actor_id=person_id,
+                identifier=user.email,
             )
             db.commit()
         raise InvalidCredentials("Invalid credentials") from error
@@ -342,6 +349,7 @@ def change_password(
                     login=True,
                     source=source,
                     actor_id=person_id,
+                    identifier=user.email,
                 )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
@@ -361,6 +369,7 @@ def change_password(
                     login=True,
                     source=source,
                     actor_id=person_id,
+                    identifier=user.email,
                 )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
@@ -369,7 +378,7 @@ def change_password(
             locked is None
             or locked.supabase_user_id != temporary.user_id
             or locked.status != UserStatus.ACTIVE.value
-            or not is_identity_eligible(locked)
+            or not is_active_account(db, locked)
         ):
             if fingerprint is not None:
                 rate_limits.record_attempt(
@@ -381,6 +390,7 @@ def change_password(
                     login=True,
                     source=source,
                     actor_id=person_id,
+                    identifier=user.email,
                 )
                 db.commit()
             raise InvalidCredentials("Invalid credentials")
@@ -403,6 +413,8 @@ def change_password(
         revoke_user_sessions(db, user.id, except_session_id=current_session_id)
         if bucket is not None:
             db.delete(bucket)
+        if enforce_rate_limit:
+            rate_limits.clear_login_account_budget(db, user.email)
         audit_service.append_security_event(
             db,
             _action_event(

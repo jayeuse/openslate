@@ -30,6 +30,7 @@ pytest_plugins = ("tests.relationships_integration.relationship_http_support",)
 # Counts cover the route and its locks, audit and outbox rows; authentication is
 # overridden here (its single workspace-policy read is guarded in tests/auth).
 # Before the 2026-10 clean-up: GET 4, POST records 18, PATCH 15, POST link 19, PUT 24.
+# The membership read belongs to authentication (cached for the request), not the route.
 BUDGETS = {
     "GET /api/records/{record_id}": 4,
     "POST /api/records": 13,
@@ -44,7 +45,9 @@ def _statements(engine: Any) -> Iterator[list[str]]:
     executed: list[str] = []
 
     def record(_connection: object, _cursor: object, statement: str, *_args: object) -> None:
-        executed.append(" ".join(statement.split())[:160])
+        # Binding the transaction to its organization is infrastructure, not route work.
+        if "set_config('openslate.org_id'" not in statement:
+            executed.append(" ".join(statement.split())[:160])
 
     event.listen(engine, "before_cursor_execute", record)
     try:
@@ -62,16 +65,17 @@ def _add_fields(fixture: Any) -> tuple[UUID, UUID]:
         connection.execute(
             text(
                 "INSERT INTO public.fields "
-                "(id, module_id, name, type, required, position, config, "
+                "(id, org_id, module_id, name, type, required, position, config, "
                 "relationship_target_module_id, relationship_multiple_targets, "
                 "relationship_multiple_sources, is_deleted) VALUES "
-                "(:text_id, :source, :text_name, 'text', false, 3, "
+                "(:text_id, :org_id, :source, :text_name, 'text', false, 3, "
                 '\'{"kind": "text", "defaultValue": ""}\'::jsonb, NULL, NULL, NULL, false), '
-                "(:link_id, :source, :link_name, 'relationship', false, 4, '{}'::jsonb, "
+                "(:link_id, :org_id, :source, :link_name, 'relationship', false, 4, '{}'::jsonb, "
                 ":target, true, true, false)"
             ),
             {
                 "text_id": text_field,
+                "org_id": fixture.org_id,
                 "link_id": link_field,
                 "source": graph.source_module_id,
                 "target": graph.target_module_id,
@@ -166,4 +170,6 @@ def test_record_and_link_routes_stay_within_their_statement_budgets(
         for route, statements in measured.items()
     )
     print(report)
+    assert not [statement for statements in measured.values() for statement in statements
+                if "FROM memberships" in statement], report
     assert {route: len(statements) for route, statements in measured.items()} == BUDGETS, report

@@ -70,7 +70,7 @@ The scope is the code in this repository, as shipped:
 - the backup and restore tooling (`packaging/backup/`) and the operator commands (`backend/operations/`);
 - real credentials found in this repository or its history.
 
-Examples of in-scope problems: a login or session bypass; access to a module or record that the access rules deny; a provider account that gets access without a local binding; a revoked session that works again; cross-site request forgery on a cookie-authenticated change; a file that passes validation but is not an allowed type, or that escapes the validation limits.
+Examples of in-scope problems: a login or session bypass; access to a module or record that the access rules deny; a provider account that gets access without a local binding; a revoked session that works again; cross-site request forgery on a cookie-authenticated change; a file that passes validation but is not an allowed type, or that escapes the validation limits; access to another organization's data.
 
 ### Out of scope
 
@@ -80,7 +80,7 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 | Attacks from another process or user on the developer's own machine | Development trusts the local host. |
 | Malware detection in uploaded files | Content scanning is not a feature of OpenSlate. |
 | OpenComms sample screens | They are browser-local examples with no server permissions. |
-| Attacks that need an OpenSlate administrator or host access | That person already controls the installation. |
+| Attacks that need the installation owner or host access | That person already controls the installation. An administrator of one organization who reaches another organization's data is in scope. |
 | Infrastructure that the operator changes or runs: host, Docker, network, TLS certificates | The operator owns these. A flaw in the shipped default configuration is in scope. |
 | Problems in Supabase, PostgreSQL, or another upstream project | Report them to that project. |
 | Scanner output, missing headers, or best-practice advice without a shown effect | Show the effect on OpenSlate. |
@@ -108,7 +108,7 @@ If you are not sure, ask in a private report before you continue.
 - Set `ENVIRONMENT=production` exactly. Other values do not trust the Caddy proxy subnet.
 - Use at least 32 random bytes for each secret key in `.env`, for example `openssl rand -base64 48`.
 - Keep Supabase Studio bound to loopback. Treat backups, exports, and `docker compose config` output as secrets.
-- One installation serves one organization. Use separate installations for organizations that do not trust each other.
+- One installation can hold several organizations. Each organization sees only its own data, and its administrators have no power in another organization. The installation owner controls installation-wide settings and backups for all of them. Use separate installations for organizations that must not share an installation owner.
 - You are responsible for the data-protection duties of your organization in your country.
 - If you think your installation is compromised, handle it as an incident in your organization first. Report the software flaw here.
 
@@ -149,7 +149,7 @@ cve-ids: from the first tagged release; advisories before that have none
 credit: advisory, unless declined
 ai-assisted-reports: allowed if disclosed and verified by a human
 accepts-automated-change-request: true  # Dependabot pull requests
-last-reviewed: 2026-10-15
+last-reviewed: 2026-10-17
 ```
 
 ### Rules
@@ -200,5 +200,7 @@ last-reviewed: 2026-10-15
 | File allowlist, archive bounds, parser subprocess limits | `backend/app/systems/platform/files/` |
 | Private bucket; downloads as attachments with `nosniff` | `docs/architecture/14-security-architecture.md` |
 | `AuditSession` for every application mutation; no bulk or raw ORM changes | `docs/architecture/10-audit-and-history.md` |
+| Organization isolation: `org_id` on organization tables; membership of the bound organization (`resolve_membership`, `get_current_membership`, `bound_membership_join`); row-level security on `openslate.org_id` | `backend/app/common/dependencies/auth.py`, `backend/app/core/database/organization_scope.py`, migration `f5a100021193`, `backend/tests/access/test_membership_join_guard.py` |
+| Realtime: only `/realtime/v1/websocket` with a header `apikey`; 5-minute ES256 token (`purpose: realtime`) that Supabase Auth, FastAPI, and Storage refuse; RLS on `realtime.messages` through `can_join_realtime_topic` | `backend/app/systems/platform/realtime/`, migration `071607de0f40`, `backend/operations/provision_database_role.py`, `infra/supabase/PLAN.md` |
 | No secret reaches the browser bundle; provider bootstrap secrets (`DATABASE_BOOTSTRAP_URL`, `POSTGRES_PASSWORD`, the JWT signing keys) stay out of the API env | `docs/architecture/17-configuration.md` |
 | SHA-pinned Actions; least-privilege token permissions; no checkout of pull-request code under `pull_request_target` | `.github/workflows/` |

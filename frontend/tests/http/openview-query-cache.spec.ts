@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./helpers/test";
+import { authMeBody, expect, test, type Page } from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -94,6 +94,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       body: JSON.stringify({
         authenticated: true,
         user_id: activeUser,
+        default_organization_blocked: null,
         setup_required: false,
       }),
     }),
@@ -101,12 +102,15 @@ async function installOpenViewApi(page: Page): Promise<Api> {
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        id: activeUser,
-        // An administrator manages every department, so Reports can be created.
-        role: "admin",
-        access: [],
-      }),
+      body: JSON.stringify(
+        authMeBody({
+          id: activeUser,
+          default_organization_blocked: null,
+          // An administrator manages every department, so Reports can be created.
+          role: "admin",
+          access: [],
+        }),
+      ),
     }),
   );
   await page.route("**/api/views/data-sources**", async (route) => {

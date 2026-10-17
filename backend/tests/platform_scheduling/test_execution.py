@@ -39,6 +39,7 @@ def scheduled_report(report_run_fixture):
     with AuditSession(subject.owner_engine) as db:
         db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
         schedule = ReportSchedule(
+            org_id=db.get(Report, subject.report_id).org_id,
             report_id=subject.report_id,
             enabled=True,
             cadence="daily",
@@ -105,7 +106,9 @@ def test_due_report_runs_as_the_workspace_and_notifies_every_module_reader(sched
     from app.systems.platform.scheduling.execution import execute_due_report_runs
 
     subject = scheduled_report
-    expected = capture_report_snapshot(subject.runtime_engine, subject.report_id, None)
+    expected = capture_report_snapshot(
+        subject.runtime_engine, subject.report_id, None, org_id=subject.org_id
+    )
     assert len(expected.rows) == 3
 
     completed = execute_due_report_runs(subject.runtime_engine, now=NOW)
@@ -183,8 +186,8 @@ def test_revision_change_after_capture_retries_without_orphan_run(scheduled_repo
     subject = scheduled_report
     original = execution.capture_report_snapshot
 
-    def mutate_after_capture(engine, report_id, owner_id):
-        snapshot = original(engine, report_id, owner_id)
+    def mutate_after_capture(engine, report_id, owner_id, *, org_id):
+        snapshot = original(engine, report_id, owner_id, org_id=org_id)
         with AuditSession(subject.owner_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
             report = db.get(Report, report_id)
@@ -211,9 +214,9 @@ def test_unavailable_report_after_capture_cancels_without_output(
     subject = scheduled_report
     original = execution.capture_report_snapshot
 
-    def remove_access_after_capture(engine, report_id, actor_id):
+    def remove_access_after_capture(engine, report_id, actor_id, *, org_id):
         assert actor_id is None
-        snapshot = original(engine, report_id, actor_id)
+        snapshot = original(engine, report_id, actor_id, org_id=org_id)
         with AuditSession(subject.owner_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
             if change == "archive":
@@ -268,8 +271,8 @@ def test_lost_lease_after_capture_cannot_save_or_notify(scheduled_report, monkey
     subject = scheduled_report
     original = execution.capture_report_snapshot
 
-    def replace_lease_after_capture(engine, report_id, owner_id):
-        snapshot = original(engine, report_id, owner_id)
+    def replace_lease_after_capture(engine, report_id, owner_id, *, org_id):
+        snapshot = original(engine, report_id, owner_id, org_id=org_id)
         with AuditSession(subject.owner_engine) as db:
             replacement = claim_due_work(db, now=NOW + timedelta(minutes=3))
             assert len(replacement) == 1
@@ -290,8 +293,8 @@ def test_source_purge_after_capture_rolls_back_run_and_retries(scheduled_report,
     subject = scheduled_report
     original = execution.capture_report_snapshot
 
-    def purge_after_capture(engine, report_id, owner_id):
-        snapshot = original(engine, report_id, owner_id)
+    def purge_after_capture(engine, report_id, owner_id, *, org_id):
+        snapshot = original(engine, report_id, owner_id, org_id=org_id)
         with AuditSession(subject.owner_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
             record = db.get(Record, subject.first_record_id)
@@ -314,14 +317,15 @@ def test_existing_run_key_collision_does_not_notify_unrelated_output(scheduled_r
     subject = scheduled_report
     original = execution.capture_report_snapshot
 
-    def collide_after_capture(engine, report_id, owner_id):
-        snapshot = original(engine, report_id, owner_id)
+    def collide_after_capture(engine, report_id, owner_id, *, org_id):
+        snapshot = original(engine, report_id, owner_id, org_id=org_id)
         with AuditSession(subject.owner_engine) as db:
             db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=uuid7())
             work = db.scalar(select(ScheduledWork).where(ScheduledWork.report_id == report_id))
             assert work is not None
             db.add(
                 ReportRun(
+                    org_id=work.org_id,
                     report_id=report_id,
                     module_id=subject.module_id,
                     idempotency_key=work.id,
@@ -350,12 +354,12 @@ def test_capture_failure_rolls_back_and_retries_once(scheduled_report, monkeypat
     original = execution.capture_report_snapshot
     attempts = 0
 
-    def fail_once(engine, report_id, owner_id):
+    def fail_once(engine, report_id, owner_id, *, org_id):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
             raise RuntimeError("controlled capture failure")
-        return original(engine, report_id, owner_id)
+        return original(engine, report_id, owner_id, org_id=org_id)
 
     monkeypatch.setattr(execution, "capture_report_snapshot", fail_once)
     assert execution.execute_due_report_runs(subject.runtime_engine, now=NOW) == []

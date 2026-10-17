@@ -15,8 +15,8 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 SUPABASE_DB_IMAGE = (
-    "supabase/postgres:17.6.1.136@sha256:"
-    "f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00"
+    "supabase/postgres:17.11.0.004@sha256:"
+    "6058a6759ab9268cff8ee70641d61f1bd75953316281b76427cf5a6b4db2eafc"
 )
 POSTGRES_IMAGE = SUPABASE_DB_IMAGE
 PROVIDER_IMAGES = {
@@ -25,29 +25,29 @@ PROVIDER_IMAGES = {
         "supabase/gotrue:v2.196.0@sha256:"
         "c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232"
     ),
-    "rest": (
-        "postgrest/postgrest:v14.17@sha256:"
-        "c9dc201e555f5d8e37e7f39cdd4df0229774996e213bfd7de8d10ac609030f2c"
-    ),
     "imgproxy": (
         "darthsim/imgproxy:v3.31.4@sha256:"
         "73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712"
     ),
     "provider-volume-init": (
-        "supabase/storage-api:v1.74.0@sha256:"
-        "f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85"
+        "supabase/storage-api:v1.81.0@sha256:"
+        "98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54"
     ),
     "storage": (
-        "supabase/storage-api:v1.74.0@sha256:"
-        "f1546fac6d1c7e345428ac904bfaa7be7cecd50a1f549fe1cf38c628a7b15c85"
+        "supabase/storage-api:v1.81.0@sha256:"
+        "98ffec5d0678803783c30e404c27f4ec65e97efbe014088f2a86b4b8b54b9f54"
+    ),
+    "realtime": (
+        "supabase/realtime:v2.143.3@sha256:"
+        "768b559241dd234c4e8852c5c0f504e598b80f1df2ad4dd78d5486fbed2f17a2"
     ),
     "meta": (
-        "supabase/postgres-meta:v0.99.0@sha256:"
-        "9a079ac1c94d89629262822a4bd1902d5b1be4adb464e5a0a8fd078aaed72158"
+        "supabase/postgres-meta:v0.100.0@sha256:"
+        "145325b7e39f8ef4931d6e8cfd3f6f4d655de09d72a2ccc96d9513542c2202bd"
     ),
     "studio": (
-        "supabase/studio:2026.09.07-sha-7996410@sha256:"
-        "94a2a9d2906e8b4109e55159a62e241c3044709a492913ea8edd34b14973d288"
+        "supabase/studio:2026.10.05-sha-94b8b06@sha256:"
+        "d878dcd9dba73b66d1c2c19aeaf53d07704e71604d93013225be1d1c51475237"
     ),
     "api-gw": (
         "envoyproxy/envoy:v1.39.1@sha256:"

@@ -13,13 +13,18 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.session import AuditSession
+from app.systems.access.users.models import User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
-from tests.conftest import _guard_integration_database
+from tests.conftest import _guard_integration_database, create_member
 from tests.conftest import guarded_create_engine as create_engine
+from tests.organization_scope_support import scope_like_a_request
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = [
@@ -33,9 +38,16 @@ pytestmark = [
 
 @dataclass(frozen=True)
 class CommittedModule:
+    org_id: UUID
     department_id: UUID
     module_id: UUID
     fields: dict[str, UUID]
+
+
+def record_writer(db: Session, module_id: UUID) -> User:
+    organization = db.get(WorkspaceProfile, db.get(Module, module_id).org_id)
+    user, _membership = create_member(db, organization, "admin")
+    return user
 
 
 FieldSpec = tuple[str, FieldType, int, bool, dict[str, Any]]
@@ -55,6 +67,7 @@ def _database_url() -> str:
 
 
 def _set_request(db: Session, request_id: UUID, path: str = "/api/test") -> None:
+    scope_like_a_request(db)
     db.info[AUDIT_CONTEXT_KEY] = AuditContext(
         request_id=request_id,
         request_method="POST",
@@ -126,6 +139,7 @@ def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
                         "records",
                         "modules",
                         "departments",
+                        "sandbox_documents",
                     ):
                         connection.execute(
                             text(f"DELETE FROM public.{table} WHERE id IN :ids").bindparams(
@@ -134,7 +148,16 @@ def owned_ids(integration_db: Session) -> Generator[set[UUID], None, None]:
                             {"ids": list(ids)},
                         )
                     connection.execute(
-                        text("DELETE FROM public.audit_logs WHERE entity_id IN :ids").bindparams(
+                        text(
+                            "DELETE FROM public.audit_logs "
+                            "WHERE entity_id IN :ids OR org_id IN :ids"
+                        ).bindparams(
+                            bindparam("ids", expanding=True)
+                        ),
+                        {"ids": list(ids)},
+                    )
+                    connection.execute(
+                        text("DELETE FROM public.organizations WHERE id IN :ids").bindparams(
                             bindparam("ids", expanding=True)
                         ),
                         {"ids": list(ids)},
@@ -147,6 +170,7 @@ def _seed_committed_module(
     owned_ids: set[UUID],
     *,
     fields: tuple[FieldSpec, ...] = (),
+    org_id: UUID | None = None,
 ) -> CommittedModule:
     """Commit a visible graph so independent PostgreSQL connections can race it."""
 
@@ -157,13 +181,22 @@ def _seed_committed_module(
             _set_request(db, uuid7(), "/api/test/seed")
             try:
                 token = str(uuid7())
-                department = Department(department_name=f"Dynamic field QA {token}")
+                if org_id is None:
+                    org = organization(db)
+                    owned_ids.add(org.id)
+                else:
+                    org = db.get(WorkspaceProfile, org_id)
+                    assert org is not None
+                document = create_document(db, org)
+                department = Department(org_id=org.id, department_name=f"Dynamic field QA {token}")
                 module = Module(
+                    org_id=org.id,
                     department=department,
                     module_name=f"Dynamic module QA {token}",
                 )
                 field_rows = [
                     Field(
+                        org_id=org.id,
                         module=module,
                         name=name,
                         type=field_type,
@@ -176,10 +209,12 @@ def _seed_committed_module(
                 db.add_all([department, module, *field_rows])
                 db.flush()
                 owned_ids.update(
-                    {department.id, module.id, *(field.id for field in field_rows)}
+                    {document.id, department.id, module.id,
+                     *(field.id for field in field_rows)}
                 )
                 db.commit()
                 return CommittedModule(
+                    org_id=org.id,
                     department_id=department.id,
                     module_id=module.id,
                     fields={field.name: field.id for field in field_rows},
@@ -199,7 +234,8 @@ def _seed_committed_record(
             db = AuditSession(bind=connection, expire_on_commit=False)
             _set_request(db, uuid7(), "/api/test/seed-record")
             try:
-                record = Record(module_id=module_id, data=data)
+                record = Record(org_id=db.get(Module, module_id).org_id,
+                                module_id=module_id, data=data)
                 db.add(record)
                 db.flush()
                 owned_ids.add(record.id)

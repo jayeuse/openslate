@@ -12,6 +12,7 @@ from app.core.integrations.supabase_auth import (
     ProviderUser,
     SupabaseAuthUnavailable,
 )
+from app.systems.access.users.models import Membership
 from app.systems.sandbox.lifecycle.exceptions import (
     LifecycleActorBlocked,
     LifecycleChallengeBindingMismatch,
@@ -37,12 +38,12 @@ ACTOR_ID = UUID("00000000-0000-0000-0000-000000000123")
 @pytest.fixture(autouse=True)
 def unit_login_policy(request, monkeypatch):
     if request.node.get_closest_marker("integration") is None:
-        from app.systems.manage.workspace.models import WorkspaceProfile
+        from app.systems.manage.workspace.models import PlatformSettings
 
         monkeypatch.setattr(
             password_module,
-            "load_workspace_policy",
-            lambda _db: WorkspaceProfile(
+            "load_platform_policy",
+            lambda _db: PlatformSettings(
                 login_failed_attempt_threshold=5, login_window_minutes=15, login_cooldown_minutes=15
             ),
         )
@@ -182,6 +183,10 @@ def test_provider_password_grant_returns_only_the_explicitly_bound_local_identit
         role="admin",
     )
     db.scalar.return_value = local
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [Membership(
+        user_id=ACTOR_ID, role="admin", status="active", is_deleted=False,
+    )]
     client = Mock()
     client.password_grant.return_value = ProviderTokens("access", "refresh", provider_id, 600)
     client.get_user.return_value = ProviderUser(provider_id, None, local.email)
@@ -226,7 +231,7 @@ def test_provider_password_step_up_preserves_backend_attempt_budget(
         cleanup_expired_buckets=lambda *_a, **_kw: None,
         login_fingerprint=lambda *_a: "fingerprint",
         lock_bucket=lambda *_a: blocked,
-        login_retry_after=lambda *_a: 60,
+        login_retry_after=lambda *_a, **_kw: 60,
     )
     monkeypatch.setattr(password_module, "rate_limits", budget, raising=False)
     client = Mock()

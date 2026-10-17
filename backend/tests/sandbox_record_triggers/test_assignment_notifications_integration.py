@@ -27,6 +27,7 @@ def test_trigger_assignment_uses_final_set_even_when_child_budget_is_exhausted(
     db = integration_owner_db
     actor, module, fields, definition = publish_trigger(db)
     assignee = Field(
+        org_id=module.org_id,
         module_id=module.id, name="Assignee", type="user", position=4, required=False, config={}
     )
     db.add(assignee)
@@ -44,6 +45,7 @@ def test_trigger_assignment_uses_final_set_even_when_child_budget_is_exhausted(
     db.flush()
     db.add(
         RecordTriggerAction(
+            org_id=definition.org_id,
             trigger_id=definition.id,
             target_field_id=assignee.id,
             position=0,
@@ -53,6 +55,7 @@ def test_trigger_assignment_uses_final_set_even_when_child_budget_is_exhausted(
     )
     db.add(
         RecordTriggerAction(
+            org_id=definition.org_id,
             trigger_id=definition.id,
             target_field_id=assignee.id,
             position=1,

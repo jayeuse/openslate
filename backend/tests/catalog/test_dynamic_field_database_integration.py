@@ -11,12 +11,11 @@ from app.systems.sandbox.records.router import create_record
 from app.systems.sandbox.records.schemas import RecordCreate
 from tests.catalog.dynamic_field_support import (
     _seed_committed_module,
+    record_writer,
 )
-from tests.rbac.support import make_user
+from tests.organization_scope_support import scope_like_a_request
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
-# Record handlers now read the caller's module level; an administrator needs no group.
-RECORD_WRITER = make_user("record_writer")
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -35,6 +34,7 @@ def test_migrated_explicit_null_decimal_config_is_an_unbounded_runtime_bound(
         fields=(("Amount", FieldType.DECIMAL, 0, False, {}),),
     )
     field_id = seeded.fields["Amount"]
+    scope_like_a_request(integration_db)
     integration_db.connection().execute(
         text("UPDATE public.fields SET config = CAST(:config AS jsonb) WHERE id = :field_id"),
         {"field_id": field_id, "config": json.dumps({"minimum": None})},
@@ -49,7 +49,7 @@ def test_migrated_explicit_null_decimal_config_is_an_unbounded_runtime_bound(
 
     record = create_record(
         RecordCreate(module_id=seeded.module_id, data={str(field_id): "-12.50"}),
-        RECORD_WRITER,
+        record_writer(integration_db, seeded.module_id),
         integration_db,
     )
     owned_ids.add(record.id)

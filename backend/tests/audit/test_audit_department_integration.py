@@ -33,6 +33,7 @@ from tests.rbac.support import (
     add_module,
     add_user,
     make_group_access,
+    organization,
 )
 
 pytestmark = pytest.mark.integration
@@ -61,11 +62,15 @@ def _board_payloads(db: Session) -> list[dict[str, str]]:
 def test_same_flush_record_ancestry_and_relationship_source_are_stamped(
     integration_db: Session,
 ) -> None:
-    inventory = Department(id=uuid7(), department_name=f"Inventory {uuid7()}")
-    finance = Department(id=uuid7(), department_name=f"Finance {uuid7()}")
-    module = Module(id=uuid7(), department_id=inventory.id, module_name="Items")
-    other_module = Module(id=uuid7(), department_id=finance.id, module_name="Accounts")
+    org_id = organization(integration_db).id
+    inventory = Department(org_id=org_id, id=uuid7(), department_name=f"Inventory {uuid7()}")
+    finance = Department(org_id=org_id, id=uuid7(), department_name=f"Finance {uuid7()}")
+    module = Module(org_id=inventory.org_id, id=uuid7(),
+                    department_id=inventory.id, module_name="Items")
+    other_module = Module(org_id=finance.org_id, id=uuid7(),
+                          department_id=finance.id, module_name="Accounts")
     field = Field(
+        org_id=module.org_id,
         id=uuid7(),
         module_id=module.id,
         name="Related item",
@@ -75,9 +80,10 @@ def test_same_flush_record_ancestry_and_relationship_source_are_stamped(
         relationship_multiple_targets=True,
         relationship_multiple_sources=True,
     )
-    source = Record(id=uuid7(), module_id=module.id, data={})
-    target = Record(id=uuid7(), module_id=other_module.id, data={})
+    source = Record(org_id=module.org_id, id=uuid7(), module_id=module.id, data={})
+    target = Record(org_id=other_module.org_id, id=uuid7(), module_id=other_module.id, data={})
     edge = RelationshipEdge(
+        org_id=field.org_id,
         id=uuid7(), field_id=field.id, source_record_id=source.id, target_record_id=target.id
     )
     integration_db.add_all([inventory, finance, module, other_module, field, source, target, edge])
@@ -94,11 +100,12 @@ def test_view_report_dashboard_and_group_access_use_their_own_department(
 ) -> None:
     department = add_department(integration_db)
     module = add_module(integration_db, department)
-    group = Group(id=uuid7(), name=f"Audit group {uuid7()}")
-    view = SavedView(module_id=module.id, name="All items", definition={})
-    report = Report(module_id=module.id, name="Items", recipe={})
-    dashboard = Dashboard(department_id=department.id, name="Items")
+    group = Group(org_id=department.org_id, id=uuid7(), name=f"Audit group {uuid7()}")
+    view = SavedView(org_id=module.org_id, module_id=module.id, name="All items", definition={})
+    report = Report(org_id=module.org_id, module_id=module.id, name="Items", recipe={})
+    dashboard = Dashboard(org_id=department.org_id, department_id=department.id, name="Items")
     grant = GroupAccess(
+        org_id=department.org_id,
         group_id=group.id,
         department_id=department.id,
         module_id=None,
@@ -118,14 +125,17 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
     department = add_department(integration_db)
     module = add_module(integration_db, department)
     author = add_user(integration_db, role=UserRole.ADMIN)
-    record = Record(id=uuid7(), module_id=module.id, data={})
+    record = Record(org_id=module.org_id, id=uuid7(), module_id=module.id, data={})
     board = Board(
+        org_id=department.org_id,
         id=uuid7(), scope=BoardScope.DEPARTMENT, department_id=department.id, name="Items"
     )
     post = BoardPost(
+        org_id=board.org_id,
         id=uuid7(), board_id=board.id, author_id=author.id, title="Count", body="Today"
     )
     event = BoardEvent(
+        org_id=board.org_id,
         id=uuid7(),
         board_id=board.id,
         author_id=author.id,
@@ -136,6 +146,7 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
         timezone_name="UTC",
     )
     widget = BoardWidget(
+        org_id=board.org_id,
         board_id=board.id,
         module_id=module.id,
         name="Items",
@@ -144,6 +155,7 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
         config={},
     )
     revision = BoardPostRevision(
+        org_id=post.org_id,
         id=uuid7(),
         post_id=post.id,
         publication_number=1,
@@ -155,6 +167,7 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
         published_at=datetime.now(UTC),
     )
     file = File(
+        org_id=board.org_id,
         id=uuid7(),
         purpose="board_attachment",
         board_id=board.id,
@@ -169,20 +182,28 @@ def test_board_content_and_revision_descendants_use_department_board_scope(
     integration_db.flush()
     integration_db.add(revision)
     integration_db.flush()
-    reminder = BoardEventReminder(board_id=board.id, event_id=event.id, timing="start")
+    reminder = BoardEventReminder(
+        org_id=event.org_id, board_id=board.id, event_id=event.id, timing="start",
+    )
     link = BoardRecordLink(
+        org_id=board.org_id,
         board_id=board.id,
         post_id=post.id,
         record_id=record.id,
         module_id=module.id,
     )
-    attachment = BoardAttachment(board_id=board.id, post_id=post.id, file_id=file.id)
+    attachment = BoardAttachment(
+        org_id=board.org_id, board_id=board.id, post_id=post.id, file_id=file.id,
+    )
     integration_db.add_all([reminder, link, attachment])
     integration_db.flush()
     revision_link = BoardPostRevisionRecordLink(
+        org_id=revision.org_id,
         revision_id=revision.id, record_id=record.id, module_id=module.id
     )
-    revision_attachment = BoardPostRevisionAttachment(revision_id=revision.id, file_id=file.id)
+    revision_attachment = BoardPostRevisionAttachment(
+        org_id=revision.org_id, revision_id=revision.id, file_id=file.id,
+    )
     integration_db.add_all([revision_link, revision_attachment])
     integration_db.flush()
 
@@ -213,6 +234,7 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
     module = add_module(integration_db, department)
     author = add_user(integration_db, role=UserRole.ADMIN)
     relationship_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Related",
         type=FieldType.RELATIONSHIP,
@@ -221,15 +243,18 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
         relationship_multiple_targets=True,
         relationship_multiple_sources=True,
     )
-    source = Record(module_id=module.id, data={})
-    target = Record(module_id=module.id, data={})
-    board = Board(scope=BoardScope.DEPARTMENT, department_id=department.id, name="Items")
+    source = Record(org_id=module.org_id, module_id=module.id, data={})
+    target = Record(org_id=module.org_id, module_id=module.id, data={})
+    board = Board(org_id=department.org_id, scope=BoardScope.DEPARTMENT,
+                  department_id=department.id, name="Items")
     integration_db.add_all([relationship_field, source, target, board])
     integration_db.flush()
-    post = BoardPost(board_id=board.id, author_id=author.id, title="Count", body="Today")
+    post = BoardPost(org_id=board.org_id, board_id=board.id, author_id=author.id,
+                     title="Count", body="Today")
     integration_db.add(post)
     integration_db.flush()
     link = BoardRecordLink(
+        org_id=board.org_id,
         board_id=board.id,
         post_id=post.id,
         record_id=source.id,
@@ -238,6 +263,7 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
     integration_db.add(link)
     integration_db.flush()
     revision = BoardPostRevision(
+        org_id=post.org_id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -250,6 +276,7 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
     integration_db.add(revision)
     integration_db.flush()
 
+    org_id = department.org_id
     department_id = department.id
     module_id = module.id
     board_id = board.id
@@ -257,13 +284,16 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
     integration_db.expunge_all()
     integration_db.info.pop(REALTIME_INVALIDATION_KEY, None)
 
-    module_child = Field(module_id=module_id, name="Notes", type=FieldType.TEXT, position=1)
+    module_child = Field(org_id=org_id, module_id=module_id,
+                         name="Notes", type=FieldType.TEXT, position=1)
     record_child = RelationshipEdge(
+        org_id=org_id,
         field_id=relationship_field.id,
         source_record_id=source.id,
         target_record_id=target.id,
     )
     board_child = BoardWidget(
+        org_id=org_id,
         board_id=board_id,
         module_id=module_id,
         name="Items",
@@ -272,6 +302,7 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
         config={},
     )
     post_child = BoardPostRevision(
+        org_id=org_id,
         post_id=post_id,
         publication_number=2,
         publication_key=uuid7(),
@@ -282,6 +313,7 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
         published_at=datetime.now(UTC),
     )
     revision_child = BoardPostRevisionRecordLink(
+        org_id=org_id,
         revision_id=revision.id, record_id=source.id, module_id=module_id
     )
     integration_db.add_all([module_child, record_child, board_child, post_child, revision_child])
@@ -299,11 +331,13 @@ def test_persisted_parent_ancestry_is_loaded_for_children_after_expunge(
 def test_project_board_and_its_group_have_no_department(
     integration_db: Session,
 ) -> None:
-    board = Board(scope=BoardScope.PROJECT, name=f"Project {uuid7()}")
-    group = Group(name=f"Project group {uuid7()}")
+    org_id = organization(integration_db).id
+    board = Board(org_id=org_id, scope=BoardScope.PROJECT, name=f"Project {uuid7()}")
+    group = Group(org_id=org_id, name=f"Project group {uuid7()}")
     integration_db.add_all([board, group])
     integration_db.flush()
-    board_group = BoardGroup(board_id=board.id, group_id=group.id, level=AccessLevel.READ)
+    board_group = BoardGroup(org_id=board.org_id, board_id=board.id,
+                             group_id=group.id, level=AccessLevel.READ)
     integration_db.add(board_group)
     integration_db.flush()
 
@@ -320,7 +354,7 @@ def test_child_audit_department_survives_same_flush_parent_hard_delete(
 ) -> None:
     department = add_department(integration_db)
     module = add_module(integration_db, department)
-    record = Record(module_id=module.id, data={})
+    record = Record(org_id=module.org_id, module_id=module.id, data={})
     integration_db.add(record)
     integration_db.flush()
     department_id = department.id
@@ -363,8 +397,10 @@ def test_department_manager_lists_only_the_explicitly_managed_department(
     finance = add_department(integration_db)
     inventory_module = add_module(integration_db, inventory)
     finance_module = add_module(integration_db, finance)
-    inventory_record = Record(module_id=inventory_module.id, data={})
-    finance_record = Record(module_id=finance_module.id, data={})
+    inventory_record = Record(
+        org_id=inventory_module.org_id, module_id=inventory_module.id, data={},
+    )
+    finance_record = Record(org_id=finance_module.org_id, module_id=finance_module.id, data={})
     integration_db.add_all([inventory_record, finance_record])
     integration_db.flush()
     administrator = add_user(integration_db, role=UserRole.ADMIN)
@@ -426,6 +462,7 @@ def test_library_file_audit_uses_its_direct_department_through_archive_and_delet
     creator = add_user(db)
     department = add_department(db)
     file = File(
+        org_id=department.org_id,
         purpose="library_document",
         department_id=department.id,
         creator_id=creator.id,

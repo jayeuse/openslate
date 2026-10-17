@@ -11,7 +11,9 @@ from app.systems.sandbox.lifecycle.planning import plan_lifecycle
 from app.systems.sandbox.lifecycle.planning_scope import LifecycleScope
 from app.systems.sandbox.lifecycle.schemas import LifecycleTargetType
 from app.systems.sandbox.modules.models import Module
+from tests.rbac.support import organization
 from tests.record_queries.support import setup_rows
+from tests.sandbox_designs.fixtures import create_document
 
 
 def test_purge_dependency_inventory_tracks_saved_view_default_changes():
@@ -74,9 +76,11 @@ def test_purge_dependency_inventory_tracks_saved_view_default_changes():
 
 @pytest.mark.integration
 def test_purge_lists_and_blocks_unpurged_attachments_and_lists_saved_views(query_db):
+    create_document(query_db, organization(query_db))
     owner = actor(query_db)
     module, _, records = setup_rows(query_db, "text", ["value"])
     attachment = File(
+        org_id=records[0].org_id,
         purpose="record_attachment",
         record_id=records[0].id,
         creator_id=owner.id,
@@ -86,6 +90,7 @@ def test_purge_lists_and_blocks_unpurged_attachments_and_lists_saved_views(query
         state="awaiting_upload",
     )
     view = SavedView(
+        org_id=module.org_id,
         module_id=module.id,
         name="Shared",
         definition={"version": 1},
@@ -120,9 +125,11 @@ def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(q
     from app.systems.sandbox.modules.models import Module
     from app.systems.sandbox.records.models import Record
 
+    create_document(query_db, organization(query_db))
     owner = actor(query_db)
     module, _, records = setup_rows(query_db, "text", ["value"])
     attachment = File(
+        org_id=records[0].org_id,
         purpose="record_attachment",
         record_id=records[0].id,
         creator_id=owner.id,
@@ -133,6 +140,7 @@ def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(q
         is_deleted=True,
     )
     view = SavedView(
+        org_id=module.org_id,
         module_id=module.id,
         name="Shared",
         definition={"version": 1},
@@ -165,9 +173,11 @@ def test_parent_purge_deletes_confirmed_file_inventory_and_views_through_audit(q
 def test_close_does_not_archive_file_or_view(query_db):
     from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 
+    create_document(query_db, organization(query_db))
     owner = actor(query_db)
     module, _, records = setup_rows(query_db, "text", ["value"])
     attachment = File(
+        org_id=records[0].org_id,
         purpose="record_attachment",
         record_id=records[0].id,
         creator_id=owner.id,
@@ -177,6 +187,7 @@ def test_close_does_not_archive_file_or_view(query_db):
         state="awaiting_upload",
     )
     view = SavedView(
+        org_id=module.org_id,
         module_id=module.id,
         name="Shared",
         definition={"version": 1},
@@ -201,13 +212,17 @@ def test_department_library_blocks_purge_tracks_drift_then_deletes_confirmed_inv
     from app.systems.sandbox.lifecycle.execution import execute_lifecycle
 
     db = query_db
+    create_document(db, organization(db))
     owner = actor(db)
     now = datetime.now(UTC)
-    department = Department(department_name=f"Library {uuid7()}", is_deleted=True, deleted_at=now)
-    other = Department(department_name=f"Other library {uuid7()}", is_deleted=True, deleted_at=now)
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Library {uuid7()}", is_deleted=True, deleted_at=now)
+    other = Department(org_id=department.org_id,
+                       department_name=f"Other library {uuid7()}", is_deleted=True, deleted_at=now)
     db.add_all([department, other])
     db.flush()
     file = File(
+        org_id=department.org_id,
         purpose="library_document",
         department_id=department.id,
         creator_id=owner.id,

@@ -94,10 +94,12 @@ def insert_sessions_and_rate_limits(
     )
     cursor.execute(
         "INSERT INTO public.lifecycle_rate_limit_buckets "
-        "(id, actor_id, attempt_count, window_started_at, window_expires_at) "
-        "VALUES (%s, %s, 1, now(), now() + interval '1 minute'), "
-        "(%s, %s, 1, now(), now() + interval '1 minute')",
-        (uuid4(), admin_id, uuid4(), member_id),
+        "(org_id, id, actor_id, attempt_count, window_started_at, window_expires_at) "
+        "VALUES ((SELECT org_id FROM public.memberships WHERE user_id = %s), "
+        "%s, %s, 1, now(), now() + interval '1 minute'), "
+        "((SELECT org_id FROM public.memberships WHERE user_id = %s), "
+        "%s, %s, 1, now(), now() + interval '1 minute')",
+        (admin_id, uuid4(), admin_id, member_id, uuid4(), member_id),
     )
 
 
@@ -117,15 +119,103 @@ def delete_sessions_and_rate_limits(cursor: Cursor, user_ids: Sequence[UUID]) ->
 
 def insert_department(cursor: Cursor, department_id: UUID, admin_id: UUID) -> None:
     cursor.execute(
-        "INSERT INTO public.departments (id, department_name) VALUES (%s, %s)",
-        (department_id, f"reset-{admin_id}"),
+        "INSERT INTO public.departments (org_id, id, department_name) VALUES "
+        "((SELECT org_id FROM public.memberships WHERE user_id = %s), %s, %s)",
+        (admin_id, department_id, f"reset-{admin_id}"),
     )
 
 
 def insert_logo_file(cursor: Cursor, file_id: UUID, admin_id: UUID) -> None:
     cursor.execute(
         "INSERT INTO public.files "
-        "(id, purpose, creator_id, filename, expected_size, object_key, state) "
-        "VALUES (%s, 'workspace_logo', %s, 'reset.png', 1, %s, 'awaiting_upload')",
-        (file_id, admin_id, uuid4().hex),
+        "(org_id, id, purpose, creator_id, filename, expected_size, object_key, state) "
+        "VALUES ((SELECT org_id FROM public.memberships WHERE user_id = %s), "
+        "%s, 'workspace_logo', %s, 'reset.png', 1, %s, 'awaiting_upload')",
+        (admin_id, file_id, admin_id, uuid4().hex),
     )
+
+
+@dataclass(frozen=True)
+class SecondOrganization:
+    """Another organization of the same install, which the reset must remove as well."""
+
+    org_id: UUID
+    user_id: UUID
+    department_id: UUID
+
+
+def insert_operator(cursor: Cursor, user_id: UUID) -> UUID:
+    """Make the account the installation operator that the reset preserves."""
+    operator_id = uuid4()
+    cursor.execute(
+        "INSERT INTO public.platform_operators (id, user_id) VALUES (%s, %s)",
+        (operator_id, user_id),
+    )
+    return operator_id
+
+
+def insert_second_organization(cursor: Cursor) -> SecondOrganization:
+    """A second organization with its own member, Sandbox draft, department and Boards."""
+    second = SecondOrganization(uuid4(), uuid4(), uuid4())
+    cursor.execute(
+        "INSERT INTO public.organizations (id, slug, display_name, timezone, locale, "
+        "theme) VALUES (%s, %s, 'Second reset organization', 'Asia/Manila', 'en-PH', "
+        "'whiteboard')",
+        (second.org_id, f"reset-second-{second.org_id}"),
+    )
+    cursor.execute(
+        "INSERT INTO public.users (id, email, username, status) VALUES (%s, %s, %s, 'active')",
+        (
+            second.user_id,
+            f"reset-second-{second.user_id}@example.test",
+            f"reset_second_{second.user_id.hex[:12]}",
+        ),
+    )
+    cursor.execute(
+        "INSERT INTO public.memberships (id, org_id, user_id, role, status) "
+        "VALUES (%s, %s, %s, 'admin', 'active')",
+        (uuid4(), second.org_id, second.user_id),
+    )
+    cursor.execute(
+        "UPDATE public.organizations SET owner_user_id = %s WHERE id = %s",
+        (second.user_id, second.org_id),
+    )
+    cursor.execute(
+        "INSERT INTO public.sandbox_documents (org_id, id, document, content_hash, byte_count) "
+        "VALUES (%s, %s, '{}'::jsonb, %s, 2)",
+        (second.org_id, uuid4(), "0" * 64),
+    )
+    cursor.execute(
+        "INSERT INTO public.departments (org_id, id, department_name) VALUES (%s, %s, %s)",
+        (second.org_id, second.department_id, f"reset-second-{second.department_id}"),
+    )
+    cursor.execute(
+        "INSERT INTO public.boards (org_id, id, scope, department_id, name) VALUES "
+        "(%s, %s, 'company', NULL, 'Company Board'), (%s, %s, 'department', %s, 'Second')",
+        (second.org_id, uuid4(), second.org_id, uuid4(), second.department_id),
+    )
+    return second
+
+
+def delete_second_organization(cursor: Cursor, second: SecondOrganization) -> None:
+    """Remove what ``insert_second_organization`` created when a reset did not."""
+    for table in ("boards", "departments", "sandbox_documents", "memberships"):
+        cursor.execute(f"DELETE FROM public.{table} WHERE org_id = %s", (second.org_id,))
+    cursor.execute("DELETE FROM public.organizations WHERE id = %s", (second.org_id,))
+    cursor.execute("DELETE FROM public.users WHERE id = %s", (second.user_id,))
+
+
+def assert_only_the_operator_remains(
+    cursor: Cursor, admin_id: UUID, operator_id: UUID
+) -> None:
+    """No organization or organization row remains; only the preserved operator account."""
+    for table in (
+        "organizations", "memberships", "sandbox_documents", "sandbox_versions",
+        "boards", "departments",
+    ):
+        cursor.execute(f"SELECT count(*) FROM public.{table}")
+        assert cursor.fetchone() == (0,), table
+    cursor.execute("SELECT id FROM public.users")
+    assert cursor.fetchall() == [(admin_id,)]
+    cursor.execute("SELECT id, user_id FROM public.platform_operators")
+    assert cursor.fetchall() == [(operator_id, admin_id)]

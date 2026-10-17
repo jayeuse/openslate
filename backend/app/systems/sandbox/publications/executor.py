@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.systems.access.users.membership import bound_organization
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.openview.charts.models import Chart
 from app.systems.platform.scheduling.notification_creation import notify_sandbox_publication
@@ -176,6 +177,7 @@ def apply_publication(
     )
     db.flush()
     publication = SandboxPublication(
+        org_id=document_row.org_id,
         document_id=document_row.id,
         version_id=version.id,
         actor_id=actor_id,
@@ -270,6 +272,7 @@ def _apply_departments(
         row = db.get(Department, binding.department_id) if binding is not None else None
         if row is None:
             row = Department(
+                org_id=bound_organization(db),
                 department_name=desired.name,
                 is_deleted=desired.closed,
                 deleted_at=datetime.now(UTC) if desired.closed else None,
@@ -300,6 +303,7 @@ def _apply_modules(
         if row is None:
             closed = desired.closed or department.is_deleted
             row = Module(
+                org_id=department.org_id,
                 department_id=department.id,
                 module_name=desired.name,
                 is_deleted=closed,
@@ -335,6 +339,7 @@ def _apply_fields(
             closed = desired.closed or modules[module.id].is_deleted
             if row is None:
                 row = Field(
+                    org_id=modules[module.id].org_id,
                     module_id=modules[module.id].id,
                     name=desired.name,
                     type=FieldType(_field_type(desired)),
@@ -428,6 +433,7 @@ def _apply_relationships(
         )
         if row is None:
             row = Field(
+                org_id=modules[desired.source_module_id].org_id,
                 module_id=modules[desired.source_module_id].id,
                 name=desired.name,
                 type=FieldType.RELATIONSHIP,
@@ -486,7 +492,8 @@ def _validate_schemas(db: Session, modules: dict[str, Module]) -> None:
 
 
 def _bind(db: Session, kind: str, sandbox_id: str, actor_id: UUID, **target: UUID) -> None:
-    db.add(SandboxBinding(kind=kind, sandbox_id=sandbox_id, performed_by=actor_id, **target))
+    db.add(SandboxBinding(org_id=bound_organization(db),
+                          kind=kind, sandbox_id=sandbox_id, performed_by=actor_id, **target))
 
 
 def _assert_no_record_or_edge_changes(db: Session) -> None:

@@ -14,13 +14,15 @@ from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.provider_jwt_support import (
     client_for_key,
     provider_settings,
     session_database,
     signed_access,
 )
+from tests.conftest import create_member
 
 
 def test_provider_access_accepts_missing_nbf_but_enforces_nbf_when_present() -> None:
@@ -130,7 +132,7 @@ def test_provider_session_admission_requires_explicit_subject_mapping(
         "app.systems.access.identity.provider_sessions.get_settings", lambda: settings
     )
     user_id, provider_user_id, provider_session_id = uuid4(), uuid4(), uuid4()
-    user = User(
+    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -139,6 +141,8 @@ def test_provider_session_admission_requires_explicit_subject_mapping(
         role=UserRole.MEMBER,
     )
     db = Mock(spec=Session)
+    db.dirty = set()
+    db.scalars.return_value.all.return_value = [membership]
     db.scalar.return_value = user
     db.execute.return_value.scalar_one.return_value = True
     client = Mock()
@@ -196,7 +200,7 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    user = User(
+    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -204,7 +208,7 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
         status=UserStatus.ACTIVE.value,
         role=UserRole.MEMBER,
     )
-    db = session_database(user, local_session)
+    db = session_database(user, membership, local_session)
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(provider_user_id, None)
     identity = ProviderAccessIdentity(
@@ -218,7 +222,7 @@ def test_valid_provider_jwt_still_requires_live_local_and_provider_sessions() ->
     assert resolved is not None
     assert resolved[0] is user
     assert resolved[1] is local_session
-    assert user.role == UserRole.MEMBER.value
+    assert membership.role == UserRole.MEMBER.value
 
     local_session.revoked_at = now
     assert resolve_provider_session(db, identity, client, now=now) is None
@@ -248,7 +252,7 @@ def test_concurrent_refresh_reuses_current_provider_token_and_stable_handle(
         lambda: SimpleNamespace(supabase_session_encryption_key=SecretStr(key)),
     )
     user_id, provider_user_id, provider_session_id = uuid4(), uuid4(), uuid4()
-    user = User(
+    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -269,7 +273,7 @@ def test_concurrent_refresh_reuses_current_provider_token_and_stable_handle(
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    db = session_database(user, session)
+    db = session_database(user, membership, session)
     client = Mock()
     client.verify_access_token.return_value = ProviderAccessIdentity(
         provider_user_id,
@@ -304,7 +308,7 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
     access = signed_access(key, user_id=str(provider_id), session_id=str(provider_session_id))
     client = client_for_key(key, user_id=provider_id)
     monkeypatch.setattr(dependency, "get_supabase_auth_client", lambda: client)
-    user = User(
+    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_id,
         email="person@example.test",
@@ -323,13 +327,13 @@ def test_api_dependency_requires_bound_provider_and_rejects_mixed_credentials(
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    db = session_database(user, session)
+    db = session_database(user, membership, session)
     app = FastAPI()
     app.dependency_overrides[get_db] = lambda: db
 
     @app.get("/protected")
     def protected(
-        identity: Annotated[dependency.CurrentIdentity, Depends(dependency.get_current_identity)],
+        identity: Annotated[dependency.CurrentIdentity, Depends(dependency.get_account_identity)],
     ):
         return {"user_id": str(identity.user.id), "session_id": str(identity.session_id)}
 
@@ -367,7 +371,7 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
         lambda: SimpleNamespace(supabase_session_encryption_key=SecretStr(key)),
     )
     user_id, provider_user_id, provider_session_id = uuid4(), uuid4(), uuid4()
-    user = User(
+    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -388,7 +392,7 @@ def test_ambiguous_refresh_persistence_failure_revokes_the_local_session(
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    db = session_database(user, session)
+    db = session_database(user, membership, session)
     db.commit.side_effect = [SQLAlchemyError("transient write failure"), None]
     client = Mock()
     client.verify_access_token.side_effect = [

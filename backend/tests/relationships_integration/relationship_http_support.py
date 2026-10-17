@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -21,10 +22,16 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.database.session import AuditSession
 from app.core.middleware.request_context import get_request_context
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
-from tests.conftest import _assert_alembic_head, _guard_integration_database
+from tests.conftest import (
+    _assert_alembic_head,
+    _guard_integration_database,
+    create_member,
+    create_organization,
+)
 from tests.conftest import guarded_create_engine as create_engine
+from tests.organization_scope_support import scoped_override
 from tests.route_app_support import route_app
 
 
@@ -112,6 +119,7 @@ class RelationshipHTTPFixture:
         self.guest_id = uuid7()
         self.writer_id = uuid7()
         self.group_id = uuid7()
+        self.org_id = uuid7()
         self.member: User | None = None
         self.guest: User | None = None
         self.writer: User | None = None
@@ -142,58 +150,38 @@ class RelationshipHTTPFixture:
         )
         self.graph = graph
         self._all_ids.update(graph.ids)
-        with self.owner_engine.begin() as connection:
+        with Session(self.owner_engine) as db:
+            organization = create_organization(db, id=self.org_id)
+            connection = db.connection()
             prefix = graph.department_id.hex[:12]
             email = f"rel-http-{prefix}@example.com"
-            updated = connection.execute(
-                text(
-                    "INSERT INTO public.users (id, email, username, status, role) "
-                    "VALUES (:id, :email, :username, 'active', 'admin'), "
-                    "(:member_id, :member_email, :member_username, 'active', 'member'), "
-                    "(:writer_id, :writer_email, :writer_username, 'active', 'member')"
-                ),
-                {
-                    "id": self.actor_id,
-                    "email": email,
-                    "username": f"rel_http_{prefix}",
-                    "member_id": self.member_id,
-                    "member_email": f"rel-http-member-{prefix}@example.com",
-                    "member_username": f"rel_http_member_{prefix}",
-                    "writer_id": self.writer_id,
-                    "writer_email": f"rel-http-writer-{prefix}@example.com",
-                    "writer_username": f"rel_http_writer_{prefix}",
-                },
-            )
-            if updated.rowcount != 3:
-                raise RuntimeError("The local test actors could not be created")
+            create_member(db, organization, "admin", id=self.actor_id,
+                          email=email, username=f"rel_http_{prefix}", status="active")
+            for user_id, label in ((self.member_id, "member"), (self.writer_id, "writer")):
+                create_member(db, organization, "member", id=user_id,
+                              email=f"rel-http-{label}-{prefix}@example.com",
+                              username=f"rel_http_{label}_{prefix}", status="active")
             self._insert_graph(connection, graph)
             # A guest whose group writes the whole department still only reads it.
             # The writer shares that group, so it writes the department and has no
             # access to the other department.
+            create_member(db, organization, "guest", id=self.guest_id,
+                          email=f"rel-http-guest-{prefix}@example.com",
+                          username=f"rel_http_guest_{prefix}", status="active",
+                          sponsor_user_id=self.member_id,
+                          expires_at=datetime.now(UTC) + timedelta(days=30))
             connection.execute(
-                text(
-                    "INSERT INTO public.users "
-                    "(id, email, username, status, role, sponsor_user_id, expires_at) "
-                    "VALUES (:id, :email, :username, 'active', 'guest', :sponsor, "
-                    "now() + interval '30 days')"
-                ),
-                {
-                    "id": self.guest_id,
-                    "email": f"rel-http-guest-{prefix}@example.com",
-                    "username": f"rel_http_guest_{prefix}",
-                    "sponsor": self.member_id,
-                },
-            )
-            connection.execute(
-                text("INSERT INTO public.groups (id, name) VALUES (:id, :name)"),
-                {"id": self.group_id, "name": f"Rel HTTP guests {prefix}"},
+                text("INSERT INTO public.groups (org_id, id, name) VALUES (:org_id, :id, :name)"),
+                {"org_id": self.org_id, "id": self.group_id, "name": f"Rel HTTP guests {prefix}"},
             )
             connection.execute(
                 text(
-                    "INSERT INTO public.group_members (id, group_id, user_id) "
-                    "VALUES (:id, :group_id, :user_id), (:writer_row, :group_id, :writer_id)"
+                    "INSERT INTO public.group_members (org_id, id, group_id, user_id) "
+                    "VALUES (:org_id, :id, :group_id, :user_id), "
+                    "(:org_id, :writer_row, :group_id, :writer_id)"
                 ),
                 {
+                    "org_id": self.org_id,
                     "id": uuid7(),
                     "group_id": self.group_id,
                     "user_id": self.guest_id,
@@ -203,24 +191,26 @@ class RelationshipHTTPFixture:
             )
             connection.execute(
                 text(
-                    "INSERT INTO public.group_access (id, group_id, department_id, level) "
-                    "VALUES (:id, :group_id, :department_id, 'write')"
+                    "INSERT INTO public.group_access (org_id, id, group_id, department_id, level) "
+                    "VALUES (:org_id, :id, :group_id, :department_id, 'write')"
                 ),
-                {"id": uuid7(), "group_id": self.group_id, "department_id": graph.department_id},
+                {"org_id": self.org_id, "id": uuid7(), "group_id": self.group_id,
+                 "department_id": graph.department_id},
             )
+            db.commit()
         self.member = _load_user(self.runtime_engine, self.member_id)
         self.guest = _load_user(self.runtime_engine, self.guest_id)
         self.writer = _load_user(self.runtime_engine, self.writer_id)
         return _load_user(self.runtime_engine, self.actor_id)
 
-    @staticmethod
-    def _insert_graph(connection: Any, graph: RelationshipGraph) -> None:
+    def _insert_graph(self, connection: Any, graph: RelationshipGraph) -> None:
         connection.execute(
             text(
-                "INSERT INTO public.departments (id, department_name, is_deleted) "
-                "VALUES (:id, :name, false), (:other_id, :other_name, false)"
+                "INSERT INTO public.departments (org_id, id, department_name, is_deleted) "
+                "VALUES (:org_id, :id, :name, false), (:org_id, :other_id, :other_name, false)"
             ),
             {
+                "org_id": self.org_id,
                 "id": graph.department_id,
                 "name": f"Rel HTTP {graph.department_id.hex[:12]}",
                 "other_id": graph.other_department_id,
@@ -230,12 +220,13 @@ class RelationshipHTTPFixture:
         connection.execute(
             text(
                 "INSERT INTO public.modules "
-                "(id, department_id, module_name, is_deleted) VALUES "
-                "(:source_id, :department_id, :source_name, false), "
-                "(:target_id, :department_id, :target_name, false), "
-                "(:cross_id, :other_department_id, :cross_name, false)"
+                "(org_id, id, department_id, module_name, is_deleted) VALUES "
+                "(:org_id, :source_id, :department_id, :source_name, false), "
+                "(:org_id, :target_id, :department_id, :target_name, false), "
+                "(:org_id, :cross_id, :other_department_id, :cross_name, false)"
             ),
             {
+                "org_id": self.org_id,
                 "source_id": graph.source_module_id,
                 "target_id": graph.target_module_id,
                 "cross_id": graph.cross_module_id,
@@ -249,17 +240,20 @@ class RelationshipHTTPFixture:
         connection.execute(
             text(
                 "INSERT INTO public.fields "
-                "(id, module_id, name, type, required, position, config, "
+                "(org_id, id, module_id, name, type, required, position, config, "
                 "relationship_target_module_id, relationship_multiple_targets, "
                 "relationship_multiple_sources, is_deleted) VALUES "
-                "(:field_id, :source_id, :field_name, 'relationship', false, 0, '{}'::jsonb, "
+                "(:org_id, :field_id, :source_id, :field_name, 'relationship', false, 0, "
+                "'{}'::jsonb, "
                 ":target_id, false, false, false), "
-                "(:cross_field_id, :source_id, :cross_field_name, 'relationship', false, 1, "
+                "(:org_id, :cross_field_id, :source_id, :cross_field_name, 'relationship', "
+                "false, 1, "
                 "'{}'::jsonb, :cross_id, false, false, false), "
-                "(:self_field_id, :source_id, :self_field_name, 'relationship', false, 2, "
+                "(:org_id, :self_field_id, :source_id, :self_field_name, 'relationship', false, 2, "
                 "'{}'::jsonb, :source_id, false, false, false)"
             ),
             {
+                "org_id": self.org_id,
                 "field_id": graph.field_id,
                 "cross_field_id": graph.cross_field_id,
                 "self_field_id": graph.self_field_id,
@@ -273,14 +267,15 @@ class RelationshipHTTPFixture:
         )
         connection.execute(
             text(
-                "INSERT INTO public.records (id, module_id, data, is_deleted) VALUES "
-                "(:source_id, :source_module, '{}'::jsonb, false), "
-                "(:target_id, :target_module, '{}'::jsonb, false), "
-                "(:replacement_id, :target_module, '{}'::jsonb, false), "
-                "(:cross_target_id, :cross_module, '{}'::jsonb, false), "
-                "(:cross_replacement_id, :cross_module, '{}'::jsonb, false)"
+                "INSERT INTO public.records (org_id, id, module_id, data, is_deleted) VALUES "
+                "(:org_id, :source_id, :source_module, '{}'::jsonb, false), "
+                "(:org_id, :target_id, :target_module, '{}'::jsonb, false), "
+                "(:org_id, :replacement_id, :target_module, '{}'::jsonb, false), "
+                "(:org_id, :cross_target_id, :cross_module, '{}'::jsonb, false), "
+                "(:org_id, :cross_replacement_id, :cross_module, '{}'::jsonb, false)"
             ),
             {
+                "org_id": self.org_id,
                 "source_id": graph.source_id,
                 "target_id": graph.target_id,
                 "replacement_id": graph.replacement_id,
@@ -293,7 +288,16 @@ class RelationshipHTTPFixture:
         )
 
     def _install_overrides(self, actor: User) -> None:
-        self.app.dependency_overrides[get_current_user] = lambda: actor
+        # Production authentication loads the membership; hand it over already loaded
+        # so the request's statements are the route's own.
+        with Session(self.owner_engine) as session:
+            membership = session.scalars(select(Membership).where(
+                Membership.user_id == actor.id, Membership.org_id == self.org_id,
+            )).one()
+            session.expunge(membership)
+        self.app.dependency_overrides[get_current_user] = scoped_override(
+            lambda: actor, membership=membership
+        )
         self.app.dependency_overrides[get_db] = self._request_database
 
     def _request_database(self, request: Request) -> Iterator[Session]:
@@ -387,9 +391,10 @@ class RelationshipHTTPFixture:
                     connection.execute(
                         text(
                             "DELETE FROM public.audit_logs "
-                            "WHERE entity_id IN :ids OR performed_by IN :user_ids"
+                            "WHERE entity_id IN :ids OR performed_by IN :user_ids "
+                            "OR org_id = :org_id"
                         ).bindparams(expanded, expanded_user_ids),
-                        {"ids": ids, "user_ids": user_ids},
+                        {"ids": ids, "user_ids": user_ids, "org_id": self.org_id},
                     )
                     for table in ("records", "fields", "modules", "departments"):
                         connection.execute(
@@ -399,10 +404,19 @@ class RelationshipHTTPFixture:
                             {"ids": ids},
                         )
                 connection.execute(
+                    text("DELETE FROM public.memberships WHERE user_id IN :user_ids").bindparams(
+                        bindparam("user_ids", expanding=True)
+                    ),
+                    {"user_ids": user_ids},
+                )
+                connection.execute(
                     text("DELETE FROM public.users WHERE id IN :user_ids").bindparams(
                         bindparam("user_ids", expanding=True)
                     ),
                     {"user_ids": user_ids},
+                )
+                connection.execute(
+                    text("DELETE FROM public.organizations WHERE id = :id"), {"id": self.org_id}
                 )
         finally:
             self.owner_engine.dispose()

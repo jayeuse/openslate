@@ -6,14 +6,18 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.common.dependencies.auth import get_current_user
 from app.core.database import get_db
+from app.core.database.organization_scope import apply_connection_scope
 from app.core.database.session import AuditSession
 from app.main import create_app
+from app.systems.access.users.models import Membership
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.lifecycle.exceptions import LifecyclePasswordServiceUnavailable
 from app.systems.sandbox.modules.models import Module
@@ -24,6 +28,8 @@ from tests.lifecycle_integration.lifecycle_integration_support import (
     delete_committed_scope,
     password_boundary,
 )
+from tests.organization_scope_support import scoped_override
+from tests.sandbox_designs.fixtures import create_document
 
 CONFIRMATION_PASSWORD = token_urlsafe(32)
 
@@ -36,6 +42,10 @@ class LifecycleApiClient:
         self.app = create_app()
         self.client = TestClient(self.app)
         self.actor = actor
+        with Session(self.engine) as database:
+            self.org_id = database.scalars(
+                select(Membership.org_id).where(Membership.user_id == actor.id)
+            ).one()
         self.active_database: AuditSession | None = None
         self.request_count = 0
         self.request_ids: set[UUID] = set()
@@ -54,7 +64,7 @@ class LifecycleApiClient:
             request_path=path,
         )
         self.active_database = database
-        self.app.dependency_overrides[get_current_user] = lambda: self.actor
+        self.app.dependency_overrides[get_current_user] = scoped_override(lambda: self.actor)
         self.app.dependency_overrides[get_db] = lambda: database
         try:
             return self.client.request(method, path, json=payload)
@@ -75,8 +85,8 @@ class LifecycleApiClient:
             request_path="/api/test/lifecycle-module",
         )
         try:
-            department = Department(department_name=department_name)
-            module = Module(department=department, module_name="Assets")
+            department = Department(org_id=self.org_id, department_name=department_name)
+            module = Module(org_id=department.org_id, department=department, module_name="Assets")
             database.add_all([department, module])
             database.flush()
             self.created_department_ids.add(department.id)
@@ -108,6 +118,10 @@ def _cleanup(client: LifecycleApiClient) -> None:
                 module_ids=client.created_module_ids,
                 department_ids=client.created_department_ids,
             )
+            connection.execute(
+                text("DELETE FROM public.sandbox_documents WHERE org_id = :id"),
+                {"id": client.org_id},
+            )
     finally:
         engine.dispose()
         delete_owned_admin(owner_url, client.actor.id)
@@ -133,6 +147,13 @@ def lifecycle_api_client() -> Callable[[], LifecycleApiClient]:
     actor = create_owned_admin(database_url, owner_url, "lifecycle-api")
     try:
         client = LifecycleApiClient(database_url, actor)
+        owner_engine = create_engine(owner_url)
+        try:
+            with Session(owner_engine) as database:
+                create_document(database, database.get(WorkspaceProfile, client.org_id))
+                database.commit()
+        finally:
+            owner_engine.dispose()
     except BaseException:
         delete_owned_admin(owner_url, actor.id)
         raise
@@ -263,6 +284,8 @@ def test_registered_close_rejects_plan_drift_after_provider_success(
 
     def verify() -> UUID:
         with client.engine.begin() as connection:
+            # The drift is another writer in the same organization.
+            apply_connection_scope(connection, client.org_id)
             connection.execute(
                 text("UPDATE public.modules SET module_name = :name WHERE id = :id"),
                 {"name": "Assets changed", "id": module_id},

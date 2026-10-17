@@ -16,6 +16,8 @@ from app.systems.platform.files.providers import (
 )
 from app.systems.platform.files.schemas import FileCreate
 from tests.files.conftest import library_department
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import organization
 
 pytestmark = pytest.mark.integration
 
@@ -71,7 +73,10 @@ def test_upload_returns_ready_and_downloads_with_no_further_step(guarded_db, act
     stored = db.get(File, file_id)
     assert stored.operation_id is None and stored.operation_expires_at is None
     events = []
-    monkeypatch.setattr(delivery, "append_committed_security_event", events.append)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event",
+        lambda event, **_kwargs: events.append(event),
+    )
     downloaded, mime, filename = service.download(db, actor_id, file_id, storage)
     assert (downloaded, mime, filename) == (content, "image/png", "image.png")
     assert len(events) == 1 and events[0].event_type == "file.download"
@@ -161,7 +166,7 @@ def test_access_event_failure_releases_no_bytes(guarded_db, actor, monkeypatch):
     storage = Store(db)
     service.upload(db, actor_id, file_id, content, storage)
 
-    def fail(event):
+    def fail(event, **_kwargs):
         raise delivery.SecurityEventPersistenceError("unavailable")
 
     monkeypatch.setattr(delivery, "append_committed_security_event", fail)
@@ -185,9 +190,10 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
     from app.systems.sandbox.records.models import Record
 
     db = guarded_db
-    department = Department(department_name=str(uuid4()))
-    module = Module(department=department, module_name="Files")
-    record = Record(module=module, data={})
+    org_id = organization(db).id
+    department = Department(org_id=org_id, department_name=str(uuid4()))
+    module = Module(org_id=org_id, department=department, module_name="Files")
+    record = Record(org_id=org_id, module=module, data={})
     db.add_all([department, module, record])
     db.commit()
     record_id = record.id
@@ -206,9 +212,14 @@ def test_registered_attachment_flow_obeys_parent_and_transfer_contracts(
 
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor
+    from app.systems.platform.files.router import get_create_user, get_upload_user
+
+    for dependency in (get_current_user, get_create_user, get_upload_user):
+        app.dependency_overrides[dependency] = scoped_override(lambda: actor)
     app.dependency_overrides[get_storage] = lambda: storage
-    monkeypatch.setattr(delivery, "append_committed_security_event", lambda event: None)
+    monkeypatch.setattr(
+        delivery, "append_committed_security_event", lambda event, **_kwargs: None
+    )
     with TestClient(app) as client:
         response = client.post(
             "/api/files",

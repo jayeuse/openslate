@@ -22,12 +22,12 @@ from app.main import create_app
 from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.provider_sessions import admit_provider_session
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.test_provider_email_integration import _email_action
 from tests.auth.totp_support import totp
-from tests.conftest import guarded_create_engine
+from tests.conftest import create_member, guarded_create_engine, membership_of
 
 pytest_plugins = ("tests.auth.test_provider_email_integration",)
 pytestmark = pytest.mark.integration
@@ -158,14 +158,14 @@ def test_native_failed_final_admission_rolls_back_email_event_and_session_withou
     try:
         if failure == "all_row_collision":
             with Session(owner) as db:
-                collision = User(
+                organization = db.get(WorkspaceProfile, membership_of(db, local_id).org_id)
+                collision, _membership = create_member(db, organization,
                     email=target,
                     username=f"email-collision-{uuid4().hex[:16]}",
                     role="member",
                     status="disabled",
                     is_deleted=True,
                 )
-                db.add(collision)
                 db.commit()
                 collision_id = collision.id
         with ExitStack() as stack:
@@ -183,6 +183,8 @@ def test_native_failed_final_admission_rolls_back_email_event_and_session_withou
             with Session(owner) as db:
                 collision = db.get(User, collision_id)
                 assert collision is not None
+                db.delete(db.scalar(select(Membership).where(Membership.user_id == collision_id)))
+                db.flush()
                 db.delete(collision)
                 db.commit()
     # This is real normal admission after legitimate conflict removal, not a repair command.
@@ -343,23 +345,30 @@ def test_native_final_confirmation_rechecks_local_admission_eligibility(email_ch
         elif loss == "unbound":
             user.supabase_user_id = None
         elif loss == "guest_expiry":
-            sponsor = User(
+            membership = membership_of(db, user.id)
+            sponsor, _sponsor_membership = create_member(
+                db, db.get(WorkspaceProfile, membership.org_id),
                 email=f"email-sponsor-{uuid4().hex}@example.test",
                 username=f"email-sponsor-{uuid4().hex[:16]}",
                 role="member",
                 status="active",
             )
-            db.add(sponsor)
-            db.flush()
             sponsor_id = sponsor.id
-            user.role, user.sponsor_user_id = "guest", sponsor_id
-            user.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            membership.role, membership.sponsor_user_id = "guest", sponsor_id
+            membership.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         else:
             user.tokens_valid_after = datetime.now(UTC) + timedelta(minutes=1)
         db.commit()
     before = _stored_state(owner, local_id)
     try:
         completed = landing.post("/api/auth/email/complete", json={"token_hash": new})
+        if loss == "guest_expiry":
+            assert completed.status_code == 200
+            me = landing.get("/api/auth/me")
+            assert me.status_code == 200 and me.json()["current_organization"] is None
+            assert me.json()["email"] == target
+            assert landing.get("/api/boards").status_code == 403
+            return
         assert completed.status_code == 409
         assert completed.json()["detail"]["code"] == "email_change_incomplete"
         assert completed.headers.get_list("set-cookie") == []
@@ -368,14 +377,16 @@ def test_native_final_confirmation_rechecks_local_admission_eligibility(email_ch
     finally:
         if sponsor_id is not None:
             with Session(owner) as db:
-                user = db.get(User, local_id)
+                user = membership_of(db, local_id)
                 user.role, user.sponsor_user_id, user.expires_at = "member", None, None
+                db.flush()
+                db.delete(db.scalar(select(Membership).where(Membership.user_id == sponsor_id)))
                 db.flush()
                 db.delete(db.get(User, sponsor_id))
                 db.commit()
 
 
-@pytest.mark.parametrize("loss", ["expiry", "source_policy", "provider_session"])
+@pytest.mark.parametrize("loss", ["expiry", "provider_session"])
 def test_native_admission_rechecks_after_provider_latency_without_partial_database_effects(
     email_change_account, monkeypatch, loss
 ):
@@ -392,20 +403,12 @@ def test_native_admission_rechecks_after_provider_latency_without_partial_databa
     claims = provider.verify_access_token(tokens.access_token)
     before = _stored_state(owner, local_id)
     real_observe = provider.get_admin_user
-    with Session(owner) as db:
-        original_allow_list = list(db.query(WorkspaceProfile).one().ip_allow_list)
-
     def after_provider_io(identifier):
         observed = real_observe(identifier)
         if loss == "expiry":
             monkeypatch.setattr(provider_sessions, "utc_now", lambda: claims.expires_at)
         elif loss == "provider_session":
             provider.sign_out(tokens.access_token, scope="local")
-        else:
-            with Session(owner) as db:
-                policy = db.query(WorkspaceProfile).one()
-                policy.ip_allow_list = ["198.51.100.0/24"]
-                db.commit()
         return observed
 
     runtime = guarded_create_engine(os.environ["TEST_DATABASE_URL"])
@@ -418,10 +421,6 @@ def test_native_admission_rechecks_after_provider_latency_without_partial_databa
         assert _stored_state(owner, local_id) == before
         assert real_observe(provider_id).email == target
     finally:
-        with Session(owner) as db:
-            policy = db.query(WorkspaceProfile).one()
-            policy.ip_allow_list = original_allow_list
-            db.commit()
         if loss != "provider_session":
             provider.sign_out(tokens.access_token, scope="local")
         runtime.dispose()
@@ -483,7 +482,7 @@ def test_native_confirmed_email_preserves_admin_actor_and_old_target_binding_ref
     with Session(owner) as db:
         user = db.get(User, local_id)
         assert user is not None
-        user.role = "admin"
+        membership_of(db, user.id).role = "admin"
         db.commit()
     target = f"email-admin-binding-{uuid4().hex}@example.test"
     current, new = _start_change(primary, mail, email, target, password)

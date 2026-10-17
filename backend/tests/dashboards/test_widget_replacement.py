@@ -23,6 +23,8 @@ from tests.dashboards.dashboard_route_support import (
     _department,
     _module,
 )
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document
 
 pytestmark = pytest.mark.integration
 
@@ -34,7 +36,8 @@ def test_dashboard_list_uses_bounded_offset_pagination(integration_owner_db: Ses
     set_audit_actor(db, owner.id)
     db.add_all(
         [
-            Dashboard(department_id=department.id, name=name, position=position)
+            Dashboard(org_id=department.org_id,
+                      department_id=department.id, name=name, position=position)
             for name, position in (("Charlie", 0), ("Alpha", 2), ("Bravo", 1))
         ]
     )
@@ -70,6 +73,7 @@ def test_invalid_field_reference_rejects_full_widget_replacement_without_partial
     owner = _actor(db)
     module, active_dimension = _module(db, name="Atomic dashboard")
     deleted_dimension = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Deleted status",
         type=FieldType.TEXT,
@@ -81,10 +85,12 @@ def test_invalid_field_reference_rejects_full_widget_replacement_without_partial
     db.flush()
     deleted_dimension.is_deleted = True
     deleted_dimension.deleted_at = datetime.now(UTC)
-    dashboard = Dashboard(department_id=module.department_id, name="Saved dashboard")
+    dashboard = Dashboard(org_id=module.org_id,
+                          department_id=module.department_id, name="Saved dashboard")
     db.add(dashboard)
     db.flush()
     existing = DashboardWidget(
+        org_id=dashboard.org_id,
         dashboard_id=dashboard.id,
         position=0,
         widget_type="chart",
@@ -133,21 +139,25 @@ def test_replacing_dashboard_widget_removes_module_purge_blocker_and_preserves_o
     integration_owner_db: Session,
 ) -> None:
     db = integration_owner_db
+    create_document(db, organization(db))
     owner = _actor(db)
     module_a, dimension_a = _module(db, name="Widget source A")
     department = db.get(Department, module_a.department_id)
     module_b, dimension_b = _module(db, name="Widget source B", department=department)
     set_audit_actor(db, owner.id)
-    dashboard = Dashboard(department_id=module_a.department_id, name="Module-owned charts")
+    dashboard = Dashboard(org_id=module_a.org_id,
+                          department_id=module_a.department_id, name="Module-owned charts")
     db.add(dashboard)
     db.flush()
     untouched = DashboardWidget(
+        org_id=dashboard.org_id,
         dashboard_id=dashboard.id,
         position=0,
         widget_type="chart",
         config=_chart_config(module_b, dimension_b),
     )
     removed = DashboardWidget(
+        org_id=dashboard.org_id,
         dashboard_id=dashboard.id,
         position=1,
         widget_type="chart",

@@ -11,6 +11,7 @@ import {
   sendOpenViewEvent,
 } from "./helpers/openview-event-source";
 import {
+  appearanceUrl,
   isEventStream,
   signedInAs,
   type SignedInIdentity,
@@ -2795,7 +2796,7 @@ test("paired Board and Dashboard follow one Chart revision without source writes
           },
         }),
       );
-      await target.route("**/api/workspace/appearance", (route) =>
+      await target.route(appearanceUrl, (route) =>
         route.fulfill({ json: { theme: "slate" } }),
       );
       await target.route("**/api/notifications/unread-count", (route) =>

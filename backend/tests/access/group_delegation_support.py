@@ -17,7 +17,8 @@ from app.systems.access.policy.models import AccessLevel, Group, GroupMember
 from app.systems.access.users.models import User, UserRole, UserStatus
 from app.systems.manage.audit.context import set_audit_actor
 from app.systems.sandbox.departments.models import Department
-from tests.rbac.support import add_department, add_module, add_user, make_group_access
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import add_department, add_module, add_user, make_group_access, organization
 
 
 @dataclass
@@ -54,7 +55,7 @@ class DelegationWorld:
 
 
 def add_group(db: Session, name: str) -> Group:
-    group = Group(name=f"{name} {uuid7().hex}")
+    group = Group(org_id=organization(db).id, name=f"{name} {uuid7().hex}")
     db.add(group)
     db.flush()
     return group
@@ -84,7 +85,7 @@ def world(integration_owner_db: Session) -> Iterator[DelegationWorld]:
     mixed = make_group_access(db, [plain], inventory, level=AccessLevel.WRITE)
     make_group_access(db, [], finance, level=AccessLevel.READ, group=db.get(Group, mixed.group_id))
     empty_group = add_group(db, "No access")
-    db.add(GroupMember(group_id=empty_group.id, user_id=plain.id))
+    db.add(GroupMember(org_id=empty_group.org_id, group_id=empty_group.id, user_id=plain.id))
     # Release the setup savepoint so a refused request rolls back only its own work.
     db.commit()
 
@@ -92,7 +93,7 @@ def world(integration_owner_db: Session) -> Iterator[DelegationWorld]:
     app = FastAPI()
     app.include_router(access_policy_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: actor[0]
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: actor[0])
     with TestClient(app) as client:
         yield DelegationWorld(
             db=db,

@@ -188,7 +188,10 @@ export function InvitePersonDialog({
       const response = await inviteAccessUser(request);
       toast.add({
         title: "Invitation sent",
-        description: `An invitation email is on its way to ${response.user.email}.`,
+        description:
+          response.delivery === "in_app"
+            ? `${response.user.email} can accept this invitation when signed in.`
+            : `An invitation email is on its way to ${response.user.email}.`,
         type: "success",
       });
       reset();
@@ -218,7 +221,8 @@ export function InvitePersonDialog({
           <DialogHeader>
             <DialogTitle>Invite a person</DialogTitle>
             <DialogDescription>
-              They get an email with a link to set up their account.
+              Existing accounts accept when signed in. New accounts get an email
+              to set up their account.
             </DialogDescription>
           </DialogHeader>
           <form

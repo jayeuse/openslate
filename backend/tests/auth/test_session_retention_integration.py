@@ -18,9 +18,9 @@ from app.core.database.session import AuditSession, get_engine
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.identity.provider_signout_worker import ProviderSignoutWorker
 from app.systems.access.identity.session_revocation import revoke_user_sessions
-from app.systems.access.users.models import User
 from app.systems.manage.audit.models import AuditLog, SecurityEvent
 from tests.auth.session_retention_support import world as world
+from tests.conftest import membership_of
 
 pytest_plugins = ("tests.auth.session_policy_support",)
 pytestmark = pytest.mark.integration
@@ -311,7 +311,7 @@ def test_mfa_and_bulk_revocation_complete_without_deadlock(policy_world, request
     a, z = world.session_ids[0], world.session_ids[3]
     assert a < z
     with Session(world.owner) as db:
-        db.get(User, world.actor_id).mfa_required_since = world.clock
+        membership_of(db, world.actor_id).mfa_required_since = world.clock
         cipher = Fernet(get_settings().supabase_session_encryption_key.get_secret_value().encode())
         db.get(IdentitySession, a).provider_access_token_encrypted = cipher.encrypt(
             world.access("aal2", slot=0).encode()

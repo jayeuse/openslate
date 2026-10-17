@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from uuid import UUID
 
 from app.core.config import Settings
+from app.core.database.organization_scope import worker_organization
 from app.core.database.session import get_engine
 from app.core.observability import log_event
+from app.systems.manage.workspace.organizations import active_organization_ids
 from app.systems.platform.scheduling.execution import execute_due_report_runs
 from app.systems.platform.scheduling.post_execution import (
     execute_due_post_publications,
@@ -19,6 +22,26 @@ from app.systems.platform.scheduling.reminder_execution import execute_due_remin
 _POLL_SECONDS = 1
 _MAX_RETRY_SECONDS = 60
 _SHUTDOWN_SECONDS = 5
+
+
+def _each_organization(job: Callable[[], object]) -> bool:
+    """Run ``job`` once per active organization; one failure does not stop the others.
+
+    Returns whether every organization (and the organization list) succeeded.
+    """
+
+    try:
+        organizations = active_organization_ids(get_engine())
+    except Exception:
+        return False
+    succeeded = True
+    for org_id in organizations:
+        try:
+            with worker_organization(org_id):
+                job()
+        except Exception:
+            succeeded = False
+    return succeeded
 
 
 class ReportSchedulingWorker:
@@ -98,9 +121,10 @@ class ReportSchedulingWorker:
         return completed
 
     def _poll_reports(self, *, now: datetime | None) -> list[UUID]:
-        try:
-            completed = execute_due_report_runs(get_engine(), now=now)
-        except Exception:
+        completed: list[UUID] = []
+        if not _each_organization(
+            lambda: completed.extend(execute_due_report_runs(get_engine(), now=now))
+        ):
             self._retry_seconds = min(self._retry_seconds * 2, _MAX_RETRY_SECONDS)
             if not self._failure_reported:
                 log_event(
@@ -109,15 +133,13 @@ class ReportSchedulingWorker:
                     upstream="report-scheduling",
                 )
                 self._failure_reported = True
-            return []
+            return completed
         self._retry_seconds = _POLL_SECONDS
         self._failure_reported = False
         return completed
 
     def _poll_posts(self, *, now: datetime | None) -> None:
-        try:
-            execute_due_post_publications(get_engine(), now=now)
-        except Exception:
+        if not _each_organization(lambda: execute_due_post_publications(get_engine(), now=now)):
             self._post_retry_seconds = min(self._post_retry_seconds * 2, _MAX_RETRY_SECONDS)
             if not self._post_failure_reported:
                 log_event(
@@ -131,9 +153,7 @@ class ReportSchedulingWorker:
         self._post_failure_reported = False
 
     def _poll_reminders(self, *, now: datetime | None) -> None:
-        try:
-            execute_due_reminders(get_engine(), now=now)
-        except Exception:
+        if not _each_organization(lambda: execute_due_reminders(get_engine(), now=now)):
             self._reminder_retry_seconds = min(self._reminder_retry_seconds * 2, _MAX_RETRY_SECONDS)
             if not self._reminder_failure_reported:
                 log_event(

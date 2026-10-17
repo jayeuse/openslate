@@ -28,7 +28,7 @@ from app.systems.manage.audit.security_failures import (
     canonical_source,
 )
 from app.systems.manage.audit.service import append_security_event
-from app.systems.manage.workspace.security_policy import load_workspace_policy
+from app.systems.manage.workspace.security_policy import load_platform_policy
 
 
 def login_with_provider(
@@ -45,14 +45,16 @@ def login_with_provider(
     """Exchange a password, then admit only a bound local user and provider session."""
 
     timestamp = now or utc_now()
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     fingerprint: str | None = None
     bucket = None
     if enforce_rate_limit:
-        rate_limits.cleanup_expired_buckets(db, now_value=timestamp)
+        rate_limits.cleanup_expired_buckets(now_value=timestamp)
         fingerprint = rate_limits.login_fingerprint(email, source)
         bucket = rate_limits.lock_bucket(db, fingerprint)
-        retry_after = rate_limits.login_retry_after(db, bucket, timestamp, policy, source=source)
+        retry_after = rate_limits.login_retry_after(
+            db, bucket, timestamp, policy, source=source, identifier=email, source_budget=True
+        )
         if retry_after is not None:
             raise IdentityRateLimited("Too many attempts", retry_after=retry_after)
     try:
@@ -60,7 +62,15 @@ def login_with_provider(
     except InvalidProviderCredentials as error:
         if fingerprint is not None:
             rate_limits.record_attempt(
-                db, fingerprint, bucket, timestamp, policy=policy, login=True, source=source
+                db,
+                fingerprint,
+                bucket,
+                timestamp,
+                policy=policy,
+                login=True,
+                source=source,
+                identifier=email,
+                source_budget=True,
             )
         append_representative_failure(db, "identity.sign_in_failure", source, now=timestamp)
         raise InvalidCredentials("Invalid credentials") from error
@@ -71,7 +81,15 @@ def login_with_provider(
     except InvalidCredentials:
         if fingerprint is not None:
             rate_limits.record_attempt(
-                db, fingerprint, bucket, timestamp, policy=policy, login=True, source=source
+                db,
+                fingerprint,
+                bucket,
+                timestamp,
+                policy=policy,
+                login=True,
+                source=source,
+                identifier=email,
+                source_budget=True,
             )
         try:
             client.sign_out(tokens.access_token)
@@ -83,6 +101,8 @@ def login_with_provider(
         raise SupabaseAuthUnavailable("Supabase Auth returned an invalid session") from error
     if bucket is not None:
         db.delete(bucket)
+    if enforce_rate_limit:
+        rate_limits.clear_login_account_budget(db, email)
     session = db.get(IdentitySession, issued.session_id)
     if session is None:
         raise SupabaseAuthUnavailable("Admitted identity is unavailable")

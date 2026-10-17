@@ -4,13 +4,14 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 from uuid6 import uuid7
 
 from app.common.dependencies import CurrentIdentity, get_current_identity, require_fresh_exact_admin
+from app.common.dependencies.auth import get_account_identity
 from app.common.listing import ListQuerySpec, execute_standard_list
 from app.core.base_model import utc_now
 from app.core.database import get_db
@@ -21,7 +22,13 @@ from app.systems.access.auth.request_security import (
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.identity.session_revocation import revoke_session, revoke_user_sessions
 from app.systems.access.users.coordination import get_user as load_user
-from app.systems.access.users.models import User
+from app.systems.access.users.coordination import (
+    not_found,
+    refuse_account_details,
+    shares_another_organization,
+)
+from app.systems.access.users.membership import bound_organization, is_platform_operator
+from app.systems.access.users.models import Membership, User
 from app.systems.access.users.sessions_schemas import (
     AdminSessionCollectionItem,
     AdminSessionCollectionRequest,
@@ -37,7 +44,7 @@ from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
-    load_workspace_policy,
+    load_platform_policy,
     session_expiry_expression,
 )
 
@@ -118,6 +125,22 @@ def _require_admin(identity: CurrentIdentity, db: Session) -> UUID:
     return require_fresh_exact_admin(db, identity.user.id).id
 
 
+def _visible_accounts(db: Session) -> Select[tuple[UUID]]:
+    return select(Membership.user_id).where(Membership.org_id == bound_organization(db))
+
+
+def _session_target(db: Session, user_id: UUID, actor_id: UUID | None = None) -> User:
+    target = load_user(db, user_id)
+    if db.scalar(select(Membership.id).where(
+        Membership.user_id == user_id, Membership.org_id == bound_organization(db),
+    )) is None:
+        raise not_found("User")
+    if (actor_id is not None and shares_another_organization(db, target)
+            and not is_platform_operator(db, actor_id)):
+        refuse_account_details(db)
+    return target
+
+
 def _record_revocation(
     db: Session,
     *,
@@ -152,11 +175,11 @@ def _commit_revocation(db: Session) -> None:
 
 @auth_router.get("/sessions", response_model=list[AdminSessionResponse])
 def list_sessions(
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
     db: Annotated[Session, Depends(get_db)],
 ) -> list[AdminSessionResponse]:
     identity = _require_completed_identity(identity)
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     sessions = db.scalars(
         select(IdentitySession)
         .where(
@@ -189,11 +212,12 @@ def list_admin_sessions(
     response: Response,
 ) -> AdminSessionCollectionResponse:
     _require_admin(identity, db)
-    policy = load_workspace_policy(db)
+    policy = load_platform_policy(db)
     statement = (
         select(IdentitySession)
         .join(User, User.id == IdentitySession.user_id)
         .where(
+            IdentitySession.user_id.in_(_visible_accounts(db)),
             IdentitySession.revoked_at.is_(None),
             IdentitySession.expires_at > utc_now(),
             session_expiry_expression(policy) > utc_now(),
@@ -243,7 +267,13 @@ def list_admin_sessions(
     )
 
 
-@auth_router.delete("/admin-sessions", status_code=status.HTTP_204_NO_CONTENT)
+@auth_router.delete(
+    "/admin-sessions", status_code=status.HTTP_204_NO_CONTENT,
+    responses={204: {"headers": {"X-Skipped-Shared-Accounts": {
+        "description": "Number of shared accounts skipped by this organization administrator",
+        "schema": {"type": "integer", "minimum": 0},
+    }}}},
+)
 def revoke_admin_session_collection(
     identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
     db: Annotated[Session, Depends(get_db)],
@@ -254,6 +284,7 @@ def revoke_admin_session_collection(
         sessions = db.scalars(
             select(IdentitySession)
             .where(
+                IdentitySession.user_id.in_(_visible_accounts(db)),
                 IdentitySession.revoked_at.is_(None),
                 IdentitySession.expires_at > timestamp,
                 IdentitySession.id != identity.session_id,
@@ -262,10 +293,17 @@ def revoke_admin_session_collection(
             .execution_options(populate_existing=True)
             .with_for_update(of=IdentitySession)
         ).all()
+        shared = set() if is_platform_operator(db, actor_id) else set(db.scalars(
+            select(Membership.user_id).where(
+                Membership.user_id.in_({item.user_id for item in sessions}),
+                Membership.org_id != bound_organization(db), Membership.is_deleted.is_(False),
+            )
+        ))
         affected_users = {
             item.user_id
             for item in sessions
-            if revoke_session(db, item.id, item.user_id, now=timestamp)
+            if item.user_id not in shared
+            and revoke_session(db, item.id, item.user_id, now=timestamp)
         }
         for user_id in sorted(affected_users):
             _record_revocation(
@@ -279,13 +317,16 @@ def revoke_admin_session_collection(
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(status_code=503, detail="Session revocation is unavailable") from error
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+        headers={"X-Skipped-Shared-Accounts": str(len(shared))},
+    )
 
 
 @auth_router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_one_session(
     session_id: UUID,
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
@@ -307,7 +348,7 @@ def revoke_one_session(
 
 @auth_router.post("/sessions/revoke-others", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_other_sessions(
-    identity: Annotated[CurrentIdentity, Depends(get_current_identity)],
+    identity: Annotated[CurrentIdentity, Depends(get_account_identity)],
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
@@ -333,8 +374,8 @@ def list_user_sessions(
     params: Annotated[AdminSessionListRequest, Query()],
 ) -> AdminSessionListResponse:
     _require_admin(identity, db)
-    target = load_user(db, user_id)
-    policy = load_workspace_policy(db)
+    target = _session_target(db, user_id)
+    policy = load_platform_policy(db)
     result = execute_standard_list(
         db,
         select(IdentitySession).where(
@@ -371,7 +412,7 @@ def revoke_user_session(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     actor_id = _require_admin(identity, db)
-    target = load_user(db, user_id)
+    target = _session_target(db, user_id, actor_id)
     if target.id == identity.user.id and session_id == identity.session_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -397,7 +438,7 @@ def revoke_user_session_collection(
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     actor_id = _require_admin(identity, db)
-    target = load_user(db, user_id)
+    target = _session_target(db, user_id, actor_id)
     preserving_current = target.id == identity.user.id
     current_session_id = identity.session_id if preserving_current else None
     try:

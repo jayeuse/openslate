@@ -18,7 +18,8 @@ from app.systems.sandbox.designs.service import (
     replace_document,
     restore_version,
 )
-from tests.sandbox_designs.fixtures import sample_document
+from tests.rbac.support import organization
+from tests.sandbox_designs.fixtures import create_document, sample_document
 
 pytestmark = pytest.mark.integration
 
@@ -32,6 +33,7 @@ def _document_with_module_name(name: str):
 def test_replace_checkpoint_restore_and_stale_revision_are_persistent_and_audited(
     integration_owner_db: Session,
 ) -> None:
+    create_document(integration_owner_db, organization(integration_owner_db))
     initial = read_document(integration_owner_db)
     assert initial.document.design.departments == []
     assert initial.document.design.modules == []
@@ -108,6 +110,7 @@ def test_replace_checkpoint_restore_and_stale_revision_are_persistent_and_audite
 def test_published_versions_do_not_consume_mutable_history_capacity(
     integration_owner_db: Session,
 ) -> None:
+    create_document(integration_owner_db, organization(integration_owner_db))
     initial = read_document(integration_owner_db)
     row = integration_owner_db.scalar(select(SandboxDocumentRow))
     assert row is not None

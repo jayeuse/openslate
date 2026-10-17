@@ -83,6 +83,7 @@ from app.systems.platform.files.board_router import router as board_files_router
 from app.systems.platform.files.lifecycle_router import router as file_lifecycle_router
 from app.systems.platform.files.providers import transfer_slot
 from app.systems.platform.files.router import router as files_router
+from app.systems.platform.realtime.router import router as realtime_router
 from app.systems.platform.scheduling.notification_router import router as notifications_router
 from app.systems.platform.scheduling.worker import ReportSchedulingWorker
 from app.systems.platform.search.router import router as search_router
@@ -398,6 +399,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs_router, prefix="/api")
     app.include_router(files_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
+    app.include_router(realtime_router, prefix="/api")
     app.include_router(file_lifecycle_router, prefix="/api")
     app.include_router(relationships_router, prefix="/api")
     app.include_router(lifecycle_router, prefix="/api")

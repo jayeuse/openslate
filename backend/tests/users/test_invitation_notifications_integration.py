@@ -7,11 +7,12 @@ from uuid6 import uuid7
 
 from app.core.base_model import utc_now
 from app.systems.access.users import acceptance
-from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.access.users.models import Membership, UserRole, UserStatus
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
 from app.systems.manage.audit.service import append_security_event
 from app.systems.platform.scheduling.models import InAppNotification
+from tests.conftest import create_member, create_organization, membership_of
 from tests.platform_scheduling.support import notification_client as _client
 from tests.rbac.support import add_user
 
@@ -26,8 +27,9 @@ def test_acceptance_notifies_original_inviter_or_current_admins_once_and_atomica
     db = integration_owner_db
     inviter, resender = add_user(db, role=UserRole.ADMIN), add_user(db, role=UserRole.ADMIN)
     target = add_user(db, role=UserRole.MEMBER, status=UserStatus.PENDING)
-    target.provider_invitation_operation_id = None if original == "bootstrap" else uuid7()
-    target.invitation_sent_at = utc_now()
+    membership = db.scalars(select(Membership).where(Membership.user_id == target.id)).one()
+    membership.provider_invitation_operation_id = None if original == "bootstrap" else uuid7()
+    membership.invitation_sent_at = utc_now()
     if original in {"eligible", "demoted"}:
         append_security_event(
             db,
@@ -35,7 +37,7 @@ def test_acceptance_notifies_original_inviter_or_current_admins_once_and_atomica
                 event_type="user.invitation",
                 outcome=SecurityEventOutcome.SUCCESS,
                 source="users.service",
-                operation_id=target.provider_invitation_operation_id,
+                operation_id=membership.provider_invitation_operation_id,
                 actor_id=inviter.id,
                 subject_id=target.id,
             ),
@@ -47,13 +49,15 @@ def test_acceptance_notifies_original_inviter_or_current_admins_once_and_atomica
             event_type="user.invitation_resend",
             outcome=SecurityEventOutcome.SUCCESS,
             source="users.service",
-            operation_id=target.provider_invitation_operation_id or uuid7(),
+            operation_id=membership.provider_invitation_operation_id or uuid7(),
             actor_id=resender.id,
             subject_id=target.id,
         ),
     )
     if original == "demoted":
-        inviter.role = UserRole.MEMBER.value
+        db.scalars(select(Membership).where(Membership.user_id == inviter.id)).one().role = (
+            UserRole.MEMBER.value
+        )
     db.commit()
     monkeypatch.setattr(acceptance, "begin_invitation_acceptance", lambda _id: uuid7())
     failures = []
@@ -72,7 +76,9 @@ def test_acceptance_notifies_original_inviter_or_current_admins_once_and_atomica
                 db, target.id, verified_email=target.email, verified_identity=target.id
             )
         db.expire_all()
-        assert target.status == UserStatus.PENDING.value and target.invitation_accepted_at is None
+        assert (
+            target.status == UserStatus.PENDING.value and membership.invitation_accepted_at is None
+        )
         assert failures
         assert (
             list(
@@ -104,11 +110,11 @@ def test_acceptance_notifies_original_inviter_or_current_admins_once_and_atomica
     )
     assert {n.recipient_id for n in notices} == expected
     assert all(n.subject_type == "user" and n.work_id is None for n in notices)
-    first_accepted = target.invitation_accepted_at
+    first_accepted = membership.invitation_accepted_at
     acceptance.accept_verified_invitation(
         db, target.id, verified_email=target.email, verified_identity=target.id
     )
-    assert target.invitation_accepted_at == first_accepted
+    assert membership.invitation_accepted_at == first_accepted
     assert len(
         list(
             db.scalars(
@@ -127,7 +133,45 @@ def test_acceptance_notifies_original_inviter_or_current_admins_once_and_atomica
     assert item["subject_id"] == str(target.id) and item["kind"] == "invitation-accepted"
     assert item["scheduled_for"] is None and "email" not in item
     assert client.post("/api/notifications/read-all").json() == {"updated_count": 1}
-    reader.role = UserRole.MEMBER.value
+    db.scalars(select(Membership).where(Membership.user_id == reader.id)).one().role = (
+        UserRole.MEMBER.value
+    )
     db.commit()
     assert client.get("/api/notifications").json()["items"] == []
     assert client.post(f"/api/notifications/{notices[0].id}/read").status_code == 404
+
+
+def test_an_existing_account_accepts_another_organizations_invitation(
+    integration_owner_db, monkeypatch
+):
+    """S05 step 6: an invitation to an existing account adds a membership it can accept."""
+    db = integration_owner_db
+    person = add_user(db, role=UserRole.MEMBER)
+    first = membership_of(db, person.id)
+    second_org = create_organization(db)
+    _, sponsor_membership = create_member(db, second_org, "admin")
+    invited = Membership(
+        id=uuid7(), org_id=second_org.id, user_id=person.id, role=UserRole.MEMBER.value,
+        status=UserStatus.PENDING.value, invitation_sent_at=utc_now(),
+    )
+    db.add(invited)
+    db.commit()
+    monkeypatch.setattr(acceptance, "begin_invitation_acceptance", lambda _id: uuid7())
+    monkeypatch.setattr(acceptance, "record_invitation_acceptance_failure", lambda *args: None)
+
+    accepted = acceptance.accept_verified_invitation(
+        db, person.id, verified_email=person.email, verified_identity=person.id
+    )
+
+    db.expire_all()
+    assert accepted.status == UserStatus.ACTIVE.value
+    assert invited.status == UserStatus.ACTIVE.value and invited.invitation_accepted_at
+    assert first.status == UserStatus.ACTIVE.value and first.org_id != second_org.id
+    assert sponsor_membership.role == UserRole.ADMIN.value
+    # A replay succeeds without a second effect.
+    accepted_at = invited.invitation_accepted_at
+    acceptance.accept_verified_invitation(
+        db, person.id, verified_email=person.email, verified_identity=person.id
+    )
+    db.expire_all()
+    assert invited.invitation_accepted_at == accepted_at

@@ -1,4 +1,5 @@
 import {
+  appearanceUrl,
   expect,
   heldResponse,
   test,
@@ -29,7 +30,12 @@ async function installIdentity(
   await page.route("**/api/auth/session", (route) => {
     checks += 1;
     return route.fulfill({
-      json: { authenticated: true, user_id: user, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: user,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     });
   });
   await page.route("**/api/auth/me", (route) =>
@@ -40,7 +46,7 @@ async function installIdentity(
   );
   let organizationTheme = organizationLook;
   let revision = 1;
-  await page.route("**/api/workspace/appearance", (route) =>
+  await page.route(appearanceUrl, (route) =>
     route.fulfill({ json: { theme: organizationTheme } }),
   );
   await page.route("**/api/workspace", (route) => {
@@ -108,10 +114,9 @@ const dark = (page: Page) =>
 test("a cold preference load is disabled, fails visibly, and retries without changing local motion or organization look", async ({
   page,
 }) => {
-  await installIdentity(page, "guest");
-  await page.route("**/api/workspace/appearance", (route) =>
-    route.fulfill({ json: { theme: "stockroom" } }),
-  );
+  // The organization's look is Stockroom for the public read and the
+  // signed-in organization read alike.
+  await installIdentity(page, "guest", "stockroom");
 
   const gate = heldResponse();
   let reads = 0;
@@ -1132,7 +1137,12 @@ test("a write completing behind the session curtain waits for a fresh verified r
   await page.route("**/api/auth/session", async (route) => {
     if (holdVerification) await verification.released;
     return route.fulfill({
-      json: { authenticated: true, user_id: userA, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: userA,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     });
   });
   await page.route(`**${preferencePath(userA)}`, async (route) => {
@@ -1246,7 +1256,12 @@ test("an ordinary preference GET completing behind the curtain requires a fresh 
   await page.route("**/api/auth/session", async (route) => {
     if (holdVerification) await verification.released;
     return route.fulfill({
-      json: { authenticated: true, user_id: userA, setup_required: false },
+      json: {
+        authenticated: true,
+        user_id: userA,
+        setup_required: false,
+        default_organization_blocked: null,
+      },
     });
   });
   await page.route(`**${preferencePath(userA)}`, async (route) => {

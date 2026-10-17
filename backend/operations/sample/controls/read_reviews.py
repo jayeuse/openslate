@@ -151,9 +151,15 @@ def execute_read_review(
     operation = action.values["operation"]
     if operation == "review_workspace_appearance":
         _id(context.user_ids, action.actor_key, label="administrator", step=action.key)
+        # Like the sign-in page, name the organization; an install holds several.
+        organization_id = context.clients["admin"].organization_id
         try:
             appearance = WorkspaceAppearanceResponse.model_validate_json(
-                json.dumps(read("/api/workspace/appearance")), strict=True
+                json.dumps(read(
+                    "/api/workspace/appearance",
+                    {"org": organization_id} if organization_id else None,
+                )),
+                strict=True,
             )
         except ValidationError:
             raise SamplePhaseActionError(

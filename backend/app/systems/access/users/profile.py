@@ -1,6 +1,7 @@
 """Fresh self-only profile merge and committed avatar replacement cleanup."""
 
 from contextlib import nullcontext
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -9,10 +10,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.common.dependencies.auth import CurrentIdentity
+from app.core.base_model import utc_now
 from app.systems.access.policy.checks import require_live_session
 from app.systems.access.policy.scope import effective_levels
-from app.systems.access.users.models import User
-from app.systems.access.users.schemas import AuthMeResponse, SelfProfileUpdate, UserResponse
+from app.systems.access.users.membership import eligible_memberships, is_platform_operator
+from app.systems.access.users.models import Membership, User
+from app.systems.access.users.schemas import (
+    AccountResponse,
+    AuthMeResponse,
+    DefaultOrganizationBlocked,
+    SelfProfileUpdate,
+)
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.files.access import error, fresh_user
 from app.systems.platform.files.models import File
 from app.systems.platform.files.providers import StorageBackend, transfer_slot
@@ -24,18 +33,53 @@ from app.systems.platform.files.purge import (
 from app.systems.platform.files.quota import lock_quota
 
 
-def self_profile_response(db: Session, user: User) -> AuthMeResponse:
-    access = effective_levels(db, user)
+def self_profile_response(
+    db: Session, user: User, membership: Membership | None,
+    default_organization_blocked: DefaultOrganizationBlocked | None = None,
+) -> AuthMeResponse:
+    account = AccountResponse.model_validate(user).model_dump()
+    access = effective_levels(db, user, membership=membership).entries() if membership else []
+    entries = [
+        {"department_id": department_id, "module_id": module_id, "level": level}
+        for department_id, module_id, level in access
+    ]
+    organizations = {org.id: org for org in db.scalars(select(WorkspaceProfile).join(
+        Membership, Membership.org_id == WorkspaceProfile.id
+    ).where(Membership.user_id == user.id, WorkspaceProfile.is_deleted.is_(False)))}
+    def summary(row: Membership) -> dict[str, object]:
+        org = organizations[row.org_id]
+        return {"org_id": org.id, "name": org.display_name, "slug": org.slug, "role": row.role}
+    pending = []
+    for row in db.scalars(select(Membership).where(
+        Membership.user_id == user.id, Membership.status == "pending",
+        Membership.is_deleted.is_(False), Membership.invitation_sent_at.is_not(None),
+        Membership.invitation_accepted_at.is_(None),
+    ).order_by(Membership.org_id)):
+        org = organizations.get(row.org_id)
+        if org is None or row.invitation_sent_at is None:
+            continue
+        deadline = row.invitation_sent_at + timedelta(days=org.invitation_expiry_days)
+        if deadline > utc_now() and (row.expires_at is None or row.expires_at > utc_now()):
+            pending.append({**summary(row), "id": row.id, "expires_at": deadline})
     return AuthMeResponse.model_validate(
         {
-            **UserResponse.model_validate(user).model_dump(),
-            "phone": user.phone,
-            "bio": user.bio,
-            "avatar_file_id": user.avatar_file_id,
-            "access": [
-                {"department_id": department_id, "module_id": module_id, "level": level}
-                for department_id, module_id, level in access.entries()
-            ],
+            **account, "account": account,
+            "memberships": [summary(row) for row in eligible_memberships(db, user.id)],
+            "pending_invitations": pending,
+            "current_organization": (
+                {
+                    **summary(membership), "access": entries,
+                    "owner": organizations[membership.org_id].owner_user_id == user.id,
+                }
+                if membership else None
+            ),
+            "default_organization_blocked": default_organization_blocked,
+            "role": membership.role if membership else None,
+            "operator": is_platform_operator(db, user.id),
+            "sponsor_user_id": membership.sponsor_user_id if membership else None,
+            "expires_at": membership.expires_at if membership else None,
+            "invitation_sent_at": membership.invitation_sent_at if membership else None,
+            "access": entries,
         }
     )
 
@@ -61,6 +105,8 @@ def update_self_profile(
     identity: CurrentIdentity,
     payload: SelfProfileUpdate,
     storage: StorageBackend,
+    membership: Membership | None = None,
+    default_organization_blocked: DefaultOrganizationBlocked | None = None,
 ) -> AuthMeResponse:
     avatar_supplied = "avatar_file_id" in payload.model_fields_set
     actor_id = identity.user.id
@@ -118,4 +164,5 @@ def update_self_profile(
                     "Profile saved; previous avatar deletion requires reconciliation",
                     503,
                 ) from exc
-        return self_profile_response(db, fresh_user(db, actor_id))
+        return self_profile_response(db, fresh_user(db, actor_id), membership,
+                                     default_organization_blocked)

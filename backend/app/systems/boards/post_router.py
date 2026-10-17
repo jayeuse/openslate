@@ -149,7 +149,7 @@ def create_post(
     )
     if count is None or count >= MAX_POSTS:
         raise conflict("post_limit_reached", "The Board has 500 posts")
-    item = BoardPost(board_id=board.id, author_id=actor.id)
+    item = BoardPost(org_id=board.org_id, board_id=board.id, author_id=actor.id)
     set_content(item, payload)
     db.add(item)
     board.revision += 1
@@ -275,6 +275,7 @@ def schedule_post(
     cancel_post_work(db, item)
     db.add(
         ScheduledWork(
+            org_id=item.org_id,
             kind=WorkKind.POST_PUBLISH,
             post_id=item.id,
             source_revision=item.revision,

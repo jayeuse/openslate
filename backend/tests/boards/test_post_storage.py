@@ -9,7 +9,6 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from uuid6 import uuid7
 
 from app.core.database import Base, model_registry  # noqa: F401
-from app.systems.access.users.models import User
 from app.systems.boards.models import Board
 from app.systems.boards.post_models import (
     BoardPost,
@@ -17,6 +16,8 @@ from app.systems.boards.post_models import (
     publication_content_fingerprint,
 )
 from app.systems.manage.audit.models import AuditAction, AuditLog
+from tests.conftest import create_member
+from tests.rbac.support import organization
 
 SUPABASE_DATABASE_ROLES = ("anon", "authenticated", "service_role")
 TABLE_ACTIONS = ("SELECT", "INSERT", "UPDATE", "DELETE")
@@ -58,14 +59,14 @@ def test_published_snapshot_remains_private_and_immutable_during_scheduled_repla
     role = "member"
     assert role is not None
     author_id, reader_id = uuid7(), uuid7()
-    author = User(
+    author, _author_membership = create_member(db, organization(db),
         id=author_id,
         email=f"post-author-{author_id.hex}@example.test",
         username=f"post_author_{author_id.hex[:10]}",
         status="active",
         role=role,
     )
-    reader = User(
+    reader, _reader_membership = create_member(db, organization(db),
         id=reader_id,
         email=f"post-reader-{reader_id.hex}@example.test",
         username=f"post_reader_{reader_id.hex[:10]}",
@@ -74,11 +75,12 @@ def test_published_snapshot_remains_private_and_immutable_during_scheduled_repla
     )
     db.add_all([author, reader])
     db.flush()
-    board = Board(scope="project", name="Posts")
+    board = Board(org_id=organization(db).id, scope="project", name="Posts")
     db.add(board)
     db.flush()
     now = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
     post = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=author.id,
         title="First published title",
@@ -90,6 +92,7 @@ def test_published_snapshot_remains_private_and_immutable_during_scheduled_repla
     db.add(post)
     db.flush()
     published = BoardPostRevision(
+        org_id=post.org_id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -183,7 +186,7 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
     role = "member"
     assert role is not None
     author_id = uuid7()
-    author = User(
+    author, _membership = create_member(db, organization(db),
         id=author_id,
         email=f"post-constraints-{author_id.hex}@example.test",
         username=f"post_constraints_{author_id.hex[:8]}",
@@ -192,11 +195,12 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
     )
     db.add(author)
     db.flush()
-    board = Board(scope="project", name="Constraint board")
+    board = Board(org_id=organization(db).id, scope="project", name="Constraint board")
     db.add(board)
     db.flush()
     now = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
     base = {
+        "org_id": board.org_id,
         "board_id": board.id,
         "author_id": author.id,
         "title": "Notice",
@@ -222,6 +226,7 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
     db.add(post)
     db.flush()
     published = BoardPostRevision(
+        org_id=post.org_id,
         post_id=post.id,
         publication_number=1,
         publication_key=uuid7(),
@@ -238,6 +243,7 @@ def test_post_constraints_reject_invalid_timing_and_duplicate_publication(
     db.add(published)
     db.flush()
     revision_base = {
+        "org_id": post.org_id,
         "post_id": post.id,
         "publication_number": 2,
         "publication_key": uuid7(),

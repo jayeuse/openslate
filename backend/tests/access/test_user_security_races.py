@@ -14,6 +14,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from app.systems.manage.audit.models import SecurityEvent
 from tests.access.user_security_support import open_security_world
+from tests.conftest import membership_of
 from tests.fake_provider_support import fake_provider as fake_provider
 from tests.fake_provider_support import owned_account
 
@@ -90,7 +91,7 @@ def test_reset_attempt_requires_cleanup_even_after_authority_loss(world, change)
             changed.append(True)
             with Session(world.owner) as db:
                 if change == "role":
-                    db.get(User, world.actor_id).role = "member"
+                    membership_of(db, world.actor_id).role = "member"
                 elif change == "session":
                     db.get(IdentitySession, world.session_id).revoked_at = datetime.now(UTC)
                 elif change == "disabled":
@@ -209,7 +210,7 @@ def test_zero_factor_observation_cannot_revoke_after_actor_loss(world):
     def during_inventory(request):
         if request.url.path.endswith("/factors"):
             with Session(world.owner) as db:
-                db.get(User, world.actor_id).role = "member"
+                membership_of(db, world.actor_id).role = "member"
                 db.commit()
         return None
 
@@ -256,7 +257,9 @@ def test_reciprocal_administrators_use_real_sessions_without_deadlock(world, fak
     from app.core.integrations.supabase_auth import get_supabase_auth_client
     from app.main import create_app
 
-    owned = owned_account(fake_provider)
+    with Session(world.owner) as db:
+        org_id = membership_of(db, world.actor_id).org_id
+    owned = owned_account(fake_provider, organization_id=org_id)
     email, password, provider_id, local_id, owner = next(owned)
     provider = get_supabase_auth_client()
     transport = provider._transport
@@ -265,7 +268,8 @@ def test_reciprocal_administrators_use_real_sessions_without_deadlock(world, fak
     try:
         with Session(owner) as db:
             actor = db.get(User, local_id)
-            actor.supabase_user_id, actor.role = provider_id, "admin"
+            actor.supabase_user_id = provider_id
+            membership_of(db, actor.id).role = "admin"
             db.commit()
         # The second administrator signs in through the fake provider, then requests use
         # the world's own provider boundary again.
@@ -342,7 +346,7 @@ def test_initial_ineligible_target_cannot_receive_remote_effects(world, state, a
     with Session(world.owner) as db:
         target = db.get(User, world.target_id)
         if state == "expired":
-            target.expires_at = datetime.now(UTC) - timedelta(days=1)
+            membership_of(db, target.id).expires_at = datetime.now(UTC) - timedelta(days=1)
         elif state == "unbound":
             target.supabase_user_id = None
         else:

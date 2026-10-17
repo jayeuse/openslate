@@ -1,5 +1,7 @@
 "use client";
 
+import { currentOrganizationId } from "@/lib/organization-context";
+
 /**
  * A change notice. `moduleId` names the module of a module-scoped change; the
  * server sends it only to users who can read that module.
@@ -64,10 +66,12 @@ function invalidationPayload(
 
 // Subscribers in one tab share one stream. The first subscriber opens it and
 // the last one closes it at once, so a new account never inherits a stream
-// that the previous session opened.
+// that the previous session opened. The stream binds to one organization: a
+// subscriber in another organization closes it and opens a new one.
 const listeners = new Set<Listener>();
 const connectedListeners = new Set<() => void>();
 let stream: EventSource | null = null;
+let streamOrganization: string | null = null;
 // True once the open stream delivered its opening resync: from then on, no
 // server change can be missed.
 let connected = false;
@@ -77,8 +81,14 @@ function emit(event: WorkspaceInvalidation) {
   for (const listener of [...listeners]) listener(event);
 }
 
-function openStream(): EventSource {
-  const source = new EventSource("/api/events");
+function streamUrl(organization: string | null): string {
+  return organization
+    ? `/api/events?org=${encodeURIComponent(organization)}`
+    : "/api/events";
+}
+
+function openStream(organization: string | null): EventSource {
+  const source = new EventSource(streamUrl(organization));
   let firstResync = true;
   let errorNotified = false;
 
@@ -128,10 +138,17 @@ export function subscribeWorkspaceInvalidations(
     if (stream && connected) queueMicrotask(connectedListener);
     else connectedListeners.add(connectedListener);
   }
+  const organization = currentOrganizationId();
+  if (stream && streamOrganization !== organization) {
+    // Events of the previous organization must not reach this one.
+    stream.close();
+    stream = null;
+  }
   if (!stream) {
     connected = false;
     available = false;
-    stream = openStream();
+    streamOrganization = organization;
+    stream = openStream(organization);
   }
 
   return () => {
@@ -140,6 +157,7 @@ export function subscribeWorkspaceInvalidations(
     if (listeners.size === 0 && stream) {
       stream.close();
       stream = null;
+      streamOrganization = null;
       connected = false;
       available = false;
     }

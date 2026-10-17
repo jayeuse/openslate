@@ -182,12 +182,14 @@ def test_event_snapshots_redact_secret_record_values(integration_owner_db: Sessi
 def test_failed_claim_retries_exactly_five_times(integration_owner_db: Session) -> None:
     actor, module, fields, definition = publish_trigger(integration_owner_db)
     record = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={str(fields["request-number"].id): "REQ-RETRY"},
     )
     integration_owner_db.add(record)
     integration_owner_db.flush()
     event = RecordTriggerEvent(
+        org_id=module.org_id,
         record_id=record.id,
         module_id=module.id,
         event_kind="record-created",
@@ -228,6 +230,7 @@ def test_failed_claim_retries_exactly_five_times(integration_owner_db: Session) 
     assert run.performed_by == actor.id
 
     crashed_fifth_attempt = RecordTriggerEvent(
+        org_id=module.org_id,
         record_id=record.id,
         module_id=module.id,
         event_kind="record-created",
@@ -257,12 +260,14 @@ def test_releasing_an_unprocessed_claim_does_not_spend_an_attempt(
 ) -> None:
     _actor, module, fields, _definition = publish_trigger(integration_owner_db)
     record = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={str(fields["request-number"].id): "REQ-SHUTDOWN"},
     )
     integration_owner_db.add(record)
     integration_owner_db.flush()
     event = RecordTriggerEvent(
+        org_id=module.org_id,
         record_id=record.id,
         module_id=module.id,
         event_kind="record-created",
@@ -297,12 +302,14 @@ def test_releasing_an_unprocessed_claim_does_not_spend_an_attempt(
 def test_runtime_role_can_write_and_read_execution_rows(integration_db: Session) -> None:
     _actor, module, fields, _definition = publish_trigger(integration_db)
     record = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={str(fields["request-number"].id): "REQ-RUNTIME"},
     )
     integration_db.add(record)
     integration_db.flush()
     event = RecordTriggerEvent(
+        org_id=module.org_id,
         record_id=record.id,
         module_id=module.id,
         event_kind="record-created",

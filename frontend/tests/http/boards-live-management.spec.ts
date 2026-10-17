@@ -9,7 +9,7 @@ import type {
 } from "../../src/components/systems/boards/adapters/board-management-api";
 
 import { group as accessGroupFixture } from "../isolated/access/fixtures";
-import { isEventStream } from "./helpers/test";
+import { authMeBody, isEventStream } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireBoard } from "../helpers/wire";
 
@@ -87,11 +87,21 @@ async function installArchivedBoard(page: Page) {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/auth/session")
       return route.fulfill({
-        json: { authenticated: true, user_id: actorId, setup_required: false },
+        json: {
+          authenticated: true,
+          user_id: actorId,
+          setup_required: false,
+          default_organization_blocked: null,
+        },
       });
     if (path === "/api/auth/me")
       return route.fulfill({
-        json: { id: actorId, role: "admin", access: [] },
+        json: authMeBody({
+          id: actorId,
+          role: "admin",
+          access: [],
+          default_organization_blocked: null,
+        }),
       });
     if (path === "/api/workspace")
       return route.fulfill(

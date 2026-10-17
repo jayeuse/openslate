@@ -31,9 +31,10 @@ from app.systems.sandbox.fields.models import Field, FieldType
 from app.systems.sandbox.modules.models import Module
 from app.systems.sandbox.records.models import Record
 from app.systems.sandbox.records.query_router import router as record_query_router
-from tests.conftest import _guard_integration_database, guarded_create_engine
+from tests.conftest import _guard_integration_database, create_member, guarded_create_engine
 from tests.fake_provider_support import install_fake_provider, real_session_pool
-from tests.rbac.support import add_user, make_group_access
+from tests.organization_scope_support import scoped_override
+from tests.rbac.support import add_user, make_group_access, organization
 
 pytestmark = pytest.mark.integration
 
@@ -53,6 +54,7 @@ class _RunFixture:
     module_id: UUID
     note_field_id: UUID
     first_record_id: UUID
+    org_id: UUID
 
     def headers(self, token: str | None = None, *, key: UUID | None = None) -> dict[str, str]:
         values = {"Authorization": f"Bearer {token or self.owner_token}"}
@@ -91,6 +93,7 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
     resources = ExitStack()
     provider = get_supabase_auth_client()
     identities = []
+    org_id = None
     try:
         # Report runs are the subject, not Supabase Auth: the three actors sign in against
         # the fake provider, and OpenSlate's real admission issues their sessions.
@@ -110,8 +113,10 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
             # The owner and the outsider are members who manage the module through one
             # group; the third actor is a guest in that group, so it only reads.
             guest_expiry = datetime.now(UTC) + timedelta(days=30)
+            org = organization(setup)
+            org_id = org.id
             users = [
-                User(
+                create_member(setup, org,
                     id=actor_id,
                     email=f"report-run-{actor_id.hex}@example.test",
                     username=f"report_run_{actor_id.hex[:16]}",
@@ -120,7 +125,7 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
                     supabase_user_id=identity[0],
                     sponsor_user_id=owner_id if role == "guest" else None,
                     expires_at=guest_expiry if role == "guest" else None,
-                )
+                )[0]
                 for actor_id, role, identity in zip(
                     actor_ids, ("member", "member", "guest"), identities, strict=True
                 )
@@ -129,23 +134,27 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
             setup.flush()
             setup.add_all(users[1:])
             setup.flush()
-            setup.add(Department(id=department_id, department_name=f"Report run {uuid7().hex}"))
+            setup.add(Department(org_id=org_id, id=department_id,
+                                 department_name=f"Report run {uuid7().hex}"))
             setup.flush()
             setup.add(
                 Module(
+                    org_id=org_id,
                     id=module_id,
                     department_id=department_id,
                     module_name=f"Report run {uuid7().hex}",
                 )
             )
             setup.flush()
-            setup.add(Group(id=group_id, name=f"Report run {group_id.hex}"))
+            setup.add(Group(org_id=org_id, id=group_id, name=f"Report run {group_id.hex}"))
             setup.flush()
             setup.add_all(
-                GroupMember(group_id=group_id, user_id=actor_id) for actor_id in actor_ids
+                GroupMember(org_id=org_id, group_id=group_id, user_id=actor_id)
+                for actor_id in actor_ids
             )
             setup.add(
                 GroupAccess(
+                    org_id=org_id,
                     id=owner_access_id,
                     group_id=group_id,
                     department_id=department_id,
@@ -156,6 +165,7 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
             setup.flush()
             fields = [
                 Field(
+                    org_id=org_id,
                     id=field_id,
                     module_id=module_id,
                     name=name,
@@ -192,6 +202,7 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
             )
             setup.add(
                 Report(
+                    org_id=org_id,
                     id=report_id,
                     module_id=module_id,
                     name="Operations snapshot",
@@ -206,6 +217,7 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
             )
             setup.add_all(
                 Record(
+                    org_id=org_id,
                     id=record_id,
                     module_id=module_id,
                     data={
@@ -259,6 +271,7 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
                 module_id=module_id,
                 note_field_id=note_id,
                 first_record_id=record_ids[0],
+                org_id=org_id,
             )
     finally:
         resources.close()
@@ -279,12 +292,12 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
             cleanup.execute(
                 text(
                     "DELETE FROM public.audit_logs "
-                    "WHERE performed_by IN :actors OR entity_id IN :all_ids"
+                    "WHERE performed_by IN :actors OR entity_id IN :all_ids OR org_id = :org_id"
                 ).bindparams(
                     bindparam("actors", expanding=True),
                     bindparam("all_ids", expanding=True),
                 ),
-                {"actors": list(actor_ids), "all_ids": all_ids},
+                {"actors": list(actor_ids), "all_ids": all_ids, "org_id": org_id},
             )
             cleanup.execute(
                 text(
@@ -319,12 +332,21 @@ def report_run_fixture(request: pytest.FixtureRequest) -> Generator[_RunFixture,
                 {"ids": list(actor_ids)},
             )
             cleanup.execute(
+                text("DELETE FROM public.memberships WHERE user_id IN :ids").bindparams(
+                    bindparam("ids", expanding=True)
+                ),
+                {"ids": list(actor_ids)},
+            )
+            cleanup.execute(
                 text("DELETE FROM public.users WHERE id IN :ids AND id <> :owner").bindparams(
                     bindparam("ids", expanding=True)
                 ),
                 {"ids": list(actor_ids), "owner": owner_id},
             )
             cleanup.execute(text("DELETE FROM public.users WHERE id = :id"), {"id": owner_id})
+            cleanup.execute(
+                text("DELETE FROM public.organizations WHERE id = :id"), {"id": org_id}
+            )
         owner_engine.dispose()
         runtime_engine.dispose()
 
@@ -347,15 +369,16 @@ def report_route_client(db: Session, user: User) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_current_user] = scoped_override(lambda: user)
     return TestClient(app)
 
 
 def report_route_module(db: Session, *, active: bool = True) -> tuple[Module, Field]:
-    department = Department(department_name=f"Report source {uuid7()}")
+    department = Department(org_id=organization(db).id, department_name=f"Report source {uuid7()}")
     db.add(department)
     db.flush()
     module = Module(
+        org_id=department.org_id,
         department_id=department.id,
         module_name=f"Report source {uuid7()}",
         is_deleted=not active,
@@ -364,6 +387,7 @@ def report_route_module(db: Session, *, active: bool = True) -> tuple[Module, Fi
     db.add(module)
     db.flush()
     field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Category",
         type=FieldType.TEXT,

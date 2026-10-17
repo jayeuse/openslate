@@ -15,6 +15,7 @@ from app.systems.sandbox.record_triggers.schemas import (
     TriggerRunListResponse,
     TriggerRunResponse,
 )
+from tests.organization_scope_support import scoped_override
 from tests.rbac.support import make_user
 
 
@@ -25,8 +26,10 @@ def test_recent_runs_are_administrator_only(monkeypatch) -> None:
     application = FastAPI()
     application.include_router(router, prefix="/api")
     application.dependency_overrides[get_db] = lambda: database
-    current_user = make_user("partial", role="member")
-    application.dependency_overrides[get_current_user] = lambda: current_user
+    current_user, membership = make_user("partial", role="member")
+    database.dirty = set()
+    database.scalars.return_value.all.return_value = [membership]
+    application.dependency_overrides[get_current_user] = scoped_override(lambda: current_user)
     client = TestClient(application)
 
     assert client.get("/api/sandbox/trigger-runs").status_code == 403
@@ -51,7 +54,8 @@ def test_recent_runs_are_administrator_only(monkeypatch) -> None:
         hasMore=False,
     )
     monkeypatch.setattr(trigger_router, "list_recent_runs", lambda *_args, **_kw: response_model)
-    current_user = make_user("reader")
+    current_user, membership = make_user("reader")
+    database.scalars.return_value.all.return_value = [membership]
 
     response = client.get("/api/sandbox/trigger-runs?limit=20&offset=0")
 

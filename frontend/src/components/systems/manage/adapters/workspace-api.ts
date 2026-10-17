@@ -2,6 +2,7 @@ import { z } from "zod";
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import { lastOrganizationId } from "@/lib/organization-context";
 import {
   ORGANIZATION_THEMES,
   type OrganizationTheme,
@@ -14,8 +15,13 @@ const workspaceAppearanceSchema = z
   .strict();
 
 /** Public palette only; an unavailable read must never enter the auth refresh flow. */
+/** The public look; with the last organization id, that organization's look. */
 export function getWorkspaceAppearance(signal?: AbortSignal) {
-  return apiFetch("/workspace/appearance", workspaceAppearanceSchema, {
+  const organization = lastOrganizationId();
+  const path = organization
+    ? `/workspace/appearance?org=${encodeURIComponent(organization)}`
+    : "/workspace/appearance";
+  return apiFetch(path, workspaceAppearanceSchema, {
     cache: "no-store",
     signal,
     refreshOnUnauthorized: false,
@@ -93,15 +99,18 @@ export type ManageWorkspaceFullProfile = z.output<
   typeof workspaceFullProfileSchema
 >;
 
-const workspaceBrandSchema = workspaceCommonProfileSchema.pick({
-  display_name: true,
-  mark: true,
-  logo_file_id: true,
-  revision: true,
-});
+const workspaceBrandSchema = workspaceCommonProfileSchema
+  .pick({
+    display_name: true,
+    mark: true,
+    logo_file_id: true,
+    revision: true,
+  })
+  // The shell applies the organization's look when the read carries it.
+  .extend({ theme: organizationThemeSchema.optional() });
 export type WorkspaceBrand = z.output<typeof workspaceBrandSchema>;
 
-/** The shell cache keeps these four public fields, never profile contacts. */
+/** The shell cache keeps these public fields, never profile contacts. */
 export function workspaceBrand(
   workspace: ManageWorkspaceProfile,
 ): WorkspaceBrand {

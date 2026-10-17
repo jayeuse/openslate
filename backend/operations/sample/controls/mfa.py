@@ -10,6 +10,7 @@ import httpx
 from operations.sample.blueprint import SampleDataset
 from operations.sample.client import SampleClient, SampleClientError, SampleWriteOutcomeUnknown
 from operations.sample.controls.account import plan_account_controls
+from operations.sample.controls.mfa_codes import verify_totp_codes
 from operations.sample.controls.mfa_observation import configure_mfa_observer
 from operations.sample.controls.mfa_verification import (
     CONTROL_ROUTES as CONTROL_ROUTES,
@@ -19,7 +20,6 @@ from operations.sample.controls.mfa_verification import (
     _group_members,
     _identifiers,
     _require,
-    _totp,
     _uuid,
 )
 from operations.sample.controls.reads import plan_read_controls
@@ -225,18 +225,7 @@ class _Journey:
             totp = body.get("totp")
             secret = totp.get("secret") if isinstance(totp, Mapping) else None
             _require(isinstance(secret, str) and bool(secret), f"{prefix}_verify")
-            verified = _read_json(
-                self.request(
-                    key,
-                    f"{prefix}_verify",
-                    "POST",
-                    f"/api/auth/mfa/factors/{factor}/verification",
-                    client=client,
-                    body={"code": _totp(cast(str, secret), time())},
-                ),
-                step=f"{prefix}_verify",
-            )
-            _require(verified == {"verified": True, "access_token": None}, f"{prefix}_verify")
+            verify_totp_codes(self.request, key, prefix, client, factor, cast(str, secret), time())
             aal, current = self.factors(key, f"{prefix}_aal2", client)
             _require(
                 aal == "aal2"

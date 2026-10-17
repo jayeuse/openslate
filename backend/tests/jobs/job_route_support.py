@@ -33,6 +33,7 @@ def failed_jobs(
     actor, report, *_ = report_work_subject(db)
     report.name = "Literal_% report"
     report_work = ScheduledWork(
+        org_id=report.org_id,
         id=shared_id or uuid7(),
         kind="report-run",
         report_id=report.id,

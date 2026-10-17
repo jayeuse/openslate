@@ -20,6 +20,7 @@ def reference(field, kind):
 def complete_query(world):
     option_ids = [str(uuid7()), str(uuid7())]
     selected = Field(
+        org_id=world.module.org_id,
         module_id=world.module.id,
         name="Status",
         type=FieldType.SELECT,
@@ -145,7 +146,8 @@ def alternate_source(world):
             if kind == FieldType.SELECT
             else {}
         )
-        field = Field(module_id=module.id, name=label, type=kind, position=position, config=config)
+        field = Field(org_id=module.org_id, module_id=module.id,
+                      name=label, type=kind, position=position, config=config)
         db.add(field)
         fields[label] = field
     db.commit()
@@ -162,9 +164,11 @@ def multi_source_board(world):
         for name in ("Alpha", "Beta"):
             module = add_module(db, department, name)
             label = Field(
+                org_id=module.org_id,
                 module_id=module.id, name="Label", type=FieldType.TEXT, position=0, config={}
             )
             amount = Field(
+                org_id=module.org_id,
                 module_id=module.id, name="Amount", type=FieldType.NUMBER, position=1, config={}
             )
             db.add_all([label, amount])
@@ -257,8 +261,10 @@ def portable_race_world():
 
 def prepare_cross_pair_board(world):
     with AuditSession(world.owner) as db:
+        org_id = db.get(Module, world.module_id).org_id
         db.get(Module, world.module_id).module_name = "Alpha"
         access = GroupAccess(
+            org_id=org_id,
             group_id=world.group_id, department_id=world.other_department_id, level="read"
         )
         db.add(access)
@@ -270,7 +276,7 @@ def prepare_cross_pair_board(world):
             (world.other_department_id, "Alpha"),
             (world.other_department_id, "Beta"),
         ]:
-            module = Module(department_id=department_id, module_name=name)
+            module = Module(org_id=org_id, department_id=department_id, module_name=name)
             db.add(module)
             db.flush()
             world.extra_module_ids.append(module.id)
@@ -282,6 +288,7 @@ def prepare_cross_pair_board(world):
                     [("Label", FieldType.TEXT), ("Amount", FieldType.NUMBER)]
                 ):
                     field = Field(
+                        org_id=module.org_id,
                         module_id=module.id, name=label, type=kind, position=position, config={}
                     )
                     db.add(field)
@@ -290,6 +297,7 @@ def prepare_cross_pair_board(world):
                     if label == "Amount":
                         selected_field = field
         extra = Field(
+            org_id=org_id,
             module_id=world.module_id, name="Amount", type=FieldType.NUMBER, position=1, config={}
         )
         db.add(extra)

@@ -36,6 +36,7 @@ def sync_department_board(
         if not create:
             return None
         board = Board(
+            org_id=department.org_id,
             scope=BoardScope.DEPARTMENT.value,
             department_id=department.id,
             name=name,

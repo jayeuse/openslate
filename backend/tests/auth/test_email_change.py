@@ -18,6 +18,7 @@ from app.systems.access.identity.contracts import InvalidCredentials
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.users.models import User
 from tests.auth.provider_jwt_support import provider_settings, session_database, signed_access
+from tests.conftest import create_member
 
 PARTIAL = {
     "code": "200",
@@ -27,7 +28,7 @@ ORIGIN = "http://frontend.test"
 
 
 @pytest.fixture
-def email_boundary(monkeypatch, unit_workspace_policy):
+def email_boundary(monkeypatch, unit_workspace_policy, unit_platform_policy):
     from app.common.dependencies import auth as dependencies
     from app.core.database import get_db
     from app.core.integrations import supabase_auth
@@ -35,7 +36,7 @@ def email_boundary(monkeypatch, unit_workspace_policy):
     from app.systems.access.auth.aggregate_router import router
     from app.systems.access.identity import provider_actions
     from app.systems.manage.audit import service as audit_service
-    from app.systems.manage.workspace.models import WorkspaceProfile
+    from app.systems.manage.workspace.models import PlatformSettings, WorkspaceProfile
 
     # Pin the browser origin so the strict test environment matches this client.
     monkeypatch.setattr(
@@ -52,7 +53,7 @@ def email_boundary(monkeypatch, unit_workspace_policy):
         session_id=str(provider_session_id),
         extra={"email": "old@example.test"},
     )
-    user = User(
+    user, membership = create_member(None, unit_workspace_policy,
         id=uuid4(),
         supabase_user_id=provider_id,
         email="old@example.test",
@@ -71,7 +72,11 @@ def email_boundary(monkeypatch, unit_workspace_policy):
         refreshed_at=now,
         expires_at=now + timedelta(hours=1),
     )
-    db = session_database(user, old_session)
+    db = session_database(user, membership, old_session)
+    db.scalars.side_effect = lambda query: SimpleNamespace(all=lambda: [
+        unit_workspace_policy if query.column_descriptions[0]["entity"] is WorkspaceProfile
+        else membership
+    ])
     state = {
         "provider_email": "old@example.test",
         "confirmation": PARTIAL.copy(),
@@ -87,6 +92,8 @@ def email_boundary(monkeypatch, unit_workspace_policy):
         if query.column_descriptions[0]["expr"] is User.id
         else unit_workspace_policy
         if query.column_descriptions[0]["expr"] is WorkspaceProfile
+        else unit_platform_policy
+        if query.column_descriptions[0]["expr"] is PlatformSettings
         else resolve_row(query)
     )
 
@@ -175,6 +182,31 @@ def test_email_request_requires_password_and_never_changes_saved_email(email_bou
         ("identity.email_change_request", "success"),
     ]
     assert all("old@example.test" not in e.model_dump_json() for e in state["events"])
+
+
+@pytest.mark.parametrize("organizations", ["zero", "multiple", "restricted"])
+def test_global_email_request_does_not_depend_on_organization_policy(
+    email_boundary, unit_workspace_policy, organizations
+):
+    from app.systems.manage.workspace.models import WorkspaceProfile
+
+    browser, db, user, _, _, access, state = email_boundary
+    unit_workspace_policy.ip_allow_list = ["192.0.2.0/24"]
+    policies = [] if organizations == "zero" else [unit_workspace_policy]
+    if organizations == "multiple":
+        policies.append(WorkspaceProfile(id=uuid4()))
+    db.scalars.side_effect = lambda _query: SimpleNamespace(all=lambda: policies)
+    headers = {"Authorization": f"Bearer {access}"}
+    response = browser.post("/api/auth/me/email", headers=headers,
+                            json={"email": "new@example.test", "current_password": "correct"})
+    assert response.status_code == 200
+    assert response.json() == {"confirmation_required": True}
+    assert user.email == "old@example.test"
+    assert len([request for request in state["seen"] if request.method == "PUT"]) == 1
+    # Account access alone grants no organization authority.
+    denied = browser.get("/api/users", headers=headers)
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "organization_required"
 
 
 @pytest.mark.parametrize(
@@ -268,10 +300,10 @@ def test_admission_reconciles_out_of_band_confirmed_email_once(email_boundary):
 
 
 @pytest.mark.parametrize(
-    "fault", ["cutoff", "expired_during_provider", "ineligible_during_provider", "source_policy"]
+    "fault", ["cutoff", "expired_during_provider", "ineligible_during_provider"]
 )
 def test_admission_rechecks_after_provider_latency_before_email_mutation(
-    email_boundary, monkeypatch, unit_workspace_policy, fault
+    email_boundary, monkeypatch, fault
 ):
     from app.systems.access.identity import provider_sessions
 
@@ -280,8 +312,6 @@ def test_admission_rechecks_after_provider_latency_before_email_mutation(
     claims = client.verify_access_token(access)
     if fault == "cutoff":
         user.tokens_valid_after = claims.issued_at + timedelta(seconds=1)
-    elif fault == "source_policy":
-        unit_workspace_policy.ip_allow_list = ["192.0.2.0/24"]
     else:
         original = client.get_admin_user
 

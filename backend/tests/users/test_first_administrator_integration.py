@@ -30,18 +30,24 @@ import app.systems.access.users.service as user_service
 from app.core.config import get_settings
 from app.core.integrations.supabase_auth import ProviderUser
 from app.systems.access.users.coordination import InvitationError
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import Membership, PlatformOperator, User, UserRole, UserStatus
 from app.systems.access.users.schemas import InvitationCreate
+from app.systems.manage.audit.models import AuditLog
+from app.systems.manage.workspace.models import WorkspaceProfile
 from operations import bootstrap_admin as bootstrap
 from tests.conftest import guarded_create_engine
+from tests.organization_scope_support import in_context
 from tests.race_support import WAIT, backend_pid, wait_until_waiting
-from tests.rbac.support import add_user
+from tests.rbac.support import add_user, organization
 
 pytestmark = pytest.mark.integration
 
 
 def _live_administrators() -> Any:
-    return select(User).where(User.role == UserRole.ADMIN.value, User.is_deleted.is_(False))
+    return select(User).join(Membership, Membership.user_id == User.id).where(
+        Membership.role == UserRole.ADMIN.value,
+        Membership.is_deleted.is_(False), User.is_deleted.is_(False),
+    ).distinct()
 
 
 def _provider() -> Mock:
@@ -81,8 +87,10 @@ def empty_installation(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine
             monkeypatch.setattr(bootstrap, "get_engine", lambda: runtime)
             invited: list[str] = []
             hidden: dict[UUID, datetime | None] = {}
+            org_id = None
             try:
                 with Session(owner) as db:
+                    org_id = organization(db).id
                     hidden = {
                         row.id: row.deleted_at for row in db.scalars(_live_administrators()).all()
                     }
@@ -98,7 +106,16 @@ def empty_installation(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Engine
             finally:
                 with Session(owner) as db:
                     if invited:
+                        invited_ids = select(User.id).where(User.email.in_(invited))
+                        db.execute(delete(Membership).where(Membership.user_id.in_(invited_ids)))
+                        # Bootstrap also records its administrator as a platform operator.
+                        db.execute(
+                            delete(PlatformOperator).where(PlatformOperator.user_id.in_(invited_ids))
+                        )
                         db.execute(delete(User).where(User.email.in_(invited)))
+                    if org_id is not None:
+                        db.execute(delete(AuditLog).where(AuditLog.org_id == org_id))
+                        db.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == org_id))
                     for user_id, deleted_at in hidden.items():
                         db.execute(
                             update(User)
@@ -129,22 +146,25 @@ def test_two_bootstraps_that_start_together_reserve_one_administrator(
     first_counted, release_first = Event(), Event()
     second_pid: list[int] = []
     original_exists = user_service._other_administrator_exists
-    original_count = bootstrap._admin_assignment_count
 
-    def pause_first_under_the_lock(db: Session, excluded_user_id: UUID) -> bool:
-        found = original_exists(db, excluded_user_id)
+    def pause_first_under_the_lock(db: Session, excluded_user_id: UUID, org_id: UUID) -> bool:
+        found = original_exists(db, excluded_user_id, org_id)
         if not first_counted.is_set():
             first_counted.set()
             assert release_first.wait(WAIT)
         return found
 
-    def note_second_connection(db: Session, **options: Any) -> int:
+    original_validate = bootstrap._validate_schema
+
+    def note_second_connection(db: Session) -> None:
+        # Bootstraps serialize on the installation settings row, taken right after this
+        # check; record the second connection before it can wait there.
         if first_counted.is_set() and not second_pid:
             second_pid.append(backend_pid(db))
-        return original_count(db, **options)
+        original_validate(db)
 
     monkeypatch.setattr(user_service, "_other_administrator_exists", pause_first_under_the_lock)
-    monkeypatch.setattr(bootstrap, "_admin_assignment_count", note_second_connection)
+    monkeypatch.setattr(bootstrap, "_validate_schema", note_second_connection)
     results: dict[str, object] = {}
 
     def run(invitation: InvitationCreate) -> None:
@@ -153,7 +173,10 @@ def test_two_bootstraps_that_start_together_reserve_one_administrator(
         except bootstrap.BootstrapError as error:
             results[invitation.email] = error
 
-    runs = [Thread(target=run, args=(first,)), Thread(target=run, args=(second,))]
+    runs = [
+        Thread(target=in_context(run), args=(first,)),
+        Thread(target=in_context(run), args=(second,)),
+    ]
     try:
         runs[0].start()
         assert first_counted.wait(WAIT)
@@ -171,9 +194,10 @@ def test_two_bootstraps_that_start_together_reserve_one_administrator(
     assert isinstance(results[second.email], bootstrap.BootstrapError), results
     with Session(owner) as db:
         reserved = db.scalars(
-            select(User.email).where(
+            select(User.email).join(Membership, Membership.user_id == User.id).where(
                 User.email.in_(invited),
-                User.role == UserRole.ADMIN.value,
+                Membership.role == UserRole.ADMIN.value,
+                Membership.is_deleted.is_(False),
                 User.is_deleted.is_(False),
             )
         ).all()
@@ -203,13 +227,21 @@ def test_a_bootstrap_reconcile_resends_only_the_sole_pending_administrator(
     if other_administrator:
         add_user(db, "other-admin", role=UserRole.ADMIN)
     pending = add_user(db, "pending-admin", role=UserRole.ADMIN, status=UserStatus.PENDING)
-    pending.provider_invitation_operation_id = uuid7()
+    pending_membership = db.scalars(select(Membership).where(
+        Membership.user_id == pending.id, Membership.org_id == organization(db).id,
+        Membership.status == UserStatus.PENDING.value,
+    )).one()
+    pending_membership.provider_invitation_operation_id = uuid7()
     db.commit()
+    stored_profile = select(User.supabase_user_id, Membership.invitation_sent_at).join(
+        Membership, Membership.user_id == User.id,
+    ).where(User.id == pending.id, Membership.id == pending_membership.id)
 
     if reconciled:
-        result = user_service.reconcile_invitation(
+        user_service.reconcile_invitation(
             db, pending.id, actor_id=None, bootstrap=True, client=_provider()
         )
+        result = db.execute(stored_profile).one()
         assert result.supabase_user_id is not None
         assert result.invitation_sent_at is not None
     else:
@@ -217,6 +249,6 @@ def test_a_bootstrap_reconcile_resends_only_the_sole_pending_administrator(
             user_service.reconcile_invitation(
                 db, pending.id, actor_id=None, bootstrap=True, client=_provider()
             )
-        stored = db.get(User, pending.id)
+        stored = db.execute(stored_profile).one_or_none()
         assert stored is not None
         assert (stored.supabase_user_id, stored.invitation_sent_at) == (None, None)

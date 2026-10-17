@@ -1,6 +1,9 @@
 """Authenticated avatar delivery rechecks real state across provider latency."""
 
+from io import BytesIO
+
 import pytest
+from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -44,6 +47,28 @@ def test_own_avatar_is_readable_without_shared_scope_and_preserves_image_safegua
     assert response.headers["x-content-type-options"] == "nosniff"
     assert "no-store" in response.headers["cache-control"]
     assert "private" in response.headers["cache-control"]
+
+
+@pytest.mark.parametrize("size", [64, 256])
+def test_a_thumbnail_is_a_square_of_the_requested_size(avatar_world, size):
+    world = avatar_world
+    native_avatar(world, bind=True)
+    response = world.client.get(
+        f"/api/users/{world.actor_id}/avatar", params={"size": size}, headers=world.headers()
+    )
+    assert response.status_code == 200, response.text
+    with Image.open(BytesIO(response.content)) as thumbnail:
+        assert (thumbnail.format, thumbnail.size) == ("PNG", (size, size))
+    assert "no-store" in response.headers["cache-control"]
+
+
+def test_only_the_two_thumbnail_sizes_are_served(avatar_world):
+    world = avatar_world
+    native_avatar(world, bind=True)
+    response = world.client.get(
+        f"/api/users/{world.actor_id}/avatar", params={"size": 1024}, headers=world.headers()
+    )
+    assert response.status_code == 422
 
 
 def test_avatar_download_holds_no_user_file_quota_or_session_locks_during_io(avatar_world):

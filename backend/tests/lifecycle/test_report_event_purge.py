@@ -28,6 +28,7 @@ from app.systems.sandbox.lifecycle.exceptions import (
 from app.systems.sandbox.records.models import Record
 from tests.boards.support import client, project_board
 from tests.boards.test_permanent_delete import _actor
+from tests.conftest import membership_of
 from tests.reports.test_report_routes import _module, _recipe
 
 pytestmark = pytest.mark.integration
@@ -47,12 +48,14 @@ def purge_target(request: pytest.FixtureRequest, integration_owner_db: Session, 
     if request.param == "report":
         module, field = _module(db)
         target: Report | BoardEvent = Report(
+            org_id=module.org_id,
             module_id=module.id, name="Archived report", recipe=_recipe(field)
         )
         root = "/api/reports"
     else:
         board = project_board(db)
         target = BoardEvent(
+            org_id=board.org_id,
             board_id=board.id,
             author_id=actor.id,
             title="Archived event",
@@ -199,7 +202,7 @@ def test_report_event_rechecks_after_password_without_deleting(
             else:
                 target.archived = False
         elif change == "downgrade":
-            actor.role = "member"
+            membership_of(db, actor.id).role = "member"
         else:
             monkeypatch.setattr(
                 settings_path, lambda: SimpleNamespace(lifecycle_purge_enabled=False)
@@ -236,9 +239,11 @@ def test_report_event_challenge_is_bound_to_actor_and_target(purge_target) -> No
     db, actor, target, path, api = purge_target
     _archive(db, target)
     if isinstance(target, Report):
-        other = Report(module_id=target.module_id, name=target.name, recipe=target.recipe)
+        other = Report(org_id=target.org_id,
+                       module_id=target.module_id, name=target.name, recipe=target.recipe)
     else:
         other = BoardEvent(
+            org_id=target.org_id,
             board_id=target.board_id,
             author_id=actor.id,
             title=target.title,
@@ -287,6 +292,7 @@ def test_event_purge_inventories_children_keeps_sources_and_rolls_back(
     board = project_board(db)
     module, _ = _module(db)
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=actor.id,
         title="Retained event",
@@ -297,8 +303,9 @@ def test_event_purge_inventories_children_keeps_sources_and_rolls_back(
         end_date=date(2026, 10, 8),
         timezone_name="UTC",
     )
-    record = Record(module_id=module.id, data={"name": "Source remains"})
+    record = Record(org_id=module.org_id, module_id=module.id, data={"name": "Source remains"})
     file = File(
+        org_id=board.org_id,
         purpose="board_attachment",
         board_id=board.id,
         creator_id=actor.id,
@@ -311,15 +318,19 @@ def test_event_purge_inventories_children_keeps_sources_and_rolls_back(
     )
     db.add_all([event, record, file])
     db.flush()
-    attachment = BoardAttachment(board_id=board.id, event_id=event.id, file_id=file.id)
+    attachment = BoardAttachment(org_id=board.org_id,
+                                 board_id=board.id, event_id=event.id, file_id=file.id)
     link = BoardRecordLink(
+        org_id=board.org_id,
         board_id=board.id, event_id=event.id, module_id=module.id, record_id=record.id
     )
-    reminder = BoardEventReminder(board_id=board.id, event_id=event.id, timing="start")
+    reminder = BoardEventReminder(org_id=board.org_id,
+                                  board_id=board.id, event_id=event.id, timing="start")
     db.add_all([attachment, link, reminder])
     db.flush()
     instant = datetime.now(UTC)
     work = ScheduledWork(
+        org_id=reminder.org_id,
         kind="event-reminder",
         reminder_id=reminder.id,
         occurrence_start_at=instant,
@@ -330,6 +341,7 @@ def test_event_purge_inventories_children_keeps_sources_and_rolls_back(
     db.add(work)
     db.flush()
     notice = InAppNotification(
+        org_id=work.org_id,
         work_id=work.id,
         recipient_id=actor.id,
         kind="event-reminder",

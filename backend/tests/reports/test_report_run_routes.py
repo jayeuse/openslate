@@ -301,8 +301,10 @@ def test_source_purged_after_snapshot_rolls_back_run_and_rows(
     router_module = importlib.import_module("app.systems.openview.reports.router")
     original = router_module.capture_report_snapshot
 
-    def purge_after_snapshot(engine: Engine, report_id: UUID, actor_id: UUID | None):
-        snapshot = original(engine, report_id, actor_id)
+    def purge_after_snapshot(
+        engine: Engine, report_id: UUID, actor_id: UUID | None, *, org_id: UUID | None
+    ):
+        snapshot = original(engine, report_id, actor_id, org_id=org_id)
         with AuditSession(fixture.owner_engine) as writer:
             writer.info[AUDIT_CONTEXT_KEY] = AuditContext(
                 performed_by=fixture.owner_id,

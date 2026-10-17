@@ -16,24 +16,106 @@ import { wireWorkspace } from "../../helpers/wire";
 // context route wins over this one. Contexts a spec opens itself with
 // `browser.newContext()` get no default.
 
-export const defaultSignedInIdentity = {
-  id: "00000000-0000-4000-8000-000000000001",
-  role: "admin",
-  access: [],
-} as const;
-
 type AccessLevel = "read" | "write" | "manage";
+type AccountRole = "admin" | "member" | "guest";
+type AccessRow = {
+  department_id: string;
+  module_id: string | null;
+  level: AccessLevel;
+};
+type MembershipBody = {
+  org_id: string;
+  name: string;
+  slug: string;
+  role: AccountRole;
+};
+
+/**
+ * The organization every default identity belongs to. Its id is the default
+ * `/api/workspace` id, so the shell's organization and membership agree.
+ */
+export const defaultOrganization = {
+  org_id: "00000000-0000-4000-8000-000000000102",
+  name: "OpenSlate",
+  slug: "openslate",
+} as const;
 
 /** The `/api/auth/me` body: one account and its group access rows. */
 export type SignedInIdentity = {
   id: string;
-  role: "admin" | "member" | "guest";
-  access?: readonly {
-    department_id: string;
-    module_id: string | null;
-    level: AccessLevel;
-  }[];
+  role: AccountRole;
+  access?: readonly AccessRow[];
 };
+
+/**
+ * Builds the complete `/api/auth/me` body from an account's id, its role and
+ * access in the current organization, and any other account fields. By
+ * default the account belongs to `defaultOrganization` alone and has it open;
+ * pass `memberships`, `pending_invitations` or `current_organization` (null
+ * for none) to describe another situation. Every `/auth/me` mock uses it.
+ */
+export function authMeBody(
+  identity: {
+    id: string;
+    // Loose on purpose: journeys keep their own literal types.
+    role: string | null;
+    access?: readonly unknown[];
+    default_organization_blocked?:
+      "mfa_required" | "ip_not_allowed" | "organization_required" | null;
+    memberships?: readonly MembershipBody[];
+    pending_invitations?: readonly (MembershipBody & {
+      id: string;
+      expires_at: string;
+    })[];
+    current_organization?: (MembershipBody & { access: unknown[] }) | null;
+  } & Record<string, unknown>,
+) {
+  const {
+    id,
+    role,
+    access = [],
+    default_organization_blocked = null,
+    memberships,
+    pending_invitations = [],
+    current_organization,
+    ...account
+  } = identity;
+  const organization = role ? { ...defaultOrganization, role } : null;
+  const current =
+    current_organization !== undefined
+      ? current_organization
+      : organization && {
+          ...organization,
+          access: [...access],
+          // A journey's administrator installed OpenSlate: it owns both levels.
+          owner: role === "admin",
+        };
+  return {
+    username: "signed_in_person",
+    operator: role === "admin",
+    display_name: null,
+    avatar_file_id: null,
+    ...account,
+    id,
+    role: current ? current.role : null,
+    access: current ? current.access : [],
+    default_organization_blocked,
+    memberships: memberships ?? (organization ? [organization] : []),
+    pending_invitations,
+    current_organization: current,
+  };
+}
+
+export const defaultSignedInIdentity = authMeBody({
+  id: "00000000-0000-4000-8000-000000000001",
+  role: "admin",
+});
+
+/** Matches the event stream with or without its `org` parameter. */
+export const eventStreamUrl = (url: URL) => url.pathname === "/api/events";
+/** Matches the public look read with or without its `org` parameter. */
+export const appearanceUrl = (url: URL) =>
+  url.pathname === "/api/workspace/appearance";
 
 /**
  * Answers the session read as signed out, for pages a signed-out person uses
@@ -66,6 +148,7 @@ export async function signedInSession(
       json: {
         authenticated: true,
         user_id: userId,
+        default_organization_blocked: null,
         setup_required: options.setupRequired ?? false,
       },
     }),
@@ -80,13 +163,7 @@ export async function signedInAs(
 ): Promise<void> {
   await signedInSession(target, identity.id, options);
   await target.route("**/api/auth/me", (route) =>
-    route.fulfill({
-      json: {
-        id: identity.id,
-        role: identity.role,
-        access: identity.access ?? [],
-      },
-    }),
+    route.fulfill({ json: authMeBody(identity) }),
   );
 }
 
@@ -123,6 +200,7 @@ export async function controlledSession(
         ? {
             authenticated: true,
             user_id: session.identity.id,
+            default_organization_blocked: null,
             setup_required: false,
           }
         : { authenticated: false },
@@ -131,13 +209,7 @@ export async function controlledSession(
   if (options.identityRead !== false)
     await target.route("**/api/auth/me", (route) =>
       session.identityStatus === 200
-        ? route.fulfill({
-            json: {
-              id: session.identity.id,
-              role: session.identity.role,
-              access: session.identity.access ?? [],
-            },
-          })
+        ? route.fulfill({ json: authMeBody(session.identity) })
         : route.fulfill({
             status: session.identityStatus,
             json: { detail: "Private database detail must never be displayed" },
@@ -153,6 +225,7 @@ export const test = base.extend({
         json: {
           authenticated: true,
           user_id: defaultSignedInIdentity.id,
+          default_organization_blocked: null,
           setup_required: false,
         },
       }),
@@ -160,7 +233,26 @@ export const test = base.extend({
     await context.route("**/api/auth/me", (route) =>
       route.fulfill({ json: defaultSignedInIdentity }),
     );
-    await context.route("**/api/workspace/appearance", (route) =>
+    // A signed-in tab saves its organization as the session's active one.
+    await context.route("**/api/auth/session/organization", (route) => {
+      const body: unknown = route.request().postDataJSON();
+      const orgId =
+        typeof body === "object" && body !== null && "org_id" in body
+          ? String(body.org_id)
+          : "";
+      return orgId === defaultOrganization.org_id
+        ? route.fulfill({ json: defaultSignedInIdentity })
+        : route.fulfill({
+            status: 403,
+            json: {
+              detail: {
+                code: "organization_required",
+                message: "An active organization membership is required",
+              },
+            },
+          });
+    });
+    await context.route(appearanceUrl, (route) =>
       route.fulfill({
         headers: { "Cache-Control": "no-store" },
         json: { theme: "slate" },
@@ -188,7 +280,7 @@ export const test = base.extend({
     // The synthetic server has no event stream: proxied, it fails at a random
     // moment and the resync reloads whatever the journey is doing. Holding the
     // request keeps it connecting; specs that drive the stream override it.
-    await context.route("**/api/events", () => undefined);
+    await context.route(eventStreamUrl, () => undefined);
     // Preferences are read under the verified session ID, which individual
     // journeys may override independently of this default navigation identity.
     // Full preferences mirror the strict preferences DTO; each context owns its state.

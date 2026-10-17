@@ -22,6 +22,7 @@ from app.systems.sandbox.record_triggers.outbox import enqueue_due_schedules
 from app.systems.sandbox.record_triggers.runner import execute_claim
 from app.systems.sandbox.records.models import Record
 from tests.postgres_runtime import assert_runner_database_url
+from tests.rbac.support import organization
 from tests.sandbox_record_triggers.support import (
     DocumentBaseline,
     cleanup_committed_trigger,
@@ -38,7 +39,7 @@ def test_schedule_freezes_upper_bound_and_completes_more_than_one_chunk(
     integration_owner_db: Session,
 ) -> None:
     profile = integration_owner_db.scalar(
-        select(WorkspaceProfile).where(WorkspaceProfile.singleton_key.is_(True))
+        select(WorkspaceProfile).where(WorkspaceProfile.id == organization(integration_owner_db).id)
     )
     assert profile is not None
     profile.timezone = "Asia/Manila"
@@ -47,6 +48,7 @@ def test_schedule_freezes_upper_bound_and_completes_more_than_one_chunk(
     )
     records = [
         Record(
+            org_id=module.org_id,
             module_id=module.id,
             data={
                 str(fields["request-number"].id): f"REQ-{index:03d}",
@@ -82,6 +84,7 @@ def test_schedule_freezes_upper_bound_and_completes_more_than_one_chunk(
     integration_owner_db.commit()
 
     late_record = Record(
+        org_id=module.org_id,
         module_id=module.id,
         data={
             str(fields["request-number"].id): "REQ-LATE",

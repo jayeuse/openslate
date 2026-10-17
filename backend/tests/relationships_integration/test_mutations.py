@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.manage.audit.models import AuditAction
 from app.systems.sandbox.records.models import Record
@@ -25,7 +26,7 @@ from app.systems.sandbox.relationships.service import (
     create_relationship,
     list_relationships,
 )
-from tests.rbac.support import make_user
+from tests.rbac.support import add_user
 from tests.relationships_integration.relationships_integration_support import (
     _add_edge,
     _edge_audit_rows,
@@ -35,8 +36,6 @@ from tests.relationships_integration.relationships_integration_support import (
 )
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
-# An administrator reads every module, so the projection needs no group.
-READER = make_user("relationship_reader")
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -54,6 +53,7 @@ def test_postgres_constraints_reject_self_and_active_duplicates(
     savepoint = integration_db.begin_nested()
     integration_db.add(
         RelationshipEdge(
+            org_id=field.org_id,
             field_id=field.id,
             source_record_id=sources[0].id,
             target_record_id=sources[0].id,
@@ -67,6 +67,7 @@ def test_postgres_constraints_reject_self_and_active_duplicates(
     savepoint = integration_db.begin_nested()
     integration_db.add(
         RelationshipEdge(
+            org_id=field.org_id,
             field_id=field.id,
             source_record_id=sources[0].id,
             target_record_id=targets[0].id,
@@ -126,7 +127,7 @@ def test_assignment_commits_delete_and_create_audits_same_request(
     field, _, target_module, sources, targets = _seed_graph(integration_db, owned_ids)
     original = create_relationship(integration_db, field.id, sources[0].id, targets[0].id)
     owned_ids.add(original.id)
-    new_target = Record(module_id=target_module.id, data={})
+    new_target = Record(org_id=target_module.org_id, module_id=target_module.id, data={})
     integration_db.add(new_target)
     integration_db.flush()
     owned_ids.add(new_target.id)
@@ -168,7 +169,9 @@ def test_assignment_rollback_removes_replacement_and_audit_mutations(
         owned_ids, with_edge=True
     )
     assert original is not None
-    new_target = Record(module_id=target_module.id, data={})
+    # The graph is committed in its own organization; work in it like a request would.
+    scope_session(integration_db, target_module.org_id)
+    new_target = Record(org_id=target_module.org_id, module_id=target_module.id, data={})
     integration_db.add(new_target)
     integration_db.flush()
     owned_ids.add(new_target.id)
@@ -228,6 +231,7 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
     integration_db: Session, owned_ids: set[UUID]
 ) -> None:
     field, _, _, sources, targets = _seed_graph(integration_db, owned_ids, record_count=4)
+    reader = add_user(integration_db, "relationship_reader", role="admin")
     edges = [
         _add_edge(integration_db, owned_ids, field, source, target)
         for source, target in zip(sources, targets, strict=True)
@@ -241,7 +245,7 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
     visible, visible_page = list_relationships(
         integration_db,
         RelationshipListRequest(field_id=field.id),
-        reader=READER,
+        reader=reader,
     )
     assert {item.id for item in visible} == {edges[0].id, edges[1].id}
     assert visible_page.total == 2
@@ -252,7 +256,7 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
             field_id=field.id,
             availability=RelationshipAvailability.HIDDEN,
         ),
-        reader=READER,
+        reader=reader,
     )
     assert [item.id for item in hidden] == [edges[2].id]
     assert hidden_page.total == 1
@@ -268,7 +272,7 @@ def test_relationship_list_filters_visibility_and_pagination_in_postgresql(
             limit=2,
             offset=1,
         ),
-        reader=READER,
+        reader=reader,
     )
     assert len(all_items) == 2
     assert all_page.total == 4
@@ -280,6 +284,7 @@ def test_relationship_list_projects_each_hidden_reason_independently(
     integration_db: Session, owned_ids: set[UUID]
 ) -> None:
     field, source_module, target_module, sources, targets = _seed_graph(integration_db, owned_ids)
+    reader = add_user(integration_db, "relationship_reader", role="admin")
     edge = _add_edge(integration_db, owned_ids, field, sources[0], targets[0])
     hidden_causes = (
         (field, RelationshipHiddenReason.FIELD_ARCHIVED),
@@ -300,7 +305,7 @@ def test_relationship_list_projects_each_hidden_reason_independently(
                 field_id=field.id,
                 availability=RelationshipAvailability.HIDDEN,
             ),
-            reader=READER,
+            reader=reader,
         )
 
         assert [item.id for item in hidden] == [edge.id]

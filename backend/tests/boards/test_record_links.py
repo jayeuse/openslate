@@ -28,7 +28,8 @@ from app.systems.sandbox.records.models import Record
 from tests.boards.support import admin, guest, member
 from tests.boards.support import client as board_client
 from tests.boards.test_post_routes import _actor, _board, _grant
-from tests.rbac.support import make_group_access
+from tests.rbac.support import make_group_access, organization
+from tests.sandbox_designs.fixtures import create_document
 
 
 @pytest.mark.integration
@@ -43,6 +44,7 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
     _grant(db, board, board_reader, "view")
     module, record = _source(db, source_reader)
     title_field = Field(
+        org_id=module.org_id,
         module_id=module.id,
         name="Record title",
         type=FieldType.TEXT,
@@ -55,6 +57,7 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
     module.title_field_id = title_field.id
     record.data = {str(title_field.id): "Private first title"}
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=board_writer.id,
         title="Record meeting",
@@ -110,15 +113,19 @@ def test_board_record_link_uses_live_title_and_requires_source_read(
 
 
 def _source(db: Session, *readers) -> tuple[Module, Record]:
-    department = Department(department_name=f"Record links {uuid7().hex}")
+    create_document(db, organization(db))
+    department = Department(org_id=organization(db).id,
+                            department_name=f"Record links {uuid7().hex}")
     db.add(department)
     db.flush()
-    module = Module(department_id=department.id, module_name="Source records")
+    module = Module(org_id=department.org_id,
+                    department_id=department.id, module_name="Source records")
     db.add(module)
     db.flush()
     if readers:
         make_group_access(db, readers, department, module)
-    record = Record(module_id=module.id, data={"private": "never serialize this"})
+    record = Record(org_id=module.org_id,
+                    module_id=module.id, data={"private": "never serialize this"})
     db.add(record)
     db.flush()
     return module, record
@@ -135,6 +142,7 @@ def test_event_record_link_is_contextual_and_one_record_can_link_two_items(
     other = _board(db, owner)
     module, record = _source(db, owner, outsider)
     first = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Private event",
@@ -144,6 +152,7 @@ def test_event_record_link_is_contextual_and_one_record_can_link_two_items(
         timezone_name="UTC",
     )
     second = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Second event",
@@ -219,6 +228,7 @@ def test_published_record_link_snapshot_survives_draft_unlink_and_blocks_source_
     _grant(db, board, reader, "view")
     module, record = _source(db, owner, reader)
     item = BoardPost(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Record notice",
@@ -340,6 +350,7 @@ def test_archived_event_record_link_blocks_record_module_and_department_purge_un
     department = db.get(Department, module.department_id)
     assert department is not None
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Retained event",
@@ -418,6 +429,7 @@ def test_record_link_cap_and_database_parent_guards(integration_owner_db: Sessio
     _grant(db, board, write_only, "edit")
     module, record = _source(db, owner, write_only)
     event = BoardEvent(
+        org_id=board.org_id,
         board_id=board.id,
         author_id=owner.id,
         title="Bounded event",
@@ -431,6 +443,7 @@ def test_record_link_cap_and_database_parent_guards(integration_owner_db: Sessio
     savepoint = db.begin_nested()
     db.add(
         BoardRecordLink(
+            org_id=wrong_board.org_id,
             board_id=wrong_board.id,
             event_id=event.id,
             record_id=record.id,
@@ -441,11 +454,12 @@ def test_record_link_cap_and_database_parent_guards(integration_owner_db: Sessio
         db.flush()
     savepoint.rollback()
     for index in range(20):
-        source = Record(module_id=module.id, data={"index": index})
+        source = Record(org_id=module.org_id, module_id=module.id, data={"index": index})
         db.add(source)
         db.flush()
         db.add(
             BoardRecordLink(
+                org_id=board.org_id,
                 board_id=board.id,
                 event_id=event.id,
                 record_id=source.id,

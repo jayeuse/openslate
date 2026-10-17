@@ -1,6 +1,6 @@
 """Strict list-only directory projections and local inventory through real signed HTTP."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 from app.systems.access.identity.models import IdentityMfaObservation, IdentitySession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users import router as users_router
-from app.systems.access.users.models import User
+from app.systems.access.users.models import Membership, User
+from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
+from tests.conftest import create_member, membership_of
 
 pytest_plugins = ("tests.security_events.event_support",)
 pytestmark = pytest.mark.integration
@@ -25,6 +27,7 @@ def directory_world(event_world, monkeypatch):
     marker = f"directory-{uuid4().hex}"
     people = {}
     with Session(world.owner) as db:
+        organization = db.get(WorkspaceProfile, membership_of(db, world.actor_id).org_id)
         for key in (
             "active",
             "pending",
@@ -35,7 +38,8 @@ def directory_world(event_world, monkeypatch):
             "unknown",
             "stale",
         ):
-            user = User(
+            user, _membership = create_member(
+                db, organization,
                 id=uuid4(),
                 email=f"{marker}-{key}@example.test",
                 username=f"{marker}-{key}",
@@ -52,15 +56,15 @@ def directory_world(event_world, monkeypatch):
                 if key in {"false", "unknown", "stale"}
                 else world.clock + timedelta(days=7),
             )
-            db.add(user)
             people[key] = user.id
-        group = Group(id=uuid4(), name=marker)
-        department = Department(id=uuid4(), department_name=marker)
+        group = Group(id=uuid4(), org_id=organization.id, name=marker)
+        department = Department(id=uuid4(), org_id=organization.id, department_name=marker)
         db.add_all([group, department])
         db.flush()
-        db.add(GroupAccess(group_id=group.id, department_id=department.id, level="read"))
+        db.add(GroupAccess(org_id=organization.id, group_id=group.id,
+                           department_id=department.id, level="read"))
         for key in ("active", "pending", "false"):
-            db.add(GroupMember(group_id=group.id, user_id=people[key]))
+            db.add(GroupMember(org_id=organization.id, group_id=group.id, user_id=people[key]))
         for key in ("false", "stale"):
             user = db.get(User, people[key])
             db.add(
@@ -89,6 +93,11 @@ def directory_world(event_world, monkeypatch):
                 db.delete(row)
             db.delete(db.get(Group, group_id))
             db.delete(db.get(Department, department_id))
+            for row in db.scalars(
+                select(Membership).where(Membership.user_id.in_(people.values()))
+            ):
+                db.delete(row)
+            db.flush()
             for row in db.scalars(select(User).where(User.id.in_(people.values()))):
                 db.delete(row)
             db.commit()
@@ -184,6 +193,39 @@ def test_server_status_precedence_and_ending_match_the_designed_directory(
     complete = get_rows(context, status=status, limit=100)
     assert {UUID(row["id"]) for row in complete["items"]} == {
         context.people[key] for key in expected
+    }
+
+
+def test_disabling_an_account_updates_directory_status_filters_without_changing_expiry(
+    directory_world,
+):
+    context = directory_world
+    target_id = context.people["active"]
+    expires_at = context.world.clock + timedelta(days=7)
+    assert target_id in {
+        UUID(row["id"]) for row in get_rows(context, status="ending")["items"]
+    }
+
+    disabled = context.world.client.patch(
+        f"/api/users/{target_id}", json={"status": "disabled"}
+    )
+
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["status"] == "disabled"
+    assert datetime.fromisoformat(disabled.json()["expires_at"]) == expires_at
+    rows = get_rows(context, ids=str(target_id))["items"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "disabled"
+    assert datetime.fromisoformat(rows[0]["expires_at"]) == expires_at
+    filtered = {
+        status: {UUID(row["id"]) for row in get_rows(context, status=status)["items"]}
+        for status in ("active", "disabled", "ending", "expired")
+    }
+    assert filtered == {
+        "active": {context.people[key] for key in ("false", "unknown", "stale")},
+        "disabled": {context.people[key] for key in ("active", "disabled")},
+        "ending": {context.people["pending"]},
+        "expired": {context.people["expired"]},
     }
 
 
@@ -394,8 +436,7 @@ def test_recorded_history_days_reject_noninteger_and_out_of_range_queries(direct
 def test_recorded_history_endpoints_retain_exact_admin_admission(directory_world):
     world = directory_world.world
     with Session(world.owner) as db:
-        actor = db.get(User, world.actor_id)
-        actor.role = "member"
+        membership_of(db, world.actor_id).role = "member"
         db.commit()
     try:
         for path in ("/api/users", "/api/users/summary"):
@@ -408,5 +449,5 @@ def test_recorded_history_endpoints_retain_exact_admin_admission(directory_world
             assert response.status_code == 403
     finally:
         with Session(world.owner) as db:
-            db.get(User, world.actor_id).role = "admin"
+            membership_of(db, world.actor_id).role = "admin"
             db.commit()

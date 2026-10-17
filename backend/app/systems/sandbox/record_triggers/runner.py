@@ -391,6 +391,7 @@ def _finish_run(
     ):
         db.add(
             RecordTriggerRun(
+                org_id=event.org_id,
                 event_id=event.id, trigger_id=definition.id, state=state, details=details
             )
         )

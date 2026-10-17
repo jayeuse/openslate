@@ -15,8 +15,10 @@ from app.core.integrations.supabase_auth import (
 from app.systems.access.identity import provider_sessions, provider_user_cache
 from app.systems.access.identity.mfa import MFARequired
 from app.systems.access.identity.models import IdentitySession
-from app.systems.access.users.models import User, UserRole, UserStatus
+from app.systems.access.users.models import UserRole, UserStatus
+from app.systems.manage.workspace.models import WorkspaceProfile
 from tests.auth.provider_jwt_support import session_database
+from tests.conftest import create_member
 
 
 def _subject(*, assurance: str = "aal1"):
@@ -33,7 +35,7 @@ def _subject(*, assurance: str = "aal1"):
         refreshed_at=now,
         expires_at=now + timedelta(days=1),
     )
-    user = User(
+    user, membership = create_member(None, WorkspaceProfile(id=uuid4()),
         id=user_id,
         supabase_user_id=provider_user_id,
         email="person@example.test",
@@ -46,7 +48,7 @@ def _subject(*, assurance: str = "aal1"):
     )
     client = Mock()
     client.get_admin_user.return_value = ProviderUser(provider_user_id, None)
-    return now, session_database(user, session), claims, client
+    return now, session_database(user, membership, session), claims, client
 
 
 def test_recent_provider_account_admits_without_another_provider_read() -> None:

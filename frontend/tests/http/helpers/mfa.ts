@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { quietEventSource, type Page } from "./test";
+import { authMeBody, quietEventSource, type Page } from "./test";
 import { addTestStylesheet } from "./test-styles";
 
 export const mfaUserA = "00000000-0000-4000-8000-000000000001";
@@ -93,11 +93,12 @@ export async function mockMfa(
   await quietEventSource(page);
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
-      json: {
+      json: authMeBody({
         id: state.userId,
         role: "admin",
         access: [],
-      },
+        default_organization_blocked: null,
+      }),
     }),
   );
   await page.route("**/api/auth/session", async (route) => {
@@ -133,7 +134,12 @@ export async function mockMfa(
               },
             }
           : state.authenticated
-            ? { authenticated: true, user_id: userId, setup_required: false }
+            ? {
+                authenticated: true,
+                user_id: userId,
+                setup_required: false,
+                default_organization_blocked: null,
+              }
             : { authenticated: false },
     });
   });

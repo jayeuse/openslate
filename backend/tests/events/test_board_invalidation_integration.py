@@ -11,7 +11,7 @@ from app.systems.boards.models import Board, BoardScope
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.manage.audit.listeners import REALTIME_INVALIDATION_KEY
 from app.systems.platform.events.models import InvalidationEvent
-from tests.rbac.support import add_user
+from tests.rbac.support import add_user, organization
 
 pytestmark = pytest.mark.integration
 
@@ -30,14 +30,17 @@ def test_new_board_scope_and_deleted_parent_chain_survive_flushes_and_commit_ded
 ) -> None:
     db = integration_db
     author = add_user(db, role=UserRole.ADMIN)
-    board = Board(scope=BoardScope.PROJECT, name=f"Events {uuid7()}")
+    board = Board(org_id=organization(db).id,
+                  scope=BoardScope.PROJECT, name=f"Events {uuid7()}")
     db.add(board)
     db.flush()
     board_id = board.id
     post = BoardPost(
+        org_id=board.org_id,
         id=uuid7(), board_id=board_id, author_id=author.id, title="Count", body="Today"
     )
     revision = BoardPostRevision(
+        org_id=post.org_id,
         id=uuid7(),
         post_id=post.id,
         publication_number=1,
@@ -81,7 +84,8 @@ def test_new_board_scope_and_deleted_parent_chain_survive_flushes_and_commit_ded
     ]
     assert REALTIME_INVALIDATION_KEY not in db.info
 
-    board = Board(scope=BoardScope.PROJECT, name=f"Rollback {uuid7()}")
+    board = Board(org_id=organization(db).id,
+                  scope=BoardScope.PROJECT, name=f"Rollback {uuid7()}")
     db.add(board)
     db.flush()
     assert _board_payloads(db) == [{"entity": "boards", "board_id": str(board.id)}]
