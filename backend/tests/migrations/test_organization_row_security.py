@@ -25,13 +25,7 @@ from app.systems.sandbox.departments.models import Department
 from tests.conftest import guarded_create_engine
 from tests.migrations.test_organization_root import MIXED_TABLES, ORGANIZATION_TABLES
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("TEST_DATABASE_URL") is None,
-        reason="Set TEST_DATABASE_URL to run PostgreSQL integration tests",
-    ),
-]
+pytestmark = pytest.mark.integration
 
 
 @dataclass(frozen=True)

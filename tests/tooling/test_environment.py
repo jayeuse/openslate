@@ -22,9 +22,9 @@ environment = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = environment
 spec.loader.exec_module(environment)
 
-from operations.supabase_keys import realtime_secrets  # noqa: E402
-
-REALTIME_SIGNING_KEY = realtime_secrets()[0]["REALTIME_TOKEN_SIGNING_KEY"]
+# environment.py adds backend/ to sys.path, so the key generator imports only after it.
+supabase_keys = importlib.import_module("operations.supabase_keys")
+REALTIME_SIGNING_KEY = supabase_keys.realtime_secrets()[0]["REALTIME_TOKEN_SIGNING_KEY"]
 
 
 def fixture() -> dict[str, str]:

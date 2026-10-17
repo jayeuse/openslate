@@ -6,6 +6,7 @@ case for a guest, who can read but never write.
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Annotated
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
@@ -113,7 +114,9 @@ def world(integration_owner_db: Session) -> Iterator[_World]:
     # /auth/me reads the account and its organization context, not the current user.
     app.dependency_overrides[get_account_user] = lambda: actor[0]
 
-    def account_organization(request_db: Session = Depends(get_db)) -> AccountOrganization:  # noqa: B008
+    def account_organization(
+        request_db: Annotated[Session, Depends(get_db)],
+    ) -> AccountOrganization:
         membership = membership_of(request_db, actor[0].id)
         scope_session(request_db, membership.org_id)
         return AccountOrganization(membership)

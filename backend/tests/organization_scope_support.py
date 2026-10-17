@@ -58,7 +58,9 @@ def scoped_override(
     """
 
     # Defaults, not Annotated: string annotations cannot resolve the closure's ``original``.
-    def dependency(db: Session = Depends(get_db), value: Any = Depends(original)) -> Any:  # noqa: B008
+    database, resolved = Depends(get_db), Depends(original)
+
+    def dependency(db: Session = database, value: Any = resolved) -> Any:
         user = getattr(value, "user", value)
         user_id = getattr(user, "id", None)
         # Mocked sessions (``Mock(spec=Session)``) have no real info and no database.
