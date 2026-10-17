@@ -1,6 +1,14 @@
 import { useUserPreferences } from "@/components/theme-provider";
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
-import { useCallback, useState, useEffect, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import type {
   SandboxBinding,
   SandboxLifecycleBinding,
@@ -68,7 +76,6 @@ import {
 import {
   SandboxCanvas,
   type SandboxCanvasApi,
-  type SandboxCanvasViewState,
   type SandboxDropKind,
 } from "@/components/sandbox/sandbox-canvas";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
@@ -209,6 +216,85 @@ function updateProjectedFieldOrThrow(
   return updateProjectedField(design, id, patch);
 }
 
+// The canvas reports zoom on every wheel step. Only the zoom controls read it,
+// so it lives in this small store instead of Designer state: a zoom step then
+// re-renders the controls, not the whole designer.
+type CanvasZoomStore = {
+  get: () => number;
+  set: (zoom: number) => void;
+  subscribe: (listener: () => void) => () => void;
+};
+
+function createCanvasZoomStore(): CanvasZoomStore {
+  let zoom = 1;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => zoom,
+    set: (next) => {
+      if (next === zoom) return;
+      zoom = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+function CanvasZoomControls({
+  zoomStore,
+  graphRef,
+}: {
+  zoomStore: CanvasZoomStore;
+  graphRef: RefObject<SandboxCanvasApi | null>;
+}) {
+  const zoom = useSyncExternalStore(
+    zoomStore.subscribe,
+    zoomStore.get,
+    zoomStore.get,
+  );
+  const atMinZoom = zoom <= SANDBOX_ZOOM.min + 0.001;
+  const atMaxZoom = zoom >= SANDBOX_ZOOM.max - 0.001;
+  return (
+    <>
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label="Zoom out"
+        aria-disabled={atMinZoom}
+        className="size-11 aria-disabled:opacity-50"
+        onClick={() => {
+          if (!atMinZoom) graphRef.current?.zoomOut();
+        }}
+      >
+        <ZoomOut aria-hidden="true" />
+      </Button>
+      <output
+        role="status"
+        aria-label="Canvas zoom"
+        className="text-muted-foreground min-w-12 shrink-0 text-center text-xs tabular-nums"
+      >
+        {Math.round(zoom * 100)}%
+      </output>
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label="Zoom in"
+        aria-disabled={atMaxZoom}
+        className="size-11 aria-disabled:opacity-50"
+        onClick={() => {
+          if (!atMaxZoom) graphRef.current?.zoomIn();
+        }}
+      >
+        <ZoomIn aria-hidden="true" />
+      </Button>
+    </>
+  );
+}
+
 export function Designer({
   initialSelected,
   inspectOnOpen,
@@ -287,11 +373,11 @@ export function Designer({
   const panelGroupElementRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<SandboxCanvasApi | null>(null);
   const canvasFrameRef = useRef<HTMLDivElement>(null);
-  const [canvasView, setCanvasView] = useState<SandboxCanvasViewState>({
-    zoom: 1,
+  const [canvasView, setCanvasView] = useState({
     gridVisible: viewPreferences.gridVisible,
     snapEnabled: viewPreferences.snapEnabled,
   });
+  const [zoomStore] = useState(createCanvasZoomStore);
   const [canvasHelpOpen, setCanvasHelpOpen] = useState(false);
   const [canvasAction, setCanvasAction] = useState("Canvas ready.");
   // A visible note on the canvas: what a pinned trace shows, or that Fit
@@ -1002,8 +1088,6 @@ export function Designer({
     selectedModule ?? design.departments.find((item) => item.id === selected);
   const designIsEmpty =
     design.departments.length === 0 && design.modules.length === 0;
-  const atMinZoom = canvasView.zoom <= SANDBOX_ZOOM.min + 0.001;
-  const atMaxZoom = canvasView.zoom >= SANDBOX_ZOOM.max - 0.001;
   const currentDeleteImpact = deletionImpact(
     design,
     deleteTarget,
@@ -2227,37 +2311,10 @@ export function Designer({
                     aria-label="Canvas view controls"
                     className="flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-x-auto py-1 [&>button]:shrink-0"
                   >
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label="Zoom out"
-                      aria-disabled={atMinZoom}
-                      className="size-11 aria-disabled:opacity-50"
-                      onClick={() => {
-                        if (!atMinZoom) graphRef.current?.zoomOut();
-                      }}
-                    >
-                      <ZoomOut aria-hidden="true" />
-                    </Button>
-                    <output
-                      role="status"
-                      aria-label="Canvas zoom"
-                      className="text-muted-foreground min-w-12 shrink-0 text-center text-xs tabular-nums"
-                    >
-                      {Math.round(canvasView.zoom * 100)}%
-                    </output>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label="Zoom in"
-                      aria-disabled={atMaxZoom}
-                      className="size-11 aria-disabled:opacity-50"
-                      onClick={() => {
-                        if (!atMaxZoom) graphRef.current?.zoomIn();
-                      }}
-                    >
-                      <ZoomIn aria-hidden="true" />
-                    </Button>
+                    <CanvasZoomControls
+                      zoomStore={zoomStore}
+                      graphRef={graphRef}
+                    />
                     <Button
                       size="sm"
                       className="min-h-11"
@@ -2544,7 +2601,7 @@ export function Designer({
                     graphRef={graphRef}
                     gridVisible={canvasView.gridVisible}
                     snapEnabled={canvasView.snapEnabled}
-                    onViewChange={setCanvasView}
+                    onZoomChange={zoomStore.set}
                     onSelect={(id) => {
                       setSelected(id ?? "");
                       if (id) setWorkbenchTab("Inspector");

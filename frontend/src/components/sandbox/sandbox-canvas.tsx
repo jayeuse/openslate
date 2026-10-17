@@ -104,7 +104,8 @@ export interface SandboxCanvasProps {
   onLayoutChange?: (layout: SandboxCanvasLayout) => SandboxCommand;
   gridVisible?: boolean;
   snapEnabled?: boolean;
-  onViewChange?: (view: SandboxCanvasViewState) => void;
+  /** Reports the zoom once at start and on every zoom step. */
+  onZoomChange?: (zoom: number) => void;
   onSelect: (cellId: string | null) => void;
   onRenameDepartment: (departmentId: string, name: string) => SandboxCommand;
   onRenameModule: (moduleId: string, name: string) => SandboxCommand;
@@ -135,7 +136,7 @@ interface SandboxCanvasRuntime {
 
 interface SandboxCanvasCallbacks {
   onLayoutChange?: SandboxCanvasProps["onLayoutChange"];
-  onViewChange?: SandboxCanvasProps["onViewChange"];
+  onZoomChange?: SandboxCanvasProps["onZoomChange"];
   onSelect: (cellId: string | null) => void;
   onRenameDepartment: SandboxCanvasProps["onRenameDepartment"];
   onRenameModule: SandboxCanvasProps["onRenameModule"];
@@ -172,7 +173,7 @@ export function SandboxCanvas({
   onLayoutChange,
   gridVisible = true,
   snapEnabled = true,
-  onViewChange,
+  onZoomChange,
   onSelect,
   onRenameDepartment,
   onRenameModule,
@@ -207,7 +208,7 @@ export function SandboxCanvas({
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
   const callbacksRef = useRef<SandboxCanvasCallbacks>({
     onLayoutChange,
-    onViewChange,
+    onZoomChange,
     onSelect,
     onRenameDepartment,
     onRenameModule,
@@ -230,7 +231,7 @@ export function SandboxCanvas({
   useEffect(() => {
     callbacksRef.current = {
       onLayoutChange,
-      onViewChange,
+      onZoomChange,
       onSelect,
       onRenameDepartment,
       onRenameModule,
@@ -254,11 +255,6 @@ export function SandboxCanvas({
     graph.setGridSize(snapEnabled ? SANDBOX_GRID_SIZE : 1);
     if (gridRef.current)
       gridRef.current.dataset.snapSize = `${graph.getGridSize()}`;
-    callbacksRef.current.onViewChange?.({
-      zoom: graph.zoom(),
-      gridVisible,
-      snapEnabled,
-    });
   }, [gridVisible, snapEnabled]);
   // Single Graph owner: create once, dispose on unmount (StrictMode-safe).
   useEffect(() => {
@@ -309,12 +305,8 @@ export function SandboxCanvas({
       return layoutQueue;
     };
 
-    const emitViewState = (): void => {
-      callbacksRef.current.onViewChange?.({
-        zoom: graph.zoom(),
-        gridVisible: gridVisibleRef.current,
-        snapEnabled: snapEnabledRef.current,
-      });
+    const emitZoom = (): void => {
+      callbacksRef.current.onZoomChange?.(graph.zoom());
     };
     const updateGridVisual = (): void => {
       const grid = gridRef.current;
@@ -339,7 +331,7 @@ export function SandboxCanvas({
       grid.dataset.translate = `${offsetX},${offsetY}`;
     };
     updateGridVisual();
-    emitViewState();
+    emitZoom();
     // Keep an open inline editor on its text while the view zooms or pans.
     const reanchorEditor = (): void => {
       const current = editorRef.current;
@@ -355,7 +347,7 @@ export function SandboxCanvas({
     };
     const updateScale = (): void => {
       updateGridVisual();
-      emitViewState();
+      emitZoom();
       reanchorEditor();
     };
     const updateTranslate = (): void => {
