@@ -1,9 +1,12 @@
 import { useUserPreferences } from "@/components/theme-provider";
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
 import {
+  memo,
   useCallback,
   useState,
+  useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useSyncExternalStore,
@@ -101,6 +104,7 @@ import {
 import type {
   SandboxCanvasLayout,
   SandboxFieldType,
+  SandboxState,
 } from "@/lib/sandbox/model";
 import {
   canvasFieldId,
@@ -214,6 +218,59 @@ function updateProjectedFieldOrThrow(
       "This field was deleted. Keep the field edit open and try again.",
     );
   return updateProjectedField(design, id, patch);
+}
+
+// The Structure outline renders a row for every field, the slowest part of a
+// Designer render (about 135 ms for the Harbor sample in the dev build). The
+// Designer gives it deferred inputs and stable handlers, so a canvas drop or a
+// save never waits for it: React updates it in the background instead.
+const StructureOutline = memo(SandboxInspector);
+
+type HandlerSet = Record<string, (...args: never[]) => unknown>;
+
+function createStableHandlers<T extends HandlerSet>(initial: T) {
+  let current = initial;
+  const handlers = Object.fromEntries(
+    Object.keys(initial).map((key) => [
+      key,
+      (...args: never[]) => current[key](...args),
+    ]),
+  ) as T;
+  return {
+    handlers,
+    update: (next: T) => {
+      current = next;
+    },
+  };
+}
+
+/**
+ * Returns functions that keep one identity and always call the newest handler,
+ * so a memoized child does not re-render for new closures.
+ */
+function useStableHandlers<T extends HandlerSet>(handlers: T): T {
+  const [stable] = useState(() => createStableHandlers(handlers));
+  useLayoutEffect(() => {
+    stable.update(handlers);
+  });
+  return stable.handlers;
+}
+
+/**
+ * True only after `active` has stayed true for `delay` ms, so a fast save does
+ * not flash every outline control disabled and back.
+ */
+function useDelayedFlag(active: boolean, delay: number): boolean {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setShown(false);
+      return;
+    }
+    const timer = setTimeout(() => setShown(true), delay);
+    return () => clearTimeout(timer);
+  }, [active, delay]);
+  return shown;
 }
 
 // The canvas reports zoom on every wheel step. Only the zoom controls read it,
@@ -733,15 +790,26 @@ export function Designer({
     if (!result.ok) notify(result.error);
     return result;
   }
+  // The Structure outline reads lifecycle state from its deferred inputs; every
+  // other caller reads the current ones.
+  const currentLifecycleInputs = {
+    design,
+    bindings,
+    pending,
+    draftDirty: localDraftDirty,
+  };
   function bindingFor(
     target: SandboxInspectorTarget,
+    inputs = currentLifecycleInputs,
   ): SandboxLifecycleBinding | undefined {
     const kind = target.kind === "link" ? "relationship" : target.kind;
     const field =
-      target.kind === "field" ? projectedField(design, target.id) : undefined;
+      target.kind === "field"
+        ? projectedField(inputs.design, target.id)
+        : undefined;
     const id = field?.field.id ?? target.id;
     const parent = field?.moduleId ?? null;
-    const binding = bindings?.find(
+    const binding = inputs.bindings?.find(
       (item) =>
         item.kind === kind &&
         item.sandbox_id === id &&
@@ -749,19 +817,25 @@ export function Designer({
     );
     return binding ? { ...binding, kind } : undefined;
   }
-  function lifecycleState(target: SandboxInspectorTarget) {
-    const binding = bindingFor(target);
+  function lifecycleState(
+    target: SandboxInspectorTarget,
+    inputs = currentLifecycleInputs,
+  ) {
+    const binding = bindingFor(target, inputs);
     const draftClosed =
       target.kind === "department"
-        ? design.departments.find((item) => item.id === target.id)?.closed
+        ? inputs.design.departments.find((item) => item.id === target.id)
+            ?.closed
         : target.kind === "module"
-          ? design.modules.find((item) => item.id === target.id)?.closed
-          : projectedField(design, target.id)?.field.closed;
+          ? inputs.design.modules.find((item) => item.id === target.id)?.closed
+          : projectedField(inputs.design, target.id)?.field.closed;
     return {
       closed: binding?.is_deleted ?? draftClosed ?? false,
       canPurge: purgeEnabled && Boolean(binding?.is_deleted),
       disabled:
-        pending || bindings === null || Boolean(binding && localDraftDirty),
+        inputs.pending ||
+        inputs.bindings === null ||
+        Boolean(binding && inputs.draftDirty),
     };
   }
   async function purgeLifecycle(
@@ -1618,58 +1692,101 @@ export function Designer({
       </div>
     </form>
   );
+  // The outline's inputs change only when what it shows changes. A layout-only
+  // save keeps the same projection; a save shows as busy only after 300 ms; and
+  // while bindings reload, the outline keeps the last loaded ones (its handlers
+  // still check the current bindings and refuse until they load).
+  const outlineDesign = useDeferredValue(design);
+  const outlinePending = useDelayedFlag(pending, 300);
+  const outlineDraftDirty = useDeferredValue(localDraftDirty);
+  const [outlineBindings, setOutlineBindings] = useState(bindings);
+  if (bindings !== null && bindings !== outlineBindings)
+    setOutlineBindings(bindings);
+  const outlineStateJson = useMemo(
+    () => JSON.stringify(projectDesign(outlineDesign, selected)),
+    [outlineDesign, selected],
+  );
+  const outlineState = useMemo(
+    () => JSON.parse(outlineStateJson) as SandboxState,
+    [outlineStateJson],
+  );
+  const outlineBindingsJson = useMemo(
+    () => JSON.stringify(outlineBindings),
+    [outlineBindings],
+  );
+  // Equal projection JSON means equal closed flags and the same canvas id to
+  // module and field mapping; equal bindings JSON means equal lookups. So these
+  // keys, not object identity, decide when the lifecycle state changes.
+  const outlineLifecycleState = useCallback(
+    (target: SandboxInspectorTarget) =>
+      lifecycleState(target, {
+        design: outlineDesign,
+        bindings: outlineBindings,
+        pending: outlinePending,
+        draftDirty: outlineDraftDirty,
+      }),
+    [
+      outlineStateJson,
+      outlineBindingsJson,
+      outlinePending,
+      outlineDraftDirty,
+      purgeEnabled,
+    ],
+  );
+  const outlineHandlers = useStableHandlers({
+    onSelect: selectItem,
+    onEdit: (id: string) => {
+      selectItem(id);
+      const relationship = design.relationships.find((item) => item.id === id);
+      if (relationship) editRelationship(id);
+      else setEditor("");
+    },
+    onRenameDepartment: renameDepartment,
+    onRenameModule: renameModule,
+    onUpdateField: (
+      id: string,
+      patch: Parameters<typeof updateProjectedField>[2],
+    ) =>
+      change(
+        (previous) => updateProjectedFieldOrThrow(previous, id, patch),
+        `sandbox.design.field:${id}`,
+      ),
+    onDeleteSelected: requestDelete,
+    onDuplicate: duplicateTarget,
+    onToggleLifecycle: toggleLifecycle,
+    onPurge: purgeLifecycle,
+    onEditingChange: setOutlineEditing,
+    onAddDepartment: () => open("department"),
+    onAddModule: (id: string) => {
+      setSelected(id);
+      open("module");
+    },
+    onAddField: (id: string, fieldType: SandboxFieldType) => {
+      setSelected(id);
+      open("field");
+      setType(fieldTypeNames[fieldType]);
+    },
+    onAddRelationship: () => {
+      setSelected(selectedModule?.id ?? design.modules[0]?.id ?? "");
+      open("relationship");
+      setTarget(
+        design.modules.find(
+          (item) => item.id !== (selectedModule?.id ?? design.modules[0]?.id),
+        )?.id ?? "",
+      );
+    },
+  });
   const structurePane = (
     <aside
       tabIndex={-1}
       aria-label="Organization structure"
       className="h-full min-w-0 p-3 [&_section]:w-full [&_section]:min-w-0"
     >
-      <SandboxInspector
-        state={projected}
-        onSelect={selectItem}
-        onEdit={(id) => {
-          selectItem(id);
-          const relationship = design.relationships.find(
-            (item) => item.id === id,
-          );
-          if (relationship) editRelationship(id);
-          else setEditor("");
-        }}
-        onRenameDepartment={renameDepartment}
-        onRenameModule={renameModule}
-        onUpdateField={(id, patch) =>
-          change(
-            (previous) => updateProjectedFieldOrThrow(previous, id, patch),
-            `sandbox.design.field:${id}`,
-          )
-        }
-        onDeleteSelected={requestDelete}
-        onDuplicate={duplicateTarget}
-        onToggleLifecycle={toggleLifecycle}
-        lifecycleState={lifecycleState}
-        onPurge={purgeLifecycle}
-        onEditingChange={setOutlineEditing}
-        onAddDepartment={() => open("department")}
-        onAddModule={(id) => {
-          setSelected(id);
-          open("module");
-        }}
-        onAddField={(id, fieldType) => {
-          setSelected(id);
-          open("field");
-          setType(fieldTypeNames[fieldType]);
-        }}
-        pending={pending}
-        onAddRelationship={() => {
-          setSelected(selectedModule?.id ?? design.modules[0]?.id ?? "");
-          open("relationship");
-          setTarget(
-            design.modules.find(
-              (item) =>
-                item.id !== (selectedModule?.id ?? design.modules[0]?.id),
-            )?.id ?? "",
-          );
-        }}
+      <StructureOutline
+        state={outlineState}
+        lifecycleState={outlineLifecycleState}
+        pending={outlinePending}
+        {...outlineHandlers}
       />
       {selected ? (
         <Button
