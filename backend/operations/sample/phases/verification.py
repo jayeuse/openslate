@@ -156,7 +156,8 @@ def _request_matches(
         valid = False
     descriptor_id = evidence.get("primary_entity_id")
     expected_id = session_id if rule.dynamic_session else rule.entity_id
-    if rule.entity == "sandbox_documents":
+    if rule.entity in {"sandbox_documents", "memberships"}:
+        # Neither row ID is visible to the client; the audit row identifies it.
         if descriptor_id is not None:
             issues.append("phase document descriptor claims an unavailable row ID")
             valid = False
@@ -189,6 +190,17 @@ def _request_matches(
         if expected_id is not None and _uuid(entity_id) != expected_id:
             issues.append("phase primary audit points to another entity")
             valid = False
+        if rule.entity == "memberships":
+            # The request's one membership update must be the role change itself.
+            before, after = primary[0].get("before"), primary[0].get("after")
+            if (
+                not isinstance(before, Mapping)
+                or not isinstance(after, Mapping)
+                or after.get("role") not in {"admin", "member", "guest"}
+                or before.get("role") == after.get("role")
+            ):
+                issues.append("phase membership audit is not the planned role change")
+                valid = False
         if rule.entity == "sandbox_documents":
             canonical = _uuid(entity_id)
             if canonical is None:

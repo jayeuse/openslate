@@ -107,8 +107,9 @@ def test_promote_user_sends_only_planned_role_change_and_returns_safe_attributio
     assert result["actor_key"] == "admin"
     evidence = result["request_evidence"]
     assert evidence[0]["request_id"] == request_id
-    assert evidence[0]["primary_entity_type"] == "users"
-    assert evidence[0]["primary_entity_id"] == TARGET_ID
+    # A role lives on the membership, whose row ID the client cannot see.
+    assert evidence[0]["primary_entity_type"] == "memberships"
+    assert evidence[0]["primary_entity_id"] is None
     assert evidence[0]["primary_action"] == "update"
     assert evidence[0]["expected_audit_rows"] == 1
     assert "fixture-admin-password" not in repr(result)

@@ -169,8 +169,15 @@ def _access_action(
             on_substep=on_substep,
             json_body=body,
             expected_detail=action.expected_detail if refusal else None,
-            primary_entity_type=None if refusal else "users",
-            primary_entity_id=None if refusal else user_id,
+            # A role lives on the membership (S04); status stays on the account.
+            primary_entity_type=None
+            if refusal
+            else "memberships"
+            if kind in {"promote_user", "demote_user"}
+            else "users",
+            primary_entity_id=None
+            if refusal or kind in {"promote_user", "demote_user"}
+            else user_id,
             primary_action=None if refusal else "update",
             expected_audit_rows=0 if refusal else 1,
             related_entity_types=("groups", "group_members")

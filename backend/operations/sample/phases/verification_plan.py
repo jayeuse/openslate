@@ -151,6 +151,8 @@ def _rules(
         "restore_disabled_user",
     }:
         refusal = kind == "refuse_role_change"
+        # A role lives on the membership (S04): its audit row is the membership's.
+        role_change = kind in {"promote_user", "demote_user"}
         related = (
             ("groups", "group_members")
             if kind == "promote_user"
@@ -163,8 +165,8 @@ def _rules(
                 "PATCH",
                 user_path,
                 action.expected_status,
-                None if refusal else "users",
-                None if refusal else user_id,
+                None if refusal else "memberships" if role_change else "users",
+                None if refusal or role_change else user_id,
                 None if refusal else "update",
                 0 if refusal else 1,
                 related,
