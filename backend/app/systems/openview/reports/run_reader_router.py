@@ -84,8 +84,10 @@ def _report_for_output(db: Session, user: User, report_id: UUID) -> Report:
     return report
 
 
-def accessible_run(db: Session, report_id: UUID, run_id: UUID, user: User) -> ReportRun:
-    run = db.scalar(
+def accessible_run(
+    db: Session, report_id: UUID, run_id: UUID, user: User, *, metadata_only: bool = False
+) -> ReportRun:
+    statement = (
         select(ReportRun)
         .join(
             ReportRunEligibleUser,
@@ -99,6 +101,9 @@ def accessible_run(db: Session, report_id: UUID, run_id: UUID, user: User) -> Re
             module_filter(db, user, AccessLevel.READ, ReportRun.module_id),
         )
     )
+    if metadata_only:
+        statement = statement.options(load_only(*REPORT_RUN_METADATA_COLUMNS, raiseload=True))
+    run = db.scalar(statement)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Report run not found")
     return run
@@ -173,7 +178,7 @@ def list_report_runs(
 @router.get("/{report_id}/runs/{run_id}", response_model=ReportRunResponse)
 def read_report_run(report_id: UUID, run_id: UUID, user: Reader, db: Database) -> ReportRunResponse:
     report = _report_for_output(db, user, report_id)
-    return run_response(accessible_run(db, report.id, run_id, user))
+    return run_response(accessible_run(db, report.id, run_id, user, metadata_only=True))
 
 
 @router.get("/{report_id}/runs/{run_id}/csv")
