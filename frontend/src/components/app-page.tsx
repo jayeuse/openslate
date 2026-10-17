@@ -89,12 +89,15 @@ function supersedeSessionCheck(current: CheckQueue) {
 function SessionVerificationMessage({
   draftCleanupFailed,
   unavailable,
+  backgrounded,
   onRetry,
   onSignOut,
   signOutError,
 }: {
   draftCleanupFailed: boolean;
   unavailable: boolean;
+  /** Hidden because the window lost focus; nothing is checked until it returns. */
+  backgrounded: boolean;
   onRetry: () => void;
   onSignOut?: () => void;
   signOutError?: boolean;
@@ -113,13 +116,22 @@ function SessionVerificationMessage({
           available.
         </Alert>
       ) : (
-        <p className="text-muted-foreground text-center text-sm" role="status">
-          Checking your session…
+        <p
+          className="text-muted-foreground text-center text-sm text-balance"
+          role="status"
+        >
+          {backgrounded
+            ? "Your workspace is hidden while you use another window or tab."
+            : "Checking your session…"}
         </p>
       )}
       <div className="mt-5 flex flex-wrap justify-center gap-3">
         <Button className="min-h-11" onClick={onRetry} type="button">
-          {unavailable ? "Retry" : "Check again"}
+          {unavailable
+            ? "Retry"
+            : backgrounded && !draftCleanupFailed
+              ? "Show workspace"
+              : "Check again"}
         </Button>
         {onSignOut && (
           <Button
@@ -178,6 +190,7 @@ export function AppPage({ children }: AppPageProps) {
   const [checking, setChecking] = useState(true);
   const [forceFallback, setForceFallback] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [backgrounded, setBackgrounded] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [networkDenied, setNetworkDenied] = useState(false);
   const [accountProfileAvailable, setAccountProfileAvailable] = useState(false);
@@ -277,7 +290,7 @@ export function AppPage({ children }: AppPageProps) {
   }, [checking, unavailable, verifiedUserId]);
 
   useEffect(() => {
-    function concealWorkspace() {
+    function concealWorkspace(background: boolean) {
       if (!mounted.current || signOutAccepted.current) return;
       // A tab's cookie identity can change elsewhere. Invalidate an in-flight
       // result and cover even body-level portals before the next browser paint.
@@ -296,13 +309,14 @@ export function AppPage({ children }: AppPageProps) {
       flushSync(() => {
         setChecking(true);
         setUnavailable(false);
+        setBackgrounded(background);
       });
     }
 
     function recheckOnReturn() {
       if (signOutAccepted.current || document.visibilityState !== "visible")
         return;
-      concealWorkspace();
+      concealWorkspace(false);
       setRetryVersion((version) => version + 1);
     }
 
@@ -310,7 +324,7 @@ export function AppPage({ children }: AppPageProps) {
       // The first session request has no protected tree to conceal. Let it
       // finish while backgrounded; a later focus will supersede and recheck.
       if (!curtain.current && !mfaRequired) return;
-      concealWorkspace();
+      concealWorkspace(true);
     }
 
     function onVisibilityChange() {
@@ -347,6 +361,8 @@ export function AppPage({ children }: AppPageProps) {
 
   useEffect(() => {
     if (signOutAccepted.current) return;
+    // A check is about to run, so the curtain says so.
+    setBackgrounded(false);
     const current = queue.current;
     current.queued = {
       pathname,
@@ -686,6 +702,7 @@ export function AppPage({ children }: AppPageProps) {
   function retrySessionCheck() {
     hideMfa();
     supersedeSessionCheck(queue.current);
+    setBackgrounded(false);
     setUnavailable(false);
     setDraftCleanupFailed(false);
     setRetryVersion((version) => version + 1);
@@ -859,6 +876,7 @@ export function AppPage({ children }: AppPageProps) {
     <SessionVerificationMessage
       draftCleanupFailed={draftCleanupFailed}
       unavailable={unavailable}
+      backgrounded={backgrounded}
       onRetry={retrySessionCheck}
       onSignOut={mfaRequired ? () => void signOutFromGate() : undefined}
       signOutError={signOutError}
