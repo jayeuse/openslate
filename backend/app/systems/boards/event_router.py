@@ -320,7 +320,8 @@ def update_board_event(
     )
     try:
         definition = EventDefinition.model_validate(values)
-    except ValidationError as error:
+        definition.require_bounded_occurrences()
+    except ValueError as error:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "event_invalid", "message": "Event fields are invalid"},

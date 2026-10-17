@@ -1,19 +1,24 @@
 """Board event API: input contract, author and manager lifecycle, and revisions."""
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.event_author_router import router as author_router
 from app.systems.boards.event_models import BoardEvent
+from app.systems.boards.event_occurrences import expand_board_event_occurrences
 from app.systems.boards.event_router import router
 from app.systems.boards.event_schemas import EventCreate
 from app.systems.boards.models import Board
+from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.platform.scheduling.models import ScheduledWork, WorkKind, WorkState
 from tests.boards.support import admin, client, grant, member, project_board
 
 
@@ -86,6 +91,192 @@ def test_event_input_rejects_temporal_ambiguity_and_unsupported_content() -> Non
     for candidate in invalid:
         with pytest.raises(ValidationError):
             EventCreate.model_validate(candidate)
+
+
+@pytest.mark.parametrize(
+    ("recurrence", "anchor", "end", "until", "accepted"),
+    [
+        ("none", "2026-01-01", "9999-12-31", None, True),
+        ("daily", "2026-01-01", "2026-02-28", "9999-12-31", True),
+        ("daily", "2026-01-01", "2026-03-01", "9999-12-31", False),
+        ("weekly", "2026-01-01", "2027-10-21", "9999-12-31", True),
+        ("weekly", "2026-01-01", "2027-10-22", "9999-12-31", False),
+        ("daily", "2026-01-01", "2026-01-01", "9999-12-31", True),
+        ("weekly", "2026-01-01", "2026-01-01", "9999-12-31", True),
+        ("monthly", "2026-01-31", "2026-01-31", "9999-12-31", True),
+        ("daily", "2026-01-01", "2028-01-01", "2026-04-10", True),
+        ("daily", "2026-01-01", "2028-01-01", "2026-04-11", False),
+        ("weekly", "2026-01-01", "2028-01-01", "2027-11-25", True),
+        ("weekly", "2026-01-01", "2028-01-01", "2027-12-02", False),
+        # The 31st occurs seven times a year; the hundredth start is March 2034.
+        ("monthly", "2020-01-31", "2035-01-31", "2034-03-31", True),
+        ("monthly", "2020-01-31", "2035-01-31", "2034-05-30", True),
+        ("monthly", "2020-01-31", "2035-01-31", "2034-05-31", False),
+        ("monthly", "9990-01-31", "9999-12-31", "9999-12-31", True),
+    ],
+)
+def test_all_day_series_admission_preserves_bounded_calendar_reads(
+    recurrence: str, anchor: str, end: str, until: str | None, accepted: bool
+) -> None:
+    payload = _payload(
+        1, start_date=anchor, end_date=end, recurrence=recurrence, repeat_until=until
+    )
+    if not accepted:
+        with pytest.raises(ValidationError, match="100 occurrences"):
+            EventCreate.model_validate(payload)
+        return
+
+    definition = EventCreate.model_validate(payload)
+    assert definition.start_date == date.fromisoformat(anchor)
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "zone", "window", "until", "accepted"),
+    [
+        (
+            "2026-01-01T00:00:00Z", "2026-02-27T00:00:00Z",
+            "UTC", "2026-03-01", "9999-12-31", True,
+        ),
+        (
+            "2026-01-01T00:00:00Z", "2026-02-27T00:00:00.000001Z",
+            "UTC", "2026-03-01", "9999-12-31", False,
+        ),
+        (
+            "2026-01-01T23:59:59.999999Z", "2026-02-27T00:00:00Z",
+            "UTC", "2026-03-01", "9999-12-31", True,
+        ),
+        (
+            "2026-01-01T23:59:59.999999Z", "2026-02-27T00:00:00.000001Z",
+            "UTC", "2026-03-01", "9999-12-31", False,
+        ),
+        (
+            "2026-01-01T07:30:00Z", "2026-02-26T07:30:00Z",
+            "America/New_York", "2026-03-01", "9999-12-31", True,
+        ),
+        (
+            "2026-09-01T05:30:00Z", "2026-10-27T05:30:00Z",
+            "America/New_York", "2026-11-01", "9999-12-31", True,
+        ),
+        (
+            "2011-10-01T09:45:00Z", "2011-11-26T09:45:00Z",
+            "Pacific/Apia", "2011-12-01", "9999-12-31", True,
+        ),
+        (
+            "2026-01-01T23:30:00Z", "2026-04-11T23:30:00Z",
+            "Pacific/Kiritimati", "2026-04-01", "2026-04-11", True,
+        ),
+        (
+            "2026-01-01T23:30:00Z", "2026-04-11T23:30:00Z",
+            "Pacific/Kiritimati", "2026-04-01", "2026-04-12", False,
+        ),
+    ],
+)
+def test_timed_series_admission_keeps_reader_complete_across_clock_boundaries(
+    start: str, end: str, zone: str, window: str, until: str, accepted: bool
+) -> None:
+    payload = _payload(
+        1, all_day=False, start_date=None, end_date=None, start_at=start, end_at=end,
+        timezone_name=zone, recurrence="daily", repeat_until=until,
+    )
+    if not accepted:
+        with pytest.raises(ValidationError, match="100 occurrences"):
+            EventCreate.model_validate(payload)
+        return
+
+    definition = EventCreate.model_validate(payload)
+    event = BoardEvent(
+        id=UUID(int=1), **definition.model_dump(exclude={"board_revision", "reminders"})
+    )
+    first = date.fromisoformat(window)
+    result = expand_board_event_occurrences(event, first, first + timedelta(days=41))
+    assert result.occurrences
+    assert result.truncated is False
+
+
+@pytest.mark.integration
+def test_series_save_admission_is_atomic_and_stored_series_remain_correctable(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    author = member(db)
+    board = project_board(db)
+    grant(db, board, [author], AccessLevel.WRITE)
+    unrelated = _series(db, board, author, "Other calendar event")
+    unrelated.start_date = unrelated.end_date = date(2026, 4, 5)
+    db.commit()
+    api = _client(db, author)
+    root = f"/api/boards/{board.id}/events"
+    span = {"start_date": "2026-01-01", "end_date": "2026-04-10"}
+    created = api.post(root, json=_payload(1, **span, reminders=["start"]))
+    assert created.status_code == 201
+    event_id = created.json()["id"]
+    detail_url = f"{root}/{event_id}"
+    before = api.get(detail_url).json()
+    reminder = db.scalars(
+        select(BoardEventReminder).where(BoardEventReminder.event_id == UUID(event_id))
+    ).one()
+    reminder_id = reminder.id
+    instant = datetime(2026, 1, 1, tzinfo=UTC)
+    work = ScheduledWork(
+        org_id=board.org_id, kind=WorkKind.EVENT_REMINDER, reminder_id=reminder_id,
+        occurrence_start_at=instant, scheduled_for=instant, next_attempt_at=instant,
+    )
+    db.add(work)
+    db.commit()
+    work_id = work.id
+
+    refused_create = api.post(
+        root, json=_payload(
+            2, **span, recurrence="daily", repeat_until="2026-12-31", reminders=["15m"]
+        ),
+    )
+    current = api.get(detail_url).json()
+    refused_patch = api.patch(
+        detail_url,
+        json={
+            "board_revision": current["board_revision"], "event_revision": 1,
+            "title": "Changed title", "recurrence": "daily", "repeat_until": "2026-12-31",
+            "reminders": ["15m"],
+        },
+    )
+    assert (refused_create.status_code, refused_patch.status_code) == (422, 422)
+    db.expire_all()
+    assert api.get(detail_url).json() == before
+    assert api.get(root).json()["pagination"]["total"] == 2
+    assert list(db.execute(
+        select(BoardEventReminder.id, BoardEventReminder.timing).where(
+            BoardEventReminder.board_id == board.id
+        )
+    )) == [(reminder_id, "start")]
+    assert list(db.execute(
+        select(ScheduledWork.id, ScheduledWork.state).where(
+            ScheduledWork.reminder_id == reminder_id
+        )
+    )) == [(work_id, WorkState.PENDING)]
+    window = {"window_start": "2026-04-01", "window_end": "2026-05-12"}
+    calendar = api.get(f"{root}/occurrences", params=window)
+    assert calendar.status_code == 200
+    assert {item["event_id"] for item in calendar.json()["items"]} == {
+        event_id, str(unrelated.id)
+    }
+
+    stored = _series(db, board, author, "Stored recurring span")
+    stored.start_date, stored.end_date = date(2026, 1, 1), date(2026, 4, 10)
+    stored.recurrence, stored.repeat_until = "daily", date(2026, 12, 31)
+    db.commit()
+    assert api.get(f"{root}/{stored.id}").status_code == 200
+    listed = api.get(root)
+    assert listed.status_code == 200
+    assert str(stored.id) in {item["id"] for item in listed.json()["items"]}
+    corrected = api.patch(
+        f"{root}/{stored.id}",
+        json={"board_revision": 2, "event_revision": 1, "end_date": "2026-01-01"},
+    )
+    assert corrected.status_code == 200
+    assert corrected.json()["event_revision"] == 2
+    calendar = api.get(f"{root}/occurrences", params=window)
+    assert calendar.status_code == 200
+    assert calendar.json()["pagination"]["total"] == 44
 
 
 @pytest.mark.integration

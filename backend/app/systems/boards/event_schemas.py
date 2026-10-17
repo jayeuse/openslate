@@ -1,5 +1,6 @@
 """Typed Board event-series and bounded occurrence HTTP contracts."""
 
+from calendar import monthrange
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Literal, Self
@@ -10,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 
 from app.common.listing import SortOrder, StandardListRequest, StandardListResponse
 from app.systems.boards.content_links import ContentLink
+from app.systems.boards.event_occurrences import MAX_EVENT_OCCURRENCES
 
 MAX_WINDOW_DAYS = 42
 
@@ -76,6 +78,70 @@ class EventDefinition(BaseModel):
             raise ValueError("Recurrence ends before the event starts")
         return self
 
+    def require_bounded_occurrences(self) -> None:
+        """Admit saves only when every supported calendar window fits the reader bound.
+
+        Call after temporal validation, not while reading stored definitions: those
+        must remain readable so their authors can correct them.
+        """
+
+        if self.recurrence == "none":
+            return
+        assert self.repeat_until is not None
+        if self.all_day:
+            assert self.start_date is not None and self.end_date is not None
+            anchor = self.start_date
+            lookback = (self.end_date - self.start_date).days
+        else:
+            assert self.start_at is not None and self.end_at is not None
+            local = self.start_at.astimezone(ZoneInfo(self.timezone_name))
+            anchor = local.date()
+            wall_time = timedelta(
+                hours=local.hour, minutes=local.minute, seconds=local.second,
+                microseconds=local.microsecond,
+            )
+            days, remainder = divmod(self.end_at - self.start_at + wall_time, timedelta(days=1))
+            # Cover offset changes while retaining the reader's fixed local start time.
+            lookback = days + bool(remainder) + 1
+
+        required_span = {
+            "daily": MAX_EVENT_OCCURRENCES,
+            "weekly": 7 * MAX_EVENT_OCCURRENCES,
+            "monthly": 365 * (MAX_EVENT_OCCURRENCES // 12) + 28 * (MAX_EVENT_OCCURRENCES % 12),
+        }[self.recurrence]
+        # A shorter candidate-date span cannot contain 101 recurrence starts.
+        if MAX_WINDOW_DAYS - 1 + lookback < required_span:
+            return
+
+        elapsed_days = (self.repeat_until - anchor).days
+        if self.recurrence == "daily":
+            count = 1 + elapsed_days
+        elif self.recurrence == "weekly":
+            count = 1 + elapsed_days // 7
+        else:
+            count = 0
+            month = anchor.replace(day=1)
+            while month <= self.repeat_until:
+                if (
+                    anchor.day <= monthrange(month.year, month.month)[1]
+                    and month.replace(day=anchor.day) <= self.repeat_until
+                ):
+                    count += 1
+                if count > MAX_EVENT_OCCURRENCES or (
+                    month.year == date.max.year and month.month == 12
+                ):
+                    break
+                month = (
+                    date(month.year + 1, 1, 1)
+                    if month.month == 12
+                    else date(month.year, month.month + 1, 1)
+                )
+        if count > MAX_EVENT_OCCURRENCES:
+            raise ValueError(
+                f"Recurring events must fit within {MAX_EVENT_OCCURRENCES} occurrences "
+                "per calendar window"
+            )
+
 
 class EventCreate(EventDefinition):
     board_revision: int = Field(ge=1)
@@ -85,6 +151,11 @@ class EventCreate(EventDefinition):
     @classmethod
     def distinct_reminders(cls, value: list[ReminderTiming]) -> list[ReminderTiming]:
         return _distinct_timings(value) or []
+
+    @model_validator(mode="after")
+    def bounded_occurrences(self) -> Self:
+        self.require_bounded_occurrences()
+        return self
 
 
 class EventPatch(BaseModel):
