@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -118,6 +119,10 @@ class Membership(BaseModel):
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_memberships_org_id_id"),
         UniqueConstraint("org_id", "user_id", name="uq_memberships_org_user"),
+        Index(
+            "uq_memberships_user_pending", "user_id", unique=True,
+            postgresql_where=text("status = 'pending' AND is_deleted = false"),
+        ),
         CheckConstraint("role IN ('admin', 'member', 'guest')", name="ck_memberships_role"),
         CheckConstraint(
             "status IN ('pending', 'active', 'disabled')", name="ck_memberships_status"

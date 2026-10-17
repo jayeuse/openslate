@@ -251,7 +251,15 @@ def invite_user(
     except (IntegrityError, SQLAlchemyError) as error:
         db.rollback()
         _record_invitation_failure(operation_id, actor_id)
-        raise InvitationConflict("Email or username is already in use") from error
+        constraint = getattr(getattr(error.orig, "diag", None), "constraint_name", None) if (
+            isinstance(error, IntegrityError)
+        ) else None
+        message = (
+            "This person cannot be invited right now"
+            if constraint == "uq_memberships_user_pending"
+            else "Email or username is already in use"
+        )
+        raise InvitationConflict(message) from error
     try:
         provider_user = provider.admin_create_invitation_user(user.email, user.id, operation_id)
         expected_marker = {

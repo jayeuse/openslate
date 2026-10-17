@@ -93,6 +93,8 @@ def organization_membership(
     membership = rows[0] if rows else None
     if membership is not None:
         cache[(org_id, user_id)] = membership
+    else:
+        cache.pop((org_id, user_id), None)
     return membership
 
 

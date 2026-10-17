@@ -11,6 +11,7 @@ from uuid6 import uuid7
 from app.systems.manage.audit.models import SecurityEvent
 from app.systems.manage.backups.models import BackupRun
 from app.systems.platform.scheduling.models import ScheduledWork
+from tests.conftest import create_member, create_organization, make_operator
 from tests.jobs.job_route_support import NOW, committed_client, failed_jobs
 from tests.rbac.support import add_user
 from tests.route_app_support import route_app
@@ -23,7 +24,7 @@ def test_jobs_union_pages_every_kind_with_global_totals_and_safe_subjects(
 ) -> None:
     db = integration_owner_db
     jobs = failed_jobs(db, shared_id=uuid7())
-    admin = add_user(db, role="admin")
+    admin = make_operator(db, add_user(db, role="admin"))
     with committed_client(route_app(), admin, db) as client:
         pages = [client.get("/api/jobs", params={"limit": 1, "offset": i}) for i in range(4)]
     assert all(page.status_code == 200 for page in pages), [page.status_code for page in pages]
@@ -65,7 +66,7 @@ def test_jobs_failed_priority_literal_search_and_global_date_filters(integration
     )
     db.add(pending)
     db.flush()
-    with committed_client(route_app(), add_user(db, role="admin"), db) as client:
+    with committed_client(route_app(), make_operator(db, add_user(db, role="admin")), db) as client:
         default = client.get("/api/jobs").json()
         assert [row["state"] for row in default["items"]] == ["failed"] * 4 + ["pending"]
         literal = client.get("/api/jobs", params={"search": "_%", "limit": 1}).json()
@@ -201,7 +202,7 @@ def test_backup_retry_queues_new_run_with_durable_replay_and_preserves_failed_ru
 ):
     db = integration_owner_db
     original = failed_jobs(db)["backup"]
-    admin = add_user(db, role="admin")
+    admin = make_operator(db, add_user(db, role="admin"))
     with committed_client(route_app(), admin, db) as client:
         path = f"/api/jobs/backup/{original.id}/retry"
         assert client.post(path).status_code == 422
@@ -218,6 +219,36 @@ def test_backup_retry_queues_new_run_with_durable_replay_and_preserves_failed_ru
         len(list(db.scalars(select(SecurityEvent).where(SecurityEvent.event_type == "job.retry"))))
         == 1
     )
+
+
+def test_organization_admin_cannot_see_or_retry_installation_backup_jobs(
+    integration_owner_db: Session,
+) -> None:
+    db = integration_owner_db
+    jobs = failed_jobs(db)
+    admin_a = add_user(db, role="admin")
+    organization_b = create_organization(db)
+    owner_b, _ = create_member(db, organization_b, role="admin")
+    make_operator(db, owner_b)
+    jobs["backup"].requester_id = owner_b.id
+    with committed_client(route_app(), admin_a, db) as client:
+        response = client.get("/api/jobs")
+        assert response.status_code == 200, response.text
+        assert {row["kind"] for row in response.json()["items"]} == set(jobs) - {"backup"}
+        assert response.json()["pagination"]["total"] == 3
+        hidden = client.get("/api/jobs", params={"kind": "backup"})
+        assert hidden.status_code == 200 and hidden.json()["items"] == []
+        assert hidden.json()["pagination"]["total"] == 0
+        for headers in ({}, {"Idempotency-Key": "nonoperator-retry"}):
+            denied = client.post(f"/api/jobs/backup/{jobs['backup'].id}/retry", headers=headers)
+            assert denied.status_code == 403, denied.text
+            assert denied.json()["detail"]["code"] == "operator_required"
+    db.expire_all()
+    assert list(db.scalars(select(BackupRun.id))) == [jobs["backup"].id]
+    assert jobs["backup"].state == "failed"
+    assert list(db.scalars(select(SecurityEvent).where(
+        SecurityEvent.event_type == "job.retry", SecurityEvent.actor_id == admin_a.id,
+    ))) == []
 
 
 @pytest.mark.parametrize(

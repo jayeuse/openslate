@@ -18,6 +18,7 @@ from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.models import AccessLevel, Group, GroupAccess, GroupMember
 from app.systems.access.policy.scope import allowed_module_ids, effective_levels, includes
 from app.systems.access.users.eligibility import is_active_account
+from app.systems.access.users.membership import organization_membership
 from app.systems.access.users.models import User
 from app.systems.manage.workspace.security_policy import (
     effective_session_expiry,
@@ -116,8 +117,9 @@ def _lock_authority(db: Session, actor_id: UUID) -> User | None:
        which locks the user row before the memberships it removes.
     2. The actor's live memberships joined to those groups' live access rows,
        FOR SHARE (step 3 of ``delegation.py``).
-    3. The user row, FOR SHARE, reloaded, so a change of role, status or expiry
-       waits too.
+    3. The user row, FOR SHARE, reloaded. Membership authority writers lock this
+       row FOR UPDATE before changing role, status, expiry or deletion; the fresh
+       bound membership read after this lock is serialized through commit too.
 
     A group joined after step 1 can only add access, so it cannot make the
     decision wrong. The Sandbox publish locks the live groups FOR SHARE, then the
@@ -185,7 +187,13 @@ def require_fresh_module_access(
         if actor is None or not is_active_account(db, actor, now=timestamp):
             db.rollback()
             raise forbidden()
-        granted = effective_levels(db, actor, now=timestamp).module_level(module_id)
+        membership = organization_membership(db, actor.id, fresh=True)
+        if membership is None:
+            db.rollback()
+            raise forbidden()
+        granted = effective_levels(db, actor, now=timestamp, membership=membership).module_level(
+            module_id
+        )
     except SQLAlchemyError as error:
         db.rollback()
         raise HTTPException(
