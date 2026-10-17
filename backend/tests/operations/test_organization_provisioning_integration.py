@@ -72,6 +72,8 @@ def _remove_organization(owner, org_id):
                 db.delete(row)
         db.flush()
         db.execute(text("DELETE FROM audit_logs WHERE org_id = :id"), {"id": org_id})
+        # Invitation failures are attributed to the reserved organization (RESTRICT FK).
+        db.execute(text("DELETE FROM security_events WHERE org_id = :id"), {"id": org_id})
         db.delete(db.get(WorkspaceProfile, org_id))
         db.commit()
 

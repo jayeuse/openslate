@@ -26,6 +26,9 @@ from tests.runtime.readiness_support import (
 
 MOCK_DATABASE_PASSWORD = token_urlsafe(32)
 READINESS_BODY_CANARY = "provider-health-body-must-not-leak"
+# Hang guard for thread hand-offs only. A worker process paused by swap can overrun any
+# short bound, so no latency claim rests on it: those come from the order of events.
+HANDOFF_SECONDS = 30
 
 
 @pytest.fixture(autouse=True)
@@ -170,9 +173,9 @@ def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monk
             with request_lock:
                 request_count += 1
             started.set()
-            # Held well past the 5 s bounds below: a caller that blocked on this in-flight
-            # probe instead of answering at its own deadline would fail the test.
-            assert release.wait(10)
+            # Held until `finally` releases it: a caller that blocked on this in-flight
+            # probe instead of answering at its own deadline never answers inside `try`.
+            assert release.wait(HANDOFF_SECONDS)
             completed.set()
         return httpx.Response(200, request=request)
 
@@ -183,17 +186,20 @@ def test_readiness_deadline_callers_share_the_same_in_flight_provider_probe(monk
     gate = Barrier(3)
 
     def call_readiness():
-        gate.wait(timeout=1)
+        gate.wait(timeout=HANDOFF_SECONDS)
         return client.get("/api/ready")
 
     try:
         with ThreadPoolExecutor(max_workers=2) as callers:
             futures = [callers.submit(call_readiness) for _ in range(2)]
-            gate.wait(timeout=1)
-            # Generous bounds tolerate thread scheduling under parallel load; the held probe
-            # above keeps them a latency proof, and one provider request proves sharing.
-            assert started.wait(5), "readiness did not probe the configured Auth health path"
-            responses = [future.result(timeout=5) for future in futures]
+            gate.wait(timeout=HANDOFF_SECONDS)
+            assert started.wait(HANDOFF_SECONDS), (
+                "readiness did not probe the configured Auth health path"
+            )
+            responses = [future.result(timeout=HANDOFF_SECONDS) for future in futures]
+            # Both callers answered while the probe was still held; one provider
+            # request below proves they shared it.
+            assert not completed.is_set()
 
         assert [response.status_code for response in responses] == [503, 503]
         assert request_count == 1
@@ -270,9 +276,9 @@ def test_timed_out_readiness_call_does_not_start_a_replacement_and_recovers(
         call_count += 1
         if call_count == 1:
             started.set()
-            # Held well past the 5 s bounds below: a caller that blocked on this in-flight
-            # probe instead of answering at its own deadline would fail the test.
-            assert release.wait(10)
+            # Held until the test releases it: a caller that blocked on this in-flight
+            # probe instead of answering at its own deadline would never return.
+            assert release.wait(HANDOFF_SECONDS)
             completed.set()
             return report(False)
         return report(True)
@@ -291,14 +297,17 @@ def test_timed_out_readiness_call_does_not_start_a_replacement_and_recovers(
                 "smtp": component("ready"),
             },
         }
-        assert started.wait(0.5)
+        assert started.wait(HANDOFF_SECONDS)
         assert readiness.get_readiness_snapshot()["status"] == "not_ready"
         assert call_count == 1
 
         release.set()
-        assert completed.wait(0.5)
+        assert completed.wait(HANDOFF_SECONDS)
         assert readiness._snapshot_future is not None
-        assert readiness._snapshot_future.result(timeout=0.5)["status"] == "not_ready"
+        assert readiness._snapshot_future.result(timeout=HANDOFF_SECONDS)["status"] == "not_ready"
+        # Recovery is the replacement probe's answer, not a race with a 0.01 s deadline.
+        recovery = readiness_settings(readiness_caller_timeout_seconds=HANDOFF_SECONDS)
+        monkeypatch.setattr(readiness, "get_settings", lambda: recovery)
         assert readiness.get_readiness_snapshot()["status"] == "ready"
         assert call_count == 2
     finally:
