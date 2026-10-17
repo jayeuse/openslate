@@ -173,6 +173,7 @@ def _close(
             user.email,
             payload.password,
         )
+        require_fresh_exact_admin(db, user.id)
         plan = plan_lifecycle(db, target_type, target_id, LifecycleOperation.CLOSE, user.id)
         if plan.impact_digest != challenge.impact_digest:
             db.rollback()

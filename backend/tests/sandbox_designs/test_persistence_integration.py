@@ -71,6 +71,17 @@ def test_replace_checkpoint_restore_and_stale_revision_are_persistent_and_audite
         document=_document_with_module_name("Changed requests"),
     )
 
+    page = design_service.list_versions(integration_owner_db, limit=1, offset=0)
+    assert [item.model_dump() for item in page.items] == [
+        checkpoint.model_dump(exclude={"document"})
+    ]
+    detail = design_service.read_version(integration_owner_db, checkpoint.id)
+    assert detail.document.design.modules[0].name == "Saved requests"
+    exported = design_service.export_bundle(integration_owner_db, include_versions=True)
+    assert exported.design.modules[0].name == "Changed requests"
+    assert exported.versions is not None
+    assert exported.versions[0].document.design.modules[0].name == "Saved requests"
+
     restored = restore_version(
         integration_owner_db,
         actor_id=None,  # type: ignore[arg-type]

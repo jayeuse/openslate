@@ -295,7 +295,7 @@ def create_report_run(
         )
     )
     if existing is not None:
-        accessible_run(db, report.id, existing.id, user.id)
+        accessible_run(db, report.id, existing.id, user)
         response.headers["Location"] = f"/api/reports/{report_id}/runs/{existing.id}"
         return run_response(existing)
 
@@ -327,7 +327,7 @@ def create_report_run(
         )
     )
     if existing is not None:
-        accessible_run(db, report.id, existing.id, fresh_actor.id)
+        accessible_run(db, report.id, existing.id, fresh_actor)
         response.headers["Location"] = f"/api/reports/{report_id}/runs/{existing.id}"
         return run_response(existing)
     if (

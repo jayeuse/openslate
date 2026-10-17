@@ -122,10 +122,17 @@ def test_account_rows_are_visible_only_for_people_of_the_bound_organization(
         hidden_events = client.get(f"/api/security-events?person_id={stranger.id}&limit=50")
         audits = client.get(f"/api/audit-logs?entity_id={neighbour.id}&limit=50")
         hidden_audits = client.get(f"/api/audit-logs?entity_id={stranger.id}&limit=50")
+        card = client.get(f"/api/users/{neighbour.id}/card")
+        hidden_card = client.get(f"/api/users/{stranger.id}/card")
     assert events.status_code == 200 and events.json()["items"], events.text
     assert hidden_events.status_code == 200 and hidden_events.json()["items"] == []
     assert audits.status_code == 200 and audits.json()["items"], audits.text
     assert hidden_audits.status_code == 200 and hidden_audits.json()["items"] == []
+    assert card.status_code == 200, card.text
+    assert hidden_card.status_code == 404
+    assert hidden_card.json() == {
+        "detail": {"code": "person_not_found", "message": "Person not found"}
+    }
 
 
 def test_an_organization_admin_acts_on_the_membership_of_a_shared_person(

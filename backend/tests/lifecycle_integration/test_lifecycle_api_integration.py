@@ -1,22 +1,31 @@
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from secrets import token_urlsafe
+from threading import Event
 from typing import Any
 from uuid import UUID
 
+import httpx
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.common.dependencies.auth import get_current_user
+from app.common.dependencies.auth import ADMINISTRATOR_CHANGE_LOCK, get_current_user
 from app.core.database import get_db
 from app.core.database.organization_scope import apply_connection_scope
 from app.core.database.session import AuditSession
+from app.core.integrations.supabase_auth import get_supabase_auth_client
 from app.main import create_app
-from app.systems.access.users.models import Membership
+from app.systems.access.identity.models import IdentitySession
+from app.systems.access.identity.provider_sessions import admit_provider_session
+from app.systems.access.identity.rate_limits import login_fingerprint, rate_limit_fingerprint
+from app.systems.access.users.models import Membership, PlatformOperator, User
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.lifecycle.exceptions import LifecyclePasswordServiceUnavailable
@@ -24,6 +33,7 @@ from app.systems.sandbox.modules.models import Module
 from tests.api_integration_support import create_owned_admin, delete_owned_admin
 from tests.conftest import _assert_alembic_head, _guard_integration_database
 from tests.conftest import guarded_create_engine as create_engine
+from tests.fake_provider_support import FakeProvider, install_fake_provider, real_session_pool
 from tests.lifecycle_integration.lifecycle_integration_support import (
     delete_committed_scope,
     password_boundary,
@@ -373,3 +383,211 @@ def test_registered_purge_refuses_when_disabled_before_provider(
     assert response.status_code == 403, response.text
     assert response.json()["detail"]["code"] == "purge_disabled"
     assert calls == []
+
+
+@pytest.fixture
+def authenticated_administrators(
+    lifecycle_api_client: Callable[[], LifecycleApiClient],
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> Iterator[tuple[LifecycleApiClient, FakeProvider, dict[str, str]]]:
+    client = lifecycle_api_client()
+    owner_url = os.environ["MIGRATION_DATABASE_URL"]
+    administrator = create_owned_admin(
+        os.environ["TEST_DATABASE_URL"], owner_url, "lifecycle-admin", org_id=client.org_id,
+    )
+    owner = create_engine(owner_url)
+    fake = install_fake_provider(monkeypatch, real_session_pool(request.config))
+    actors = (client.actor, administrator)
+    try:
+        with Session(owner) as db:
+            organization = db.get(WorkspaceProfile, client.org_id)
+            organization.owner_user_id = administrator.id
+            for actor in actors:
+                user = db.get(User, actor.id)
+                user.supabase_user_id = fake.add(actor.email, CONFIRMATION_PASSWORD)
+            assert db.get(PlatformOperator, client.actor.id) is None
+            db.commit()
+
+        tokens = []
+        provider = get_supabase_auth_client()
+        for actor in actors:
+            grant = provider.password_grant(actor.email, CONFIRMATION_PASSWORD)
+            with AuditSession(client.engine) as db:
+                request_id = uuid7()
+                client.request_ids.add(request_id)
+                db.info[AUDIT_CONTEXT_KEY] = AuditContext(request_id=request_id)
+                issued = admit_provider_session(db, grant, provider)
+                db.commit()
+                tokens.append(issued.access_token)
+
+        def database(http_request: Request) -> Iterator[Session]:
+            with AuditSession(client.engine) as db:
+                request_id = uuid7()
+                client.request_ids.add(request_id)
+                db.info[AUDIT_CONTEXT_KEY] = AuditContext(
+                    request_id=request_id,
+                    request_method=http_request.method,
+                    request_path=http_request.url.path,
+                )
+                if http_request.url.path.endswith("/close"):
+                    client.active_database = db
+                try:
+                    yield db
+                finally:
+                    if client.active_database is db:
+                        client.active_database = None
+
+        client.app.dependency_overrides[get_db] = database
+        assert get_current_user not in client.app.dependency_overrides
+        client.client.headers["Authorization"] = f"Bearer {tokens[0]}"
+        yield client, fake, {"Authorization": f"Bearer {tokens[1]}"}
+    finally:
+        client.app.dependency_overrides.clear()
+        with owner.begin() as connection:
+            values = {"actor": client.actor.id, "admin": administrator.id, "org": client.org_id}
+            for table, predicate in (
+                ("identity_sessions", "user_id IN (:actor, :admin)"),
+                ("in_app_notifications", "org_id = :org"),
+                ("audit_logs", "org_id = :org OR entity_id IN (:actor, :admin)"),
+                ("security_events", "org_id = :org OR actor_id IN (:actor, :admin)"),
+            ):
+                connection.execute(text(f"DELETE FROM public.{table} WHERE {predicate}"), values)
+            connection.execute(
+                text("UPDATE public.organizations SET owner_user_id = NULL WHERE id = :org"),
+                values,
+            )
+            for actor in actors:
+                for fingerprint in (
+                    login_fingerprint(actor.email, None),
+                    rate_limit_fingerprint("login-account", actor.email, None),
+                ):
+                    connection.execute(
+                        text(
+                            "DELETE FROM public.identity_rate_limit_buckets WHERE fingerprint = :f"
+                        ),
+                        {"f": fingerprint},
+                    )
+        owner.dispose()
+        delete_owned_admin(owner_url, administrator.id)
+
+
+def _close_state(client: LifecycleApiClient, module_id: str) -> tuple:
+    with client.engine.connect() as connection:
+        apply_connection_scope(connection, client.org_id)
+        return (
+            connection.scalar(
+                text("SELECT to_jsonb(m) FROM public.modules m WHERE id = :id"), {"id": module_id},
+            ),
+            connection.scalar(
+                text("SELECT to_jsonb(d) FROM public.sandbox_documents d WHERE org_id = :id"),
+                {"id": client.org_id},
+            ),
+        )
+
+
+def test_registered_close_requires_current_administrator_after_password(
+    authenticated_administrators: tuple[LifecycleApiClient, FakeProvider, dict[str, str]],
+) -> None:
+    client, fake, administrator_headers = authenticated_administrators
+    module_id = client.create_module("Current administrator")
+    path = f"/api/modules/{module_id}/close"
+    preview = client.client.post(f"{path}/preview")
+    assert preview.status_code == 200
+    before = _close_state(client, module_id)
+    provider_pending, resume_provider = Event(), Event()
+    limiter_transactions: list[bool] = []
+
+    def provider_io(http_request: httpx.Request) -> None:
+        if http_request.url.path == "/auth/v1/token":
+            db = client.active_database
+            assert db is not None and db.in_transaction()
+            limiter_transactions.append(db.connection().scalar(text(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() "
+                "AND locktype = 'advisory' AND objsubid = 1 AND granted)"
+            )))
+            provider_pending.set()
+            assert resume_provider.wait(timeout=10), "Password grant was not released"
+
+    fake.hook = provider_io
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        close = executor.submit(client.client.post, path, json={
+            "token": preview.json()["token"], "confirmation_name": "Assets",
+            "password": CONFIRMATION_PASSWORD,
+        })
+        try:
+            if not provider_pending.wait(timeout=10):
+                early_response = close.result(timeout=10)
+                pytest.fail(
+                    f"Password grant was not reached: HTTP {early_response.status_code}"
+                )
+            demoted = client.client.patch(
+                f"/api/users/{client.actor.id}", json={"role": "member"},
+                headers=administrator_headers,
+            )
+            assert demoted.status_code == 200
+            with Session(client.engine) as db:
+                membership = db.scalars(select(Membership).where(
+                    Membership.org_id == client.org_id, Membership.user_id == client.actor.id,
+                )).one()
+                assert (membership.role, membership.status) == ("member", "active")
+                assert db.scalars(select(IdentitySession).where(
+                    IdentitySession.user_id == client.actor.id,
+                    IdentitySession.revoked_at.is_(None),
+                )).one()
+        finally:
+            resume_provider.set()
+        response = close.result(timeout=10)
+
+    assert limiter_transactions == [True]
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Forbidden"
+    assert _close_state(client, module_id) == before
+    with Session(client.engine) as db:
+        assert db.scalars(select(AuditLog.id).where(AuditLog.request_path == path)).all() == []
+
+
+def test_registered_close_holds_administrator_authority_through_commit(
+    authenticated_administrators: tuple[LifecycleApiClient, FakeProvider, dict[str, str]],
+) -> None:
+    client, _fake, _administrator_headers = authenticated_administrators
+    module_id = client.create_module("Administrator commit")
+    path = f"/api/modules/{module_id}/close"
+    preview = client.client.post(f"{path}/preview")
+    assert preview.status_code == 200
+    lock_available_at_commit: list[bool] = []
+
+    def administrator_lock_available() -> bool:
+        with client.engine.begin() as connection:
+            return connection.scalar(text(
+                "SELECT pg_try_advisory_xact_lock(:key, hashtext(:org))"
+            ), {"key": ADMINISTRATOR_CHANGE_LOCK, "org": str(client.org_id)})
+
+    def before_commit(db: Session) -> None:
+        context = db.info.get(AUDIT_CONTEXT_KEY)
+        if context is not None and context.request_path == path and any(
+            isinstance(row, Module) and str(row.id) == module_id and row.is_deleted
+            for row in db.dirty
+        ):
+            lock_available_at_commit.append(administrator_lock_available())
+
+    event.listen(AuditSession, "before_commit", before_commit)
+    try:
+        response = client.client.post(path, json={
+            "token": preview.json()["token"], "confirmation_name": "Assets",
+            "password": CONFIRMATION_PASSWORD,
+        })
+    finally:
+        event.remove(AuditSession, "before_commit", before_commit)
+
+    assert response.status_code == 200
+    assert lock_available_at_commit == [False]
+    assert administrator_lock_available() is True
+    with Session(client.engine) as db:
+        module = db.get(Module, UUID(module_id))
+        assert module.is_deleted is True
+        assert module.deleted_at is not None
+        audit = db.scalars(select(AuditLog).where(
+            AuditLog.entity_id == module.id, AuditLog.request_path == path,
+        )).one()
+        assert audit.performed_by == client.actor.id

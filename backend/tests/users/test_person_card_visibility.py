@@ -186,6 +186,48 @@ def test_removed_live_group_membership_hides_card_and_avatar_without_company_sha
     )
 
 
+@pytest.mark.parametrize(
+    "defect", ["separate_boards", "board_is_deleted", "board_deleted_at", "removed_board_grant"]
+)
+def test_board_visibility_requires_a_shared_live_board(person_world, defect):
+    world = person_world
+    shared(world, "project_board")
+    native_avatar(world, owner_id=world.target_id, bind=True)
+    assert card(world).status_code == 200
+    with Session(world.owner) as db:
+        grant = db.scalar(
+            select(BoardGroup)
+            .join(GroupMember, GroupMember.group_id == BoardGroup.group_id)
+            .where(GroupMember.user_id == world.target_id)
+        )
+        board = db.get(Board, grant.board_id)
+        if defect == "separate_boards":
+            separate = Board(org_id=board.org_id, scope="project", name="Target's Board")
+            db.add(separate)
+            db.flush()
+            world.person_owned.append((Board, separate.id))
+            separate_grant = BoardGroup(
+                org_id=board.org_id, board_id=separate.id, group_id=grant.group_id, level="read"
+            )
+            db.add(separate_grant)
+            db.flush()
+            world.person_owned.append((BoardGroup, separate_grant.id))
+            grant.is_deleted = True
+        elif defect == "board_is_deleted":
+            board.is_deleted = True
+        elif defect == "board_deleted_at":
+            board.deleted_at = world.clock
+        else:
+            grant.is_deleted = True
+        db.commit()
+    hidden = card(world)
+    assert hidden.status_code == 404
+    assert hidden.json() == {"detail": {"code": "person_not_found", "message": "Person not found"}}
+    assert world.client.get(
+        f"/api/users/{world.target_id}/avatar", headers=world.headers()
+    ).status_code == 404
+
+
 @pytest.mark.parametrize("defect", ["disabled", "pending", "deleted", "unaccepted"])
 def test_ineligible_target_is_hidden_even_to_admin(person_world, defect):
     world = person_world

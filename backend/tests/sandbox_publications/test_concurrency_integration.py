@@ -12,7 +12,7 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import Engine, create_engine, delete, select, text
+from sqlalchemy import Engine, create_engine, delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -20,12 +20,14 @@ from uuid6 import uuid7
 import app.systems.sandbox.publications.router as publication_router
 from app.common.dependencies.auth import CurrentIdentity
 from app.core.base_model import utc_now
+from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
 from app.systems.access.identity.models import IdentitySession
 from app.systems.access.policy.checks import _lock_authority
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User, UserStatus
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
+from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
 from app.systems.platform.scheduling.models import InAppNotification
 from app.systems.sandbox.designs.service import read_document, replace_document
@@ -39,10 +41,10 @@ from app.systems.sandbox.publications.models import SandboxPublication
 from app.systems.sandbox.publications.planner import publication_plan
 from app.systems.sandbox.publications.schemas import PublicationRequest
 from app.systems.sandbox.publications.tokens import issue_preview_token
-from tests.conftest import create_member
-from tests.organization_scope_support import in_context
+from tests.conftest import create_member, create_organization
+from tests.organization_scope_support import bind_test_organization, in_context
 from tests.postgres_runtime import assert_runner_database_url
-from tests.race_support import WAIT, wait_until_blocked_by
+from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 from tests.rbac.support import organization
 from tests.sandbox_designs.fixtures import sample_document
 from tests.sandbox_publications.support import bound_module, publish_saved
@@ -248,6 +250,106 @@ def test_publication_waits_for_a_member_access_check_without_deadlock(
             assert published.result(timeout=WAIT) is not None
     finally:
         _remove_module_grant(engine, member_id, group_id)
+
+
+@pytest.mark.parametrize("same_organization", [True, False], ids=["same-org", "other-org"])
+def test_publication_profile_lock_is_organization_scoped(
+    committed_publisher: Callable[..., Publisher], same_organization: bool
+) -> None:
+    publisher = committed_publisher(pool_size=4)
+    engine, actor_id = publisher.engine, publisher.actor_id
+    prepared = _prepare(engine, actor_id, "profile-lock")
+    org_id = peer_id = None
+    try:
+        with Session(engine) as setup:
+            org_id = setup.scalar(select(Membership.org_id).where(Membership.user_id == actor_id))
+            assert org_id is not None
+            audits_before = setup.scalar(
+                select(func.count()).select_from(AuditLog).where(AuditLog.org_id == org_id)
+            )
+            # This organization has no structure that could introduce another shared lock.
+            peer_id = create_organization(setup).id
+            setup.commit()
+        bind_test_organization(org_id)
+        worker_pids: list[int] = []
+
+        def publish() -> UUID:
+            with AuditSession(bind=engine) as db:
+                # in_context preserves a context; it does not select this organization.
+                scope_session(db, org_id)
+                worker_pids.append(backend_pid(db))
+                _set_audit_context(db, actor_id)
+                return publish_saved(
+                    db, actor_id, prepared, prepared,
+                    token_digest=prepared.token_digest,
+                    idempotency_key=f"profile-{uuid7()}",
+                ).id
+
+        committed_while_held = blocked_by_holder = False
+        refusal = None
+        with Session(engine) as holder, ThreadPoolExecutor(max_workers=1) as pool:
+            held_org_id = org_id if same_organization else peer_id
+            scope_session(holder, held_org_id)
+            profile = holder.scalar(
+                select(WorkspaceProfile).where(WorkspaceProfile.id == held_org_id).with_for_update()
+            )
+            assert profile is not None
+            profile.timezone = "Asia/Manila"
+            profile.revision += 1
+            holder.flush()
+            holder_pid = int(holder.scalar(text("SELECT pg_backend_pid()")))
+            published = pool.submit(in_context(publish))
+            try:
+                if same_organization:
+                    blocked_by_holder = wait_until_blocked_by(engine, holder_pid) == worker_pids[0]
+                else:
+                    try:
+                        publication_id = published.result(timeout=WAIT)
+                    except TimeoutError:
+                        blocked_by_holder = (
+                            wait_until_blocked_by(engine, holder_pid) == worker_pids[0]
+                        )
+                    else:
+                        with Session(engine) as check:
+                            scope_session(check, org_id)
+                            committed_while_held = check.scalar(
+                                select(SandboxPublication.org_id)
+                                .where(SandboxPublication.id == publication_id)
+                            ) == org_id
+            finally:
+                # Release and join even on the old global-lock query's expected timeout.
+                holder.commit()
+                try:
+                    published.result(timeout=WAIT)
+                except PublicationError as error:
+                    refusal = error
+        if same_organization:
+            assert blocked_by_holder
+            assert isinstance(refusal, PublicationError)
+            assert (refusal.code, refusal.status_code) == ("live_state_changed", 409)
+            with Session(engine) as check:
+                scope_session(check, org_id)
+                current = read_document(check)
+                assert (current.revision, current.content_hash) == (
+                    prepared.revision, prepared.content_hash
+                )
+                assert check.scalar(select(SandboxPublication.id)) is None
+                assert check.scalar(select(Module.id)) is None
+                assert check.scalar(
+                    select(func.count()).select_from(AuditLog).where(AuditLog.org_id == org_id)
+                ) == audits_before
+        else:
+            assert committed_while_held, (
+                "Publication did not commit before the unrelated organization's profile was "
+                f"released; PostgreSQL confirmed blocked_by_holder={blocked_by_holder}"
+            )
+            assert refusal is None
+    finally:
+        if org_id is not None:
+            bind_test_organization(org_id)
+        if peer_id is not None:
+            with engine.begin() as cleanup:
+                cleanup.execute(delete(WorkspaceProfile).where(WorkspaceProfile.id == peer_id))
 
 
 def _publish_once(engine: Engine, prepared: Prepared) -> UUID:

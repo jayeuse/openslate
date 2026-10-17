@@ -10,7 +10,7 @@ from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.common.listing.query import _escape_like
 from app.systems.access.users.membership import bound_organization
@@ -113,6 +113,25 @@ def list_versions(
     document = _document_row(db, lock=False)
     statement = (
         select(SandboxVersion)
+        .options(
+            load_only(
+                SandboxVersion.id,
+                SandboxVersion.sequence,
+                SandboxVersion.kind,
+                SandboxVersion.label,
+                SandboxVersion.note,
+                SandboxVersion.source_document_revision,
+                SandboxVersion.source_version_id,
+                SandboxVersion.content_hash,
+                SandboxVersion.byte_count,
+                SandboxVersion.metadata_revision,
+                SandboxVersion.created_at,
+                SandboxVersion.performed_by,
+                SandboxVersion.is_deleted,
+                SandboxVersion.deleted_at,
+                raiseload=True,
+            )
+        )
         .where(SandboxVersion.is_deleted.is_(False))
         .order_by(SandboxVersion.sequence.desc())
     )

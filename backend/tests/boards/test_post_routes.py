@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+import app.systems.boards.post_router as post_routes
 from app.systems.access.policy.models import AccessLevel
 from app.systems.access.users.models import User
 from app.systems.boards.models import Board
@@ -259,7 +260,7 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
         title="Private unpublished edit",
         body="New private body",
         status="draft",
-        displayed_publication_number=1,
+        displayed_publication_number=2,
         created_at=now - timedelta(days=4),
         updated_at=now - timedelta(days=1),
     )
@@ -273,7 +274,7 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
             BoardPostRevision(
                 org_id=parent.org_id,
                 post_id=parent.id,
-                publication_number=1,
+                publication_number=parent.displayed_publication_number,
                 publication_key=uuid7(),
                 content_fingerprint="a" * 64,
                 author_id=owner.id,
@@ -282,6 +283,19 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
                 published_at=published_at,
                 created_at=published_at,
                 updated_at=published_at,
+            )
+        )
+        db.add(
+            BoardPostRevision(
+                org_id=parent.org_id,
+                post_id=parent.id,
+                publication_number=parent.displayed_publication_number + 1,
+                publication_key=uuid7(),
+                content_fingerprint="b" * 64,
+                author_id=owner.id,
+                title="Newer retained publication",
+                body="Not the displayed body",
+                published_at=now,
             )
         )
     db.commit()
@@ -294,6 +308,83 @@ def test_published_list_orders_by_displayed_revision_not_unpublished_draft_times
         result = api.get(f"/api/boards/{board.id}/posts?view=published&limit=1{suffix}")
         assert result.status_code == 200 and result.json()["pagination"]["total"] == 2
         assert result.json()["items"][0]["id"] == str(expected)
+
+    page = api.get(f"/api/boards/{board.id}/posts?view=published&limit=2")
+    assert page.status_code == 200
+    assert page.json()["items"] == [
+        api.get(f"/api/boards/{board.id}/posts/{parent.id}").json()
+        for parent in (early_parent, later_parent_with_draft)
+    ]
+    assert [item["publication_number"] for item in page.json()["items"]] == [1, 2]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("unavailable", ("missing", "is_deleted", "deleted_at"))
+def test_published_page_refuses_a_displayed_revision_that_becomes_unavailable(
+    integration_owner_db: Session, monkeypatch: pytest.MonkeyPatch, unavailable: str
+) -> None:
+    db = integration_owner_db
+    author, reader = _actor(db, "unavailable-author"), _actor(db, "unavailable-reader")
+    board = _board(db, author)
+    _grant(db, board, reader, "view")
+    item = BoardPost(
+        org_id=board.org_id,
+        board_id=board.id,
+        author_id=author.id,
+        title="Private draft title",
+        body="Private draft body",
+        status="draft",
+        displayed_publication_number=1,
+    )
+    db.add(item)
+    db.flush()
+    values = {
+        "org_id": item.org_id,
+        "post_id": item.id,
+        "publication_number": 1,
+        "publication_key": uuid7(),
+        "content_fingerprint": "a" * 64,
+        "author_id": author.id,
+        "title": "Displayed title",
+        "body": "Displayed body",
+        "published_at": datetime.now(UTC),
+    }
+    revision = BoardPostRevision(**values)
+    db.add(revision)
+    db.commit()
+    execute_list = post_routes.execute_standard_list
+
+    def make_revision_unavailable(*args, **kwargs):
+        page = execute_list(*args, **kwargs)
+        db.delete(revision)
+        db.flush()
+        if unavailable != "missing":
+            db.add(
+                BoardPostRevision(
+                    **values,
+                    is_deleted=unavailable == "is_deleted",
+                    deleted_at=datetime.now(UTC) if unavailable == "deleted_at" else None,
+                )
+            )
+            db.flush()
+        return page
+
+    api = _client(db, reader)
+    path = f"/api/boards/{board.id}/posts?view=published"
+    with monkeypatch.context() as patch:
+        patch.setattr(post_routes, "execute_standard_list", make_revision_unavailable)
+        response = api.get(path)
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": {
+            "code": "publication_invalid",
+            "message": "The displayed publication is unavailable",
+        }
+    }
+    hidden = api.get(path)
+    assert hidden.status_code == 200
+    assert hidden.json()["items"] == []
+    assert hidden.json()["pagination"]["total"] == 0
 
 
 @pytest.mark.integration

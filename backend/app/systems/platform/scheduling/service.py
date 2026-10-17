@@ -354,6 +354,7 @@ def current_user_notification_query(
             ReportRun.report_id == Report.id,
             ReportRun.is_deleted.is_(False),
             module_filter(db, user, AccessLevel.READ, Report.module_id),
+            module_filter(db, user, AccessLevel.READ, ReportRun.module_id),
             Report.is_deleted.is_(False),
             Report.deleted_at.is_(None),
             Module.is_deleted.is_(False),
