@@ -306,6 +306,12 @@
   * {
     border-color: var(--border);
     box-sizing: border-box;
+    /* Quiet Scrollbar Rule (DESIGN.md): thin, no track, a thumb tinted from
+       the look's muted ink. Never hidden: it is the only cue that a panel
+       has more below the fold. Set per element so look previews follow. */
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--ink-muted) 60%, transparent)
+      transparent;
   }
 
   h1,
