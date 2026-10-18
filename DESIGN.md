@@ -475,7 +475,7 @@ Wrong: `--lift: 4px 4px 0 var(--ink);`
 
 **The Selection Lifts Rule.** On the canvas, state lift belongs to selection: the selected department or module takes `--lift-filter` and a heavier stroke. A look may give a node kind a resting material lift (Whiteboard modules, Triplicate departments, Stockroom's shelf lip), and it is the same on every node of that kind. Hovering a module or a line traces its connections: the rest dims to 35% opacity in 150ms, the traced lines turn `--action` at 2px (3.4px in Whiteboard), and nothing moves. "Show test on canvas" from a Test result pins the same trace on the tested module (`?trace=` and `?run=`) and plays the run as three still steps in a strip above the canvas (What happened, Triggers, Result) with Previous step, Next step, Back to result, and Clear, plus a one-line legend. The strip repeats the result's caveats (an older draft, open issues). The trigger field row takes a solid 2.5px `--action` outline; changed rows take `--canvas-test-fill` (the action color mixed into the module fill; Stockroom dark mixes it into a darker base to keep type ink AA) and a dashed 1.5px `--action` outline, so the marks differ by pattern, not only hue. A field can carry both. Rows also carry an `aria-description` ("started the test", "changed in the test"). Each step keeps the earlier marks, and nothing moves. Clear, or a click on empty canvas, removes the trace and the marks; Back to result reopens the same run on its module and event.
 
-Correct: `.sandbox-ui .x6-cell[data-trace="dim"] { opacity: 0.35; }`
+Correct: `.sandbox-ui :is([data-sandbox-node], [data-sandbox-edge])[data-trace="dim"] { opacity: 0.35; }`
 
 Wrong: hover scales the table up or slides the connected tables toward it.
 

@@ -1,7 +1,7 @@
 /**
  * Sandbox domain model (frontend-only mock state).
  *
- * Pure data + pure reducers. No backend, no API calls, no X6 imports.
+ * Pure data + pure reducers. No backend, no API calls, no canvas imports.
  */
 
 export type SandboxCanvasLayout = Record<

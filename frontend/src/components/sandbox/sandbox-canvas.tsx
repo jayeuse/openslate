@@ -613,7 +613,7 @@ function SandboxFlowCanvas({
       height: current.frame.height,
       zoom: flow.getViewport().zoom,
     };
-    // The gesture follows the pointer anywhere on the page, as X6's did.
+    // The gesture follows the pointer anywhere on the page, even off the grip.
     event.currentTarget.focus();
     const move = (moveEvent: globalThis.PointerEvent) => {
       const gesture = resizeGestureRef.current;

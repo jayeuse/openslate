@@ -1,5 +1,5 @@
 /**
- * Sandbox pure rules (no X6, no backend).
+ * Sandbox pure rules (no canvas, no backend).
  *
  * Embed/connect rules for the frontend-only prototype.
  */
