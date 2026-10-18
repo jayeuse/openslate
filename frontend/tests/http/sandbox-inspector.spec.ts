@@ -1,5 +1,8 @@
 import { expect, test } from "./helpers/test";
-import { openAuthenticatedSandbox } from "./helpers/sandbox-api";
+import {
+  fieldRowTrigger,
+  openAuthenticatedSandbox,
+} from "./helpers/sandbox-api";
 import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
 
 // The Advanced Last Rule (DESIGN.md): Properties shows the essentials, keeps
@@ -69,9 +72,7 @@ test("Delete is reachable from Properties for a module and a field", async ({
     name: "Priority field settings",
     exact: true,
   });
-  await field
-    .getByRole("button", { name: "Show Priority settings", exact: true })
-    .click();
+  await fieldRowTrigger(field, "Priority").click();
   await field.getByRole("button", { name: /^Advanced/ }).click();
   await field
     .getByRole("button", { name: "Delete field", exact: true })
@@ -79,4 +80,32 @@ test("Delete is reachable from Properties for a module and a field", async ({
   await expect(deletion).toContainText("Priority");
   await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(deletion).toBeHidden();
+});
+
+test("collapsing a field row keeps its unsaved edit and says so", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  await page.goto("/sandbox?module=sample-requests");
+  const field = page.getByRole("group", {
+    name: "Priority field settings",
+    exact: true,
+  });
+  await fieldRowTrigger(field, "Priority").click();
+  await field
+    .getByLabel("Priority field type", { exact: true })
+    .selectOption("Long text");
+  const header = field.getByRole("button", { name: /^Priority\b/ });
+  await header.click();
+  await expect(header).toHaveAttribute("aria-expanded", "false");
+  await expect(field.getByText("Unsaved", { exact: true })).toBeVisible();
+
+  await header.click();
+  await expect(
+    field.getByLabel("Priority field type", { exact: true }),
+  ).toHaveValue("Long text");
+  await field.getByRole("button", { name: "Save field changes" }).click();
+  await expect.poll(sandbox.documentWrites).toBe(1);
+  await expect(header).toHaveAccessibleName("Priority Long text");
+  await expect(field.getByText("Unsaved", { exact: true })).toBeHidden();
 });

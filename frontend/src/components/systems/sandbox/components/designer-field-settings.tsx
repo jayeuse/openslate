@@ -443,7 +443,7 @@ export function FieldSettings({
       ? (lifecycleReason ?? null)
       : null;
   return (
-    <FieldGroup className="gap-3 pt-1">
+    <FieldGroup data-field-dirty={dirty || undefined} className="gap-3 pt-1">
       <fieldset disabled={pending} className="contents">
         <FormField>
           <FieldLabel htmlFor={controlId("name")}>Name</FieldLabel>
@@ -476,7 +476,7 @@ export function FieldSettings({
               ))}
             </NativeSelect>
           </FormField>
-          <FormField className="min-h-10 flex-row items-center gap-2">
+          <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-10">
             <Checkbox
               id={controlId("required")}
               checked={draft.required}
@@ -610,6 +610,7 @@ export function FieldSettings({
               <NativeSelect
                 id={controlId("default-value")}
                 aria-label={`${prefix} default value`}
+                className="w-full"
                 value={draft.defaultValue}
                 onChange={(event) =>
                   update("defaultValue", event.currentTarget.value)
@@ -787,9 +788,15 @@ export function FieldRow({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(selected);
+  // Once opened, the settings stay mounted while collapsed, so an unsaved
+  // edit survives closing the row (and the row says it is unsaved).
+  const [opened, setOpened] = useState(selected);
 
   useEffect(() => {
-    if (selected) setOpen(true);
+    if (selected) {
+      setOpen(true);
+      setOpened(true);
+    }
   }, [selected]);
 
   return (
@@ -799,12 +806,12 @@ export function FieldRow({
       data-selected={selected ? "true" : "false"}
       className="group border-border border-b last:border-b-0"
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setOpened(true);
+      }}
     >
-      <CollapsibleTrigger
-        aria-label={`${open ? "Hide" : "Show"} ${field.name} settings`}
-        className="hover:bg-surface-hover focus-visible:outline-ring group-data-[selected=true]:bg-accent flex min-h-11 w-full items-center gap-2.5 rounded-sm px-2 text-left text-sm outline-none focus-visible:outline-2 xl:min-h-9"
-      >
+      <CollapsibleTrigger className="hover:bg-surface-hover focus-visible:outline-ring group-data-[selected=true]:bg-accent flex min-h-11 w-full items-center gap-2.5 rounded-sm px-2 text-left text-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 xl:min-h-9">
         <span
           aria-hidden="true"
           className={cn(
@@ -821,6 +828,12 @@ export function FieldRow({
         >
           {field.name}
         </span>
+        <Badge
+          variant="warning"
+          className="hidden group-has-[[data-field-dirty]]:inline-flex"
+        >
+          Unsaved
+        </Badge>
         {field.closed ? (
           <Badge variant="outline">Closed</Badge>
         ) : (
@@ -828,12 +841,13 @@ export function FieldRow({
             {field.type}
           </span>
         )}
+        {field.required ? <span className="sr-only">, required</span> : null}
         <ChevronDown
           aria-hidden="true"
           className="text-muted-foreground size-4 shrink-0 transition-transform duration-(--motion-fast) group-data-[open]:rotate-180 motion-reduce:transition-none"
         />
       </CollapsibleTrigger>
-      <CollapsibleContent className="px-2 pt-1 pb-4">
+      <CollapsibleContent keepMounted={opened} className="px-2 pt-1 pb-4">
         {children}
       </CollapsibleContent>
     </Collapsible>

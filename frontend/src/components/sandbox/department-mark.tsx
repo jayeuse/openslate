@@ -28,7 +28,7 @@ export function DepartmentMark({
       aria-hidden="true"
       data-sandbox-part="identity"
       className={cn(
-        "inline-block size-2 shrink-0 rounded-[2px]",
+        "inline-block size-2 shrink-0 rounded-xs",
         TONE_FILL[tone],
         className,
       )}

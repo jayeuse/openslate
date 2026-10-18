@@ -42,7 +42,7 @@ test("an Advanced block with nothing set shows no count", () => {
     storageKey: "sandbox.module",
     children: "Title field",
   });
-  expect(markup).not.toContain("set");
+  expect(markup).not.toMatch(/\d+ set/);
 });
 
 test("each viewer's Advanced state is remembered per panel", () => {

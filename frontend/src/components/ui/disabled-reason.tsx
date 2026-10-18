@@ -1,6 +1,12 @@
 "use client";
 
-import { cloneElement, useId, type MouseEvent, type ReactElement } from "react";
+import {
+  cloneElement,
+  useId,
+  useState,
+  type MouseEvent,
+  type ReactElement,
+} from "react";
 
 import {
   Tooltip,
@@ -32,6 +38,9 @@ export function DisabledReason({
   children: ReactElement<ControlProps>;
 }) {
   const id = useId();
+  // Opened by a tap or click too: touch has no hover, and a tap on the
+  // control is where the user asks why nothing happened.
+  const [open, setOpen] = useState(false);
   if (!reason) return children;
   const describedBy = [children.props["aria-describedby"], id]
     .filter(Boolean)
@@ -40,11 +49,14 @@ export function DisabledReason({
     "aria-disabled": true,
     "aria-describedby": describedBy,
     disabled: false,
-    onClick: (event: MouseEvent<HTMLElement>) => event.preventDefault(),
+    onClick: (event: MouseEvent<HTMLElement>) => {
+      event.preventDefault();
+      setOpen(true);
+    },
   });
   return (
     <>
-      <Tooltip>
+      <Tooltip open={open} onOpenChange={setOpen}>
         <TooltipTrigger render={control} />
         <TooltipContent>{reason}</TooltipContent>
       </Tooltip>

@@ -1,4 +1,4 @@
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,17 +16,15 @@ export interface RelationshipRow {
 
 /**
  * A module's relationships as compact rows: the name, the module at the
- * other end with an arrow for the direction, and icon actions. Both
- * directions share one list, so one empty line covers the module.
+ * other end with an arrow for the direction, and Edit. Delete, Close, and
+ * Reopen live in the module's Advanced block (the Advanced Last Rule).
  */
 export function RelationshipList({
   rows,
   onEdit,
-  onDelete,
 }: {
   rows: readonly RelationshipRow[];
   onEdit: (id: string) => void;
-  onDelete: (id: string) => void;
 }) {
   if (rows.length === 0)
     return (
@@ -54,28 +52,16 @@ export function RelationshipList({
               {row.otherModule} · {row.cardinality}
             </p>
           </div>
-          <div className="flex shrink-0 items-center">
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-11 xl:size-8"
-              aria-label={`Edit ${row.direction} relationship ${row.name}`}
-              title="Edit"
-              onClick={() => onEdit(row.id)}
-            >
-              <Pencil aria-hidden="true" />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="hover:text-danger-text size-11 xl:size-8"
-              aria-label={`Delete ${row.direction} relationship ${row.name}`}
-              title="Delete"
-              onClick={() => onDelete(row.id)}
-            >
-              <Trash2 aria-hidden="true" />
-            </Button>
-          </div>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-11 shrink-0 xl:size-8"
+            aria-label={`Edit ${row.direction} relationship ${row.name}`}
+            title="Edit"
+            onClick={() => onEdit(row.id)}
+          >
+            <Pencil aria-hidden="true" />
+          </Button>
         </li>
       ))}
     </ul>

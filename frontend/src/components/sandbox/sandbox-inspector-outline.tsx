@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
@@ -691,18 +692,21 @@ export function SandboxInspectorOutline({
             >
               <ChevronsDownUp aria-hidden="true" />
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-11 shrink-0 xl:size-9"
-              aria-label="Jump to selection"
-              title="Jump to selection"
-              disabled={!selectedCellId}
-              onClick={jumpToSelection}
+            <DisabledReason
+              reason={selectedCellId ? null : "Select an item first."}
             >
-              <LocateFixed aria-hidden="true" />
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11 shrink-0 xl:size-9"
+                aria-label="Jump to selection"
+                disabled={!selectedCellId}
+                onClick={jumpToSelection}
+              >
+                <LocateFixed aria-hidden="true" />
+              </Button>
+            </DisabledReason>
           </div>
         </div>
 

@@ -23,6 +23,7 @@ import {
   lifecycleImpactFixture,
   lifecycleReview,
   liveBinding,
+  fieldRowTrigger,
   openAuthenticatedSandbox,
   openCheckpointDialog,
   openImportExport,
@@ -142,7 +143,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.goto(`/sandbox?module=${relationship.target}`);
       await page
         .getByRole("button", {
-          name: `Close incoming relationship ${relationship.name}`,
+          name: `Close relationship ${relationship.name}, incoming`,
           exact: true,
         })
         .click();
@@ -621,7 +622,7 @@ for (const orientation of ["outgoing", "incoming"] as const) {
     );
     const action = (verb: string) =>
       page.getByRole("button", {
-        name: `${verb} ${orientation} relationship ${relationship.name}`,
+        name: `${verb} relationship ${relationship.name}, ${orientation}`,
         exact: true,
       });
     await action("Close").click();
@@ -760,7 +761,7 @@ test("relationship mismatched Field preview refuses confirmation", async ({
   await page.goto(`/sandbox?module=${relationship.source}`);
   await page
     .getByRole("button", {
-      name: `Close outgoing relationship ${relationship.name}`,
+      name: `Close relationship ${relationship.name}, outgoing`,
       exact: true,
     })
     .click();
@@ -799,7 +800,7 @@ test("bound draft deletion explains retained live data while unbound copy remain
   await page.goto(`/sandbox?module=${relationship.source}`);
   await page
     .getByRole("button", {
-      name: `Delete outgoing relationship ${relationship.name}`,
+      name: `Delete relationship ${relationship.name}, outgoing`,
       exact: true,
     })
     .click();
@@ -922,9 +923,7 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
   const settings = page.getByLabel(`${field.name} field settings`, {
     exact: true,
   });
-  await settings
-    .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
-    .click();
+  await fieldRowTrigger(settings, field.name).click();
   await settings
     .getByLabel(`${field.name} name`, { exact: true })
     .fill("Unsaved field name");
@@ -1156,9 +1155,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     const settings = page.getByLabel(`${field.name} field settings`, {
       exact: true,
     });
-    await settings
-      .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
-      .click();
+    await fieldRowTrigger(settings, field.name).click();
     await expect(
       settings.getByRole("button", { name: "Reopen field", exact: true }),
     ).toBeEnabled();
@@ -1312,9 +1309,7 @@ test("a retained saved Chart query blocks bound field purge until repaired", asy
   const settings = page.getByLabel(`${field.name} field settings`, {
     exact: true,
   });
-  await settings
-    .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
-    .click();
+  await fieldRowTrigger(settings, field.name).click();
   await settings
     .getByRole("button", { name: "Permanently delete field", exact: true })
     .click();
@@ -1892,7 +1887,15 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   await page.getByRole("button", { name: "Create department" }).click();
 
   for (const moduleName of ["Inventory", "Suppliers"]) {
-    await page.getByRole("button", { name: "Add module", exact: true }).click();
+    // A module's panel holds its own fields; new modules start from the
+    // department, here through its Structure row.
+    await page
+      .getByRole("tablist", { name: "Workbench view" })
+      .getByRole("tab", { name: "Structure" })
+      .click();
+    await page
+      .getByRole("button", { name: "Add module to Operations", exact: true })
+      .click();
     await page.getByLabel("Module name").fill(moduleName);
     await page.getByRole("button", { name: "Create module" }).click();
   }
@@ -2670,9 +2673,10 @@ test("closing a mapped field removes its relationship mappings", async ({
 }) => {
   await openAuthenticatedSandbox(page, configuredDesignWithLegacyMapping());
 
-  await page
-    .getByRole("button", { name: "Show Request number settings" })
-    .click();
+  await fieldRowTrigger(
+    page.getByLabel("Request number field settings"),
+    "Request number",
+  ).click();
   await page
     .getByLabel("Request number field settings")
     .getByRole("button", { name: "Close field" })
@@ -2700,9 +2704,10 @@ test("the Designer saves offset Date/Time bounds in chronological order", async 
     configuredDesignWithOffsetDateTimeBounds(),
   );
 
-  await page
-    .getByRole("button", { name: "Show Request number settings" })
-    .click();
+  await fieldRowTrigger(
+    page.getByLabel("Request number field settings"),
+    "Request number",
+  ).click();
   // Save appears once the row has an edit; the bounds stay as loaded.
   await page
     .getByLabel("Request number field settings")
@@ -3196,7 +3201,10 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   expect(before.defaultValue).toBe(openId);
   const idShapedLabel = openId;
 
-  await page.getByRole("button", { name: "Show Status settings" }).click();
+  await fieldRowTrigger(
+    page.getByLabel("Status field settings"),
+    "Status",
+  ).click();
   const settings = page.getByLabel("Status field settings");
   await settings
     .getByLabel("Status options")
@@ -3296,9 +3304,10 @@ test("editing select choices preserves IDs, even when a label matches the defaul
       await expect(propertiesTab).toHaveCount(1);
       if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
         await propertiesTab.click();
-      const showSettings = page
-        .getByLabel("Status field settings")
-        .getByRole("button", { name: "Show Status settings", exact: true });
+      const showSettings = fieldRowTrigger(
+        page.getByLabel("Status field settings"),
+        "Status",
+      );
       if (await showSettings.isVisible()) await showSettings.click();
     }
   }
@@ -3311,7 +3320,10 @@ test("removing an unsaved selected choice requires an explicit new default", asy
 }) => {
   const design = structuredClone(configuredSandboxDesign);
   const sandbox = await openAuthenticatedSandbox(page, design);
-  await page.getByRole("button", { name: "Show Status settings" }).click();
+  await fieldRowTrigger(
+    page.getByLabel("Status field settings"),
+    "Status",
+  ).click();
   const settings = page.getByLabel("Status field settings");
   const optionsInput = settings.getByLabel("Status options");
   await optionsInput.fill("Temporary, Open, In progress, Complete");
@@ -3368,9 +3380,7 @@ test("the Designer saves a module record title field in the current v4 draft", a
   expect(consoleErrors).toEqual([]);
 
   const titleSettings = page.getByLabel(`${titleField.name} field settings`);
-  await titleSettings
-    .getByRole("button", { name: `Show ${titleField.name} settings` })
-    .click();
+  await fieldRowTrigger(titleSettings, titleField.name).click();
   const closeField = titleSettings.getByRole("button", {
     name: "Close field",
   });
@@ -3394,9 +3404,10 @@ test("the Designer saves a module record title field in the current v4 draft", a
       await expect(propertiesTab).toHaveCount(1);
       if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
         await propertiesTab.click();
-      const showSettings = page
-        .getByLabel("Title field settings")
-        .getByRole("button", { name: "Show Title settings", exact: true });
+      const showSettings = fieldRowTrigger(
+        page.getByLabel("Title field settings"),
+        "Title",
+      );
       if (await showSettings.isVisible()) await showSettings.click();
     }
   }
@@ -3405,10 +3416,7 @@ test("the Designer saves a module record title field in the current v4 draft", a
 
   await titleSelector.selectOption("");
   await expect.poll(sandbox.documentWrites).toBe(2);
-  const showSettings = titleSettings.getByRole("button", {
-    name: "Show Title settings",
-    exact: true,
-  });
+  const showSettings = fieldRowTrigger(titleSettings, "Title");
   if (await showSettings.isVisible()) await showSettings.click();
   await expect(closeField).toBeEnabled();
   await expect(closeField).toHaveAccessibleDescription("");
@@ -3428,7 +3436,7 @@ test("a failed record title field change shows its error under the select", asyn
   await titleSelector.selectOption(titleField.id);
   await expect(titleSelector).toHaveAttribute("aria-invalid", "true");
   await expect(titleSelector).toHaveAccessibleDescription(
-    "This Sandbox change could not be saved. Try again.",
+    /^This Sandbox change could not be saved\. Try again\./,
   );
 });
 

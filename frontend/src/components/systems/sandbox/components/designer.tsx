@@ -102,10 +102,10 @@ import { RelationshipList, type RelationshipRow } from "./relationship-list";
 import { AdvancedSection } from "@/components/ui/advanced-section";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { DepartmentMark } from "@/components/sandbox/department-mark";
 import type {
   SandboxCanvasLayout,
@@ -562,6 +562,10 @@ export function Designer({
     moduleId: string;
     message: string;
   } | null>(null);
+  const [moveError, setMoveError] = useState<{
+    moduleId: string;
+    message: string;
+  } | null>(null);
   const handledFocusTarget = useRef<string | null>(null);
   const selectedField = projectedField(design, selected);
   const selectedRelationship = design.relationships.find(
@@ -856,20 +860,21 @@ export function Designer({
           size="sm"
           variant="ghost"
           disabled={state.disabled}
-          aria-label={`${verb} ${orientation} relationship ${name}`}
+          aria-label={`${verb} relationship ${name}, ${orientation}`}
           onClick={() => void toggleLifecycle(target)}
         >
-          {verb} relationship
+          {verb}
         </Button>
         {state.canPurge ? (
           <Button
             size="sm"
             variant="ghost"
+            className="text-danger-text"
             disabled={state.disabled}
-            aria-label={`Permanently delete ${orientation} relationship ${name}`}
+            aria-label={`Permanently delete relationship ${name}, ${orientation}`}
             onClick={() => void purgeLifecycle(target)}
           >
-            Permanently delete relationship
+            Permanently delete
           </Button>
         ) : null}
       </>
@@ -933,7 +938,7 @@ export function Designer({
         ),
       };
     }, `sandbox.design.module-parent:${id}`);
-    if (!result.ok) notify(result.error);
+    setMoveError(result.ok ? null : { moduleId: id, message: result.error });
     return result;
   }
   async function addFromCanvas(
@@ -1150,6 +1155,10 @@ export function Designer({
   const shownTitleFieldError =
     titleFieldError && titleFieldError.moduleId === selectedModule?.id
       ? titleFieldError.message
+      : "";
+  const shownMoveError =
+    moveError && moveError.moduleId === selectedModule?.id
+      ? moveError.message
       : "";
   const designIsEmpty =
     design.departments.length === 0 && design.modules.length === 0;
@@ -1858,14 +1867,6 @@ export function Designer({
           })),
       ]
     : [];
-  const relationshipLifecycle = relationshipRows.flatMap((row) => {
-    const actions = relationshipLifecycleActions(
-      row.id,
-      row.name,
-      row.direction,
-    );
-    return actions ? [{ row, actions }] : [];
-  });
   const inspectorPane = (
     <aside
       aria-label="Design inspector"
@@ -1924,17 +1925,19 @@ export function Designer({
         editorForm
       ) : !inspectedItem || !inspectedTarget || !inspectedLifecycle ? null : (
         <>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={() => open("module")}
-            >
-              <Plus aria-hidden="true" />
-              Add module
-            </Button>
-          </div>
+          {selectedModule ? null : (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => open("module")}
+              >
+                <Plus aria-hidden="true" />
+                Add module
+              </Button>
+            </div>
+          )}
           {selectedModule ? (
             <>
               <section
@@ -2197,12 +2200,12 @@ export function Designer({
                 <RelationshipList
                   rows={relationshipRows}
                   onEdit={editRelationship}
-                  onDelete={(id) => requestDelete({ kind: "link", id })}
                 />
               </section>
             </>
           ) : null}
           <AdvancedSection
+            key={inspectedKind}
             storageKey={`sandbox.${inspectedKind}`}
             setCount={
               (selectedModule?.titleFieldId ? 1 : 0) +
@@ -2212,7 +2215,7 @@ export function Designer({
           >
             {selectedModule ? (
               <>
-                <FormField>
+                <FormField data-invalid={Boolean(shownMoveError) || undefined}>
                   <FieldLabel htmlFor="sandbox-move-module-department">
                     Move module to department
                   </FieldLabel>
@@ -2220,8 +2223,15 @@ export function Designer({
                     id="sandbox-move-module-department"
                     className="w-full [&_select]:min-h-10"
                     value={selectedModule.department}
+                    disabled={pending}
+                    aria-invalid={shownMoveError ? true : undefined}
+                    aria-describedby={
+                      shownMoveError
+                        ? "sandbox-move-module-department-error"
+                        : undefined
+                    }
                     onChange={(event) =>
-                      moveModule(selectedModule.id, event.target.value)
+                      void moveModule(selectedModule.id, event.target.value)
                     }
                   >
                     {design.departments.map((item) => (
@@ -2230,6 +2240,14 @@ export function Designer({
                       </NativeSelectOption>
                     ))}
                   </NativeSelect>
+                  {shownMoveError ? (
+                    <FieldError
+                      id="sandbox-move-module-department-error"
+                      className="text-xs"
+                    >
+                      {shownMoveError}
+                    </FieldError>
+                  ) : null}
                 </FormField>
                 <FormField
                   data-invalid={Boolean(shownTitleFieldError) || undefined}
@@ -2238,22 +2256,22 @@ export function Designer({
                     <FieldLabel htmlFor="sandbox-record-title-field">
                       Title field
                     </FieldLabel>
-                    <Tooltip>
-                      <TooltipTrigger
+                    <Popover>
+                      <PopoverTrigger
                         render={
                           <button
                             type="button"
                             aria-label="About the title field"
-                            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring inline-flex size-6 items-center justify-center rounded-sm outline-none focus-visible:outline-2"
+                            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring -my-2 inline-flex size-11 items-center justify-center rounded-sm outline-none focus-visible:outline-2 xl:my-0 xl:size-6"
                           />
                         }
                       >
                         <Info aria-hidden="true" className="size-3.5" />
-                      </TooltipTrigger>
-                      <TooltipContent>
+                      </PopoverTrigger>
+                      <PopoverContent side="top" className="w-auto max-w-64">
                         Names this module&apos;s records in Boards links.
-                      </TooltipContent>
-                    </Tooltip>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                   <NativeSelect
                     id="sandbox-record-title-field"
@@ -2263,8 +2281,8 @@ export function Designer({
                     aria-invalid={shownTitleFieldError ? true : undefined}
                     aria-describedby={
                       shownTitleFieldError
-                        ? "sandbox-record-title-field-error"
-                        : undefined
+                        ? "sandbox-record-title-field-error sandbox-record-title-field-help"
+                        : "sandbox-record-title-field-help"
                     }
                     onChange={async (event) => {
                       const moduleId = selectedModule.id;
@@ -2305,6 +2323,12 @@ export function Designer({
                         </NativeSelectOption>
                       ))}
                   </NativeSelect>
+                  <span
+                    id="sandbox-record-title-field-help"
+                    className="sr-only"
+                  >
+                    Names this module&apos;s records in Boards links.
+                  </span>
                   {shownTitleFieldError ? (
                     <FieldError
                       id="sandbox-record-title-field-error"
@@ -2367,29 +2391,56 @@ export function Designer({
                     : "Stops new records. Keeps existing data."}
               </p>
             </div>
-            {relationshipLifecycle.length > 0 ? (
+            {relationshipRows.length > 0 ? (
               <div
                 role="group"
                 aria-labelledby="sandbox-relationship-lifecycle"
-                className="flex flex-col"
+                className="flex flex-col gap-1"
               >
                 <p
                   id="sandbox-relationship-lifecycle"
-                  className="text-muted-foreground text-xs font-medium"
+                  className="text-sm font-medium"
                 >
                   Relationships
                 </p>
-                {relationshipLifecycle.map(({ row, actions }) => (
-                  <div
-                    key={`${row.direction}:${row.id}`}
-                    className="flex flex-wrap items-center gap-x-1"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      {row.name}
-                    </span>
-                    {actions}
-                  </div>
-                ))}
+                <ul className="divide-border divide-y">
+                  {relationshipRows.map((row) => (
+                    <li
+                      key={`${row.direction}:${row.id}`}
+                      className="flex flex-wrap items-center gap-x-1 gap-y-0.5 py-1"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm">{row.name}</p>
+                        <p className="text-muted-foreground truncate text-xs">
+                          <span aria-hidden="true">
+                            {row.direction === "outgoing" ? "→ " : "← "}
+                          </span>
+                          <span className="sr-only">
+                            {row.direction === "outgoing" ? "To " : "From "}
+                          </span>
+                          {row.otherModule}
+                        </p>
+                      </div>
+                      {relationshipLifecycleActions(
+                        row.id,
+                        row.name,
+                        row.direction,
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-danger-text"
+                        disabled={pending}
+                        aria-label={`Delete relationship ${row.name}, ${row.direction}`}
+                        onClick={() =>
+                          requestDelete({ kind: "link", id: row.id })
+                        }
+                      >
+                        Delete
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             ) : null}
           </AdvancedSection>
