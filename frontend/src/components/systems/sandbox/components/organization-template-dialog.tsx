@@ -130,10 +130,11 @@ export function OrganizationTemplateDialog({
                           `${stats.fields} fields`,
                           `${stats.relationships} relationships`,
                           `${stats.triggers} triggers`,
-                        ].map((part, index) => (
+                        ].map((part, index, parts) => (
+                          // The separator ends its part, so no line starts with it.
                           <span key={part} className="whitespace-nowrap">
-                            {index ? "· " : ""}
                             {part}
+                            {index < parts.length - 1 ? " ·" : ""}
                           </span>
                         ))}
                       </p>
