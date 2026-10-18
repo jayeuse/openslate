@@ -119,6 +119,22 @@ Each phase ends with its focused tests, the Sandbox batch (lint, build, isolated
 
 It runs last because it touches strings in every section, including the strings that phases 1 to 5 add.
 
+**Proposed glossary (waiting for the owner's approval).** Display words only; stored values and wire formats stay.
+
+| #   | Now                                                     | Proposed                                                                                 | Where                                                   | UI / tests                           |
+| --- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------ |
+| G1  | module                                                  | **table** (alternatives: list, record type)                                              | Sandbox, canvas Key; Access, OpenView, Platform, Manage | about 147 Sandbox + 45 other strings |
+| G2  | One-to-one · One-to-many · Many-to-many                 | Each has one · One has many · Many have many                                             | relationship rows, canvas line chips, editor            | 13 / 6                               |
+| G3  | Integer · Date/Time · URL · Select                      | Whole number · Date and time · Web link · Choice list                                    | field type menus, canvas type labels, Properties        | display map / about 44               |
+| G4  | equals (=), does not equal (≠), is greater than (>) …   | is, is not, is more than, is at least, is less than, is at most (no symbols; "is" first) | condition and threshold operators                       | 1 / 6                                |
+| G5  | Live state                                              | what your team sees (in buttons: "Reload team view")                                     | lifecycle notices and buttons                           | 12 / 7                               |
+| G6  | "Save conflict: your proposed document is still local." | "Not saved: someone else changed this draft. Your edits are still here."                 | conflict alert                                          | 3 / 3                                |
+| G7  | Export JSON · Import from file · "portable JSON file"   | Download a backup · Load a backup · "a backup file"                                      | Import or export dialog                                 | 3 / 16                               |
+| G8  | Enter a simulated user UUID                             | Paste the person's ID (a people picker is a follow-up)                                   | Test values for a User field                            | 1 / few                              |
+| G9  | Event module                                            | the G1 word (for example "Table")                                                        | trigger settings                                        | 1 / 1                                |
+| G10 | relationship field mapping                              | linked field                                                                             | delete and close notices, legacy mappings               | 6 / 6                                |
+| G11 | "" (empty text)                                         | (empty)                                                                                  | condition summaries                                     | 1 / 0                                |
+
 ## Exit
 
 1. The Sandbox batch passes, and the frontend static checks are clean.
