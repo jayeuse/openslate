@@ -102,7 +102,6 @@
   --canvas-grid: #dde1e7;
   --canvas-grid-major: #c3c9d2;
   --sandbox-node-border: var(--rule-strong);
-  --sandbox-field-stripe: var(--ground);
   --radius: 0.5rem;
   /* Motion. Durations name the job, not a speed: fast for feedback, base
      for routine state, slow for layout and authored moments. Each look sets
@@ -308,6 +307,39 @@
     box-sizing: border-box;
   }
 
+  /* Quiet Scrollbar Rule (DESIGN.md): a 4px thumb in an 8px lane, no
+     track, tinted from the look's muted ink; under the pointer it widens to
+     6px and darkens. The transparent border draws the thin thumb while the
+     lane stays easy to grab. Never hidden: it is the only cue that a panel
+     has more below the fold. Chromium ignores these pseudo-elements once
+     `scrollbar-width` or `scrollbar-color` is set, so the standard
+     properties are for Firefox only. */
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+    background-color: color-mix(in oklab, var(--ink-muted) 60%, transparent);
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    border-width: 1px;
+    background-color: var(--ink-muted);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in oklab, var(--ink-muted) 60%, transparent)
+        transparent;
+    }
+  }
+
   h1,
   [data-slot="page-title"] {
     font-family: var(--font-display);
@@ -368,16 +400,11 @@ textarea {
   --popover: var(--surface-raised);
   --muted: var(--surface-hover);
   --secondary: var(--surface-hover);
-  --sandbox-field-stripe: var(--ground);
   --border: var(--rule-strong);
 }
 
 .sandbox-ui .sandbox-field-list > li {
   border-radius: var(--radius);
-}
-
-.sandbox-ui .sandbox-field-list > li:nth-child(even) {
-  background-color: var(--sandbox-field-stripe);
 }
 
 .sandbox-ui
@@ -458,47 +485,67 @@ textarea {
   stroke-width: 2px;
 }
 
-/* Minimap overview for the Sandbox canvas. X6 would inject these rules at
- * runtime, which the production CSP blocks, so they live here, themed. */
-.sandbox-minimap .x6-widget-minimap {
-  position: relative;
-  overflow: hidden;
-  background: var(--canvas-background);
+/* Minimap overview for the Sandbox canvas (React Flow's MiniMap, outside
+ * the flow root, so its variables are set here). Frames carry their
+ * department tones; the viewport is an action-colored outline. */
+.sandbox-minimap {
+  --xy-minimap-node-stroke-color: transparent;
+}
+
+.sandbox-minimap .react-flow__minimap {
   user-select: none;
 }
 
-.sandbox-minimap .x6-widget-minimap .x6-graph {
-  display: inline-block;
-  box-shadow: none;
-  cursor: pointer;
-}
-
-/* Dark card fills sit too close to the dark canvas to read at minimap scale. */
-.dark .sandbox-minimap [data-sandbox-body] {
-  fill: var(--rule-strong);
-}
-
-/* At minimap scale, text and edges are noise; frames and tables carry it. */
-.sandbox-minimap :is(text, .x6-edge) {
-  display: none;
-}
-
-.sandbox-minimap .x6-widget-minimap .x6-graph > svg {
-  pointer-events: none;
+.sandbox-minimap .react-flow__minimap-svg {
   shape-rendering: optimizespeed;
 }
 
-.sandbox-minimap .x6-widget-minimap-viewport {
-  position: absolute;
-  box-sizing: content-box;
-  margin: -2px 0 0 -2px;
-  border: 2px solid var(--action);
-  border-radius: 2px;
-  cursor: move;
+.sandbox-minimap .sandbox-minimap-department.sandbox-minimap-tone-1 {
+  fill: var(--dept-1-sheet);
 }
 
-.sandbox-minimap .x6-widget-minimap-viewport-zoom {
-  display: none;
+.sandbox-minimap .sandbox-minimap-department.sandbox-minimap-tone-2 {
+  fill: var(--dept-2-sheet);
+}
+
+.sandbox-minimap .sandbox-minimap-department.sandbox-minimap-tone-3 {
+  fill: var(--dept-3-sheet);
+}
+
+.sandbox-minimap .sandbox-minimap-department.sandbox-minimap-tone-4 {
+  fill: var(--dept-4-sheet);
+}
+
+/* Frames keep a one-pixel outline at any minimap scale, since a pale sheet
+   on the pale canvas does not read. */
+.sandbox-minimap .sandbox-minimap-department {
+  stroke: var(--canvas-dept-frame);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Card fills sit too close to the frames to read at minimap scale, in light
+   and dark alike, so tables take the strong rule color. */
+.sandbox-minimap .sandbox-minimap-module {
+  fill: var(--rule-strong);
+}
+
+/* Connection points on module sides: hidden until the module is hovered or
+ * selected, or while a line is being drawn (sandbox-canvas-nodes.tsx). */
+.sandbox-flow .react-flow__handle.sandbox-port {
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--muted-foreground);
+  border-radius: 50%;
+  background: var(--card);
+  opacity: 0;
+}
+
+.sandbox-flow .react-flow__node:hover .sandbox-port,
+.sandbox-flow .sandbox-port[data-visible="true"],
+.sandbox-flow[data-connecting="true"] .sandbox-port {
+  opacity: 1;
 }
 
 /* Data that replaces a loading state fades in; cached data appears at once
@@ -516,7 +563,7 @@ textarea {
 }
 
 /* Motion follows input: only the lines a hover traces drift. */
-.sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line="true"] {
+.sandbox-ui [data-sandbox-edge][data-trace="on"] [data-sandbox-line="true"] {
   animation: sandbox-relationship-flow 2.4s linear infinite;
 }
 
@@ -576,22 +623,32 @@ textarea {
 
 /* Hovering a module or relationship traces its connections
    (sandbox-canvas-trace.ts). Only opacity animates. */
-.sandbox-ui .x6-cell[data-trace] {
+.sandbox-ui
+  :is(
+    [data-sandbox-node],
+    [data-sandbox-edge],
+    [data-sandbox-edge-label]
+  )[data-trace] {
   transition: opacity 150ms ease-out;
 }
 
-.sandbox-ui .x6-cell[data-trace="dim"] {
+.sandbox-ui
+  :is(
+    [data-sandbox-node],
+    [data-sandbox-edge],
+    [data-sandbox-edge-label]
+  )[data-trace="dim"] {
   opacity: 0.35;
 }
 
 /* A traced path shows movement, so it takes the flow color. */
-.sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line] {
+.sandbox-ui [data-sandbox-edge][data-trace="on"] [data-sandbox-line] {
   stroke: var(--flow);
   stroke-width: 2px;
 }
 
 .sandbox-ui
-  .x6-node[data-trace="on"]
+  [data-sandbox-node][data-trace="on"]
   [data-sandbox-kind="module"][data-selected="false"][data-feedback=""] {
   stroke: var(--flow);
   stroke-width: 2px;
@@ -615,23 +672,34 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line="true"] {
+  .sandbox-ui [data-sandbox-edge][data-trace="on"] [data-sandbox-line="true"] {
     animation: none;
   }
 
-  .sandbox-ui .x6-cell[data-trace] {
+  .sandbox-ui
+    :is(
+      [data-sandbox-node],
+      [data-sandbox-edge],
+      [data-sandbox-edge-label]
+    )[data-trace] {
     transition: none;
   }
 }
 
 [data-motion="reduced"]
   .sandbox-ui
-  .x6-edge[data-trace="on"]
+  [data-sandbox-edge][data-trace="on"]
   [data-sandbox-line="true"] {
   animation: none;
 }
 
-[data-motion="reduced"] .sandbox-ui .x6-cell[data-trace] {
+[data-motion="reduced"]
+  .sandbox-ui
+  :is(
+    [data-sandbox-node],
+    [data-sandbox-edge],
+    [data-sandbox-edge-label]
+  )[data-trace] {
   transition: none;
 }
 
@@ -701,22 +769,15 @@ textarea {
   stroke-width: 1.65;
 }
 
-.app-sidebar-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: var(--sidebar-muted) transparent;
-}
-
-.app-sidebar-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-
-.app-sidebar-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
+/* The sidebar's thumb (Quiet Scrollbar Rule) uses its own ink. */
 .app-sidebar-scroll::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: var(--sidebar-muted);
+  background-color: var(--sidebar-muted);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .app-sidebar-scroll {
+    scrollbar-color: var(--sidebar-muted) transparent;
+  }
 }
 
 @media (max-width: 639px) {
@@ -767,13 +828,17 @@ html[data-density="spacious"]
     --spacing: 0.21875rem;
   }
 }
-#main-content :where([class~="min-h-11"]) {
+/* The 44px target floor: page density scales --spacing, so these keep a
+   fixed 44px at every density. An element that sets its own desktop size
+   (xl:min-h-9) is left to that class, or the ID rule would beat it at
+   1280px and up; touch tablets below that keep 44px. */
+#main-content :where([class~="min-h-11"]:not([class*="xl:min-h-"])) {
   min-height: max(44px, 2.75rem);
 }
-#main-content :where([class~="min-w-11"]) {
+#main-content :where([class~="min-w-11"]:not([class*="xl:min-w-"])) {
   min-width: max(44px, 2.75rem);
 }
-#main-content :where([class~="size-11"]) {
+#main-content :where([class~="size-11"]:not([class*="xl:size-"])) {
   width: max(44px, 2.75rem);
   height: max(44px, 2.75rem);
 }
@@ -803,6 +868,13 @@ html {
 }
 #main-content :where(button, a, input, select, textarea, [tabindex], [id]) {
   scroll-margin-block: 4.5rem 1rem;
+}
+/* The Test setup's sticky Run test bar must not cover the focused input
+   (WCAG 2.4.11). */
+#main-content
+  [data-test-setup]
+  :where(button, a, input, select, textarea, [tabindex]) {
+  scroll-margin-block-end: 5rem;
 }
 @media (prefers-contrast: more) {
   #main-content[data-skin="page"] {

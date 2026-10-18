@@ -32,6 +32,7 @@ Run these declared scripts from `frontend/`:
 - `npm test`: all retained isolated and HTTP tests (the gate's native collection).
 - `npm run test:full`: existing full selector over mapped sections, not a replacement for the gate's native collection.
 - `npm run verify`: `check` → `build` → `test`; full frontend gate/repair, not the loop after every edit.
+- `npm run sweep -- --credentials <absolute-path>`: on demand against the running dev stack, signs in, visits every sidebar route and tab, and fails on runtime errors; it saves nothing and is not part of the gate.
 
 The lockfile pins Playwright and Chromium. Local tests use up to three workers;
 CI runs a separate isolated job at its default one worker and six whole-file,

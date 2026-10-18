@@ -46,6 +46,9 @@ general-purpose tools such as Google Sheets.
 Customer-facing lines speak about ownership and outcome in plain words (your
 organization, your own system, one place for your people) and avoid
 "builder", "no-code", "platform", "workflow", and "module".
+Inside the product, "module" stays the name of a table that the owner creates
+in the Sandbox (owner decision, 2026-10-18): "table" already means a real
+database table on other pages. Marketing lines still avoid it.
 
 The public line is **"Draw your ___ as it works."** The blank rotates through
 kinds of organization (business, school, clinic, shop, club, nonprofit) so

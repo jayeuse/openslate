@@ -107,11 +107,17 @@ function affectedRuleReferences(
   return count;
 }
 
+/** The sentence for trigger steps that lose a deleted field or module. */
+function triggerNote(references: number): string {
+  if (!references) return "";
+  return ` ${plural(references, "trigger step")} ${references === 1 ? "uses" : "use"} it and may stop working.`;
+}
+
 export function deletionImpact(
   design: Design,
   target: SandboxDesignTarget | null,
   bound = false,
-): { title: string; detail: string } | null {
+): { title: string; detail: string; action: string } | null {
   if (!target) return null;
   if (bound) {
     const impact = deletionImpact(design, target);
@@ -129,7 +135,9 @@ export function deletionImpact(
     const name = relationship?.name || "Unnamed relationship";
     return {
       title: `Delete relationship ${name}?`,
-      detail: `Deleting relationship “${name}” removes that exact relationship from both connected modules. Undo restores the complete change.`,
+      detail:
+        "Removes it from both connected modules. Undo restores the complete change.",
+      action: "Delete relationship",
     };
   }
   if (target.kind === "field") {
@@ -149,7 +157,8 @@ export function deletionImpact(
     );
     return {
       title: `Delete field ${name}?`,
-      detail: `Deleting field “${name}” removes it from its module, removes ${plural(mappings, "relationship field mapping")}, and invalidates ${plural(ruleReferences, "trigger reference")}. Triggers that use it stay, but may stop working. Undo restores the complete change.`,
+      detail: `Removes it from its module${mappings ? ` with ${plural(mappings, "linked field")}` : ""}.${triggerNote(ruleReferences)} Undo restores the complete change.`,
+      action: "Delete field",
     };
   }
   const moduleIds = new Set(
@@ -188,11 +197,11 @@ export function deletionImpact(
     ...(target.kind === "department" ? [plural(modules.length, "module")] : []),
     plural(fieldCount, "field"),
     plural(relationships, "relationship"),
-    plural(ruleReferences, "trigger reference"),
   ];
   return {
     title: `Delete ${target.kind} ${name}?`,
-    detail: `Deleting ${target.kind} “${name}” removes ${joinedImpact(parts)}. Triggers that use it stay, but may stop working. Undo restores the complete change.`,
+    detail: `Removes it with ${joinedImpact(parts)}.${triggerNote(ruleReferences)} Undo restores the complete change.`,
+    action: `Delete ${target.kind}`,
   };
 }
 

@@ -183,8 +183,8 @@ export function SandboxLifecycleDialog({
               ) : null}
               {binding.kind === "field" ? (
                 <p>
-                  Closing this field removes its relationship field mappings
-                  from the current design.
+                  Closing this field removes its linked fields from the current
+                  design.
                 </p>
               ) : null}
               {blocked ? (

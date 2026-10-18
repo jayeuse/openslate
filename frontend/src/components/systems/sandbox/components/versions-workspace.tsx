@@ -13,14 +13,14 @@ import {
   sandboxKeys,
   sandboxVersionPageOptions,
 } from "../state/sandbox-queries";
-import { ArrowRight } from "lucide-react";
 import { VersionComparison } from "./version-comparison";
 import {
   VersionCapacityBanner,
   type VersionCapacityActions,
 } from "./version-capacity-banner";
 import { SearchField } from "@/components/ui/search-field";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { AdvancedSection } from "@/components/ui/advanced-section";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 import {
@@ -67,6 +67,10 @@ type Props = {
   notifyError: (message: string) => void;
   notifyDone: (message: string) => void;
   pending: boolean;
+  /** Opens the page's Save checkpoint dialog. */
+  onSaveCheckpoint: () => void;
+  /** A checkpoint of an empty design would save nothing. */
+  canCheckpoint: boolean;
 };
 
 type VersionFilter = "all" | "checkpoint" | "published" | "imported";
@@ -147,6 +151,16 @@ function formatVersionDate(value: string): string {
   }).format(date);
 }
 
+/** The time alone, for timeline rows under their day heading. */
+function formatVersionTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function formatVersionDay(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -184,14 +198,13 @@ function VersionChoice({
       {(controlId) => (
         <NativeSelect
           id={controlId}
-          className="w-full [&_select]:min-h-11"
+          className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-9"
           value={value}
           onChange={(event) => onChange(event.target.value)}
         >
           {versions.map((version) => (
             <NativeSelectOption key={version.id} value={version.id}>
-              {version.label} · v{version.sequence} ·{" "}
-              {formatVersionDate(version.createdAt)}
+              v{version.sequence} · {version.label}
             </NativeSelectOption>
           ))}
         </NativeSelect>
@@ -232,6 +245,8 @@ export function VersionsWorkspace({
   notifyError,
   notifyDone,
   pending,
+  onSaveCheckpoint,
+  canCheckpoint,
 }: Props) {
   const [compareA, setCompareA] = useState("");
   const [compareB, setCompareB] = useState("");
@@ -403,6 +418,39 @@ export function VersionsWorkspace({
     setComparison(null);
     setComparing(false);
   }, [comparisonUnavailable]);
+  /** A changed compare selection hides the result of the earlier pair. */
+  function clearComparison() {
+    setComparison(null);
+    setComparing(false);
+    setCompareError("");
+  }
+  const [comparePending, setComparePending] = useState(false);
+  const [compareError, setCompareError] = useState("");
+  const comparisonHeading = useRef<HTMLHeadingElement | null>(null);
+  async function compare(firstId: string, secondId: string) {
+    setComparePending(true);
+    setCompareError("");
+    const [first, second] = await Promise.all([
+      getVersion(firstId),
+      getVersion(secondId),
+    ]);
+    setComparePending(false);
+    if (!first.ok) setCompareError(first.error);
+    else if (!second.ok) setCompareError(second.error);
+    else {
+      setComparison({ first: first.value, second: second.value });
+      setComparing(true);
+    }
+    // Below xl the comparison sits under the detail: bring the result or
+    // the error into view.
+    requestAnimationFrame(() => {
+      const heading = comparisonHeading.current;
+      if (!heading || window.matchMedia("(min-width: 80rem)").matches) return;
+      heading.scrollIntoView({ block: "start" });
+      heading.focus({ preventScroll: true });
+    });
+  }
+  const [compareWith, setCompareWith] = useState("");
   const versionActionReturnFocus = useRef<HTMLElement | null>(null);
   const versionsHeading = useRef<HTMLHeadingElement | null>(null);
   const confirmVersion = confirm
@@ -462,9 +510,7 @@ export function VersionsWorkspace({
         setActionError(result.error);
         return;
       }
-      notifyDone(
-        `Draft restored from ${version.label}. Shared history added a recovery checkpoint.`,
-      );
+      notifyDone("Draft restored · checkpoint saved");
     }
     const deleted = action.kind === "delete";
     setConfirm(null);
@@ -488,9 +534,9 @@ export function VersionsWorkspace({
   }
 
   return (
-    <div className="min-w-0">
-      <div className="border-border min-w-0 overflow-hidden rounded-xl border xl:h-[calc(100dvh-15rem)]">
-        <div className="grid min-w-0 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(30rem,2fr)_minmax(18rem,1.2fr)]">
+    <div className="flex h-full min-w-0 flex-col">
+      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border xl:min-h-0 xl:flex-1 xl:shrink">
+        <div className="grid min-w-0 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(16rem,1fr)_minmax(26rem,1.7fr)_minmax(18rem,1.1fr)]">
           <section
             aria-label="Version timeline"
             className="bg-card border-border relative min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
@@ -510,6 +556,21 @@ export function VersionsWorkspace({
                   {displayedPage?.total === 1 ? "" : "s"}
                 </p>
               </div>
+              <DisabledReason
+                reason={
+                  canCheckpoint ? null : "Add a department or module first."
+                }
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 max-xl:min-h-11"
+                  disabled={pending || !canCheckpoint}
+                  onClick={onSaveCheckpoint}
+                >
+                  Save checkpoint
+                </Button>
+              </DisabledReason>
             </div>
 
             <div className="grid gap-3">
@@ -528,11 +589,12 @@ export function VersionsWorkspace({
                 placeholder="Search labels and notes"
                 autoComplete="off"
               />
-              <ToggleGroup
+              <NativeSelect
                 aria-label="Filter versions"
-                value={[filter]}
-                onValueChange={(values) => {
-                  const next = values[0];
+                className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-9"
+                value={filter}
+                onChange={(event) => {
+                  const next = event.target.value;
                   if (
                     next === "all" ||
                     next === "checkpoint" ||
@@ -544,37 +606,20 @@ export function VersionsWorkspace({
                     setOffset(0);
                   }
                 }}
-                className="bg-muted grid w-full grid-cols-2 gap-1 rounded-lg p-1"
               >
-                <ToggleGroupItem
-                  value="all"
-                  aria-label="All versions"
-                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
-                >
-                  All
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="checkpoint"
-                  aria-label="Checkpoints"
-                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
-                >
+                <NativeSelectOption value="all">
+                  All versions
+                </NativeSelectOption>
+                <NativeSelectOption value="checkpoint">
                   Checkpoints
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="published"
-                  aria-label="Published versions"
-                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
-                >
+                </NativeSelectOption>
+                <NativeSelectOption value="published">
                   Published
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="imported"
-                  aria-label="Imported versions"
-                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
-                >
+                </NativeSelectOption>
+                <NativeSelectOption value="imported">
                   Imported
-                </ToggleGroupItem>
-              </ToggleGroup>
+                </NativeSelectOption>
+              </NativeSelect>
             </div>
 
             {history.isFetching && (
@@ -627,7 +672,7 @@ export function VersionsWorkspace({
                     <div className="relative">
                       <span
                         aria-hidden="true"
-                        className="bg-border pointer-events-none absolute inset-y-3 left-2 z-20 w-px"
+                        className="bg-border pointer-events-none absolute inset-y-3 left-3 z-20 w-px -translate-x-1/2"
                       />
                       <ol aria-label="Saved versions" className="space-y-1">
                         {group.versions.map((version) => {
@@ -648,12 +693,20 @@ export function VersionsWorkspace({
                                 type="button"
                                 variant="ghost"
                                 aria-label={accessibleLabel}
-                                aria-describedby={detailId}
-                                aria-pressed={selected}
+                                aria-describedby={
+                                  isComparedFirst || isComparedSecond
+                                    ? `${detailId}-role ${detailId}`
+                                    : detailId
+                                }
+                                // The shown version is current, as in the
+                                // trigger list; not a pressed toggle.
+                                aria-current={selected ? "true" : undefined}
                                 disabled={
                                   pending || checkpointLabelEdit !== null
                                 }
-                                className={`relative z-10 h-auto min-h-16 w-full justify-start py-3 pr-2 pl-8 text-left whitespace-normal ${selected ? "bg-accent text-accent-foreground" : ""}`}
+                                // Hover and selected tint from the look's ink, as
+                                // in the trigger list.
+                                className="relative z-10 h-auto min-h-16 w-full justify-start py-3 pr-2 pl-8 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
                                 onClick={() => setSelectedVersionId(version.id)}
                               >
                                 <span
@@ -661,34 +714,44 @@ export function VersionsWorkspace({
                                   className={`border-background absolute top-4 left-2 z-30 size-2 rounded-full border ${selected ? "bg-primary" : "bg-muted-foreground/50"}`}
                                 />
                                 <span className="min-w-0 flex-1">
-                                  <span className="flex items-center gap-1.5">
-                                    <span className="min-w-0 flex-1 truncate font-medium">
+                                  <span className="flex items-start gap-1.5">
+                                    <span className="min-w-0 flex-1 font-medium [overflow-wrap:anywhere]">
                                       {version.label}
                                     </span>
-                                    {isComparedFirst ? (
-                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
-                                        A
-                                      </span>
+                                    {isComparedFirst || isComparedSecond ? (
+                                      <>
+                                        <span
+                                          aria-hidden="true"
+                                          className="border-action-text/30 bg-action-tint text-action-text shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold"
+                                        >
+                                          {isComparedFirst ? "A" : "B"}
+                                        </span>
+                                        <span
+                                          id={`${detailId}-role`}
+                                          className="sr-only"
+                                        >
+                                          {isComparedFirst
+                                            ? "Compared as A."
+                                            : "Compared as B."}
+                                        </span>
+                                      </>
                                     ) : null}
-                                    {isComparedSecond ? (
-                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
-                                        B
-                                      </span>
-                                    ) : null}
+                                  </span>
+                                  <span
+                                    id={detailId}
+                                    className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs"
+                                    title={version.createdAt}
+                                  >
+                                    {/* The kind sits with the date, so a long
+                                        name keeps the row's full width. */}
                                     <Badge
                                       variant="outline"
                                       className="shrink-0 px-1 py-0 text-xs"
                                     >
                                       {versionKindLabel(version)}
                                     </Badge>
-                                  </span>
-                                  <span
-                                    id={detailId}
-                                    className="text-muted-foreground mt-1 block text-xs"
-                                    title={version.createdAt}
-                                  >
                                     <time dateTime={version.createdAt}>
-                                      {formatVersionDate(version.createdAt)}
+                                      {formatVersionTime(version.createdAt)}
                                     </time>{" "}
                                     · v{version.sequence}
                                   </span>
@@ -718,7 +781,10 @@ export function VersionsWorkspace({
                 </EmptyHeader>
               </Empty>
             )}
-            {displayedPage && !denied ? (
+            {/* Paging shows only when it has somewhere to go. */}
+            {displayedPage &&
+            !denied &&
+            (displayedPage.total > pageSize || displayedPage.offset > 0) ? (
               <TablePagination
                 ariaLabel="History pages"
                 total={displayedPage.total}
@@ -744,62 +810,64 @@ export function VersionsWorkspace({
 
           <section
             aria-label="Version comparison"
-            className="bg-background border-border relative min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
+            className="bg-background border-border relative min-w-0 border-t p-4 max-xl:order-last xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-t-0 xl:border-r"
           >
             <div>
-              <h2 data-slot="section-title" className="font-semibold">
+              <h2
+                ref={comparisonHeading}
+                tabIndex={-1}
+                data-slot="section-title"
+                className="font-semibold outline-none"
+              >
                 Compare versions
               </h2>
-              <p className="text-muted-foreground mt-1 text-sm">
-                See how two saved versions differ.
-              </p>
             </div>
 
             {knownVersions.length ? (
-              <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] sm:items-end">
+              <div className="mt-5 grid gap-3">
                 <VersionChoice
                   label="Compare first version"
                   value={selectedCompareA}
                   versions={knownVersions}
-                  onChange={setCompareA}
+                  onChange={(value) => {
+                    setCompareA(value);
+                    clearComparison();
+                  }}
                 />
-                <span
-                  aria-hidden="true"
-                  className="text-muted-foreground hidden items-center justify-center pb-3 sm:flex"
-                >
-                  <ArrowRight size={16} />
-                </span>
                 <VersionChoice
                   label="Compare second version"
                   value={selectedCompareB}
                   versions={knownVersions}
-                  onChange={setCompareB}
+                  onChange={(value) => {
+                    setCompareB(value);
+                    clearComparison();
+                  }}
                 />
                 <Button
+                  variant="outline"
+                  className="justify-self-start"
                   disabled={pending || !selectedCompareA || !selectedCompareB}
-                  onClick={async () => {
-                    const [first, second] = await Promise.all([
-                      getVersion(selectedCompareA),
-                      getVersion(selectedCompareB),
-                    ]);
-                    if (!first.ok) {
-                      notifyError(first.error);
-                      return;
-                    }
-                    if (!second.ok) {
-                      notifyError(second.error);
-                      return;
-                    }
-                    setComparison({ first: first.value, second: second.value });
-                    setComparing(true);
-                  }}
+                  pending={comparePending}
+                  pendingLabel="Comparing…"
+                  onClick={() =>
+                    void compare(selectedCompareA, selectedCompareB)
+                  }
                 >
                   Compare versions
                 </Button>
               </div>
             ) : null}
+            {compareError ? (
+              <Alert variant="destructive" className="mt-3">
+                {compareError}
+              </Alert>
+            ) : null}
 
-            {comparing && comparison && !comparisonUnavailable ? (
+            {comparing &&
+            comparison &&
+            !comparisonUnavailable &&
+            comparison.first.id === selectedCompareA &&
+            comparison.second.id === selectedCompareB ? (
               <VersionComparison
                 first={comparison.first}
                 second={comparison.second}
@@ -831,7 +899,7 @@ export function VersionsWorkspace({
               <>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    <p className="text-muted-foreground text-xs font-medium">
                       {versionKindLabel(selectedVersion)}
                     </p>
                     <h2
@@ -851,111 +919,193 @@ export function VersionsWorkspace({
                         {formatVersionDate(selectedVersion.createdAt)}
                       </time>
                       <span className="text-muted-foreground ml-2 text-xs">
-                        Version {selectedVersion.sequence}
+                        v{selectedVersion.sequence}
                       </span>
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-muted-foreground text-xs">Note</dt>
-                    <dd className="mt-1 break-words">
-                      {selectedVersion.note || "No version note provided."}
-                    </dd>
-                  </div>
+                  {selectedVersion.note ? (
+                    <div>
+                      <dt className="text-muted-foreground text-xs">Note</dt>
+                      <dd className="mt-1 break-words">
+                        {selectedVersion.note}
+                      </dd>
+                    </div>
+                  ) : null}
                 </dl>
 
-                {checkpointLabelEdit?.id === selectedVersion.id ? (
-                  <form
-                    aria-label={`Edit checkpoint label ${selectedVersion.label}`}
-                    className="border-border mt-5 grid gap-3 border-b pb-5"
-                    onSubmit={async (event) => {
-                      event.preventDefault();
-                      if (pending || !checkpointLabelEdit) return;
-                      const label = checkpointLabelEdit.value.trim();
-                      if (!label) {
-                        setCheckpointLabelEdit({
-                          ...checkpointLabelEdit,
-                          error: "Checkpoint label is required",
-                        });
-                        return;
-                      }
-                      if (checkpointLabelEdit.value.length > 80) {
-                        setCheckpointLabelEdit({
-                          ...checkpointLabelEdit,
-                          error:
-                            "Checkpoint label must be 80 characters or fewer",
-                        });
-                        return;
-                      }
-                      const result = await updateVersion(
-                        selectedVersion.id,
-                        label,
-                      );
-                      if (!result.ok) {
-                        setCheckpointLabelEdit({
-                          ...checkpointLabelEdit,
-                          error: result.error,
-                        });
-                        return;
-                      }
-                      setRetainedVersions((items) =>
-                        items.map((item) =>
-                          item.id === result.value.id ? result.value : item,
-                        ),
-                      );
-                      setCheckpointLabelEdit(null);
-                      notifyDone("Checkpoint label updated in shared history.");
-                    }}
-                  >
-                    <LabeledField label="Checkpoint label">
+                {knownVersions.length > 1 ? (
+                  <div className="border-border mt-5 grid gap-2 border-b pb-5">
+                    <LabeledField label="Compare with">
                       {(controlId) => (
-                        <Input
+                        <NativeSelect
                           id={controlId}
-                          autoFocus
-                          required
-                          maxLength={80}
-                          disabled={pending}
-                          value={checkpointLabelEdit.value}
+                          className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-9"
+                          value={validVersionSelection(
+                            knownVersions.filter(
+                              (version) => version.id !== selectedVersion.id,
+                            ),
+                            compareWith || compareB,
+                            "first",
+                          )}
                           onChange={(event) =>
-                            setCheckpointLabelEdit({
-                              ...checkpointLabelEdit,
-                              value: event.target.value,
-                              error: "",
-                            })
+                            setCompareWith(event.target.value)
                           }
-                        />
+                        >
+                          {knownVersions
+                            .filter(
+                              (version) => version.id !== selectedVersion.id,
+                            )
+                            .map((version) => (
+                              <NativeSelectOption
+                                key={version.id}
+                                value={version.id}
+                              >
+                                {/* The panel already names v1; the number
+                                    is kept only to tell same names apart, so
+                                    long names fit at 1440. */}
+                                {duplicateLabels.has(version.label)
+                                  ? `v${version.sequence} · ${version.label}`
+                                  : version.label}
+                              </NativeSelectOption>
+                            ))}
+                        </NativeSelect>
                       )}
                     </LabeledField>
-                    {checkpointLabelEdit.error ? (
-                      <Alert variant="destructive" role="alert">
-                        {checkpointLabelEdit.error}
-                      </Alert>
-                    ) : null}
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" type="submit" disabled={pending}>
-                        Save label
-                      </Button>
-                      <Button
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                        disabled={pending}
-                        onClick={() => setCheckpointLabelEdit(null)}
-                      >
-                        Cancel label edit
-                      </Button>
-                    </div>
-                  </form>
+                    <Button
+                      variant="outline"
+                      disabled={pending}
+                      pending={comparePending}
+                      pendingLabel="Comparing…"
+                      onClick={() => {
+                        const other = validVersionSelection(
+                          knownVersions.filter(
+                            (version) => version.id !== selectedVersion.id,
+                          ),
+                          compareWith || compareB,
+                          "first",
+                        );
+                        setCompareA(selectedVersion.id);
+                        setCompareB(other);
+                        void compare(selectedVersion.id, other);
+                      }}
+                    >
+                      Compare
+                    </Button>
+                  </div>
                 ) : null}
 
-                {selectedVersion.kind === "checkpoint" &&
-                checkpointLabelEdit?.id !== selectedVersion.id ? (
-                  <div className="border-border mt-5 border-b pb-5">
-                    <h3 data-slot="section-title" className="font-medium">
-                      Version label
-                    </h3>
+                <Button
+                  className="mt-5 w-full"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={(event) => {
+                    versionActionReturnFocus.current = event.currentTarget;
+                    setActionError("");
+                    setConfirm({ kind: "restore", id: selectedVersion.id });
+                  }}
+                >
+                  Restore version
+                </Button>
+
+                <AdvancedSection storageKey="sandbox.version" className="mt-5">
+                  {checkpointLabelEdit?.id === selectedVersion.id ? (
+                    <form
+                      aria-label={`Edit checkpoint label ${selectedVersion.label}`}
+                      className="grid gap-3"
+                      onSubmit={async (event) => {
+                        event.preventDefault();
+                        if (pending || !checkpointLabelEdit) return;
+                        const label = checkpointLabelEdit.value.trim();
+                        if (!label) {
+                          setCheckpointLabelEdit({
+                            ...checkpointLabelEdit,
+                            error: "Checkpoint label is required",
+                          });
+                          return;
+                        }
+                        if (checkpointLabelEdit.value.length > 80) {
+                          setCheckpointLabelEdit({
+                            ...checkpointLabelEdit,
+                            error:
+                              "Checkpoint label must be 80 characters or fewer",
+                          });
+                          return;
+                        }
+                        const result = await updateVersion(
+                          selectedVersion.id,
+                          label,
+                        );
+                        if (!result.ok) {
+                          setCheckpointLabelEdit({
+                            ...checkpointLabelEdit,
+                            error: result.error,
+                          });
+                          return;
+                        }
+                        setRetainedVersions((items) =>
+                          items.map((item) =>
+                            item.id === result.value.id ? result.value : item,
+                          ),
+                        );
+                        // The new label shows in place (inline feedback).
+                        setCheckpointLabelEdit(null);
+                      }}
+                    >
+                      <LabeledField label="Checkpoint label">
+                        {(controlId) => (
+                          <Input
+                            id={controlId}
+                            autoFocus
+                            required
+                            maxLength={80}
+                            disabled={pending}
+                            value={checkpointLabelEdit.value}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Escape" || pending) return;
+                              event.preventDefault();
+                              setCheckpointLabelEdit(null);
+                            }}
+                            onChange={(event) =>
+                              setCheckpointLabelEdit({
+                                ...checkpointLabelEdit,
+                                value: event.target.value,
+                                error: "",
+                              })
+                            }
+                          />
+                        )}
+                      </LabeledField>
+                      {checkpointLabelEdit.error ? (
+                        <Alert variant="destructive" role="alert">
+                          {checkpointLabelEdit.error}
+                        </Alert>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          type="submit"
+                          pending={pending}
+                          pendingLabel="Saving…"
+                        >
+                          Save label
+                        </Button>
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                          disabled={pending}
+                          onClick={() => setCheckpointLabelEdit(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  ) : null}
+                  {selectedVersion.kind === "checkpoint" &&
+                  checkpointLabelEdit?.id !== selectedVersion.id ? (
                     <Button
-                      className="mt-3"
                       variant="outline"
+                      size="sm"
                       disabled={pending}
                       onClick={() =>
                         setCheckpointLabelEdit({
@@ -967,53 +1117,37 @@ export function VersionsWorkspace({
                     >
                       Edit checkpoint label
                     </Button>
-                  </div>
-                ) : null}
-
-                <div className="mt-5">
-                  <h3 data-slot="section-title" className="font-medium">
-                    Restore this version
-                  </h3>
-                  <p className="text-muted-foreground mt-1 text-sm">
-                    Restore it to the draft. A recovery checkpoint is added to
-                    history.
-                  </p>
-                  <Button
-                    className="mt-3 w-full"
-                    variant="outline"
-                    disabled={pending}
-                    onClick={(event) => {
-                      versionActionReturnFocus.current = event.currentTarget;
-                      setActionError("");
-                      setConfirm({ kind: "restore", id: selectedVersion.id });
-                    }}
-                  >
-                    Restore version
-                  </Button>
-                </div>
-                <div className="border-border mt-5 border-t pt-4">
-                  <Button
-                    variant="ghost"
-                    disabled={
-                      pending ||
-                      selectedVersion.kind === "published" ||
-                      historyTotal.data === undefined ||
-                      historyTotal.data <= 1
-                    }
-                    onClick={(event) => {
-                      versionActionReturnFocus.current = event.currentTarget;
-                      setActionError("");
-                      setConfirm({ kind: "delete", id: selectedVersion.id });
-                    }}
-                  >
-                    Delete version
-                  </Button>
-                  {selectedVersion.kind === "published" ? (
-                    <p className="text-muted-foreground mt-1 text-xs">
-                      Published versions are kept in history.
-                    </p>
                   ) : null}
-                </div>
+                  <DisabledReason
+                    reason={
+                      selectedVersion.kind === "published"
+                        ? "Published versions are kept."
+                        : historyTotal.data !== undefined &&
+                            historyTotal.data <= 1
+                          ? "The only version is kept."
+                          : null
+                    }
+                  >
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-danger-text"
+                      disabled={
+                        pending ||
+                        selectedVersion.kind === "published" ||
+                        historyTotal.data === undefined ||
+                        historyTotal.data <= 1
+                      }
+                      onClick={(event) => {
+                        versionActionReturnFocus.current = event.currentTarget;
+                        setActionError("");
+                        setConfirm({ kind: "delete", id: selectedVersion.id });
+                      }}
+                    >
+                      Delete version
+                    </Button>
+                  </DisabledReason>
+                </AdvancedSection>
               </>
             ) : (
               <Empty className="border-0 py-10">
@@ -1048,8 +1182,8 @@ export function VersionsWorkspace({
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {confirm.kind === "delete"
-                  ? `Delete ${confirmVersion.label} from shared history?`
-                  : `Restore the draft from ${confirmVersion.label}? Shared history will add a recovery checkpoint.`}
+                  ? "This can't be undone. Your draft and live data stay as they are."
+                  : "Your current draft is saved as a checkpoint first. Live data stays as it is."}
               </AlertDialogDescription>
             </AlertDialogHeader>
             {actionError ? (
@@ -1061,16 +1195,19 @@ export function VersionsWorkspace({
                 disabled={pending}
                 onClick={closeVersionConfirm}
               >
-                Cancel {confirm.kind === "delete" ? "deletion" : "restore"}
+                Cancel
               </Button>
               <Button
                 variant={confirm.kind === "delete" ? "destructive" : "default"}
-                disabled={pending}
+                pending={pending}
+                pendingLabel={
+                  confirm.kind === "delete" ? "Deleting…" : "Restoring…"
+                }
                 onClick={() => void apply()}
               >
                 {confirm.kind === "delete"
-                  ? `Delete ${confirmVersion.label}`
-                  : `Restore ${confirmVersion.label}`}
+                  ? "Delete version"
+                  : "Restore version"}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>

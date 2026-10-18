@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Download,
@@ -11,12 +11,14 @@ import {
   Upload,
 } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
+import { reportDone } from "@/lib/feedback";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -24,6 +26,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -52,10 +55,15 @@ type Props = {
   /** The page owns the template dialog so the empty canvas can open it too. */
   templatesOpen: boolean;
   onTemplatesOpenChange: (open: boolean) => void;
+  /** The page owns the checkpoint dialog so History can open it too. */
+  checkpointOpen: boolean;
+  onCheckpointOpenChange: (open: boolean) => void;
   /** A checkpoint of an empty design would save nothing. */
   canCheckpoint: boolean;
   /** Discard only acts when the draft differs from what was published. */
   canDiscard: boolean;
+  /** With a publish, Discard returns to it; without one, it clears the draft. */
+  hasPublish: boolean;
   onCreateCheckpoint: (
     label: string,
     note: string,
@@ -88,20 +96,33 @@ export function SandboxHeaderActions({
   pending,
   templatesOpen,
   onTemplatesOpenChange,
+  checkpointOpen,
+  onCheckpointOpenChange: setCheckpointOpen,
   canCheckpoint,
   canDiscard,
+  hasPublish,
   onCreateCheckpoint,
   onImport,
   onApplyTemplate,
   onDiscard,
 }: Props) {
   const input = useRef<HTMLInputElement | null>(null);
-  const [checkpointOpen, setCheckpointOpen] = useState(false);
+  const menuId = useId();
+  // A disabled menu item says why on a muted second line.
+  const checkpointReason = canCheckpoint
+    ? null
+    : "Add a department or module first.";
+  const discardReason = canDiscard
+    ? null
+    : hasPublish
+      ? "The draft matches the last publish."
+      : "Nothing to discard yet.";
   const [importOpen, setImportOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [note, setNote] = useState("");
   const [staged, setStaged] = useState<SandboxDocumentV4 | null>(null);
+  const [stagedName, setStagedName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [includeVersions, setIncludeVersions] = useState(false);
@@ -166,6 +187,7 @@ export function SandboxHeaderActions({
     if (!file) return;
     const result = parseSandboxDocument(await file.text());
     setStaged(result.ok ? result.document : null);
+    setStagedName(result.ok ? file.name : "");
     setError(result.ok ? "" : result.error);
   }
   async function importDocument() {
@@ -197,8 +219,10 @@ export function SandboxHeaderActions({
         mounted.current &&
         !controller.signal.aborted &&
         exportController.current === controller
-      )
+      ) {
         download(bundle.filename, bundle.document);
+        reportDone("Backup downloaded");
+      }
     } catch {
       if (
         mounted.current &&
@@ -246,6 +270,30 @@ export function SandboxHeaderActions({
         />
         <DropdownMenuContent align="end">
           <DropdownMenuItem
+            className="min-h-11 flex-col items-start justify-center gap-0 data-disabled:opacity-100"
+            disabled={!canCheckpoint}
+            aria-labelledby={`${menuId}-checkpoint`}
+            aria-describedby={
+              checkpointReason ? `${menuId}-checkpoint-reason` : undefined
+            }
+            onClick={() => setCheckpointOpen(true)}
+          >
+            <span
+              id={`${menuId}-checkpoint`}
+              className={checkpointReason ? "opacity-50" : undefined}
+            >
+              Save checkpoint
+            </span>
+            {checkpointReason ? (
+              <span
+                id={`${menuId}-checkpoint-reason`}
+                className="text-muted-foreground text-xs"
+              >
+                {checkpointReason}
+              </span>
+            ) : null}
+          </DropdownMenuItem>
+          <DropdownMenuItem
             className="min-h-11"
             onClick={() => onTemplatesOpenChange(true)}
           >
@@ -253,23 +301,34 @@ export function SandboxHeaderActions({
           </DropdownMenuItem>
           <DropdownMenuItem
             className="min-h-11"
-            disabled={!canCheckpoint}
-            onClick={() => setCheckpointOpen(true)}
-          >
-            Save checkpoint
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="min-h-11"
             onClick={() => setImportOpen(true)}
           >
             Import or export
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem
-            className="min-h-11"
+            className="text-danger-text data-highlighted:bg-danger-tint data-highlighted:text-danger-text min-h-11 flex-col items-start justify-center gap-0 data-disabled:opacity-100"
             disabled={!canDiscard}
+            aria-labelledby={`${menuId}-discard`}
+            aria-describedby={
+              discardReason ? `${menuId}-discard-reason` : undefined
+            }
             onClick={() => setDiscardOpen(true)}
           >
-            Discard draft changes
+            <span
+              id={`${menuId}-discard`}
+              className={discardReason ? "opacity-50" : undefined}
+            >
+              Discard draft changes
+            </span>
+            {discardReason ? (
+              <span
+                id={`${menuId}-discard-reason`}
+                className="text-muted-foreground text-xs"
+              >
+                {discardReason}
+              </span>
+            ) : null}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -283,12 +342,9 @@ export function SandboxHeaderActions({
         open={checkpointOpen}
         onOpenChange={(open) => !busy && setCheckpointOpen(open)}
       >
-        <DialogContent>
+        <DialogContent className="grid gap-4">
           <DialogHeader>
             <DialogTitle>Save checkpoint</DialogTitle>
-            <DialogDescription>
-              Save this draft so you can compare or restore it later.
-            </DialogDescription>
           </DialogHeader>
           <VersionCapacityBanner
             {...versionCapacity}
@@ -296,7 +352,9 @@ export function SandboxHeaderActions({
           />
           {error ? <Alert variant="destructive">{error}</Alert> : null}
           <Field>
-            <FieldLabel htmlFor="sandbox-checkpoint-label">Name</FieldLabel>
+            <FieldLabel htmlFor="sandbox-checkpoint-label">
+              Checkpoint name
+            </FieldLabel>
             <Input
               id="sandbox-checkpoint-label"
               value={label}
@@ -315,14 +373,26 @@ export function SandboxHeaderActions({
               onChange={(event) => setNote(event.target.value)}
             />
           </Field>
-          <Button
-            className="min-h-11"
-            disabled={pending || busy}
-            onClick={() => void checkpoint()}
-          >
-            <Save />
-            Save checkpoint
-          </Button>
+          <DialogFooter className="mt-1">
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={busy}
+              onClick={() => setCheckpointOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="min-h-11"
+              disabled={pending}
+              pending={busy}
+              pendingLabel="Saving…"
+              onClick={() => void checkpoint()}
+            >
+              <Save />
+              Save checkpoint
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog
@@ -337,8 +407,8 @@ export function SandboxHeaderActions({
           <DialogHeader>
             <DialogTitle>Import or export</DialogTitle>
             <DialogDescription>
-              Export a portable JSON file, or replace this draft with one you
-              previously exported.
+              Download a backup file of this draft, or replace the draft with a
+              backup you downloaded before.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -397,7 +467,7 @@ export function SandboxHeaderActions({
               onClick={() => void exportDocument()}
             >
               <Download />
-              {exportBusy ? "Exporting…" : "Export JSON"}
+              {exportBusy ? "Downloading…" : "Download a backup"}
             </Button>
             <Button
               variant="outline"
@@ -406,7 +476,7 @@ export function SandboxHeaderActions({
               onClick={() => input.current?.click()}
             >
               <Upload />
-              Choose JSON
+              Load a backup
             </Button>
           </div>
           <input
@@ -417,21 +487,12 @@ export function SandboxHeaderActions({
             onChange={(event) => void stageImport(event)}
           />
           {staged ? (
-            <div className="grid gap-2">
-              <p className="text-sm">
-                This file will replace the current draft.
-              </p>
-              <Button
-                className="min-h-11"
-                disabled={pending || busy || exportBusy}
-                onClick={() => void importDocument()}
-              >
-                <FileDown />
-                Import draft
-              </Button>
-            </div>
+            <p className="text-sm">
+              <span className="font-medium">{stagedName}</span> · Replaces your
+              draft
+            </p>
           ) : null}
-          <div className="flex justify-end">
+          <DialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
@@ -443,42 +504,56 @@ export function SandboxHeaderActions({
             >
               Cancel
             </Button>
-          </div>
+            {staged ? (
+              <Button
+                className="min-h-11"
+                disabled={pending || exportBusy}
+                pending={busy}
+                pendingLabel="Importing…"
+                onClick={() => void importDocument()}
+              >
+                <FileDown />
+                Import draft
+              </Button>
+            ) : null}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog
         open={discardOpen}
         onOpenChange={(open) => !busy && setDiscardOpen(open)}
       >
-        <DialogContent>
+        <DialogContent className="grid gap-4">
           <DialogHeader>
             <DialogTitle>Discard draft changes?</DialogTitle>
             <DialogDescription>
-              A checkpoint is saved first. This restores the latest published
-              draft when available; otherwise it starts with an empty draft.
-              Live workspace data is never changed here.
+              {hasPublish
+                ? "Saves a checkpoint, then resets the draft to the last publish. Live data stays."
+                : "Saves a checkpoint, then clears the draft. Live data stays."}
             </DialogDescription>
           </DialogHeader>
           {error ? <Alert variant="destructive">{error}</Alert> : null}
-          <div className="flex justify-end gap-2">
+          <DialogFooter className="mt-1">
             <Button
               variant="outline"
               className="min-h-11"
               disabled={busy}
               onClick={() => setDiscardOpen(false)}
             >
-              Keep editing
+              Cancel
             </Button>
             <Button
               variant="destructive"
               className="min-h-11"
-              disabled={pending || busy}
+              disabled={pending}
+              pending={busy}
+              pendingLabel="Discarding…"
               onClick={() => void discard()}
             >
               <RotateCcw />
               Discard draft
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

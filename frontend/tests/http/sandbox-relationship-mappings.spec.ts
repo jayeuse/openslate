@@ -23,6 +23,7 @@ import {
   lifecycleImpactFixture,
   lifecycleReview,
   liveBinding,
+  fieldRowTrigger,
   openAuthenticatedSandbox,
   openCheckpointDialog,
   openImportExport,
@@ -31,6 +32,26 @@ import {
   configuredSandboxDesign,
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
+
+// These journeys exercise lifecycle and settings, not disclosure, so they
+// start as a viewer who left every Advanced block open. The closed default
+// and its memory are covered in sandbox-inspector.spec.ts.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const panel of [
+      "module",
+      "department",
+      "field",
+      "test",
+      "test-results",
+      "version",
+    ])
+      window.localStorage.setItem(
+        `openslate:advanced:sandbox.${panel}`,
+        "open",
+      );
+  });
+});
 
 function configuredDesignWithLegacyMapping(): Design {
   const design = structuredClone(configuredSandboxDesign);
@@ -129,7 +150,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.goto(`/sandbox?module=${relationship.target}`);
       await page
         .getByRole("button", {
-          name: `Close incoming relationship ${relationship.name}`,
+          name: `Close relationship ${relationship.name}, incoming`,
           exact: true,
         })
         .click();
@@ -212,7 +233,7 @@ for (const theme of ["light", "dark"] as const) {
       const [download] = await Promise.all([
         page.waitForEvent("download"),
         dialog
-          .getByRole("button", { name: "Export JSON", exact: true })
+          .getByRole("button", { name: "Download a backup", exact: true })
           .click(),
       ]);
       await download.path();
@@ -250,11 +271,11 @@ for (const theme of ["light", "dark"] as const) {
       await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
       try {
         await dialog
-          .getByRole("button", { name: "Export JSON", exact: true })
+          .getByRole("button", { name: "Download a backup", exact: true })
           .click();
         await pending.entered;
         await expect(
-          dialog.getByRole("button", { name: "Exporting…", exact: true }),
+          dialog.getByRole("button", { name: "Downloading…", exact: true }),
         ).toBeDisabled();
         await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
         const completedDownload = page.waitForEvent("download");
@@ -392,12 +413,18 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
     await expect(
       inspector
         .getByLabel(`${field.name} field settings`, { exact: true })
-        .getByText(field.type, { exact: true }),
+        // The fixture has Text and Select fields; Select reads "Choice list".
+        .getByText(field.type === "Select" ? "Choice list" : field.type, {
+          exact: true,
+        }),
     ).toBeVisible();
-  const confirmedStatus = page.getByRole("status").filter({
-    hasText: "Live change confirmed. The current design has been refreshed.",
+  // A notice's title is a heading; its text also sits in a live region.
+  const confirmedStatus = page.getByRole("heading", {
+    name: "Live change confirmed",
+    exact: true,
   });
-  await expect(confirmedStatus).toBeVisible();
+  await expect(confirmedStatus.first()).toBeVisible();
+  const confirmedBefore = await confirmedStatus.count();
   async function confirmModuleChange(action: "Close module" | "Reopen module") {
     await page.getByRole("button", { name: action, exact: true }).click();
     const review = page.getByRole("dialog", { name: action, exact: true });
@@ -418,7 +445,15 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
       "The live change was confirmed. Reload live state before making another change.",
   });
   await expect(recoveryError).toBeVisible();
-  await expect.soft(confirmedStatus).toHaveCount(0);
+  // The failed refresh adds no success notice (earlier ones may still be
+  // fading out).
+  await expect
+    .soft(async () =>
+      expect(await confirmedStatus.count()).toBeLessThanOrEqual(
+        confirmedBefore,
+      ),
+    )
+    .toPass();
   await page
     .getByRole("button", { name: "Reload live state", exact: true })
     .click();
@@ -427,7 +462,7 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
   ).toBeEnabled();
   await expect.soft(recoveryError).toHaveCount(0);
   await confirmModuleChange("Close module");
-  await expect(confirmedStatus).toBeVisible();
+  await expect(confirmedStatus.first()).toBeVisible();
   await expect.soft(recoveryError).toHaveCount(0);
   expect(sandbox.documentWrites()).toBe(writes);
 });
@@ -608,7 +643,7 @@ for (const orientation of ["outgoing", "incoming"] as const) {
     );
     const action = (verb: string) =>
       page.getByRole("button", {
-        name: `${verb} ${orientation} relationship ${relationship.name}`,
+        name: `${verb} relationship ${relationship.name}, ${orientation}`,
         exact: true,
       });
     await action("Close").click();
@@ -747,7 +782,7 @@ test("relationship mismatched Field preview refuses confirmation", async ({
   await page.goto(`/sandbox?module=${relationship.source}`);
   await page
     .getByRole("button", {
-      name: `Close outgoing relationship ${relationship.name}`,
+      name: `Close relationship ${relationship.name}, outgoing`,
       exact: true,
     })
     .click();
@@ -786,7 +821,7 @@ test("bound draft deletion explains retained live data while unbound copy remain
   await page.goto(`/sandbox?module=${relationship.source}`);
   await page
     .getByRole("button", {
-      name: `Delete outgoing relationship ${relationship.name}`,
+      name: `Delete relationship ${relationship.name}, outgoing`,
       exact: true,
     })
     .click();
@@ -797,8 +832,8 @@ test("bound draft deletion explains retained live data while unbound copy remain
   await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("tab", { name: "Structure", exact: true }).click();
   await page
-    .getByRole("button", {
-      name: `Select module ${design.modules.find((module) => module.id === relationship.source)!.name}`,
+    .getByRole("treeitem", {
+      name: `${design.modules.find((module) => module.id === relationship.source)!.name}`,
       exact: true,
     })
     .click({ button: "right" });
@@ -812,8 +847,8 @@ test("bound draft deletion explains retained live data while unbound copy remain
   await page.goto(`/sandbox?module=${relationship.target}`);
   await page.getByRole("tab", { name: "Structure", exact: true }).click();
   await page
-    .getByRole("button", {
-      name: `Select module ${design.modules.find((module) => module.id === relationship.target)!.name}`,
+    .getByRole("treeitem", {
+      name: `${design.modules.find((module) => module.id === relationship.target)!.name}`,
       exact: true,
     })
     .click({ button: "right" });
@@ -824,6 +859,30 @@ test("bound draft deletion explains retained live data while unbound copy remain
     "On publish, the live item closes. Its data is kept.",
   );
   await expect(deletion).toContainText("Undo");
+});
+
+test("a failed delete shows its error inside the delete dialog", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    saveFailure: "Sandbox storage is unavailable.",
+  });
+  // Customers is not the module Build opens on, so the failed local
+  // proposal keeps the same designer and its open dialog.
+  await page.getByRole("tab", { name: "Structure", exact: true }).click();
+  await page
+    .getByRole("treeitem", { name: "Customers", exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Delete module", exact: true })
+    .click();
+  const deletion = page.getByRole("alertdialog");
+  await deletion
+    .getByRole("button", { name: "Delete module", exact: true })
+    .click();
+  await expect(deletion.getByRole("alert")).toHaveText(
+    "This Sandbox change could not be saved. Try again.",
+  );
 });
 
 test("bound field lifecycle resolves its parent and preserves dirty settings", async ({
@@ -885,9 +944,7 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
   const settings = page.getByLabel(`${field.name} field settings`, {
     exact: true,
   });
-  await settings
-    .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
-    .click();
+  await fieldRowTrigger(settings, field.name).click();
   await settings
     .getByLabel(`${field.name} name`, { exact: true })
     .fill("Unsaved field name");
@@ -937,7 +994,7 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
     })
     .click();
   await expect(
-    page.getByRole("dialog").getByText("Legacy field mappings"),
+    page.getByRole("dialog").getByText("Older linked fields"),
   ).toHaveCount(0);
 });
 
@@ -1062,7 +1119,7 @@ test("bound module purge reviews stale challenges and refreshes removal without 
   await expect(
     page
       .getByRole("region", { name: "Organization canvas" })
-      .locator(`.x6-cell[data-cell-id="${targetModule.id}"]`),
+      .locator(`[data-sandbox-node="${targetModule.id}"]`),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Undo", exact: true }),
@@ -1119,9 +1176,7 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
     const settings = page.getByLabel(`${field.name} field settings`, {
       exact: true,
     });
-    await settings
-      .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
-      .click();
+    await fieldRowTrigger(settings, field.name).click();
     await expect(
       settings.getByRole("button", { name: "Reopen field", exact: true }),
     ).toBeEnabled();
@@ -1139,8 +1194,8 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
       ["department", department],
       ["module", targetModule],
     ] as const) {
-      const row = page.getByRole("button", {
-        name: `Select ${kind} ${item.name}`,
+      const row = page.getByRole("treeitem", {
+        name: item.name,
         exact: true,
       });
       await row.click({ button: "right" });
@@ -1156,8 +1211,8 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
       await page.keyboard.press("Escape");
     }
     await page
-      .getByRole("button", {
-        name: `Select department ${department.name}`,
+      .getByRole("treeitem", {
+        name: `${department.name}`,
         exact: true,
       })
       .click();
@@ -1275,9 +1330,7 @@ test("a retained saved Chart query blocks bound field purge until repaired", asy
   const settings = page.getByLabel(`${field.name} field settings`, {
     exact: true,
   });
-  await settings
-    .getByRole("button", { name: `Show ${field.name} settings`, exact: true })
-    .click();
+  await fieldRowTrigger(settings, field.name).click();
   await settings
     .getByRole("button", { name: "Permanently delete field", exact: true })
     .click();
@@ -1388,8 +1441,8 @@ test("the bound department outline reviews blockers and reopens with explicit co
     .getByRole("tablist", { name: "Workbench view" })
     .getByRole("tab", { name: "Structure" })
     .click();
-  const row = page.getByRole("button", {
-    name: `Select department ${department.name}`,
+  const row = page.getByRole("treeitem", {
+    name: `${department.name}`,
     exact: true,
   });
   await row.click({ button: "right" });
@@ -1439,11 +1492,9 @@ test("an organization template replaces the empty draft only after confirmation"
   await page.getByRole("menuitem", { name: "Start from a template" }).click();
   const dialog = page.getByRole("dialog", { name: "Organization templates" });
   await expect(
-    dialog.getByRole("button", { name: "Select Inventory & procurement" }),
+    dialog.getByRole("radio", { name: "Inventory & procurement" }),
   ).toBeVisible();
-  await dialog
-    .getByRole("button", { name: "Select Inventory & procurement" })
-    .click();
+  await dialog.getByRole("radio", { name: "Inventory & procurement" }).click();
   await expect(
     dialog.getByText(/departments.*modules.*fields.*relationships/i),
   ).toBeVisible();
@@ -1622,6 +1673,117 @@ test("the canvas zoom range keeps a spread design legible", async ({
   );
 });
 
+async function dragCanvasNode(
+  page: Page,
+  node: ReturnType<Page["locator"]>,
+  beforeDrop: () => Promise<void> = async () => {},
+) {
+  const box = (await node
+    .locator('[data-sandbox-part="header"]')
+    .first()
+    .boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 80, y + 48, { steps: 8 });
+  await beforeDrop();
+  await page.mouse.up();
+}
+
+async function canvasPosition(node: ReturnType<Page["locator"]>) {
+  const box = (await node.boundingBox())!;
+  return { x: Math.round(box.x), y: Math.round(box.y) };
+}
+
+test("a dropped module stays where it lands while its layout saves", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  let releaseSave = () => {};
+  const saveDelay = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    configuredSandboxDesign,
+    { saveDelay },
+  );
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const node = canvas.locator('[data-sandbox-node="sample-requests"]');
+  const before = await canvasPosition(node);
+  const save = page.waitForRequest(
+    (request) =>
+      request.method() === "PUT" &&
+      request.url().endsWith("/api/sandbox/document"),
+  );
+  try {
+    // Record every position the module takes from the drop on.
+    await dragCanvasNode(page, node, () =>
+      node.evaluate((element) => {
+        const seen: string[] = [];
+        Object.assign(window, { droppedPositions: seen });
+        const region = element.closest('[aria-label="Organization canvas"]')!;
+        new MutationObserver(() => {
+          const box = element.getBoundingClientRect();
+          seen.push(`${Math.round(box.x)},${Math.round(box.y)}`);
+        }).observe(region, {
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["transform", "style"],
+        });
+      }),
+    );
+    await save;
+    await expect.poll(() => canvasPosition(node)).not.toEqual(before);
+    const dropped = await canvasPosition(node);
+    // The drag-end sync once re-applied the last saved layout, so the module
+    // jumped back to its old place before the new layout arrived.
+    expect(
+      await page.evaluate(
+        () =>
+          (window as unknown as { droppedPositions: string[] })
+            .droppedPositions,
+      ),
+    ).not.toContain(`${before.x},${before.y}`);
+    releaseSave();
+    // The saved layout now holds the dropped module's position.
+    await expect
+      .poll(() => sandbox.document().design.layout?.["sample-requests"])
+      .toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+    expect(await canvasPosition(node)).toEqual(dropped);
+  } finally {
+    releaseSave();
+  }
+});
+
+test("a refused layout puts the dropped module back", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    saveFailure: "Sandbox storage is unavailable",
+  });
+  const canvas = page.getByRole("region", { name: "Organization canvas" });
+  const requests = canvas.locator('[data-sandbox-node="sample-requests"]');
+  const equipment = canvas.locator('[data-sandbox-node="sample-equipment"]');
+  // A failed save keeps that change local and refuses later changes.
+  await dragCanvasNode(page, requests);
+  await expect(
+    page.getByText("Your change was not saved. Reapply it to try again."),
+  ).toBeVisible();
+  const before = await canvasPosition(equipment);
+  await dragCanvasNode(page, equipment);
+  await expect(
+    page.getByText("A Sandbox change is already being saved.").first(),
+  ).toBeVisible();
+  // Within 2 px: the selected outline is wider than the idle one.
+  await expect
+    .poll(async () => {
+      const now = await canvasPosition(equipment);
+      return Math.abs(now.x - before.x) <= 2 && Math.abs(now.y - before.y) <= 2;
+    })
+    .toBe(true);
+});
+
 test("an empty, never-published Sandbox offers one start and nothing to publish", async ({
   page,
 }) => {
@@ -1639,9 +1801,7 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
     0,
   );
 
-  await expect(
-    page.getByText("Nothing to publish yet", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/^Nothing to publish yet ·/)).toBeVisible();
   await expect(publish).toBeDisabled();
   await expect(
     canvas.getByRole("heading", { name: "Design your organization" }),
@@ -1678,9 +1838,7 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   await expect(
     canvas.getByRole("heading", { name: "Design your organization" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByText("Unpublished changes", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/^Unpublished changes ·/)).toBeVisible();
   await expect(publish).toBeEnabled();
 });
 
@@ -1716,7 +1874,7 @@ test("a published Sandbox with no new changes has nothing to publish", async ({
     hasUnpublishedChanges: false,
   });
 
-  await expect(page.getByText("Published", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Published ·/)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
   ).toBeDisabled();
@@ -1743,7 +1901,15 @@ test("an empty Sandbox authors and persists a complete connected organization", 
   await page.getByRole("button", { name: "Create department" }).click();
 
   for (const moduleName of ["Inventory", "Suppliers"]) {
-    await page.getByRole("button", { name: "Add module", exact: true }).click();
+    // A module's panel holds its own fields; new modules start from the
+    // department, here through its Structure row.
+    await page
+      .getByRole("tablist", { name: "Workbench view" })
+      .getByRole("tab", { name: "Structure" })
+      .click();
+    await page
+      .getByRole("treeitem", { name: "Add module to Operations", exact: true })
+      .click();
     await page.getByLabel("Module name").fill(moduleName);
     await page.getByRole("button", { name: "Create module" }).click();
   }
@@ -1795,9 +1961,11 @@ test("creating a Select field saves a typed default as its choice ID", async ({
   await page
     .getByRole("textbox", { name: "Field name", exact: true })
     .fill("Review stage");
-  await page.getByLabel("Field type", { exact: true }).selectOption("Select");
   await page
-    .getByLabel("Select options (comma separated)", { exact: true })
+    .getByLabel("Field type", { exact: true })
+    .selectOption("Choice list");
+  await page
+    .getByLabel("Choices (comma separated)", { exact: true })
     .fill("Open, On hold");
   await page.getByLabel("Default value", { exact: true }).fill("Open");
   await page.getByRole("button", { name: "Create field" }).click();
@@ -1937,9 +2105,9 @@ test("a trigger issue opens the trigger it identifies", async ({ page }) => {
   });
 
   await page
-    .getByRole("button", {
-      name: "Review: Review the follow-up trigger",
-    })
+    .getByRole("listitem")
+    .filter({ hasText: "Review the follow-up trigger" })
+    .getByRole("button", { name: "Open trigger" })
     .click();
 
   await expect(page.getByLabel("Trigger name")).toHaveValue(
@@ -2093,7 +2261,7 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
   await openAuthenticatedSandbox(page, design);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
   const line = (id: string) =>
-    canvas.locator(`.x6-cell[data-cell-id="${id}"] [data-sandbox-line]`);
+    canvas.locator(`[data-sandbox-edge="${id}"] [data-sandbox-line]`);
 
   await expect(line("sample-uses")).toHaveAttribute(
     "data-sandbox-edge-kind",
@@ -2116,8 +2284,12 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
       const dash = (selector: string) =>
         getComputedStyle(document.querySelector(selector)!).strokeDasharray;
       return {
-        relationship: dash('[data-cell-id="sample-uses"] [data-sandbox-line]'),
-        handoff: dash('[data-cell-id="sample-billing"] [data-sandbox-line]'),
+        relationship: dash(
+          '[data-sandbox-edge="sample-uses"] [data-sandbox-line]',
+        ),
+        handoff: dash(
+          '[data-sandbox-edge="sample-billing"] [data-sandbox-line]',
+        ),
         keyRelationship: dash(
           '[data-sandbox-line="key"][data-sandbox-edge-kind="relationship"]',
         ),
@@ -2142,6 +2314,23 @@ async function openConnectModules(page: Page) {
   await page.getByRole("button", { name: /^Add relationship$/i }).click();
   return page.getByRole("dialog", { name: "Connect modules" });
 }
+
+// A design rule the Designer checks while applying a change is refused with
+// its authored reason; it once rejected silently and left the dialog open.
+test("a duplicate relationship is refused with its reason and nothing is saved", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  const dialog = await openConnectModules(page);
+  await dialog.getByLabel("Source module").selectOption("sample-requests");
+  await dialog.getByLabel("Target module").selectOption("sample-equipment");
+  await dialog.getByLabel("Relationship name").fill("Uses equipment again");
+  await dialog.getByRole("button", { name: "Create relationship" }).click();
+  await expect(
+    dialog.getByText("A relationship between these modules already exists."),
+  ).toBeVisible();
+  expect(sandbox.document().design.relationships).toHaveLength(1);
+});
 
 test("a relationship can target a module in another department and publish", async ({
   page,
@@ -2201,14 +2390,14 @@ test("a relationship can target a module in another department and publish", asy
       targetModuleId: "sample-customers",
     });
   // A link to another department is not an item that needs attention.
-  await expect(page.getByText(/need attention/)).toHaveCount(0);
+  await expect(page.getByText(/needs? attention/)).toHaveCount(0);
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
   const review = page.getByRole("dialog", { name: "Review and publish" });
   await review.getByLabel("Your password").fill("local password");
   await review.getByRole("button", { name: "Publish changes" }).click();
   await expect(
-    page.getByText("Your changes are now published to the live workspace."),
+    page.getByText("Changes published", { exact: true }),
   ).toBeVisible();
   expect(published).toHaveLength(1);
 });
@@ -2232,11 +2421,11 @@ test("leaving Connect modules after choosing another department saves nothing", 
   expect(
     sandbox.document().design.relationships.map((item) => item.id),
   ).toEqual(["sample-uses"]);
-  await expect(
-    page
-      .getByRole("region", { name: "Organization canvas" })
-      .locator('[data-sandbox-edge-kind="handoff"]'),
-  ).toHaveCount(0);
+  const lines = page
+    .getByRole("region", { name: "Organization canvas" })
+    .locator("[data-sandbox-edge] [data-sandbox-line]");
+  await expect(lines).toHaveCount(1);
+  await expect(lines).toHaveAttribute("data-sandbox-edge-kind", "relationship");
 });
 
 test("a rejected password is reported beside Publish, not above the list", async ({
@@ -2317,7 +2506,7 @@ test("a successful Publish plays the look's title signature once", async ({
   await dialog.getByRole("button", { name: "Publish changes" }).click();
 
   await expect(
-    page.getByText("Your changes are now published to the live workspace."),
+    page.getByText("Changes published", { exact: true }),
   ).toBeVisible();
   await expect(title).toHaveAttribute("data-signature", "play");
   expect(published).toEqual([
@@ -2336,7 +2525,8 @@ test("hovering a module or relationship traces its connections", async ({
   await page.setViewportSize({ width: 1440, height: 900 });
   await openAuthenticatedSandbox(page);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
+  const cell = (id: string) =>
+    canvas.locator(`[data-sandbox-node="${id}"], [data-sandbox-edge="${id}"]`);
   await page.getByRole("button", { name: "Fit canvas" }).click();
 
   await cell("sample-requests").hover();
@@ -2348,7 +2538,7 @@ test("hovering a module or relationship traces its connections", async ({
   await expect(cell("sample-uses")).toHaveAttribute("data-trace", "on");
 
   await page.mouse.move(5, 5);
-  await expect(canvas.locator('.x6-cell[data-trace="dim"]')).toHaveCount(0);
+  await expect(canvas.locator('[data-trace="dim"]')).toHaveCount(0);
 });
 
 test("a pending publication review protects browser exits", async ({
@@ -2413,18 +2603,55 @@ test("history controls are locked while a version mutation is pending", async ({
 
   try {
     await expect(label).toBeDisabled();
+    // The save button shows its pending label while it locks.
+    await expect(page.getByRole("button", { name: "Saving…" })).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Save label" }),
-    ).toBeDisabled();
-    await expect(
-      page.getByRole("button", { name: "Cancel label edit" }),
+      page
+        .getByRole("form", { name: /^Edit checkpoint label/ })
+        .getByRole("button", { name: "Cancel", exact: true }),
     ).toBeDisabled();
   } finally {
     releaseMutation();
   }
+  // The new label shows in place; no notice.
   await expect(
-    page.getByText("Checkpoint label updated in shared history."),
+    page.getByRole("heading", { name: "Updated checkpoint" }),
   ).toBeVisible();
+});
+
+test("Escape cancels the checkpoint label edit without saving", async ({
+  page,
+}) => {
+  let labelUpdates = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "PATCH" &&
+      request.url().includes("/api/sandbox/versions/")
+    )
+      labelUpdates += 1;
+  });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: [historyVersionFixture(1, "Release snapshot 1")],
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const { inspector } = historyRegions(page);
+  await inspector
+    .getByRole("button", { name: "Edit checkpoint label", exact: true })
+    .click();
+  const label = inspector.getByRole("textbox", { name: "Checkpoint label" });
+  await label.fill("Unsaved label");
+  await label.press("Escape");
+  await expect(label).toHaveCount(0);
+  await expect(
+    inspector.getByRole("button", {
+      name: "Edit checkpoint label",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole("heading", { name: "Release snapshot 1" }),
+  ).toBeVisible();
+  expect(labelUpdates).toBe(0);
 });
 
 test("legacy relationship mappings can be removed before publishing", async ({
@@ -2443,7 +2670,11 @@ test("legacy relationship mappings can be removed before publishing", async ({
     .click();
 
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Legacy field mappings")).toBeVisible();
+  await expect(dialog).toHaveAccessibleName("Relationship settings");
+  await expect(
+    dialog.getByRole("heading", { name: "Create relationship" }),
+  ).toHaveCount(0);
+  await expect(dialog.getByText("Older linked fields")).toBeVisible();
   await dialog.getByRole("button", { name: "Remove mapping" }).click();
   await dialog.getByRole("button", { name: "Save relationship" }).click();
   await expect(dialog).toBeHidden();
@@ -2452,7 +2683,7 @@ test("legacy relationship mappings can be removed before publishing", async ({
       name: "Edit outgoing relationship Uses equipment",
     })
     .click();
-  await expect(dialog.getByText("Legacy field mappings")).toHaveCount(0);
+  await expect(dialog.getByText("Older linked fields")).toHaveCount(0);
 });
 
 test("closing a mapped field removes its relationship mappings", async ({
@@ -2460,16 +2691,17 @@ test("closing a mapped field removes its relationship mappings", async ({
 }) => {
   await openAuthenticatedSandbox(page, configuredDesignWithLegacyMapping());
 
-  await page
-    .getByRole("button", { name: "Show Request number settings" })
-    .click();
+  await fieldRowTrigger(
+    page.getByLabel("Request number field settings"),
+    "Request number",
+  ).click();
   await page
     .getByLabel("Request number field settings")
     .getByRole("button", { name: "Close field" })
     .click();
   await expect(
-    page.getByRole("status").filter({
-      hasText: "Request number closed. 1 relationship field mapping removed.",
+    page.getByText("Request number closed. 1 linked field removed.", {
+      exact: true,
     }),
   ).toBeVisible();
 
@@ -2479,7 +2711,7 @@ test("closing a mapped field removes its relationship mappings", async ({
     })
     .click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Legacy field mappings")).toHaveCount(0);
+  await expect(dialog.getByText("Older linked fields")).toHaveCount(0);
 });
 
 test("the Designer saves offset Date/Time bounds in chronological order", async ({
@@ -2490,9 +2722,15 @@ test("the Designer saves offset Date/Time bounds in chronological order", async 
     configuredDesignWithOffsetDateTimeBounds(),
   );
 
+  await fieldRowTrigger(
+    page.getByLabel("Request number field settings"),
+    "Request number",
+  ).click();
+  // Save appears once the row has an edit; the bounds stay as loaded.
   await page
-    .getByRole("button", { name: "Show Request number settings" })
-    .click();
+    .getByLabel("Request number field settings")
+    .getByLabel("Request number description")
+    .fill("Opened within the bounds");
   await page
     .getByLabel("Request number field settings")
     .getByRole("button", { name: "Save field changes" })
@@ -2511,7 +2749,8 @@ test("a failed structural save remains visibly unsaved until the shared draft is
     saveFailure: "Sandbox storage is unavailable.",
     hasUnpublishedChanges: false,
   });
-  await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
+  const saveState = page.locator("[data-sandbox-save-state]");
+  await expect(saveState).toHaveText("Not published yet · Saved");
 
   await page
     .getByRole("tablist", { name: "Workbench view" })
@@ -2527,23 +2766,16 @@ test("a failed structural save remains visibly unsaved until the shared draft is
   await expect(saveFailure).toBeVisible();
   await expect(saveFailure).toHaveAttribute("data-variant", "destructive");
   await expect(
-    page.getByText(
-      "Save did not complete: your proposed document is still local.",
-    ),
+    page.getByText("Not saved. Your edits are still here."),
   ).toBeVisible();
-  await expect(
-    page.getByText("Unsaved changes", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Draft saved", { exact: true })).toHaveCount(0);
+  await expect(saveState).toHaveText("Not saved");
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
   ).toBeDisabled();
 
   await page.getByRole("button", { name: "Reapply my draft" }).click();
   await expect(
-    page.getByText(
-      "Save did not complete: your proposed document is still local.",
-    ),
+    page.getByText("Not saved. Your edits are still here."),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
@@ -2551,9 +2783,7 @@ test("a failed structural save remains visibly unsaved until the shared draft is
 
   await page.getByRole("button", { name: "Reload shared draft" }).click();
   await expect(
-    page.getByText(
-      "Save did not complete: your proposed document is still local.",
-    ),
+    page.getByText("Not saved. Your edits are still here."),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
@@ -2717,24 +2947,25 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
   await expect(clear).toBeEnabled();
 });
 
-test("trigger flow preview and summary follow the unsaved rule draft", async ({
+test("the trigger flow preview follows the unsaved rule draft", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
 
   const flow = page.getByRole("region", { name: "Flow preview" });
-  const summary = page.getByRole("region", { name: "Trigger summary" });
+  // On desktop the flow carries every fact; the summary is for phones.
+  await expect(
+    page.getByRole("region", { name: "Trigger summary" }),
+  ).toHaveCount(0);
   const settings = page.getByRole("region", { name: "Trigger settings" });
   await expect(settings).toBeVisible();
+  await expect(flow.getByRole("button", { name: /^When ·/ })).toBeVisible();
   await expect(
-    flow.getByRole("button", { name: "Edit trigger" }),
+    flow.getByRole("button", { name: /^Condition 1\b/ }),
   ).toBeVisible();
   await expect(
-    flow.getByRole("button", { name: "Edit condition 1" }),
-  ).toBeVisible();
-  await expect(
-    flow.getByRole("button", { name: "Edit action 1" }),
+    flow.getByRole("button", { name: /^Then · Action 1\b/ }),
   ).toBeVisible();
 
   const savedTriggers = sandbox.document().triggers;
@@ -2742,44 +2973,38 @@ test("trigger flow preview and summary follow the unsaved rule draft", async ({
     .getByLabel("Condition 1 field")
     .selectOption({ label: "Priority" });
   const conditionValue = settings.getByLabel("Value", { exact: true }).first();
-  await settings
-    .getByText(/Value options/)
-    .first()
-    .click();
   await conditionValue.fill("Needs immediate review");
   await expect(
-    flow.getByRole("button", { name: "Edit condition 1" }),
+    flow.getByRole("button", { name: /^Condition 1\b/ }),
   ).toContainText("Needs immediate review");
-  await expect(summary).toContainText("Needs immediate review");
   expect(sandbox.document().triggers).toEqual(savedTriggers);
 
-  await page.getByLabel("Condition group operator").selectOption("any");
-  await expect(flow).toContainText(/any condition/i);
-  await expect(summary).toContainText(/any condition/i);
-
+  // All or Any appears only once there are two conditions.
+  await expect(page.getByLabel("Condition group operator")).toHaveCount(0);
   await page.getByRole("button", { name: "Add condition" }).click();
   await expect(
-    flow.getByRole("button", { name: "Edit condition 2" }),
+    flow.getByRole("button", { name: /^Condition 2\b/ }),
   ).toBeVisible();
+  await page.getByLabel("Condition group operator").selectOption("any");
+  await expect(flow).toContainText(/any condition/i);
   await page.getByRole("button", { name: "Remove condition" }).last().click();
   await expect(
-    flow.getByRole("button", { name: "Edit condition 2" }),
+    flow.getByRole("button", { name: /^Condition 2\b/ }),
   ).toHaveCount(0);
 
   await page.getByRole("button", { name: "Add action" }).click();
   await expect(
-    flow.getByRole("button", { name: "Edit action 2" }),
+    flow.getByRole("button", { name: /^Then · Action 2\b/ }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Remove action" }).last().click();
-  await expect(flow.getByRole("button", { name: "Edit action 2" })).toHaveCount(
-    0,
-  );
+  await expect(
+    flow.getByRole("button", { name: /^Then · Action 2\b/ }),
+  ).toHaveCount(0);
 
   await page.getByLabel("Event", { exact: true }).selectOption("schedule");
-  await expect(
-    flow.getByRole("button", { name: "Edit trigger" }),
-  ).toContainText(/schedule/i);
-  await expect(summary).toContainText(/schedule/i);
+  await expect(flow.getByRole("button", { name: /^When ·/ })).toContainText(
+    /schedule/i,
+  );
 });
 
 test("keyboard activation on a trigger flow node focuses its editor", async ({
@@ -2791,7 +3016,7 @@ test("keyboard activation on a trigger flow node focuses its editor", async ({
   const flow = page.getByRole("region", { name: "Flow preview" });
   const condition = page.getByLabel("Condition 1 field");
   const conditionNode = flow.getByRole("button", {
-    name: "Edit condition 1",
+    name: /^Condition 1\b/,
   });
   await conditionNode.focus();
   await page.keyboard.press("Enter");
@@ -2824,9 +3049,10 @@ test("unsaved Service request follow-up trigger draft fits the original viewport
     .getByLabel("Set field target")
     .first()
     .selectOption({ label: "Status" });
+  // Status is a select field, so its values are picked by label.
   const values = settings.getByLabel("Value", { exact: true });
-  await values.first().fill("Open");
-  await values.last().fill("In progress");
+  await values.first().selectOption({ label: "Open" });
+  await values.last().selectOption({ label: "In progress" });
 
   const views = [
     { width: 1440, height: 1080, theme: "light" },
@@ -2981,7 +3207,10 @@ test("editing select choices preserves IDs, even when a label matches the defaul
   expect(before.defaultValue).toBe(openId);
   const idShapedLabel = openId;
 
-  await page.getByRole("button", { name: "Show Status settings" }).click();
+  await fieldRowTrigger(
+    page.getByLabel("Status field settings"),
+    "Status",
+  ).click();
   const settings = page.getByLabel("Status field settings");
   await settings
     .getByLabel("Status options")
@@ -3081,9 +3310,10 @@ test("editing select choices preserves IDs, even when a label matches the defaul
       await expect(propertiesTab).toHaveCount(1);
       if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
         await propertiesTab.click();
-      const showSettings = page
-        .getByLabel("Status field settings")
-        .getByRole("button", { name: "Show Status settings", exact: true });
+      const showSettings = fieldRowTrigger(
+        page.getByLabel("Status field settings"),
+        "Status",
+      );
       if (await showSettings.isVisible()) await showSettings.click();
     }
   }
@@ -3096,7 +3326,10 @@ test("removing an unsaved selected choice requires an explicit new default", asy
 }) => {
   const design = structuredClone(configuredSandboxDesign);
   const sandbox = await openAuthenticatedSandbox(page, design);
-  await page.getByRole("button", { name: "Show Status settings" }).click();
+  await fieldRowTrigger(
+    page.getByLabel("Status field settings"),
+    "Status",
+  ).click();
   const settings = page.getByLabel("Status field settings");
   const optionsInput = settings.getByLabel("Status options");
   await optionsInput.fill("Temporary, Open, In progress, Complete");
@@ -3109,7 +3342,9 @@ test("removing an unsaved selected choice requires an explicit new default", asy
     settings.getByText("Default value must match a select option."),
   ).toBeVisible();
   expect(sandbox.documentWrites()).toBe(0);
-  await settings.getByLabel("Status default value").selectOption("");
+  await settings
+    .getByLabel("Status default value")
+    .selectOption({ label: "Open" });
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect.poll(sandbox.documentWrites).toBe(1);
 });
@@ -3133,7 +3368,7 @@ test("the Designer saves a module record title field in the current v4 draft", a
   const sandbox = await openAuthenticatedSandbox(page, design);
 
   await page
-    .getByLabel("Record title field", { exact: true })
+    .getByLabel("Title field", { exact: true })
     .selectOption(titleField.id);
   await expect.poll(sandbox.documentWrites).toBe(1);
 
@@ -3145,22 +3380,20 @@ test("the Designer saves a module record title field in the current v4 draft", a
     document.design.modules.find((item) => item.id === targetModule.id)
       ?.titleFieldId,
   ).toBe(titleField.id);
-  const titleSelector = page.getByLabel("Record title field", { exact: true });
+  const titleSelector = page.getByLabel("Title field", { exact: true });
   await expect(titleSelector).toHaveValue(titleField.id);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
 
   const titleSettings = page.getByLabel(`${titleField.name} field settings`);
-  await titleSettings
-    .getByRole("button", { name: `Show ${titleField.name} settings` })
-    .click();
+  await fieldRowTrigger(titleSettings, titleField.name).click();
   const closeField = titleSettings.getByRole("button", {
     name: "Close field",
   });
-  await expect(
-    titleSettings.getByText(/selected as the record title/i),
-  ).toBeVisible();
   await expect(closeField).toBeDisabled();
+  await expect(closeField).toHaveAccessibleDescription(
+    "This is the module's title field.",
+  );
 
   const originalViewport = page.viewportSize();
   const originalScrollY = await page.evaluate(() => window.scrollY);
@@ -3177,9 +3410,10 @@ test("the Designer saves a module record title field in the current v4 draft", a
       await expect(propertiesTab).toHaveCount(1);
       if ((await propertiesTab.getAttribute("aria-selected")) !== "true")
         await propertiesTab.click();
-      const showSettings = page
-        .getByLabel("Title field settings")
-        .getByRole("button", { name: "Show Title settings", exact: true });
+      const showSettings = fieldRowTrigger(
+        page.getByLabel("Title field settings"),
+        "Title",
+      );
       if (await showSettings.isVisible()) await showSettings.click();
     }
   }
@@ -3188,15 +3422,28 @@ test("the Designer saves a module record title field in the current v4 draft", a
 
   await titleSelector.selectOption("");
   await expect.poll(sandbox.documentWrites).toBe(2);
-  await expect(
-    titleSettings.getByText(/selected as the record title/i),
-  ).toHaveCount(0);
-  const showSettings = titleSettings.getByRole("button", {
-    name: "Show Title settings",
-    exact: true,
-  });
+  const showSettings = fieldRowTrigger(titleSettings, "Title");
   if (await showSettings.isVisible()) await showSettings.click();
   await expect(closeField).toBeEnabled();
+  await expect(closeField).toHaveAccessibleDescription("");
+});
+
+test("a failed record title field change shows its error under the select", async ({
+  page,
+}) => {
+  const titleField = configuredSandboxDesign.modules[0]?.fields.find(
+    (field) => field.name === "Title",
+  );
+  if (!titleField) throw new Error("A module with a title field is required");
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    saveFailure: "Sandbox storage is unavailable.",
+  });
+  const titleSelector = page.getByLabel("Title field", { exact: true });
+  await titleSelector.selectOption(titleField.id);
+  await expect(titleSelector).toHaveAttribute("aria-invalid", "true");
+  await expect(titleSelector).toHaveAccessibleDescription(
+    /^This Sandbox change could not be saved\. Try again\./,
+  );
 });
 
 test("Sandbox Test treats User values as simulated UUIDs without live eligibility lookup", async ({
@@ -3236,12 +3483,10 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
   const setup = page.getByRole("region", { name: "Test setup", exact: true });
-  await expect(
-    setup.getByText(/simulat(?:ed|ion).*UUID|UUID.*simulat(?:ed|ion)/i),
-  ).toBeVisible();
+  // The help says the ID is used as typed and nobody's access is checked.
   await expect(
     setup.getByText(
-      /eligibility.*(?:not|never).*(?:check|verify)|(?:does not|never).*(?:check|verify).*eligibility/i,
+      "The test uses this ID as is. It does not check that the person can sign in.",
     ),
   ).toBeVisible();
 
@@ -3297,9 +3542,7 @@ test("Sandbox Test field search preserves hidden edits in the submitted temporar
   await expect(setup.getByLabel("Find a field")).toBeVisible();
   await expect(setup.getByLabel("Title", { exact: true })).toHaveCount(0);
   await setup.getByLabel("Request number", { exact: true }).fill("TEST-001");
-  await setup
-    .getByRole("button", { name: "All input fields", exact: true })
-    .click();
+  await setup.getByRole("button", { name: /^All \(/ }).click();
   await expect(setup.getByLabel("Extra field 24", { exact: true })).toHaveCount(
     0,
   );
@@ -3315,19 +3558,13 @@ test("Sandbox Test field search preserves hidden edits in the submitted temporar
   await setup.getByLabel("Find a field").fill("Title");
   await setup.getByLabel("Title", { exact: true }).fill("Keep this hidden");
   await setup.getByLabel("Find a field").fill("");
-  await setup
-    .getByRole("button", { name: "Relevant fields", exact: true })
-    .click();
+  await setup.getByRole("button", { name: /^Relevant \(/ }).click();
   await expect(setup.getByLabel("Title", { exact: true })).toHaveCount(0);
-  await setup
-    .getByRole("button", { name: "Edited fields", exact: true })
-    .click();
+  await setup.getByRole("button", { name: /^Edited \(/ }).click();
   await expect(setup.getByLabel("Title", { exact: true })).toHaveValue(
     "Keep this hidden",
   );
-  await setup
-    .getByRole("button", { name: "Relevant fields", exact: true })
-    .click();
+  await setup.getByRole("button", { name: /^Relevant \(/ }).click();
   await setup.getByRole("button", { name: "Run test", exact: true }).click();
   await expect
     .poll(() => submitted?.["sample-field-Title"])
@@ -3486,15 +3723,15 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
       .getByLabel("Priority", { exact: true }),
   ).toBeFocused();
   await expect(comparison).toBeVisible();
-  await comparison
-    .getByRole("button", { name: "All result fields", exact: true })
-    .click();
+  await comparison.getByRole("button", { name: /^All fields \(/ }).click();
   await expect(comparison.getByRole("row", { name: /Priority/ })).toContainText(
     "No value",
   );
   await page
     .getByRole("region", { name: "Recent test results", exact: true })
-    .getByRole("button", { name: "View test 2", exact: true })
+    // Rows are named by what they show; the second is the older result.
+    .locator("button[aria-pressed]")
+    .nth(1)
     .click();
   await expect(
     comparison.getByRole("row", { name: /Needs review/ }),
@@ -3505,9 +3742,7 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
   await expect(comparison.getByRole("row", { name: /Priority/ })).toHaveCount(
     0,
   );
-  await comparison
-    .getByRole("button", { name: "All result fields", exact: true })
-    .click();
+  await comparison.getByRole("button", { name: /^All fields \(/ }).click();
   await expect(
     comparison
       .getByRole("row", { name: /Priority/ })
@@ -3519,7 +3754,8 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
       .getByRole("cell", { name: "No value", exact: true }),
   ).toHaveCount(2);
   const setup = page.getByRole("region", { name: "Test setup", exact: true });
-  await setup.getByLabel("Find a field").fill("Priority");
+  // Small modules show no search; All lists every input.
+  await setup.getByRole("button", { name: /^All \(/ }).click();
   await setup.getByLabel("Priority", { exact: true }).fill("42");
   await expect(
     comparison
@@ -3584,6 +3820,17 @@ test("refused capacity is unavailable rather than guessed or usable", async ({
   expect(sandbox.pruneRequests()).toEqual([]);
 });
 
+test("Save checkpoint can be cancelled without saving", async ({ page }) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  const checkpoint = await openCheckpointDialog(page);
+  await checkpoint
+    .getByLabel("Checkpoint name", { exact: true })
+    .fill("Not kept");
+  await checkpoint.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(checkpoint).toBeHidden();
+  expect(sandbox.checkpointRequests()).toEqual([]);
+});
+
 test("prune cancel and pending readback preserve checkpoint input and use refreshed revision", async ({
   page,
 }) => {
@@ -3604,7 +3851,7 @@ test("prune cancel and pending readback preserve checkpoint input and use refres
   const before = sandbox.document();
   const checkpoint = await openCheckpointDialog(page);
   await checkpoint
-    .getByLabel("Name", { exact: true })
+    .getByLabel("Checkpoint name", { exact: true })
     .fill("Retained authored name");
   await checkpoint.getByLabel("Note (optional)").fill("Retained authored note");
   const prune = checkpoint.getByRole("button", {
@@ -3649,9 +3896,9 @@ test("prune cancel and pending readback preserve checkpoint input and use refres
       exact: true,
     }),
   ).toHaveCount(0);
-  await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
-    "Retained authored name",
-  );
+  await expect(
+    checkpoint.getByLabel("Checkpoint name", { exact: true }),
+  ).toHaveValue("Retained authored name");
   await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
     "Retained authored note",
   );
@@ -3757,7 +4004,7 @@ for (const failure of ["stale", "readback"] as const) {
     const before = sandbox.document();
     const checkpoint = await openCheckpointDialog(page);
     await checkpoint
-      .getByLabel("Name", { exact: true })
+      .getByLabel("Checkpoint name", { exact: true })
       .fill("Keep this label");
     await checkpoint.getByLabel("Note (optional)").fill("Keep this note");
     await expect(
@@ -3784,9 +4031,9 @@ for (const failure of ["stale", "readback"] as const) {
     await confirmation
       .getByRole("button", { name: "Cancel", exact: true })
       .click();
-    await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
-      "Keep this label",
-    );
+    await expect(
+      checkpoint.getByLabel("Checkpoint name", { exact: true }),
+    ).toHaveValue("Keep this label");
     await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
       "Keep this note",
     );
@@ -3834,7 +4081,7 @@ test("full history checkpoint reports authored version_limit copy and preserves 
   );
   const checkpoint = await openCheckpointDialog(page);
   await checkpoint
-    .getByLabel("Name", { exact: true })
+    .getByLabel("Checkpoint name", { exact: true })
     .fill("Preserved full-cap label");
   await checkpoint
     .getByLabel("Note (optional)")
@@ -3848,9 +4095,9 @@ test("full history checkpoint reports authored version_limit copy and preserves 
       { exact: true },
     ),
   ).toBeVisible();
-  await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
-    "Preserved full-cap label",
-  );
+  await expect(
+    checkpoint.getByLabel("Checkpoint name", { exact: true }),
+  ).toHaveValue("Preserved full-cap label");
   await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
     "Preserved full-cap note",
   );
@@ -3909,16 +4156,12 @@ test("History timeline filters preserve the selected action target and published
   await expect(page.getByRole("alertdialog")).toContainText(
     "Restore Release snapshot 1?",
   );
-  await page
-    .getByRole("button", { name: "Cancel restore", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(
     inspector.getByRole("button", { name: "Restore version", exact: true }),
   ).toBeFocused();
   await timeline.getByLabel("Find a version").fill("");
-  await timeline
-    .getByRole("button", { name: "Published versions", exact: true })
-    .click();
+  await timeline.getByLabel("Filter versions").selectOption("published");
   await expect(
     timeline.getByRole("button", { name: "View Before import", exact: true }),
   ).toHaveCount(0);
@@ -3934,9 +4177,7 @@ test("History timeline filters preserve the selected action target and published
       exact: true,
     }),
   ).toHaveCount(0);
-  await timeline
-    .getByRole("button", { name: "All versions", exact: true })
-    .click();
+  await timeline.getByLabel("Filter versions").selectOption("all");
   await timeline
     .getByRole("button", { name: "View Release snapshot 1", exact: true })
     .click();
@@ -3949,9 +4190,43 @@ test("History timeline filters preserve the selected action target and published
   await expect(
     timeline.getByRole("button", { name: "View Before import", exact: true }),
   ).toBeDisabled();
-  await inspector
-    .getByRole("button", { name: "Cancel label edit", exact: true })
+  await inspector.getByRole("button", { name: "Cancel", exact: true }).click();
+});
+
+test("changing a compared version clears the old comparison", async ({
+  page,
+}) => {
+  const versions = [
+    historyVersionFixture(1, "Published structure", "published"),
+    historyVersionFixture(2, "Release snapshot 1"),
+    historyVersionFixture(3, "Before import"),
+  ];
+  const before = sandboxDocumentFromDesign(configuredSandboxDesign);
+  const after = structuredClone(before);
+  after.design.modules[0].name = "Updated requests";
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    const version = versions.find((item) => item.id === id)!;
+    await route.fulfill({
+      json: { ...version, document: id === versions[1].id ? after : before },
+    });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page.getByLabel("Compare first version").selectOption(versions[0].id);
+  await page.getByLabel("Compare second version").selectOption(versions[1].id);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
     .click();
+  const { comparison } = historyRegions(page);
+  await expect(comparison).toContainText("Updated requests");
+
+  await page.getByLabel("Compare second version").selectOption(versions[2].id);
+  await expect(comparison).not.toContainText("Updated requests");
+  await expect(comparison).toContainText(
+    "Ready to compare Published structure (v1) with Before import (v3).",
+  );
 });
 
 test("History comparison stays tied to compared versions while inspecting another timeline entry", async ({
@@ -4099,7 +4374,7 @@ test("History deletion failure retains its target and successful deletion select
     .click();
   const dialog = page.getByRole("alertdialog");
   await dialog
-    .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
+    .getByRole("button", { name: "Delete version", exact: true })
     .click();
   await expect.poll(() => deleteAttempts).toBe(1);
   await expect(dialog).toBeVisible();
@@ -4108,13 +4383,10 @@ test("History deletion failure retains its target and successful deletion select
   await expect(failure).toHaveAttribute("data-variant", "destructive");
   await expect(page.getByText("Try deletion again.")).toHaveCount(0);
   await expect(
-    dialog.getByRole("button", {
-      name: "Delete Disposable checkpoint",
-      exact: true,
-    }),
+    dialog.getByRole("button", { name: "Delete version", exact: true }),
   ).toBeEnabled();
   await dialog
-    .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
+    .getByRole("button", { name: "Delete version", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   await expect(
@@ -4242,7 +4514,7 @@ test("a Test result from an older draft says so and can show its module on the c
   await page.goto("/sandbox?section=test");
   const outcome = page.getByRole("region", { name: "Test outcome" });
   await expect(
-    outcome.getByText("This result is from an older draft."),
+    outcome.getByText("Draft changed", { exact: true }),
   ).toBeVisible();
   await expect(
     outcome.getByRole("button", { name: "Run again" }),
@@ -4253,7 +4525,8 @@ test("a Test result from an older draft says so and can show its module on the c
   await outcome.getByRole("button", { name: "Show test on canvas" }).click();
   await expect(page).toHaveURL(/section=build/);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
+  const cell = (id: string) =>
+    canvas.locator(`[data-sandbox-node="${id}"], [data-sandbox-edge="${id}"]`);
   await expect(cell("sample-requests")).toHaveAttribute("data-trace", "on");
   await expect(cell("sample-uses")).toHaveAttribute("data-trace", "on");
   await expect(cell("sample-requests")).toBeInViewport();
@@ -4319,7 +4592,7 @@ test("a Test run plays out on the canvas in three still steps", async ({
   await expect(page.getByText("Step 3 of 3: Result")).toBeHidden();
 });
 
-test("personal text scaling leaves canvas SVG key editor and geometry unchanged", async ({
+test("personal text scaling leaves the canvas key, editor, and geometry unchanged", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -4327,8 +4600,8 @@ test("personal text scaling leaves canvas SVG key editor and geometry unchanged"
   const frame = page.getByLabel("Module design canvas");
   await expect(frame.locator("[data-sandbox-body]").first()).toBeVisible();
   await frame.getByText("Key", { exact: true }).click();
-  const node = frame.locator('.x6-cell[data-cell-id="sample-requests"]');
-  await node.locator("text").first().dblclick();
+  const node = frame.locator('[data-sandbox-node="sample-requests"]');
+  await node.locator('[data-sandbox-part="header"]').first().dblclick();
   await expect(
     page.getByRole("textbox", { name: "Canvas name editor" }),
   ).toBeVisible();
@@ -4339,7 +4612,9 @@ test("personal text scaling leaves canvas SVG key editor and geometry unchanged"
       const editor = frame.querySelector(
         'input[aria-label="Canvas name editor"]',
       )!;
-      const body = frame.querySelector('[data-sandbox-kind="module"]')!;
+      const node = frame.querySelector(
+        '[data-sandbox-node="sample-requests"]',
+      )!;
       const grid = frame.querySelector('[data-testid="sandbox-grid"]')!;
       return {
         keyFont: getComputedStyle(key).fontSize,
@@ -4347,12 +4622,13 @@ test("personal text scaling leaves canvas SVG key editor and geometry unchanged"
         editorFont: getComputedStyle(editor).fontSize,
         editorHeight: editor.getBoundingClientRect().height,
         editorRadius: getComputedStyle(editor).borderRadius,
-        nodeRadius: getComputedStyle(body).rx,
-        nodeWidth: body.getAttribute("width"),
+        nodeWidth: Math.round(node.getBoundingClientRect().width),
         grid: getComputedStyle(grid).backgroundSize,
-        svgFonts: [...frame.querySelectorAll("svg text")].map(
-          (text) => getComputedStyle(text).fontSize,
-        ),
+        fieldFonts: [
+          ...frame.querySelectorAll(
+            '[data-sandbox-part="field-name"], [data-sandbox-part="field-type"]',
+          ),
+        ].map((text) => getComputedStyle(text).fontSize),
       };
     });
   const baseline = await metrics();
@@ -4463,11 +4739,13 @@ test("disabled convenience shortcuts preserve canvas buttons and essential arrow
   ).toContainText("Canvas");
   const node = page
     .getByRole("region", { name: "Organization canvas" })
-    .locator('.x6-cell[data-cell-id="sample-requests"]');
-  await node.locator("text").first().click();
-  const before = await node.getAttribute("transform");
+    .locator('[data-sandbox-node="sample-requests"]');
+  await node.locator('[data-sandbox-part="header"]').first().click();
+  const before = await canvasPosition(node);
   await page.keyboard.press("ArrowRight");
-  await expect(node).not.toHaveAttribute("transform", before ?? "");
+  await expect
+    .poll(async () => (await canvasPosition(node)).x)
+    .toBeGreaterThan(before.x);
   await page.getByRole("button", { name: "View canvas", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Canvas help", exact: true })
@@ -4504,8 +4782,8 @@ for (const preference of ["off", "pending"] as const) {
     try {
       const sandbox = await openAuthenticatedSandbox(page);
       const canvas = page.getByRole("region", { name: "Organization canvas" });
-      const node = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
-      await node.locator("text").first().click();
+      const node = canvas.locator('[data-sandbox-node="sample-requests"]');
+      await node.locator('[data-sandbox-part="header"]').first().click();
       await canvas.focus();
       await page.keyboard.press("F2");
       await expect(
@@ -4534,7 +4812,7 @@ for (const preference of ["off", "pending"] as const) {
       await page.keyboard.press("Enter");
       await expect(field).toHaveAttribute("aria-pressed", "true");
       const status = node.getByRole("button", {
-        name: "Status, Select, optional",
+        name: "Status, Choice list, optional",
         exact: true,
       });
       await status.focus();
@@ -4552,8 +4830,8 @@ test("registered shortcuts enabled retain real help fit rename and removal revie
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const node = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
-  await node.locator("text").first().click();
+  const node = canvas.locator('[data-sandbox-node="sample-requests"]');
+  await node.locator('[data-sandbox-part="header"]').first().click();
   await canvas.focus();
   await page.keyboard.press("?");
   await expect(
@@ -4585,7 +4863,7 @@ test("registered shortcuts enabled retain real help fit rename and removal revie
   const review = page.getByRole("alertdialog");
   await expect(review).toContainText("Service requests");
   await expect(
-    review.getByRole("button", { name: "Confirm delete", exact: true }),
+    review.getByRole("button", { name: "Delete module", exact: true }),
   ).toBeVisible();
   await review.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(sandbox.document().design.modules).toHaveLength(3);
@@ -4628,8 +4906,8 @@ test("registered shortcuts preserve native text editing modal guards and standar
   await expect.poll(() => sandbox.document().design.layout).toEqual(arranged);
   await page.getByRole("tab", { name: "Structure", exact: true }).click();
   await page
-    .getByRole("button", {
-      name: "Select module Service requests",
+    .getByRole("treeitem", {
+      name: "Service requests",
       exact: true,
     })
     .click({ button: "right" });
@@ -4664,7 +4942,7 @@ test("Trigger Studio switch preserves geometry and its 44 pixel hit target with 
   });
   const sandbox = await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
-  const toggle = page.getByRole("switch", { name: "Enabled in draft" });
+  const toggle = page.getByRole("switch", { name: "Trigger On" });
   await expect(toggle).toBeVisible();
   const track = await toggle.boundingBox();
   const thumb = await toggle
@@ -4802,9 +5080,7 @@ test("History pages and server-searches later versions while retaining inspectio
       exact: true,
     }),
   ).toBeVisible();
-  await timeline
-    .getByRole("button", { name: "Imported versions", exact: true })
-    .click();
+  await timeline.getByLabel("Filter versions").selectOption("imported");
   await expect
     .poll(() =>
       requests.some(
@@ -4836,22 +5112,14 @@ test("History pages and server-searches later versions while retaining inspectio
       await page.evaluate(async () => {
         await document.fonts.ready;
       });
-      for (const label of [
-        "All versions",
-        "Checkpoints",
-        "Published versions",
-        "Imported versions",
-      ]) {
-        await expect
-          .poll(() =>
-            timeline
-              .getByRole("button", { name: label, exact: true })
-              .evaluate(
-                (element) => element.scrollWidth <= element.clientWidth,
-              ),
-          )
-          .toBe(true);
-      }
+      // The kind filter is one compact select that fits its column.
+      await expect
+        .poll(() =>
+          timeline
+            .getByLabel("Filter versions")
+            .evaluate((element) => element.scrollWidth <= element.clientWidth),
+        )
+        .toBe(true);
     }
     if (originalViewport) await page.setViewportSize(originalViewport);
     await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
@@ -5288,7 +5556,7 @@ test("History deletion of the sole last-page row selects an available version an
     .click();
   await page
     .getByRole("alertdialog")
-    .getByRole("button", { name: "Delete Saved checkpoint 1", exact: true })
+    .getByRole("button", { name: "Delete version", exact: true })
     .click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(
@@ -5303,11 +5571,11 @@ test("History deletion of the sole last-page row selects an available version an
       exact: true,
     }),
   ).toBeVisible();
+  // Back on the first page: the 25 left fit one page, so paging is gone
+  // (it stays while the range is past the first page).
   await expect(
-    timeline
-      .getByRole("navigation", { name: "History pages", exact: true })
-      .getByRole("button", { name: "previous page" }),
-  ).toBeDisabled();
+    timeline.getByRole("navigation", { name: "History pages", exact: true }),
+  ).toHaveCount(0);
   await expect(
     timeline.getByText("No saved versions yet", { exact: true }),
   ).toHaveCount(0);
@@ -5639,7 +5907,9 @@ test("a filtered 28-version history exports its complete document and snapshots"
   ).toBeVisible();
   const [without] = await Promise.all([
     page.waitForEvent("download"),
-    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+    dialog
+      .getByRole("button", { name: "Download a backup", exact: true })
+      .click(),
   ]);
   expect(without.suggestedFilename()).toBe("owned-sandbox-history.json");
   const withoutPath = await without.path();
@@ -5652,7 +5922,9 @@ test("a filtered 28-version history exports its complete document and snapshots"
   await include.check();
   const [withHistory] = await Promise.all([
     page.waitForEvent("download"),
-    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+    dialog
+      .getByRole("button", { name: "Download a backup", exact: true })
+      .click(),
   ]);
   expect(withHistory.suggestedFilename()).toBe("owned-sandbox-history.json");
   const withPath = await withHistory.path();
@@ -5729,7 +6001,9 @@ test("export history uses complete global total and downloads both boolean varia
   ).toBeVisible();
   const [without] = await Promise.all([
     page.waitForEvent("download"),
-    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+    dialog
+      .getByRole("button", { name: "Download a backup", exact: true })
+      .click(),
   ]);
   expect(without.suggestedFilename()).toBe("owned-history-51.json");
   const withoutPath = await without.path();
@@ -5742,7 +6016,9 @@ test("export history uses complete global total and downloads both boolean varia
   await include.check();
   const [withHistory] = await Promise.all([
     page.waitForEvent("download"),
-    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+    dialog
+      .getByRole("button", { name: "Download a backup", exact: true })
+      .click(),
   ]);
   expect(withHistory.suggestedFilename()).toBe("owned-history-51.json");
   const withPath = await withHistory.path();
@@ -5773,7 +6049,7 @@ test("export count loads without guessing or enabling a premature export", async
       dialog.getByText("Loading version count…", { exact: true }),
     ).toBeVisible();
     await expect(
-      dialog.getByRole("button", { name: "Export JSON", exact: true }),
+      dialog.getByRole("button", { name: "Download a backup", exact: true }),
     ).toBeDisabled();
     await expect(
       dialog.getByText("0 saved versions", { exact: true }),
@@ -5785,7 +6061,7 @@ test("export count loads without guessing or enabling a premature export", async
     dialog.getByText("2 saved versions", { exact: true }),
   ).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeEnabled();
 });
 
@@ -5805,7 +6081,7 @@ test("export count failure stays unavailable until an authoritative Retry", asyn
     dialog.getByText("0 saved versions", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeDisabled();
   options.versionListFailure = undefined;
   await dialog
@@ -5815,7 +6091,7 @@ test("export count failure stays unavailable until an authoritative Retry", asyn
     dialog.getByText("2 saved versions", { exact: true }),
   ).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeEnabled();
 });
 
@@ -5853,7 +6129,7 @@ test("unavailable export keeps history selection and produces no download", asyn
   await expect(include).toBeVisible();
   await include.check();
   await dialog
-    .getByRole("button", { name: "Export JSON", exact: true })
+    .getByRole("button", { name: "Download a backup", exact: true })
     .click();
   await expect(
     dialog.getByText("Export could not be completed. Try again.", {
@@ -5862,7 +6138,7 @@ test("unavailable export keeps history selection and produces no download", asyn
   ).toBeVisible();
   await expect(include).toBeChecked();
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeEnabled();
   expect(downloads).toBe(0);
   expect(requests).toEqual(["true"]);
@@ -5901,12 +6177,12 @@ test("pending export is single and cancellation refuses its late download", asyn
   await expect(include).toBeVisible();
   await include.check();
   await dialog
-    .getByRole("button", { name: "Export JSON", exact: true })
+    .getByRole("button", { name: "Download a backup", exact: true })
     .click();
   try {
     await expect.poll(() => requests).toBe(1);
     await expect(
-      dialog.getByRole("button", { name: "Exporting…", exact: true }),
+      dialog.getByRole("button", { name: "Downloading…", exact: true }),
     ).toBeDisabled();
     await expect(include).toBeDisabled();
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -5921,7 +6197,7 @@ test("pending export is single and cancellation refuses its late download", asyn
   await openImportExport(page);
   await expect(include).toBeChecked();
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeEnabled();
 });
 
@@ -5970,7 +6246,7 @@ for (const transition of ["unmount", "account"] as const) {
       .getByRole("checkbox", { name: "Include version history", exact: true })
       .check();
     await dialog
-      .getByRole("button", { name: "Export JSON", exact: true })
+      .getByRole("button", { name: "Download a backup", exact: true })
       .click();
     try {
       await expect.poll(() => started).toBe(true);
@@ -6019,7 +6295,7 @@ test("import admission still refuses more than 50 snapshots before any write", a
   const dialog = await openImportExport(page);
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
-    dialog.getByRole("button", { name: "Choose JSON", exact: true }).click(),
+    dialog.getByRole("button", { name: "Load a backup", exact: true }).click(),
   ]);
   await chooser.setFiles({
     name: "owned-history-51.json",

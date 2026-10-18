@@ -309,6 +309,56 @@ Correct: the Triplicate block sets `--button-edge: var(--action); --button-ink: 
 
 Wrong: `[data-theme="triplicate"] [data-slot="button"][data-variant="outline"] { border-color: var(--action); color: var(--action); }` (every outline button turns blue, and no call site can change it back).
 
+**The Advanced Last Rule.** A panel shows the controls that its common task needs. Every other control goes in one closed **Advanced** block (`AdvancedSection`), the last block of the panel. Advanced remembers its state for each viewer, and when closed its header counts the controls whose value differs from the default ("Advanced · 2 set"). Lifecycle actions (Close, Reopen, Delete, Permanently delete) always live in Advanced. A control that applies only in one case appears only in that case.
+
+Correct: The module panel shows the name, the field list, and "Add field", then "Advanced · 1 set" (closed).
+
+Wrong: The module panel opens with "Close module" above "Move module to department", "Record title field", and the field list.
+
+**The Four Moments Rule.** Every action gives feedback before (a risky action states its consequence in one line, and a disabled control states why), during (the control shows its pending label and keeps its width; only the affected item locks), and after, through the lowest channel the person can see: inline when the result is visible, a toast (with Undo when the action can be undone) when it is not, a dialog only before an action that cannot be undone or that changes the live workspace, and a page alert only for a blocking state. Errors appear next to the control that failed, or inside the open dialog.
+
+Correct: Deleting a trigger removes it from the list and shows the toast "Trigger deleted · Undo".
+
+Wrong: Renaming a module shows the page alert "Products saved in the design.", which stays until another message replaces it.
+
+**The Few Words Rule.** A label has three words or fewer. A helper line is one sentence of twelve words or fewer, and only for a consequence, a limit, or an error. A sentence that explains how to use a control means the control needs fixing. A fact appears in one place. Numbers, marks, and state chips replace sentences, and guidance for a first visit lives in empty states and the Help drawer.
+
+Correct: The If step of a trigger with no conditions shows "Always".
+
+Wrong: "No condition filter is configured." shown twice, once in the flow and once in the summary.
+
+**The One Selection Rule.** Selection reads the same everywhere in the Sandbox: the selected row or step takes the 14% ink tint and hover the 6% tint, with no blue edge or ring. Where a selection links two panels (a trigger step and its settings), the settings section adds a thin `--ink-muted` rule. Blue stays for focus rings and primary actions.
+
+Correct: Condition 1 in the flow is tinted, and its settings block has a thin grey rule.
+
+Wrong: the flow card has a blue border and the settings block a blue ring.
+
+**The Kept Edits Rule.** Edits that wait for an explicit Save (Sandbox triggers) belong to the page, not to the panel that shows them. Moving between sections, Back, and Forward keep them; leaving the page asks Save, Discard, or Stay; a reload keeps them in session storage and offers them back once with "Restore unsaved trigger changes?" (Restore, Discard). While that prompt waits, the trigger editor is read-only (the On switch included) and Review & Publish waits, so nothing is typed over the kept edits; the prompt's Discard has Undo, which offers them again. If newer edits already exist, they stay editable and Restore waits until they are saved or discarded; the kept edits keep their stored copy meanwhile. Each unsaved item carries an "Unsaved" warning badge in its list, and a step that Save will refuse shows the reason in warning ink before Save. Ctrl+S (Cmd+S) saves.
+
+Correct: Back from Triggers to Build keeps the edit; the chip reads "· 1 unsaved trigger change"; returning to Triggers shows it.
+
+Wrong: Back unmounts the editor and the edit is gone, with the chip back at "Saved".
+
+**The Tree Keys Rule.** A hierarchy that people edit (the Sandbox Structure outline) is a WAI-ARIA tree: one Tab stop, Up and Down move, Right opens or goes to the first child, Left closes or goes to the parent, Home and End, a letter jumps to the next name, Enter selects, F2 renames, and the context-menu key opens the item's actions. "Add …" rows are items in the tree, not extra Tab stops. Only the selected item is `aria-selected`; "Closed" is the item's description, not part of its name.
+
+Correct: Tab lands on the selected module; ArrowDown reaches its first field; "e" jumps to Equipment.
+
+Wrong: Tab walks through every department, module, field, and "Add field" button.
+
+**The page pass (pattern kit).** To bring a workspace page to these rules, take its panels one at a time, with the Sandbox as the worked example (`docs/specs/sandbox-ui-ux-pass.md`):
+
+1. Inventory every control and helper line per panel and selection state, and measure helper words and default-visible controls with one script on fixed data before you change anything.
+2. Classify each control as essential, conditional (shown only in its case), menu, or Advanced; lifecycle actions go to Advanced.
+3. Give every data-changing action its four moments: a consequence or a disabled reason before, a pending label during, the lowest visible channel after, and the error beside the control or in the open dialog.
+4. Cut every helper sentence that explains a control, repeats a fact, or restates a heading; move first-visit guidance to the empty state.
+5. Reuse the shared parts: `AdvancedSection`, `DisabledReason`, the segmented `ToggleGroup`, the Button pending label, Cancel-first dialog footers, `DialogCloseButton` for large dialogs only, and ink-tint row states (6% hover, 14% selected).
+6. Apply the Still Page Rule on desktop and keep phones scrolling; give a phone a list-or-detail view with Back where a desktop shows panels side by side.
+7. Verify at 1440 and 390, light and dark, in all four looks; add one HTTP journey per criterion and a 390 sweep; measure again on the same data.
+
+Correct: History's kind filter becomes one select, Delete version moves into Advanced in danger ink with "Published versions are kept." as its disabled reason, and Restore shows "Draft restored · checkpoint saved".
+
+Wrong: History keeps four filter toggles, adds an Advanced block per version row, and confirms a label edit with a page alert.
+
 ## Colors
 
 The palette is a set of semantic roles, not a hue list. Each look supplies its own values for the same names in light and dark. Prose below names tokens; the values live in the stylesheets.
@@ -442,6 +492,10 @@ The main region pads 16px on phones and 20px by 28px from 640px up. Manage uses 
 
 The rhythm is a 4px base: 8px and 12px gaps inside groups, 16px between groups, 20px card padding, 28px between the page header and content. Tables open at 10 rows per page (options 5, 10, 25, 50).
 
+**The Still Page Rule.** On desktop (1280px and wider) a workspace page fills the viewport and never scrolls; its panels do. The shell header, the page header, and the footer line stay in place, and each panel (canvas, Structure, Properties, a section body) scrolls on its own. Scroll panels are `relative`, so screen-reader text inside them cannot stretch the page. Phones and tablets scroll the page. The Sandbox follows it now; the other workspaces follow it when their pass comes.
+
+**The Quiet Scrollbar Rule.** Every scroll area uses a 4px thumb in an 8px lane with no track, tinted from `--ink-muted`; under the pointer it widens to 6px and darkens, in every look (Firefox draws its standard thin bar, which cannot be narrower). It is never hidden: it is the only cue that a panel has more below the fold. The sidebar tints its thumb with `--sidebar-muted`.
+
 Targets stay reachable: sidebar items are at least 44px tall. Below 640px, shell buttons and inputs are at least 44px. In the Sandbox and its dialogs, controls are at least 44px below 1280px, and inline toggles inside a list row keep 24px so rows keep one rhythm. Breadcrumb links keep a 24px target.
 
 **The Sandbox.** The canvas owns at least 65% of the work area. One right workbench switches between Structure and Properties; creation actions live in the workbench, not on the canvas. Narrow screens switch among Canvas, Structure, and Properties as tabs. The canvas snaps to a 24px unit and shows a dot grid (minor dots every 24px, major dots every 120px, each dot on a snap point). It scales uniformly from 50% to 150%; the floor keeps field text readable, and the minimap shows what does not fit. There is no overview level: every zoom shows the same tables with their fields. The canvas and Properties always open on the same item: with no link, Build selects the first module of the busiest department (the most modules and lines, `openingModuleId`), and the canvas opens at 100% on the selected item's department, lifting it when the selected table would sit below the fold; if the department is wider than the view, it shows the selected table whole, with the department's left edge when it fits. Fit shows the whole design and never zooms past 100%. When Fit reaches the floor, or a trace is pinned from Test, a small notice bar at the top of the canvas says so, with Dismiss, or Back to result and Clear. The minimap sits bottom right from 640px up; the Key sits bottom left at every width.
@@ -475,7 +529,7 @@ Wrong: `--lift: 4px 4px 0 var(--ink);`
 
 **The Selection Lifts Rule.** On the canvas, state lift belongs to selection: the selected department or module takes `--lift-filter` and a heavier stroke. A look may give a node kind a resting material lift (Whiteboard modules, Triplicate departments, Stockroom's shelf lip), and it is the same on every node of that kind. Hovering a module or a line traces its connections: the rest dims to 35% opacity in 150ms, the traced lines turn `--action` at 2px (3.4px in Whiteboard), and nothing moves. "Show test on canvas" from a Test result pins the same trace on the tested module (`?trace=` and `?run=`) and plays the run as three still steps in a strip above the canvas (What happened, Triggers, Result) with Previous step, Next step, Back to result, and Clear, plus a one-line legend. The strip repeats the result's caveats (an older draft, open issues). The trigger field row takes a solid 2.5px `--action` outline; changed rows take `--canvas-test-fill` (the action color mixed into the module fill; Stockroom dark mixes it into a darker base to keep type ink AA) and a dashed 1.5px `--action` outline, so the marks differ by pattern, not only hue. A field can carry both. Rows also carry an `aria-description` ("started the test", "changed in the test"). Each step keeps the earlier marks, and nothing moves. Clear, or a click on empty canvas, removes the trace and the marks; Back to result reopens the same run on its module and event.
 
-Correct: `.sandbox-ui .x6-cell[data-trace="dim"] { opacity: 0.35; }`
+Correct: `.sandbox-ui :is([data-sandbox-node], [data-sandbox-edge])[data-trace="dim"] { opacity: 0.35; }`
 
 Wrong: hover scales the table up or slides the connected tables toward it.
 
@@ -620,7 +674,7 @@ A tinted band per signal: warning, destructive, and success use the signal's `-t
 
 ### Request feedback
 
-Keep feedback where the person can act on it. Preserve working inline notices; use a toast when the action leaves no inline surface.
+Keep feedback where the person can act on it. Preserve working inline notices; use a toast when the action leaves no inline surface. The Four Moments Rule sets the order of channels; this table applies it.
 
 | Situation | Feedback |
 | --- | --- |
@@ -653,7 +707,7 @@ The top bar (`data-skin="topbar"`) and sidebar carry the look's frame. Whiteboar
 
 ### Publish status
 
-The Sandbox header names the real state of the draft: "Nothing to publish yet", "Draft saved", "Unpublished changes", "Unsaved changes", or "Published". Review & Publish is available only when publishing would change something; it is disabled for "Nothing to publish yet", "Published", and "Unsaved changes". The review groups changes by kind (departments, modules, fields, relationships, triggers), with a New, Changed, Closed, or Reopened chip on each row, field changes nested under their module, and a "Show all" control on groups longer than five rows.
+The Sandbox header has one save-state chip (`role="status"`). It names the publish state ("Nothing to publish yet", "Not published yet", "Unpublished changes", or "Published"), then what is happening to the draft ("Saving…", "Saved", or "N unsaved trigger changes"). A save conflict turns the whole chip to "Not saved". Review & Publish is available only when publishing would change something, and its disabled state says why ("Nothing to publish yet.", "Save trigger changes first."). Trigger settings that cannot publish show in the page's "need attention" list before the review, and each blocker in the review has a button that opens it. The review groups changes by kind (departments, modules, fields, relationships, triggers), with a New, Changed, Closed, or Reopened chip on each row, field changes nested under their module, and a "Show all" control on groups longer than five rows.
 
 ### Organization look picker
 
@@ -661,7 +715,7 @@ A radio group of four tiles (two columns from 640px, four from 1280px). Each til
 
 ### Sandbox canvas (signature)
 
-An ERD-style canvas of the owner's own structure, drawn in the same materials as the website and the film. Departments are named frames on their own sheet (`--dept-n-sheet`) with a head band (`--dept-n-band`), a 3px top edge in the department color (the frame's own shape, clipped), an identity mark, and the name in `--font-display`. Modules are compact 232px table cards on `--dept-n-module`: a 34px header (`--dept-n-card`) with a table glyph and the table name, then 26px field rows with the name on the left in `--canvas-field-ink` and the type label on the right in `--font-code` and `--canvas-type-ink`, on `--dept-n-stripe` for alternate rows. A filled dot marks a required field; a hollow dot marks an optional one. Lines join tables at 1.6px and end in an arrowhead: a relationship is dashed in `--action`, a handoff is solid in `--canvas-edge` (the Dash Means Link Rule). Each line has a label chip (`--canvas-label-*`; `--action-text` ink on relationships) at the middle of the line, or at the first stop along it (35%, 65%, 20%, 80%) that no other line crosses and no table covers. Hovering a module or line traces its connections in `--flow`, and only traced lines drift (2.4s per cycle) in Slate and Triplicate; Whiteboard and Stockroom turn the drift off. The Key (closed by default, opens upward) names relationship, handoff, required field, and optional field, and says in one line what a module and a line are. The minimap hides text and lines and shows frames and tables. Under reduced motion, the drift and the trace fade stop.
+An ERD-style canvas of the owner's own structure, drawn in the same materials as the website and the film. Departments are named frames on their own sheet (`--dept-n-sheet`) with a head band (`--dept-n-band`), a 3px top edge in the department color (the frame's own shape, clipped), an identity mark, and the name in `--font-display`. Modules are compact 232px table cards on `--dept-n-module`: a 34px header (`--dept-n-card`) with a table glyph and the table name, then 26px field rows with the name on the left in `--canvas-field-ink` and the type label on the right in `--font-code` and `--canvas-type-ink`, on `--dept-n-stripe` for alternate rows. A filled dot marks a required field; a hollow dot marks an optional one. Lines join tables at 1.6px and end in an arrowhead: a relationship is dashed in `--action`, a handoff is solid in `--canvas-edge` (the Dash Means Link Rule). Each line has a label chip (`--canvas-label-*`; `--action-text` ink on relationships) at the middle of the line, or at the first stop along it (35%, 65%, 20%, 80%) that no other line crosses, no table covers, and no other label overlaps. Hovering a module or line traces its connections in `--flow`, and only traced lines drift (2.4s per cycle) in Slate and Triplicate; Whiteboard and Stockroom turn the drift off. The Key (closed by default, opens upward) names relationship, handoff, required field, and optional field, and says in one line what a module and a line are. The minimap hides text and lines and shows frames and tables. When department frames or module tables cover each other, the canvas notice bar says "Some departments or modules overlap." with Auto-arrange and Dismiss; Dismiss holds until the layout changes, and Auto-arrange spaces rows by the drawn table height, so it never makes an overlap itself. Under reduced motion, the drift and the trace fade stop.
 
 ## Do's and Don'ts
 
@@ -674,6 +728,7 @@ An ERD-style canvas of the owner's own structure, drawn in the same materials as
 - **Do** put a department's identity color beside its name every time it appears.
 - **Do** time every transition with the motion tokens and give it a `prefers-reduced-motion` path that keeps meaning (fades, color) and drops travel.
 - **Do** show `SampleDataNote` on every screen that runs on sample data, and name the real publish state in the Sandbox header.
+- **Do** put a panel's less common controls in its one closed Advanced block, last in the panel, and give every disabled control its reason.
 
 ### Don't:
 

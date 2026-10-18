@@ -1,6 +1,17 @@
 import { useUserPreferences } from "@/components/theme-provider";
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
-import { useCallback, useState, useEffect, useMemo, useRef } from "react";
+import { useStableHandlers } from "@/lib/use-stable-handlers";
+import {
+  memo,
+  useCallback,
+  useState,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import type {
   SandboxBinding,
   SandboxLifecycleBinding,
@@ -11,18 +22,21 @@ import {
   ChevronRight,
   CircleHelp,
   Grid3X3,
+  Info,
+  LayoutGrid,
   Link2,
   LocateFixed,
   Magnet,
   Maximize2,
+  Pencil,
   Plus,
   RotateCcw,
+  Undo2,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -34,9 +48,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Alert } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field as FormField,
+  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
@@ -45,12 +61,6 @@ import {
   NativeSelectOptGroup,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -61,18 +71,24 @@ import type { PanelImperativeHandle } from "react-resizable-panels";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   SandboxCanvas,
   type SandboxCanvasApi,
-  type SandboxCanvasViewState,
   type SandboxDropKind,
 } from "@/components/sandbox/sandbox-canvas";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
-import { SANDBOX_ZOOM } from "@/lib/sandbox/x6-adapter";
+import {
+  canvasBoxes,
+  canvasOverlaps,
+  deriveFlowNodes,
+} from "@/components/sandbox/sandbox-flow-model";
+import { SANDBOX_ZOOM } from "@/lib/sandbox/canvas-geometry";
 import type { TestTraceStep } from "../domain/test-run-summary";
 import type { SandboxDesignTarget as SandboxInspectorTarget } from "../domain/model";
 import { arrangedLayout, resetLayout } from "../helpers/designer-layout";
@@ -86,14 +102,20 @@ import {
   pruneRelationshipMappingsForFields,
   relationshipMappingCountForFields,
 } from "../helpers/designer-impacts";
+import { buildField, FieldRow, FieldSettings } from "./designer-field-settings";
+import { RelationshipList, type RelationshipRow } from "./relationship-list";
+import { AdvancedSection } from "@/components/ui/advanced-section";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
-  buildField,
-  FieldDisclosure,
-  FieldSettings,
-} from "./designer-field-settings";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { DepartmentMark } from "@/components/sandbox/department-mark";
 import type {
   SandboxCanvasLayout,
   SandboxFieldType,
+  SandboxState,
 } from "@/lib/sandbox/model";
 import {
   canvasFieldId,
@@ -105,6 +127,7 @@ import {
 
 import {
   FIELD_TYPES,
+  fieldTypeLabel,
   canonicalFieldType,
   counts,
   compactDefaultLayout,
@@ -209,6 +232,108 @@ function updateProjectedFieldOrThrow(
   return updateProjectedField(design, id, patch);
 }
 
+// The Structure outline renders a row for every field, the slowest part of a
+// Designer render (about 135 ms for the Harbor sample in the dev build). The
+// Designer gives it deferred inputs and stable handlers, so a canvas drop or a
+// save never waits for it: React updates it in the background instead.
+const StructureOutline = memo(SandboxInspector);
+
+/**
+ * True only after `active` has stayed true for `delay` ms, so a fast save does
+ * not flash every outline control disabled and back.
+ */
+function useDelayedFlag(active: boolean, delay: number): boolean {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setShown(false);
+      return;
+    }
+    const timer = setTimeout(() => setShown(true), delay);
+    return () => clearTimeout(timer);
+  }, [active, delay]);
+  return shown;
+}
+
+// The canvas reports zoom on every wheel step. Only the zoom controls read it,
+// so it lives in this small store instead of Designer state: a zoom step then
+// re-renders the controls, not the whole designer.
+type CanvasZoomStore = {
+  get: () => number;
+  set: (zoom: number) => void;
+  subscribe: (listener: () => void) => () => void;
+};
+
+function createCanvasZoomStore(): CanvasZoomStore {
+  let zoom = 1;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => zoom,
+    set: (next) => {
+      if (next === zoom) return;
+      zoom = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+function CanvasZoomControls({
+  zoomStore,
+  graphRef,
+}: {
+  zoomStore: CanvasZoomStore;
+  graphRef: RefObject<SandboxCanvasApi | null>;
+}) {
+  const zoom = useSyncExternalStore(
+    zoomStore.subscribe,
+    zoomStore.get,
+    zoomStore.get,
+  );
+  const atMinZoom = zoom <= SANDBOX_ZOOM.min + 0.001;
+  const atMaxZoom = zoom >= SANDBOX_ZOOM.max - 0.001;
+  return (
+    <>
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label="Zoom out"
+        aria-disabled={atMinZoom}
+        className="size-11 aria-disabled:opacity-50"
+        onClick={() => {
+          if (!atMinZoom) graphRef.current?.zoomOut();
+        }}
+      >
+        <ZoomOut aria-hidden="true" />
+      </Button>
+      <output
+        role="status"
+        aria-label="Canvas zoom"
+        className="text-muted-foreground min-w-12 shrink-0 text-center text-xs tabular-nums"
+      >
+        {Math.round(zoom * 100)}%
+      </output>
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label="Zoom in"
+        aria-disabled={atMaxZoom}
+        className="size-11 aria-disabled:opacity-50"
+        onClick={() => {
+          if (!atMaxZoom) graphRef.current?.zoomIn();
+        }}
+      >
+        <ZoomIn aria-hidden="true" />
+      </Button>
+    </>
+  );
+}
+
 export function Designer({
   initialSelected,
   inspectOnOpen,
@@ -220,6 +345,8 @@ export function Designer({
   change,
   initializeLayout,
   notify,
+  notifyError,
+  notifyUndoable,
   onStartFromTemplate,
   pending,
   bindings,
@@ -242,7 +369,12 @@ export function Designer({
     commandKey?: string,
   ) => Promise<SandboxCommandResult<Design>>;
   initializeLayout: (layout: SandboxCanvasLayout) => void;
+  /** A done notice (toast). */
   notify: (s: string) => void;
+  /** An error notice for a failure with no control to show it beside. */
+  notifyError: (s: string) => void;
+  /** A done notice whose Undo undoes the last design change. */
+  notifyUndoable: (s: string) => void;
   onStartFromTemplate: () => void;
   pending: boolean;
   bindings: readonly SandboxBinding[] | null;
@@ -287,11 +419,11 @@ export function Designer({
   const panelGroupElementRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<SandboxCanvasApi | null>(null);
   const canvasFrameRef = useRef<HTMLDivElement>(null);
-  const [canvasView, setCanvasView] = useState<SandboxCanvasViewState>({
-    zoom: 1,
+  const [canvasView, setCanvasView] = useState({
     gridVisible: viewPreferences.gridVisible,
     snapEnabled: viewPreferences.snapEnabled,
   });
+  const [zoomStore] = useState(createCanvasZoomStore);
   const [canvasHelpOpen, setCanvasHelpOpen] = useState(false);
   const [canvasAction, setCanvasAction] = useState("Canvas ready.");
   // A visible note on the canvas: what a pinned trace shows, or that Fit
@@ -299,6 +431,17 @@ export function Designer({
   const [canvasNotice, setCanvasNotice] = useState<"trace" | "partial" | null>(
     traceTargetId ? "trace" : null,
   );
+  async function autoArrange(): Promise<void> {
+    const result = await change((previous) => ({
+      ...previous,
+      layout: arrangedLayout(previous),
+    }));
+    if (!result.ok) {
+      notifyError(result.error);
+      return;
+    }
+    setCanvasAction("Canvas automatically arranged.");
+  }
   function fitCanvas(): void {
     const fitted = graphRef.current?.fit() ?? true;
     setCanvasAction(
@@ -438,6 +581,15 @@ export function Designer({
   >([]);
   const [relationshipError, setRelationshipError] = useState("");
   const [editorError, setEditorError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [titleFieldError, setTitleFieldError] = useState<{
+    moduleId: string;
+    message: string;
+  } | null>(null);
+  const [moveError, setMoveError] = useState<{
+    moduleId: string;
+    message: string;
+  } | null>(null);
   const handledFocusTarget = useRef<string | null>(null);
   const selectedField = projectedField(design, selected);
   const selectedRelationship = design.relationships.find(
@@ -503,11 +655,35 @@ export function Designer({
     });
     return () => cancelAnimationFrame(frame);
   }, [design, focusTargetId, pane]);
-  // The canvas re-syncs its whole graph whenever this object changes, so keep
-  // it stable across renders that do not change the design or selection.
-  const projected = useMemo(
-    () => projectDesign(design, selected),
+  // The canvas re-syncs its whole graph (about 100 ms for the Harbor sample)
+  // whenever this object changes, so it changes only when its content does:
+  // not for a layout-only save or the server's copy of the same design.
+  const projectedJson = useMemo(
+    () => JSON.stringify(projectDesign(design, selected)),
     [design, selected],
+  );
+  const projected = useMemo(
+    () => JSON.parse(projectedJson) as SandboxState,
+    [projectedJson],
+  );
+  // Frames or tables that cover each other in the saved layout, as the
+  // canvas draws it. Dismiss holds until the layout changes.
+  const layout = design.layout ?? compactDefaultLayout;
+  const layoutKey = JSON.stringify(layout);
+  const overlapping = useMemo(() => {
+    const overlaps = canvasOverlaps(
+      canvasBoxes(
+        deriveFlowNodes({
+          state: JSON.parse(projectedJson) as SandboxState,
+          previous: [],
+          layout,
+        }),
+      ),
+    );
+    return overlaps.departments.length > 0 || overlaps.modules.length > 0;
+  }, [layout, projectedJson]);
+  const [overlapDismissedFor, setOverlapDismissedFor] = useState<string | null>(
+    null,
   );
   const keyboardTarget: SandboxInspectorTarget | null = selectedField
     ? { kind: "field", id: selected }
@@ -569,6 +745,7 @@ export function Designer({
           )
         : null;
     deleteOpener.current = stableContextTrigger ?? activeElement;
+    setDeleteError("");
     setDeleteTarget(target);
   }
 
@@ -585,8 +762,8 @@ export function Designer({
     });
     if (!result.ok || !selectedId.current) return;
     setSelected(selectedId.current);
-    notify(
-      `${target.kind.charAt(0).toUpperCase()}${target.kind.slice(1)} duplicated. Undo restores the previous design.`,
+    notifyUndoable(
+      `${target.kind.charAt(0).toUpperCase()}${target.kind.slice(1)} duplicated`,
     );
   }
 
@@ -644,18 +821,29 @@ export function Designer({
       }
       return previous;
     });
-    if (!result.ok) notify(result.error);
+    if (!result.ok) notifyError(result.error);
     return result;
   }
+  // The Structure outline reads lifecycle state from its deferred inputs; every
+  // other caller reads the current ones.
+  const currentLifecycleInputs = {
+    design,
+    bindings,
+    pending,
+    draftDirty: localDraftDirty,
+  };
   function bindingFor(
     target: SandboxInspectorTarget,
+    inputs = currentLifecycleInputs,
   ): SandboxLifecycleBinding | undefined {
     const kind = target.kind === "link" ? "relationship" : target.kind;
     const field =
-      target.kind === "field" ? projectedField(design, target.id) : undefined;
+      target.kind === "field"
+        ? projectedField(inputs.design, target.id)
+        : undefined;
     const id = field?.field.id ?? target.id;
     const parent = field?.moduleId ?? null;
-    const binding = bindings?.find(
+    const binding = inputs.bindings?.find(
       (item) =>
         item.kind === kind &&
         item.sandbox_id === id &&
@@ -663,19 +851,25 @@ export function Designer({
     );
     return binding ? { ...binding, kind } : undefined;
   }
-  function lifecycleState(target: SandboxInspectorTarget) {
-    const binding = bindingFor(target);
+  function lifecycleState(
+    target: SandboxInspectorTarget,
+    inputs = currentLifecycleInputs,
+  ) {
+    const binding = bindingFor(target, inputs);
     const draftClosed =
       target.kind === "department"
-        ? design.departments.find((item) => item.id === target.id)?.closed
+        ? inputs.design.departments.find((item) => item.id === target.id)
+            ?.closed
         : target.kind === "module"
-          ? design.modules.find((item) => item.id === target.id)?.closed
-          : projectedField(design, target.id)?.field.closed;
+          ? inputs.design.modules.find((item) => item.id === target.id)?.closed
+          : projectedField(inputs.design, target.id)?.field.closed;
     return {
       closed: binding?.is_deleted ?? draftClosed ?? false,
       canPurge: purgeEnabled && Boolean(binding?.is_deleted),
       disabled:
-        pending || bindings === null || Boolean(binding && localDraftDirty),
+        inputs.pending ||
+        inputs.bindings === null ||
+        Boolean(binding && inputs.draftDirty),
     };
   }
   async function purgeLifecycle(
@@ -709,20 +903,21 @@ export function Designer({
           size="sm"
           variant="ghost"
           disabled={state.disabled}
-          aria-label={`${verb} ${orientation} relationship ${name}`}
+          aria-label={`${verb} relationship ${name}, ${orientation}`}
           onClick={() => void toggleLifecycle(target)}
         >
-          {verb} relationship
+          {verb}
         </Button>
         {state.canPurge ? (
           <Button
             size="sm"
             variant="ghost"
+            className="text-danger-text"
             disabled={state.disabled}
-            aria-label={`Permanently delete ${orientation} relationship ${name}`}
+            aria-label={`Permanently delete relationship ${name}, ${orientation}`}
             onClick={() => void purgeLifecycle(target)}
           >
-            Permanently delete relationship
+            Permanently delete
           </Button>
         ) : null}
       </>
@@ -744,7 +939,7 @@ export function Designer({
         ),
       };
     }, `sandbox.design.department:${id}`);
-    if (!result.ok) notify(result.error);
+    if (!result.ok) notifyError(result.error);
     return result;
   }
   async function renameModule(
@@ -763,7 +958,7 @@ export function Designer({
         ),
       };
     }, `sandbox.design.module:${id}`);
-    if (!result.ok) notify(result.error);
+    if (!result.ok) notifyError(result.error);
     return result;
   }
   async function moveModule(
@@ -786,7 +981,7 @@ export function Designer({
         ),
       };
     }, `sandbox.design.module-parent:${id}`);
-    if (!result.ok) notify(result.error);
+    setMoveError(result.ok ? null : { moduleId: id, message: result.error });
     return result;
   }
   async function addFromCanvas(
@@ -848,7 +1043,7 @@ export function Designer({
       return previous;
     });
     if (!result.ok) {
-      notify(result.error);
+      notifyError(result.error);
       return;
     }
     setSelected(
@@ -879,6 +1074,10 @@ export function Designer({
   async function removeSelected(): Promise<void> {
     if (!deleteTarget) return;
     if (pending) return;
+    const deletedKindLabel =
+      deleteTarget.kind === "link"
+        ? "Relationship"
+        : `${deleteTarget.kind.charAt(0).toUpperCase()}${deleteTarget.kind.slice(1)}`;
     const fallbackId =
       deleteTarget.kind === "module"
         ? design.modules.find((item) => item.id === deleteTarget.id)?.department
@@ -964,15 +1163,15 @@ export function Designer({
       };
     });
     if (!result.ok) {
-      notify(result.error);
+      setDeleteError(result.error);
       return;
     }
     setDeleteTarget(null);
     setSelected(nextFallbackId.current || fallbackId || "");
-    notify(
+    notifyUndoable(
       removedMappings.current > 0
-        ? `${removedFieldName.current} deleted. ${plural(removedMappings.current, "relationship field mapping")} removed. Undo restores the complete change.`
-        : "Item deleted from the design. Undo restores it.",
+        ? `${removedFieldName.current} deleted · ${plural(removedMappings.current, "linked field")} removed`
+        : `${deletedKindLabel} deleted`,
     );
   }
   function deleteFinalFocus(): HTMLElement | null {
@@ -1000,10 +1199,16 @@ export function Designer({
   // first-department fallback for creation commands.
   const inspectedItem =
     selectedModule ?? design.departments.find((item) => item.id === selected);
+  const shownTitleFieldError =
+    titleFieldError && titleFieldError.moduleId === selectedModule?.id
+      ? titleFieldError.message
+      : "";
+  const shownMoveError =
+    moveError && moveError.moduleId === selectedModule?.id
+      ? moveError.message
+      : "";
   const designIsEmpty =
     design.departments.length === 0 && design.modules.length === 0;
-  const atMinZoom = canvasView.zoom <= SANDBOX_ZOOM.min + 0.001;
-  const atMaxZoom = canvasView.zoom >= SANDBOX_ZOOM.max - 0.001;
   const currentDeleteImpact = deletionImpact(
     design,
     deleteTarget,
@@ -1046,7 +1251,7 @@ export function Designer({
       setEditor("");
       setPane("Structure");
       setWorkbenchTab("Inspector");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
     if (editor === "module" && department) {
@@ -1075,7 +1280,7 @@ export function Designer({
       setEditor("");
       setPane("Structure");
       setWorkbenchTab("Inspector");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
     if (editor === "rename") {
@@ -1113,7 +1318,7 @@ export function Designer({
         return;
       }
       setEditor("");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
     if (editor === "field" && selectedModule) {
@@ -1183,7 +1388,7 @@ export function Designer({
         return;
       }
       setEditor("");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
     if (editor === "relationship" && source && target) {
@@ -1231,7 +1436,7 @@ export function Designer({
           ).length !== fieldMappings.length
         )
           throw new SandboxCommandError(
-            "Each field mapping must use open, compatible source and target fields without duplicates.",
+            "Each linked field must pair two open fields of a matching type, once.",
           );
         return {
           ...previous,
@@ -1266,7 +1471,7 @@ export function Designer({
         return;
       }
       setEditor("");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
   }
@@ -1298,10 +1503,15 @@ export function Designer({
     targetDepartment !== undefined &&
     sourceDepartment.id !== targetDepartment.id;
   const editorForm = (
-    <form onSubmit={submit} className="flex flex-col gap-4">
-      <h3 className="font-semibold">
-        {editor === "rename" ? "Rename item" : `Create ${editor}`}
-      </h3>
+    <form
+      onSubmit={submit}
+      className={cn("flex flex-col gap-4", editor === "relationship" && "mt-4")}
+    >
+      {editor === "relationship" ? null : (
+        <h3 className="font-semibold">
+          {editor === "rename" ? "Rename item" : `Create ${editor}`}
+        </h3>
+      )}
       <FieldGroup className="gap-4">
         <FormField>
           <FieldLabel htmlFor="sandbox-editor-name">
@@ -1338,7 +1548,7 @@ export function Designer({
               >
                 {FIELD_TYPES.map((entry) => (
                   <NativeSelectOption key={entry.kind} value={entry.name}>
-                    {entry.name}
+                    {fieldTypeLabel(entry.name)}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
@@ -1360,7 +1570,7 @@ export function Designer({
             {type === "Select" && (
               <FormField>
                 <FieldLabel htmlFor="sandbox-editor-select-options">
-                  Select options (comma separated)
+                  Choices (comma separated)
                 </FieldLabel>
                 <Input
                   id="sandbox-editor-select-options"
@@ -1445,7 +1655,7 @@ export function Designer({
             {fieldMappings.length ? (
               <fieldset className="border-border flex flex-col gap-3 rounded-md border p-3">
                 <legend className="px-1 text-sm font-medium">
-                  Legacy field mappings
+                  Older linked fields
                 </legend>
                 <Alert variant="warning">
                   These imported mappings are not supported for publishing.
@@ -1512,17 +1722,10 @@ export function Designer({
           </Alert>
         ) : null}
       </FieldGroup>
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={pending}>
-          {editor === "rename"
-            ? "Save name"
-            : editingRelationship
-              ? "Save relationship"
-              : `Create ${editor}`}
-        </Button>
+      <div className="flex flex-wrap justify-end gap-2">
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           disabled={pending}
           onClick={() => {
             setEditor("");
@@ -1531,61 +1734,117 @@ export function Designer({
         >
           Cancel
         </Button>
+        <Button
+          type="submit"
+          pending={pending}
+          pendingLabel={
+            editor === "rename" || editingRelationship ? "Saving…" : "Creating…"
+          }
+        >
+          {editor === "rename"
+            ? "Save name"
+            : editingRelationship
+              ? "Save relationship"
+              : `Create ${editor}`}
+        </Button>
       </div>
     </form>
   );
+  // The outline's inputs change only when what it shows changes. A layout-only
+  // save keeps the same projection; a save shows as busy only after 300 ms; and
+  // while bindings reload, the outline keeps the last loaded ones (its handlers
+  // still check the current bindings and refuse until they load).
+  const outlineDesign = useDeferredValue(design);
+  const outlinePending = useDelayedFlag(pending, 300);
+  const outlineDraftDirty = useDeferredValue(localDraftDirty);
+  const [outlineBindings, setOutlineBindings] = useState(bindings);
+  if (bindings !== null && bindings !== outlineBindings)
+    setOutlineBindings(bindings);
+  const outlineStateJson = useMemo(
+    () => JSON.stringify(projectDesign(outlineDesign, selected)),
+    [outlineDesign, selected],
+  );
+  const outlineState = useMemo(
+    () => JSON.parse(outlineStateJson) as SandboxState,
+    [outlineStateJson],
+  );
+  const outlineBindingsJson = useMemo(
+    () => JSON.stringify(outlineBindings),
+    [outlineBindings],
+  );
+  // Equal projection JSON means equal closed flags and the same canvas id to
+  // module and field mapping; equal bindings JSON means equal lookups. So these
+  // keys, not object identity, decide when the lifecycle state changes.
+  const outlineLifecycleState = useCallback(
+    (target: SandboxInspectorTarget) =>
+      lifecycleState(target, {
+        design: outlineDesign,
+        bindings: outlineBindings,
+        pending: outlinePending,
+        draftDirty: outlineDraftDirty,
+      }),
+    [
+      outlineStateJson,
+      outlineBindingsJson,
+      outlinePending,
+      outlineDraftDirty,
+      purgeEnabled,
+    ],
+  );
+  const outlineHandlers = useStableHandlers({
+    onSelect: selectItem,
+    onEdit: (id: string) => {
+      selectItem(id);
+      const relationship = design.relationships.find((item) => item.id === id);
+      if (relationship) editRelationship(id);
+      else setEditor("");
+    },
+    onRenameDepartment: renameDepartment,
+    onRenameModule: renameModule,
+    onUpdateField: (
+      id: string,
+      patch: Parameters<typeof updateProjectedField>[2],
+    ) =>
+      change(
+        (previous) => updateProjectedFieldOrThrow(previous, id, patch),
+        `sandbox.design.field:${id}`,
+      ),
+    onDeleteSelected: requestDelete,
+    onDuplicate: duplicateTarget,
+    onToggleLifecycle: toggleLifecycle,
+    onPurge: purgeLifecycle,
+    onEditingChange: setOutlineEditing,
+    onAddDepartment: () => open("department"),
+    onAddModule: (id: string) => {
+      setSelected(id);
+      open("module");
+    },
+    onAddField: (id: string, fieldType: SandboxFieldType) => {
+      setSelected(id);
+      open("field");
+      setType(fieldTypeNames[fieldType]);
+    },
+    onAddRelationship: () => {
+      setSelected(selectedModule?.id ?? design.modules[0]?.id ?? "");
+      open("relationship");
+      setTarget(
+        design.modules.find(
+          (item) => item.id !== (selectedModule?.id ?? design.modules[0]?.id),
+        )?.id ?? "",
+      );
+    },
+  });
   const structurePane = (
     <aside
       tabIndex={-1}
       aria-label="Organization structure"
       className="h-full min-w-0 p-3 [&_section]:w-full [&_section]:min-w-0"
     >
-      <SandboxInspector
-        state={projected}
-        onSelect={selectItem}
-        onEdit={(id) => {
-          selectItem(id);
-          const relationship = design.relationships.find(
-            (item) => item.id === id,
-          );
-          if (relationship) editRelationship(id);
-          else setEditor("");
-        }}
-        onRenameDepartment={renameDepartment}
-        onRenameModule={renameModule}
-        onUpdateField={(id, patch) =>
-          change(
-            (previous) => updateProjectedFieldOrThrow(previous, id, patch),
-            `sandbox.design.field:${id}`,
-          )
-        }
-        onDeleteSelected={requestDelete}
-        onDuplicate={duplicateTarget}
-        onToggleLifecycle={toggleLifecycle}
-        lifecycleState={lifecycleState}
-        onPurge={purgeLifecycle}
-        onEditingChange={setOutlineEditing}
-        onAddDepartment={() => open("department")}
-        onAddModule={(id) => {
-          setSelected(id);
-          open("module");
-        }}
-        onAddField={(id, fieldType) => {
-          setSelected(id);
-          open("field");
-          setType(fieldTypeNames[fieldType]);
-        }}
-        pending={pending}
-        onAddRelationship={() => {
-          setSelected(selectedModule?.id ?? design.modules[0]?.id ?? "");
-          open("relationship");
-          setTarget(
-            design.modules.find(
-              (item) =>
-                item.id !== (selectedModule?.id ?? design.modules[0]?.id),
-            )?.id ?? "",
-          );
-        }}
+      <StructureOutline
+        state={outlineState}
+        lifecycleState={outlineLifecycleState}
+        pending={outlinePending}
+        {...outlineHandlers}
       />
       {selected ? (
         <Button
@@ -1605,22 +1864,90 @@ export function Designer({
       ) : null}
     </aside>
   );
+  // Why a live-state change is unavailable, when it is.
+  const lifecycleReason =
+    bindings === null
+      ? "Live state is still loading."
+      : localDraftDirty
+        ? "Save or cancel your edits first."
+        : null;
+  const inspectedKind: "module" | "department" = selectedModule
+    ? "module"
+    : "department";
+  const inspectedTarget = inspectedItem
+    ? { kind: inspectedKind, id: inspectedItem.id }
+    : null;
+  const inspectedLifecycle = inspectedTarget
+    ? lifecycleState(inspectedTarget)
+    : null;
+  const inspectedDepartmentIndex = Math.max(
+    0,
+    design.departments.findIndex(
+      (item) => item.id === (selectedModule?.department ?? inspectedItem?.id),
+    ),
+  );
+  const relationshipRows: RelationshipRow[] = selectedModule
+    ? [
+        ...design.relationships
+          .filter((r) => r.source === selectedModule.id)
+          .map((r) => ({
+            id: r.id,
+            name: r.name,
+            direction: "outgoing" as const,
+            otherModule:
+              design.modules.find((m) => m.id === r.target)?.name ??
+              "Missing module",
+            cardinality: r.cardinality,
+            closed: lifecycleState({ kind: "link", id: r.id }).closed,
+          })),
+        ...design.relationships
+          .filter((r) => r.target === selectedModule.id)
+          .map((r) => ({
+            id: r.id,
+            name: r.name,
+            direction: "incoming" as const,
+            otherModule:
+              design.modules.find((m) => m.id === r.source)?.name ??
+              "Missing source",
+            cardinality: r.cardinality,
+            closed: lifecycleState({ kind: "link", id: r.id }).closed,
+          })),
+      ]
+    : [];
   const inspectorPane = (
     <aside
       aria-label="Design inspector"
       className="flex h-full flex-col gap-5 p-5"
     >
       {inspectedItem ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <h2
-            data-slot="section-title"
-            className="text-lg font-semibold break-words"
+        <div className="flex items-start gap-2.5">
+          <DepartmentMark
+            departmentIndex={inspectedDepartmentIndex}
+            className="mt-2.5"
+          />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <h2
+              data-slot="section-title"
+              className="text-lg font-semibold break-words"
+            >
+              {inspectedItem.name}
+            </h2>
+            <Badge variant="outline">
+              {selectedModule ? "Module" : "Department"}
+            </Badge>
+          </div>
+          <Button
+            data-sandbox-inspector-primary
+            size="icon"
+            variant="ghost"
+            className="size-11 shrink-0 xl:size-8"
+            disabled={pending}
+            onClick={() => open("rename")}
+            aria-label={`Rename ${inspectedKind}`}
+            title="Rename"
           >
-            {inspectedItem.name}
-          </h2>
-          <Badge variant="outline">
-            {selectedModule ? "Module" : "Department"}
-          </Badge>
+            <Pencil aria-hidden="true" />
+          </Button>
         </div>
       ) : editor && editor !== "relationship" ? null : (
         <div className="flex flex-col gap-2">
@@ -1629,34 +1956,12 @@ export function Designer({
           </h2>
           <p className="text-muted-foreground text-sm">
             {design.departments.length === 0
-              ? "Start with a department. A department groups the work of one team."
-              : "Select a department or module on the canvas or in Structure to see and change its settings."}
+              ? "Start with a department."
+              : "Select a department or module."}
           </p>
-          <dl className="text-muted-foreground grid gap-1 text-sm">
-            <div>
-              <dt className="text-foreground inline font-medium">Module: </dt>
-              <dd className="inline">
-                a list of one kind of record, such as orders or customers.
-              </dd>
-            </div>
-            <div>
-              <dt className="text-foreground inline font-medium">
-                Relationship:{" "}
-              </dt>
-              <dd className="inline">
-                a line that links records in two modules.
-              </dd>
-            </div>
-            <div>
-              <dt className="text-foreground inline font-medium">Handoff: </dt>
-              <dd className="inline">
-                a solid line, where work passes to another department.
-              </dd>
-            </div>
-          </dl>
           <Button
             variant="outline"
-            className="self-start"
+            className="self-start xl:hidden"
             onClick={() => showPane("Structure")}
           >
             Open Structure
@@ -1665,105 +1970,299 @@ export function Designer({
       )}
       {editor && editor !== "relationship" ? (
         editorForm
-      ) : !inspectedItem ? null : (
+      ) : !inspectedItem || !inspectedTarget || !inspectedLifecycle ? null : (
         <>
-          <ButtonGroup
-            aria-label={`${selectedModule ? "Module" : "Department"} actions`}
-            orientation={wide ? "horizontal" : "vertical"}
-            className="w-full [&>button]:flex-1 [&>button]:px-2"
-          >
-            <Button
-              data-sandbox-inspector-primary
-              variant="outline"
-              disabled={pending}
-              onClick={() => open("rename")}
-              aria-label={`Rename ${selectedModule ? "module" : "department"}`}
-            >
-              Rename
-            </Button>
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() => open("module")}
-            >
-              Add module
-            </Button>
-          </ButtonGroup>
-          {/* Closing changes what the live workspace accepts, so it sits
-              apart from the editing actions and names what it closes. */}
-          <Button
-            variant="outline"
-            className="w-full justify-start"
-            disabled={
-              lifecycleState({
-                kind: selectedModule ? "module" : "department",
-                id: (selectedModule ?? department)!.id,
-              }).disabled
-            }
-            aria-describedby="sandbox-lifecycle-note"
-            onClick={async () => {
-              if (selectedModule) {
-                await toggleLifecycle({
-                  kind: "module",
-                  id: selectedModule.id,
-                });
-              } else if (department) {
-                await toggleLifecycle({
-                  kind: "department",
-                  id: department.id,
-                });
-              }
-            }}
-          >
-            {`${lifecycleState({ kind: selectedModule ? "module" : "department", id: (selectedModule ?? department)!.id }).closed ? "Reopen" : "Close"} ${selectedModule ? "module" : "department"}`}
-          </Button>
-          <p
-            id="sandbox-lifecycle-note"
-            className="text-muted-foreground -mt-2 text-xs"
-          >
-            {bindings === null
-              ? "Load live state before changing this item."
-              : localDraftDirty
-                ? "Save or cancel your edits before changing live state."
-                : !bindingFor({
-                      kind: selectedModule ? "module" : "department",
-                      id: (selectedModule ?? department)!.id,
-                    })
-                  ? "Changes this draft. Review and publish to apply it to the workspace."
-                  : lifecycleState({
-                        kind: selectedModule ? "module" : "department",
-                        id: (selectedModule ?? department)!.id,
-                      }).closed
-                    ? "Reopening lets people add new records again."
-                    : "Stops new records. Keeps existing data. You can reopen it."}
-          </p>
-          {lifecycleState({
-            kind: selectedModule ? "module" : "department",
-            id: (selectedModule ?? department)!.id,
-          }).canPurge ? (
-            <Button
-              variant="outline"
-              className="w-full justify-start"
-              disabled={
-                lifecycleState({
-                  kind: selectedModule ? "module" : "department",
-                  id: (selectedModule ?? department)!.id,
-                }).disabled
-              }
-              onClick={() =>
-                void purgeLifecycle({
-                  kind: selectedModule ? "module" : "department",
-                  id: (selectedModule ?? department)!.id,
-                })
-              }
-            >
-              Permanently delete {selectedModule ? "module" : "department"}
-            </Button>
-          ) : null}
-          {selectedModule && (
+          {selectedModule ? null : (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => open("module")}
+              >
+                <Plus aria-hidden="true" />
+                Add module
+              </Button>
+            </div>
+          )}
+          {selectedModule ? (
             <>
-              <div className="border-border flex flex-col gap-2 border-t pt-4">
-                <FormField>
+              <section
+                aria-labelledby="sandbox-fields-heading"
+                className="flex flex-col gap-1.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3
+                    id="sandbox-fields-heading"
+                    data-slot="section-title"
+                    className="text-sm font-semibold"
+                  >
+                    Fields{" "}
+                    <span className="text-muted-foreground font-normal">
+                      {selectedModule.fields.length}
+                    </span>
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => open("field")}
+                  >
+                    <Plus aria-hidden="true" />
+                    Add field
+                  </Button>
+                </div>
+                {selectedModule.fields.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">
+                    No fields yet.
+                  </p>
+                ) : (
+                  <div className="border-border border-y">
+                    {selectedModule.fields.map((f, i) => (
+                      <FieldRow
+                        key={f.id}
+                        field={f}
+                        selected={selectedField?.field.id === f.id}
+                      >
+                        <FieldSettings
+                          field={f}
+                          index={i}
+                          count={selectedModule.fields.length}
+                          titleFieldId={selectedModule.titleFieldId ?? null}
+                          onSave={(nextField) =>
+                            change((previous) => {
+                              const currentModule = previous.modules.find(
+                                (item) => item.id === selectedModule.id,
+                              );
+                              if (!currentModule)
+                                throw new SandboxCommandError(
+                                  "This module was deleted. Keep the field draft open and try again.",
+                                );
+                              if (
+                                !currentModule.fields.some(
+                                  (item) => item.id === f.id,
+                                )
+                              )
+                                throw new SandboxCommandError(
+                                  "This field was deleted. Keep the field draft open and try again.",
+                                );
+                              return {
+                                ...previous,
+                                modules: previous.modules.map((item) =>
+                                  item.id === currentModule.id
+                                    ? {
+                                        ...item,
+                                        fields: item.fields.map((entry) =>
+                                          entry.id === f.id ? nextField : entry,
+                                        ),
+                                      }
+                                    : item,
+                                ),
+                              };
+                            })
+                          }
+                          onMove={(delta) =>
+                            change((previous) => {
+                              const currentModule = previous.modules.find(
+                                (item) => item.id === selectedModule.id,
+                              );
+                              if (!currentModule) return previous;
+                              const currentIndex =
+                                currentModule.fields.findIndex(
+                                  (item) => item.id === f.id,
+                                );
+                              if (currentIndex < 0) return previous;
+                              return {
+                                ...previous,
+                                modules: previous.modules.map((item) =>
+                                  item.id === currentModule.id
+                                    ? {
+                                        ...item,
+                                        fields: reorder(
+                                          item.fields,
+                                          currentIndex,
+                                          delta,
+                                        ),
+                                      }
+                                    : item,
+                                ),
+                              };
+                            })
+                          }
+                          onLifecycle={async () => {
+                            if (bindings === null)
+                              return {
+                                ok: false,
+                                error:
+                                  "Load live state before changing this item.",
+                              };
+                            const target = {
+                              kind: "field" as const,
+                              id: canvasFieldId(selectedModule.id, f.id),
+                            };
+                            if (bindingFor(target))
+                              return toggleLifecycle(target);
+                            const removedMappings = { current: 0 };
+                            const closedFieldName = { current: "" };
+                            const result = await change((previous) => {
+                              const currentModule = previous.modules.find(
+                                (item) => item.id === selectedModule.id,
+                              );
+                              if (!currentModule) return previous;
+                              const currentField = currentModule.fields.find(
+                                (item) => item.id === f.id,
+                              );
+                              if (!currentField) return previous;
+                              const closing = !currentField.closed;
+                              const fieldReferences = new Set([
+                                mappingFieldReference(
+                                  currentModule.id,
+                                  currentField.id,
+                                ),
+                              ]);
+                              if (closing) {
+                                closedFieldName.current = currentField.name;
+                                removedMappings.current =
+                                  relationshipMappingCountForFields(
+                                    previous.relationships,
+                                    fieldReferences,
+                                  );
+                              }
+                              return {
+                                ...previous,
+                                modules: previous.modules.map((item) =>
+                                  item.id === currentModule.id
+                                    ? {
+                                        ...item,
+                                        fields: item.fields.map((entry) =>
+                                          entry.id === f.id
+                                            ? {
+                                                ...entry,
+                                                closed: !entry.closed,
+                                              }
+                                            : entry,
+                                        ),
+                                      }
+                                    : item,
+                                ),
+                                relationships: closing
+                                  ? pruneRelationshipMappingsForFields(
+                                      previous.relationships,
+                                      fieldReferences,
+                                    )
+                                  : previous.relationships,
+                              };
+                            });
+                            if (result.ok && closedFieldName.current)
+                              notify(
+                                removedMappings.current > 0
+                                  ? `${closedFieldName.current} closed. ${plural(removedMappings.current, "linked field")} removed.`
+                                  : `${closedFieldName.current} closed.`,
+                              );
+                            return result;
+                          }}
+                          pending={pending}
+                          lifecycleReason={lifecycleReason}
+                          onDelete={() =>
+                            requestDelete({
+                              kind: "field",
+                              id: canvasFieldId(selectedModule.id, f.id),
+                            })
+                          }
+                          lifecycleClosed={
+                            lifecycleState({
+                              kind: "field",
+                              id: canvasFieldId(selectedModule.id, f.id),
+                            }).closed
+                          }
+                          lifecycleDisabled={
+                            lifecycleState({
+                              kind: "field",
+                              id: canvasFieldId(selectedModule.id, f.id),
+                            }).disabled
+                          }
+                          draftId={canvasFieldId(selectedModule.id, f.id)}
+                          onDraftStateChange={reportFieldDraft}
+                          onPurge={
+                            lifecycleState({
+                              kind: "field",
+                              id: canvasFieldId(selectedModule.id, f.id),
+                            }).canPurge
+                              ? () =>
+                                  purgeLifecycle({
+                                    kind: "field",
+                                    id: canvasFieldId(selectedModule.id, f.id),
+                                  })
+                              : undefined
+                          }
+                          autoFocus={
+                            focusTargetId ===
+                            canvasFieldId(selectedModule.id, f.id)
+                          }
+                        />
+                      </FieldRow>
+                    ))}
+                  </div>
+                )}
+              </section>
+              <section
+                aria-labelledby="sandbox-relationships-heading"
+                className="flex flex-col gap-1.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3
+                    id="sandbox-relationships-heading"
+                    data-slot="section-title"
+                    className="text-sm font-semibold"
+                  >
+                    Relationships{" "}
+                    <span className="text-muted-foreground font-normal">
+                      {relationshipRows.length}
+                    </span>
+                  </h3>
+                  <DisabledReason
+                    reason={
+                      design.modules.length < 2
+                        ? "Add a second module first."
+                        : null
+                    }
+                  >
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        open("relationship");
+                        setSource(selectedModule.id);
+                        setTarget(
+                          design.modules.find((m) => m.id !== selectedModule.id)
+                            ?.id ?? "",
+                        );
+                      }}
+                      disabled={design.modules.length < 2}
+                    >
+                      <Link2 aria-hidden="true" />
+                      Connect modules
+                    </Button>
+                  </DisabledReason>
+                </div>
+                <RelationshipList
+                  rows={relationshipRows}
+                  onEdit={editRelationship}
+                />
+              </section>
+            </>
+          ) : null}
+          <AdvancedSection
+            key={inspectedKind}
+            storageKey={`sandbox.${inspectedKind}`}
+            setCount={
+              (selectedModule?.titleFieldId ? 1 : 0) +
+              (inspectedLifecycle.closed ? 1 : 0) +
+              relationshipRows.filter((row) => row.closed).length
+            }
+          >
+            {selectedModule ? (
+              <>
+                <FormField data-invalid={Boolean(shownMoveError) || undefined}>
                   <FieldLabel htmlFor="sandbox-move-module-department">
                     Move module to department
                   </FieldLabel>
@@ -1771,8 +2270,15 @@ export function Designer({
                     id="sandbox-move-module-department"
                     className="w-full [&_select]:min-h-10"
                     value={selectedModule.department}
+                    disabled={pending}
+                    aria-invalid={shownMoveError ? true : undefined}
+                    aria-describedby={
+                      shownMoveError
+                        ? "sandbox-move-module-department-error"
+                        : undefined
+                    }
                     onChange={(event) =>
-                      moveModule(selectedModule.id, event.target.value)
+                      void moveModule(selectedModule.id, event.target.value)
                     }
                   >
                     {design.departments.map((item) => (
@@ -1781,25 +2287,57 @@ export function Designer({
                       </NativeSelectOption>
                     ))}
                   </NativeSelect>
+                  {shownMoveError ? (
+                    <FieldError
+                      id="sandbox-move-module-department-error"
+                      className="text-xs"
+                    >
+                      {shownMoveError}
+                    </FieldError>
+                  ) : null}
                 </FormField>
-              </div>
-              <div className="border-border flex flex-col gap-3 border-t pt-4">
-                <FormField>
-                  <FieldLabel htmlFor="sandbox-record-title-field">
-                    Record title field
-                  </FieldLabel>
+                <FormField
+                  data-invalid={Boolean(shownTitleFieldError) || undefined}
+                >
+                  <div className="flex items-center gap-1">
+                    <FieldLabel htmlFor="sandbox-record-title-field">
+                      Title field
+                    </FieldLabel>
+                    <Popover>
+                      <PopoverTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label="About the title field"
+                            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring -my-2 inline-flex size-11 items-center justify-center rounded-sm outline-none focus-visible:outline-2 xl:my-0 xl:size-6"
+                          />
+                        }
+                      >
+                        <Info aria-hidden="true" className="size-3.5" />
+                      </PopoverTrigger>
+                      <PopoverContent side="top" className="w-auto max-w-64">
+                        Names this module&apos;s records in Boards links.
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                   <NativeSelect
                     id="sandbox-record-title-field"
                     className="w-full [&_select]:min-h-10"
                     value={selectedModule.titleFieldId ?? ""}
                     disabled={pending}
-                    onChange={(event) => {
+                    aria-invalid={shownTitleFieldError ? true : undefined}
+                    aria-describedby={
+                      shownTitleFieldError
+                        ? "sandbox-record-title-field-error sandbox-record-title-field-help"
+                        : "sandbox-record-title-field-help"
+                    }
+                    onChange={async (event) => {
+                      const moduleId = selectedModule.id;
                       const titleFieldId = event.currentTarget.value || null;
-                      void change((previous) => {
+                      setTitleFieldError(null);
+                      const result = await change((previous) => {
                         if (
-                          !previous.modules.some(
-                            (item) => item.id === selectedModule.id,
-                          )
+                          !previous.modules.some((item) => item.id === moduleId)
                         )
                           throw new SandboxCommandError(
                             "This module was deleted. Keep the title field setting open and try again.",
@@ -1807,12 +2345,14 @@ export function Designer({
                         return {
                           ...previous,
                           modules: previous.modules.map((item) =>
-                            item.id === selectedModule.id
+                            item.id === moduleId
                               ? { ...item, titleFieldId }
                               : item,
                           ),
                         };
-                      }, `sandbox.design.module-title:${selectedModule.id}`);
+                      }, `sandbox.design.module-title:${moduleId}`);
+                      if (!result.ok)
+                        setTitleFieldError({ moduleId, message: result.error });
                     }}
                   >
                     <NativeSelectOption value="">
@@ -1830,320 +2370,127 @@ export function Designer({
                         </NativeSelectOption>
                       ))}
                   </NativeSelect>
-                  <p className="text-muted-foreground text-xs">
-                    Used for Record links in Boards. If blank, links show Record
-                    and the first eight characters of its ID.
-                  </p>
-                </FormField>
-              </div>
-              <div className="border-border flex flex-col gap-3 border-t pt-4">
-                <div className="flex items-center justify-between">
-                  <h3
-                    data-slot="section-title"
-                    className="text-sm font-semibold"
+                  <span
+                    id="sandbox-record-title-field-help"
+                    className="sr-only"
                   >
-                    Fields
-                  </h3>
+                    Names this module&apos;s records in Boards links.
+                  </span>
+                  {shownTitleFieldError ? (
+                    <FieldError
+                      id="sandbox-record-title-field-error"
+                      className="text-xs"
+                    >
+                      {shownTitleFieldError}
+                    </FieldError>
+                  ) : null}
+                </FormField>
+              </>
+            ) : null}
+            <div
+              role="group"
+              aria-label={`${selectedModule ? "Module" : "Department"} lifecycle`}
+              className="flex flex-col gap-1.5"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <DisabledReason
+                  reason={inspectedLifecycle.disabled ? lifecycleReason : null}
+                >
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => open("field")}
+                    disabled={inspectedLifecycle.disabled}
+                    aria-describedby="sandbox-lifecycle-note"
+                    onClick={() => void toggleLifecycle(inspectedTarget)}
                   >
-                    <Plus />
-                    Add field
+                    {`${inspectedLifecycle.closed ? "Reopen" : "Close"} ${inspectedKind}`}
                   </Button>
-                </div>
-                {selectedModule.fields.map((f, i) => (
-                  <FieldDisclosure
-                    key={f.id}
-                    field={f}
-                    selected={selectedField?.field.id === f.id}
-                  >
-                    <FieldSettings
-                      field={f}
-                      index={i}
-                      count={selectedModule.fields.length}
-                      titleFieldId={selectedModule.titleFieldId ?? null}
-                      onSave={(nextField) =>
-                        change((previous) => {
-                          const currentModule = previous.modules.find(
-                            (item) => item.id === selectedModule.id,
-                          );
-                          if (!currentModule)
-                            throw new SandboxCommandError(
-                              "This module was deleted. Keep the field draft open and try again.",
-                            );
-                          if (
-                            !currentModule.fields.some(
-                              (item) => item.id === f.id,
-                            )
-                          )
-                            throw new SandboxCommandError(
-                              "This field was deleted. Keep the field draft open and try again.",
-                            );
-                          return {
-                            ...previous,
-                            modules: previous.modules.map((item) =>
-                              item.id === currentModule.id
-                                ? {
-                                    ...item,
-                                    fields: item.fields.map((entry) =>
-                                      entry.id === f.id ? nextField : entry,
-                                    ),
-                                  }
-                                : item,
-                            ),
-                          };
-                        })
-                      }
-                      onMove={(delta) =>
-                        change((previous) => {
-                          const currentModule = previous.modules.find(
-                            (item) => item.id === selectedModule.id,
-                          );
-                          if (!currentModule) return previous;
-                          const currentIndex = currentModule.fields.findIndex(
-                            (item) => item.id === f.id,
-                          );
-                          if (currentIndex < 0) return previous;
-                          return {
-                            ...previous,
-                            modules: previous.modules.map((item) =>
-                              item.id === currentModule.id
-                                ? {
-                                    ...item,
-                                    fields: reorder(
-                                      item.fields,
-                                      currentIndex,
-                                      delta,
-                                    ),
-                                  }
-                                : item,
-                            ),
-                          };
-                        })
-                      }
-                      onLifecycle={async () => {
-                        if (bindings === null)
-                          return {
-                            ok: false,
-                            error: "Load live state before changing this item.",
-                          };
-                        const target = {
-                          kind: "field" as const,
-                          id: canvasFieldId(selectedModule.id, f.id),
-                        };
-                        if (bindingFor(target)) return toggleLifecycle(target);
-                        const removedMappings = { current: 0 };
-                        const closedFieldName = { current: "" };
-                        const result = await change((previous) => {
-                          const currentModule = previous.modules.find(
-                            (item) => item.id === selectedModule.id,
-                          );
-                          if (!currentModule) return previous;
-                          const currentField = currentModule.fields.find(
-                            (item) => item.id === f.id,
-                          );
-                          if (!currentField) return previous;
-                          const closing = !currentField.closed;
-                          const fieldReferences = new Set([
-                            mappingFieldReference(
-                              currentModule.id,
-                              currentField.id,
-                            ),
-                          ]);
-                          if (closing) {
-                            closedFieldName.current = currentField.name;
-                            removedMappings.current =
-                              relationshipMappingCountForFields(
-                                previous.relationships,
-                                fieldReferences,
-                              );
-                          }
-                          return {
-                            ...previous,
-                            modules: previous.modules.map((item) =>
-                              item.id === currentModule.id
-                                ? {
-                                    ...item,
-                                    fields: item.fields.map((entry) =>
-                                      entry.id === f.id
-                                        ? {
-                                            ...entry,
-                                            closed: !entry.closed,
-                                          }
-                                        : entry,
-                                    ),
-                                  }
-                                : item,
-                            ),
-                            relationships: closing
-                              ? pruneRelationshipMappingsForFields(
-                                  previous.relationships,
-                                  fieldReferences,
-                                )
-                              : previous.relationships,
-                          };
-                        });
-                        if (result.ok && closedFieldName.current)
-                          notify(
-                            removedMappings.current > 0
-                              ? `${closedFieldName.current} closed. ${plural(removedMappings.current, "relationship field mapping")} removed.`
-                              : `${closedFieldName.current} closed.`,
-                          );
-                        return result;
-                      }}
-                      pending={pending}
-                      lifecycleClosed={
-                        lifecycleState({
-                          kind: "field",
-                          id: canvasFieldId(selectedModule.id, f.id),
-                        }).closed
-                      }
-                      lifecycleDisabled={
-                        lifecycleState({
-                          kind: "field",
-                          id: canvasFieldId(selectedModule.id, f.id),
-                        }).disabled
-                      }
-                      draftId={canvasFieldId(selectedModule.id, f.id)}
-                      onDraftStateChange={reportFieldDraft}
-                      onPurge={
-                        lifecycleState({
-                          kind: "field",
-                          id: canvasFieldId(selectedModule.id, f.id),
-                        }).canPurge
-                          ? () =>
-                              purgeLifecycle({
-                                kind: "field",
-                                id: canvasFieldId(selectedModule.id, f.id),
-                              })
-                          : undefined
-                      }
-                      autoFocus={
-                        focusTargetId === canvasFieldId(selectedModule.id, f.id)
-                      }
-                    />
-                  </FieldDisclosure>
-                ))}
-              </div>
-              <div className="border-border flex flex-col gap-3 border-t pt-4">
-                <h3 data-slot="section-title" className="text-sm font-semibold">
-                  Relationships
-                </h3>
+                </DisabledReason>
                 <Button
-                  variant="outline"
-                  onClick={() => {
-                    open("relationship");
-                    setSource(selectedModule.id);
-                    setTarget(
-                      design.modules.find((m) => m.id !== selectedModule.id)
-                        ?.id ?? "",
-                    );
-                  }}
-                  disabled={design.modules.length < 2}
+                  size="sm"
+                  variant="ghost"
+                  className="text-danger-text"
+                  disabled={pending}
+                  onClick={() => requestDelete(inspectedTarget)}
                 >
-                  <Link2 />
-                  Connect modules
+                  Delete {inspectedKind}
                 </Button>
-                <h4 className="text-xs font-semibold">Outgoing</h4>
-                {design.relationships.filter(
-                  (r) => r.source === selectedModule.id,
-                ).length === 0 ? (
-                  <Empty className="flex-none border py-4">
-                    <EmptyHeader>
-                      <EmptyTitle>No outgoing relationships</EmptyTitle>
-                      <EmptyDescription>
-                        Connect this module to another module to add one.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
+                {inspectedLifecycle.canPurge ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-danger-text"
+                    disabled={inspectedLifecycle.disabled}
+                    onClick={() => void purgeLifecycle(inspectedTarget)}
+                  >
+                    Permanently delete {inspectedKind}
+                  </Button>
                 ) : null}
-                {design.relationships
-                  .filter((r) => r.source === selectedModule.id)
-                  .map((r) => (
-                    <div
-                      key={r.id}
-                      className="border-border rounded-md border p-3 text-xs"
+              </div>
+              <p
+                id="sandbox-lifecycle-note"
+                className="text-muted-foreground text-xs"
+              >
+                {!bindingFor(inspectedTarget)
+                  ? "Applies when you publish."
+                  : inspectedLifecycle.closed
+                    ? "Reopening allows new records again."
+                    : "Stops new records. Keeps existing data."}
+              </p>
+            </div>
+            {relationshipRows.length > 0 ? (
+              <div
+                role="group"
+                aria-labelledby="sandbox-relationship-lifecycle"
+                className="flex flex-col gap-1"
+              >
+                <p
+                  id="sandbox-relationship-lifecycle"
+                  className="text-sm font-medium"
+                >
+                  Relationships
+                </p>
+                <ul className="divide-border divide-y">
+                  {relationshipRows.map((row) => (
+                    <li
+                      key={`${row.direction}:${row.id}`}
+                      className="flex flex-wrap items-center gap-x-1 gap-y-0.5 py-1"
                     >
-                      <strong>{r.name}</strong>
-                      <p className="text-muted-foreground my-2">
-                        {r.cardinality} →{" "}
-                        {design.modules.find((m) => m.id === r.target)?.name}
-                      </p>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm">{row.name}</p>
+                        <p className="text-muted-foreground truncate text-xs">
+                          <span aria-hidden="true">
+                            {row.direction === "outgoing" ? "→ " : "← "}
+                          </span>
+                          <span className="sr-only">
+                            {row.direction === "outgoing" ? "To " : "From "}
+                          </span>
+                          {row.otherModule}
+                        </p>
+                      </div>
+                      {relationshipLifecycleActions(
+                        row.id,
+                        row.name,
+                        row.direction,
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"
-                        aria-label={`Edit outgoing relationship ${r.name}`}
-                        onClick={() => editRelationship(r.id)}
-                      >
-                        Edit relationship
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`Delete outgoing relationship ${r.name}`}
+                        className="text-danger-text"
+                        disabled={pending}
+                        aria-label={`Delete relationship ${row.name}, ${row.direction}`}
                         onClick={() =>
-                          requestDelete({ kind: "link", id: r.id })
+                          requestDelete({ kind: "link", id: row.id })
                         }
                       >
-                        Delete relationship
+                        Delete
                       </Button>
-                      {relationshipLifecycleActions(r.id, r.name, "outgoing")}
-                    </div>
+                    </li>
                   ))}
-                <h4 className="text-xs font-semibold">Incoming</h4>
-                {design.relationships.filter(
-                  (r) => r.target === selectedModule.id,
-                ).length === 0 ? (
-                  <Empty className="flex-none border py-4">
-                    <EmptyHeader>
-                      <EmptyTitle>No incoming relationships</EmptyTitle>
-                      <EmptyDescription>
-                        Other modules have not connected to this module yet.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                ) : null}
-                {design.relationships
-                  .filter((r) => r.target === selectedModule.id)
-                  .map((r) => (
-                    <div
-                      key={r.id}
-                      className="border-border rounded-md border p-3 text-xs"
-                    >
-                      <strong>{r.name}</strong>
-                      <p className="text-muted-foreground mt-2">
-                        {design.modules.find((m) => m.id === r.source)?.name ??
-                          "Missing source"}{" "}
-                        → {r.cardinality}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Edit incoming relationship ${r.name}`}
-                          onClick={() => editRelationship(r.id)}
-                        >
-                          Edit relationship
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Delete incoming relationship ${r.name}`}
-                          onClick={() =>
-                            requestDelete({ kind: "link", id: r.id })
-                          }
-                        >
-                          Delete relationship
-                        </Button>
-                        {relationshipLifecycleActions(r.id, r.name, "incoming")}
-                      </div>
-                    </div>
-                  ))}
+                </ul>
               </div>
-            </>
-          )}
+            ) : null}
+          </AdvancedSection>
         </>
       )}
       <p className="sr-only">{counts(design)}</p>
@@ -2170,7 +2517,7 @@ export function Designer({
         <ResizablePanelGroup
           orientation="horizontal"
           elementRef={panelGroupElementRef}
-          className="sandbox-ui border-card-edge bg-card shadow-card overflow-hidden rounded-2xl border max-xl:h-auto xl:h-full"
+          className="sandbox-ui border-card-edge bg-card shadow-card overflow-hidden rounded-2xl border max-xl:h-auto xl:min-h-0 xl:flex-1"
           onLayoutChanged={(layout, meta) => {
             if (
               !meta.isUserInteraction ||
@@ -2227,37 +2574,10 @@ export function Designer({
                     aria-label="Canvas view controls"
                     className="flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-x-auto py-1 [&>button]:shrink-0"
                   >
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label="Zoom out"
-                      aria-disabled={atMinZoom}
-                      className="size-11 aria-disabled:opacity-50"
-                      onClick={() => {
-                        if (!atMinZoom) graphRef.current?.zoomOut();
-                      }}
-                    >
-                      <ZoomOut aria-hidden="true" />
-                    </Button>
-                    <output
-                      role="status"
-                      aria-label="Canvas zoom"
-                      className="text-muted-foreground min-w-12 shrink-0 text-center text-xs tabular-nums"
-                    >
-                      {Math.round(canvasView.zoom * 100)}%
-                    </output>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label="Zoom in"
-                      aria-disabled={atMaxZoom}
-                      className="size-11 aria-disabled:opacity-50"
-                      onClick={() => {
-                        if (!atMaxZoom) graphRef.current?.zoomIn();
-                      }}
-                    >
-                      <ZoomIn aria-hidden="true" />
-                    </Button>
+                    <CanvasZoomControls
+                      zoomStore={zoomStore}
+                      graphRef={graphRef}
+                    />
                     <Button
                       size="sm"
                       className="min-h-11"
@@ -2288,37 +2608,10 @@ export function Designer({
                       >
                         <DropdownMenuItem
                           className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          role="menuitemcheckbox"
-                          aria-checked={canvasView.gridVisible}
-                          onClick={() =>
-                            setCanvasView((current) => ({
-                              ...current,
-                              gridVisible: !current.gridVisible,
-                            }))
-                          }
+                          onClick={() => void autoArrange()}
                         >
-                          <Grid3X3 aria-hidden="true" />
-                          Grid
-                          <span className="text-muted-foreground ml-auto text-xs">
-                            {canvasView.gridVisible ? "On" : "Off"}
-                          </span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          role="menuitemcheckbox"
-                          aria-checked={canvasView.snapEnabled}
-                          onClick={() =>
-                            setCanvasView((current) => ({
-                              ...current,
-                              snapEnabled: !current.snapEnabled,
-                            }))
-                          }
-                        >
-                          <Magnet aria-hidden="true" />
-                          Snap
-                          <span className="text-muted-foreground ml-auto text-xs">
-                            {canvasView.snapEnabled ? "On" : "Off"}
-                          </span>
+                          <LayoutGrid aria-hidden="true" />
+                          Auto-arrange
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
@@ -2332,55 +2625,78 @@ export function Designer({
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          onClick={() => {
-                            graphRef.current?.resetZoom();
-                            setCanvasAction("Zoom reset.");
-                          }}
-                        >
-                          <RotateCcw aria-hidden="true" />
-                          Reset zoom
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          onClick={async () => {
-                            const result = await change((previous) => ({
-                              ...previous,
-                              layout: arrangedLayout(previous),
-                            }));
-                            if (!result.ok) {
-                              notify(result.error);
-                              return;
-                            }
-                            setCanvasAction("Canvas automatically arranged.");
-                          }}
-                        >
-                          Auto-arrange
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          onClick={async () => {
-                            const result = await change((previous) => ({
-                              ...previous,
-                              layout: resetLayout(previous),
-                            }));
-                            if (!result.ok) {
-                              notify(result.error);
-                              return;
-                            }
-                            setCanvasAction("Canvas layout reset.");
-                          }}
-                        >
-                          Reset layout
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
                           onClick={() => setCanvasHelpOpen((open) => !open)}
                         >
                           <CircleHelp aria-hidden="true" />
                           {canvasHelpOpen ? "Hide help" : "Canvas help"}
                         </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel className="text-muted-foreground px-2 py-1.5 text-xs font-medium">
+                            Layout
+                          </DropdownMenuLabel>
+                          <DropdownMenuItem
+                            className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+                            role="menuitemcheckbox"
+                            aria-checked={canvasView.gridVisible}
+                            onClick={() =>
+                              setCanvasView((current) => ({
+                                ...current,
+                                gridVisible: !current.gridVisible,
+                              }))
+                            }
+                          >
+                            <Grid3X3 aria-hidden="true" />
+                            Grid
+                            <span className="text-muted-foreground ml-auto text-xs">
+                              {canvasView.gridVisible ? "On" : "Off"}
+                            </span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+                            role="menuitemcheckbox"
+                            aria-checked={canvasView.snapEnabled}
+                            onClick={() =>
+                              setCanvasView((current) => ({
+                                ...current,
+                                snapEnabled: !current.snapEnabled,
+                              }))
+                            }
+                          >
+                            <Magnet aria-hidden="true" />
+                            Snap
+                            <span className="text-muted-foreground ml-auto text-xs">
+                              {canvasView.snapEnabled ? "On" : "Off"}
+                            </span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+                            onClick={() => {
+                              graphRef.current?.resetZoom();
+                              setCanvasAction("Zoom reset.");
+                            }}
+                          >
+                            <RotateCcw aria-hidden="true" />
+                            Reset zoom
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
+                            onClick={async () => {
+                              const result = await change((previous) => ({
+                                ...previous,
+                                layout: resetLayout(previous),
+                              }));
+                              if (!result.ok) {
+                                notifyError(result.error);
+                                return;
+                              }
+                              setCanvasAction("Canvas layout reset.");
+                            }}
+                          >
+                            <Undo2 aria-hidden="true" />
+                            Reset layout
+                          </DropdownMenuItem>
+                        </DropdownMenuGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -2418,7 +2734,8 @@ export function Designer({
                     </p>
                     <p className="text-muted-foreground mt-1">
                       Use the visible Undo and Redo controls for design changes.
-                      Use Structure for complete keyboard editing.
+                      Structure works fully from the keyboard: arrow keys move,
+                      Enter selects, F2 renames.
                     </p>
                     <p className="text-muted-foreground mt-1">
                       {keyboardShortcuts === true
@@ -2517,6 +2834,34 @@ export function Designer({
                       </Button>
                     </span>
                   </div>
+                ) : overlapping && overlapDismissedFor !== layoutKey ? (
+                  <div
+                    role="status"
+                    className="border-border bg-muted flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-4 py-1 text-sm"
+                  >
+                    <span className="min-w-0">
+                      Some departments or modules overlap.
+                    </span>
+                    <span className="flex flex-wrap gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="min-h-9"
+                        disabled={pending}
+                        onClick={() => void autoArrange()}
+                      >
+                        Auto-arrange
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="min-h-9"
+                        onClick={() => setOverlapDismissedFor(layoutKey)}
+                      >
+                        Dismiss
+                      </Button>
+                    </span>
+                  </div>
                 ) : null}
                 <div
                   ref={canvasFrameRef}
@@ -2544,7 +2889,7 @@ export function Designer({
                     graphRef={graphRef}
                     gridVisible={canvasView.gridVisible}
                     snapEnabled={canvasView.snapEnabled}
-                    onViewChange={setCanvasView}
+                    onZoomChange={zoomStore.set}
                     onSelect={(id) => {
                       setSelected(id ?? "");
                       if (id) setWorkbenchTab("Inspector");
@@ -2602,7 +2947,8 @@ export function Designer({
                             : previous.modules,
                         };
                       }, "sandbox.design.layout");
-                      if (!result.ok) notify(result.error);
+                      if (!result.ok) notifyError(result.error);
+                      return result;
                     }}
                   />
                 </div>
@@ -2695,14 +3041,14 @@ export function Designer({
                     <TabsContent
                       value="Structure"
                       keepMounted
-                      className="min-h-0 flex-1 overflow-y-auto"
+                      className="relative min-h-0 flex-1 overflow-y-auto"
                     >
                       {structurePane}
                     </TabsContent>
                     <TabsContent
                       value="Inspector"
                       keepMounted
-                      className="min-h-0 flex-1 overflow-y-auto"
+                      className="relative min-h-0 flex-1 overflow-y-auto"
                     >
                       {inspectorPane}
                     </TabsContent>
@@ -2729,7 +3075,9 @@ export function Designer({
       <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
-          if (!open && !pending) setDeleteTarget(null);
+          if (open || pending) return;
+          setDeleteTarget(null);
+          setDeleteError("");
         }}
       >
         <AlertDialogContent
@@ -2740,20 +3088,26 @@ export function Designer({
           <AlertDialogDescription className="my-4">
             {currentDeleteImpact?.detail}
           </AlertDialogDescription>
+          {deleteError ? (
+            <Alert role="alert" variant="destructive" className="mb-4">
+              {deleteError}
+            </Alert>
+          ) : null}
           <AlertDialogFooter>
-            <Button
-              variant="destructive"
-              disabled={pending}
-              onClick={removeSelected}
-            >
-              Confirm delete
-            </Button>
             <AlertDialogCancel
               disabled={pending}
-              render={<Button variant="ghost" />}
+              render={<Button variant="outline" />}
             >
               Cancel
             </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              pending={pending}
+              pendingLabel="Deleting…"
+              onClick={removeSelected}
+            >
+              {currentDeleteImpact?.action ?? "Delete"}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -24,6 +24,9 @@ const PAIRS = [
   ["action-text", "action-tint", 4.5],
   ["flow-text", "flow-tint", 4.5],
   ["warn-text", "warn-tint", 4.5],
+  // Triplicate draws chips without a tint, so warning ink sits on the card.
+  ["warn-text", "card", 4.5],
+  ["warn-text", "background", 4.5],
   ["danger-text", "danger-tint", 4.5],
   ["danger-text", "card", 4.5],
   ["flow-text", "card", 4.5],

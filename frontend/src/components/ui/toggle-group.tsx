@@ -8,6 +8,14 @@ import { cn } from "@/lib/utils";
 
 import { toggleVariants } from "@/components/ui/toggle";
 
+// A single-select filter: a sunken rail whose pressed item is raised, in the
+// action ink, and bold, so the choice reads in every look; idle items are
+// muted, so pressed differs in brightness as well as hue.
+const segmentedGroup =
+  "flex w-full flex-wrap gap-1 rounded-lg bg-[var(--surface-sunken)] p-1 shadow-[inset_0_0_0_1px_var(--rule)]";
+const segmentedItem =
+  "h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal text-muted-foreground hover:bg-transparent hover:text-foreground aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:text-action-text aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_color-mix(in_oklab,var(--ink-muted)_60%,transparent)] xl:min-h-9";
+
 const ToggleGroupContext = React.createContext<
   VariantProps<typeof toggleVariants> & {
     spacing?: number;
@@ -43,6 +51,7 @@ function ToggleGroup({
       style={{ "--gap": spacing } as React.CSSProperties}
       className={cn(
         "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] rounded-lg data-[orientation=vertical]:flex-col data-[orientation=vertical]:items-stretch data-[size=sm]:rounded-[min(var(--radius-md),10px)]",
+        variant === "segmented" && segmentedGroup,
         className,
       )}
       {...props}
@@ -77,6 +86,7 @@ function ToggleGroupItem({
           variant: context.variant || variant,
           size: context.size || size,
         }),
+        (context.variant || variant) === "segmented" && segmentedItem,
         className,
       )}
       {...props}

@@ -1,4 +1,4 @@
-import { expect, type Page } from "./test";
+import { expect, type Locator, type Page } from "./test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -665,4 +665,14 @@ export function historyRegions(page: Page) {
       exact: true,
     }),
   };
+}
+
+/** The collapsed header inside a field row (`<name> field settings`). Its
+ * name is what the row shows: the field name, its type, and ", required". */
+export function fieldRowTrigger(row: Locator, fieldName: string) {
+  const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return row.getByRole("button", {
+    name: new RegExp(`^${escaped}\\b`),
+    expanded: false,
+  });
 }

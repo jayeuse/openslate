@@ -80,8 +80,14 @@ test("imported unsupported actions block publication until removed", () => {
       { id: "old-action", kind: "notification" as const, message: "Legacy" },
     ],
   };
+  // Each blocker is an issue on its trigger, so the page can open it.
   expect(triggerPublicationBlockers([recordTrigger], design)).toEqual([
-    "New trigger: notification is not supported for publishing.",
+    {
+      code: "trigger.publish_blocked",
+      severity: "error",
+      message: "New trigger: notification actions can't be published yet.",
+      targetId: recordTrigger.id,
+    },
   ]);
 });
 
@@ -94,9 +100,11 @@ test("scheduled triggers require a module before publishing", () => {
       time: "09:00",
     },
   };
-  expect(triggerPublicationBlockers([recordTrigger], design)).toContain(
-    "New trigger: scheduled triggers need a module.",
-  );
+  expect(
+    triggerPublicationBlockers([recordTrigger], design).map(
+      (blocker) => blocker.message,
+    ),
+  ).toContain("New trigger: scheduled triggers need a module.");
 });
 
 test("a publish retry keeps the same idempotency key after an uncertain result", () => {

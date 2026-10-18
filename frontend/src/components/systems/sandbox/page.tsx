@@ -13,7 +13,7 @@ import {
 } from "../manage/adapters/workspace-api";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
-import { reportDone, reportError } from "@/lib/feedback";
+import { reportDone, reportError, reportUndoable } from "@/lib/feedback";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,11 +44,15 @@ import {
   SANDBOX_WORKBENCH_DEFAULT_WIDTH,
   clearSandboxViewPreferences,
 } from "./helpers/view-preferences";
-import { sandboxWorkInProgress } from "./helpers/work-in-progress";
+import {
+  sandboxWorkInProgress,
+  triggerEditsHoldMove,
+} from "./helpers/work-in-progress";
 import { Designer } from "./components/designer";
-import type {
-  SandboxCommandFailure,
-  SandboxCommandResult,
+import {
+  SandboxCommandError,
+  type SandboxCommandFailure,
+  type SandboxCommandResult,
 } from "./state/commands";
 import {
   createSandboxVersion,
@@ -84,6 +88,11 @@ import {
   TriggerStudio,
   triggerPublicationBlockers,
 } from "./components/trigger-studio";
+import { useTriggerDraft } from "./components/use-trigger-draft";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
+import { currentOrganizationId } from "@/lib/organization-context";
+import { TriggerLeaveDialog } from "./components/trigger-leave-dialog";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
@@ -188,7 +197,7 @@ function publishStatus(
   )
     return { label: "Unpublished changes", publishable: true };
   if (published) return { label: "Published", publishable: false };
-  return { label: "Draft saved", publishable: true };
+  return { label: "Not published yet", publishable: true };
 }
 
 function emptyDocument(): SandboxDocumentV4 {
@@ -201,11 +210,14 @@ function emptyDocument(): SandboxDocumentV4 {
   };
 }
 
-// LoadingRegion wraps its content in one unstyled element, so the section's
-// spacing and the Build section's wide-screen column carry through `*:`.
-const sandboxRegionClass = "*:space-y-5";
-const sandboxBuildRegionClass =
-  "*:space-y-5 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:*:flex xl:*:min-h-0 xl:*:flex-1 xl:*:flex-col xl:*:gap-5 xl:*:space-y-0";
+// On desktop the page fills the viewport and never scrolls; its panels do.
+// Phones and tablets scroll the page. LoadingRegion wraps its content in one
+// unstyled element, so the column carries through `*:`.
+const sandboxRegionClass =
+  "flex flex-col *:flex *:flex-col *:gap-5 xl:min-h-0 xl:flex-1 xl:*:min-h-0 xl:*:flex-1";
+// On desktop, one scroll panel for a section whose own layout does not fill
+// the height. `relative` keeps screen-reader text inside it.
+const sandboxPanelClass = "relative xl:min-h-0 xl:flex-1 xl:overflow-y-auto";
 
 /**
  * The Build canvas and its properties panel (phones and tablets: the pane
@@ -250,7 +262,7 @@ function SandboxSkeleton({ build }: { build: boolean }) {
           </div>
         </div>
       ) : (
-        <div className="border-card-edge bg-card shadow-card flex flex-col gap-4 rounded-xl border p-4">
+        <div className="border-card-edge bg-card shadow-card flex flex-col gap-4 overflow-hidden rounded-xl border p-4 xl:min-h-0 xl:flex-1">
           <Skeleton className="h-6 w-48" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
@@ -315,17 +327,35 @@ export default function SandboxPage() {
     ),
     enabled: session !== null && !historyAccess.denied,
   });
-  const [message, setMessage] = useState("");
+  // A design save in flight, for the header's save-state chip.
+  const [saving, setSaving] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
   // Bumped by each successful Publish; the look's title signature plays once.
   const [publishCount, setPublishCount] = useState(0);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
-  const [triggerDraft, setTriggerDraft] = useState({
-    dirty: false,
-    pending: false,
+  const [checkpointOpen, setCheckpointOpen] = useState(false);
+  // The page owns unsaved trigger edits, so moving between sections (a
+  // link, Back, Forward) keeps them; a reload offers them back.
+  const saveTriggersRef = useRef<
+    (triggers: SandboxDocumentV4["triggers"]) => Promise<void>
+  >(async () => {
+    throw new Error("Sandbox is still loading.");
   });
+  const triggerDraft = useTriggerDraft({
+    document: session?.document ?? null,
+    persist: useCallback(
+      (triggers: SandboxDocumentV4["triggers"]) =>
+        saveTriggersRef.current(triggers),
+      [],
+    ),
+    userId: useVerifiedWorkspaceUserId(),
+    orgId: currentOrganizationId(),
+    confirmed: conflict === null,
+  });
+  // A navigation held back by unsaved triggers, resumed after Save or Discard.
+  const [leaveRequest, setLeaveRequest] = useState<(() => void) | null>(null);
   const [publicationPending, setPublicationPending] = useState(false);
   const [testPending, setTestPending] = useState(false);
   const [sandboxGeneration, setSandboxGeneration] = useState(0);
@@ -350,14 +380,24 @@ export default function SandboxPage() {
   const skipNextLayoutInitialization = useRef(false);
   const section = sectionFromSearch(search.get("section"), search.get("rule"));
   const design = session?.history.present ?? initialDesign;
+  // Trigger settings that block publishing show here too, so nobody first
+  // meets them inside the review.
+  const publicationBlockers = session
+    ? triggerPublicationBlockers(
+        session.document.triggers,
+        session.document.design,
+      )
+    : [];
   const issues = Array.from(
     new Map(
-      [...validateSandboxDesign(design), ...(session?.issues ?? [])].map(
-        (issue) => [
-          `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
-          issue,
-        ],
-      ),
+      [
+        ...validateSandboxDesign(design),
+        ...(session?.issues ?? []),
+        ...publicationBlockers,
+      ].map((issue) => [
+        `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
+        issue,
+      ]),
     ).values(),
   );
   const requestedFocusTarget = search.get("inspect");
@@ -490,8 +530,8 @@ export default function SandboxPage() {
       });
       await refreshCapacity();
       setVersionRecovery(false);
-      setMessage(
-        `${result.deletedCount} old version${result.deletedCount === 1 ? "" : "s"} deleted.`,
+      reportDone(
+        `${result.deletedCount} old version${result.deletedCount === 1 ? "" : "s"} deleted`,
       );
       return { ok: true, value: result.deletedCount };
     } catch (error) {
@@ -557,7 +597,8 @@ export default function SandboxPage() {
           publicationPending,
           testPending,
           conflict: conflict !== null,
-          triggerDraftDirty: triggerDraft.dirty,
+          triggerDraftDirty:
+            triggerDraft.dirty && triggerEditsHoldMove(section, next),
           triggerDraftPending: triggerDraft.pending,
           designerDraftDirty,
         })
@@ -576,22 +617,39 @@ export default function SandboxPage() {
       publicationPending,
       router,
       search,
+      section,
       testPending,
     ],
   );
   useWorkspaceNavigationGuard(
     useCallback(
-      () =>
-        !sandboxWorkInProgress({
+      (href: string, resume: () => void) => {
+        const otherWork = sandboxWorkInProgress({
           commandBusy,
           publicationPending,
           testPending,
           conflict: conflict !== null,
-          triggerDraftDirty: triggerDraft.dirty,
+          triggerDraftDirty: false,
           triggerDraftPending: triggerDraft.pending,
           designerDraftDirty,
-        }),
+        });
+        if (otherWork) return false;
+        const target = new URL(href, window.location.origin);
+        const to =
+          target.pathname.replace(/\/$/, "") === "/sandbox"
+            ? sectionFromSearch(
+                target.searchParams.get("section"),
+                target.searchParams.get("rule"),
+              )
+            : null;
+        if (!triggerDraft.dirty || !triggerEditsHoldMove(section, to))
+          return true;
+        // Only unsaved triggers hold the page: ask Save, Discard, or Stay.
+        setLeaveRequest(() => resume);
+        return false;
+      },
       [
+        section,
         triggerDraft.dirty,
         triggerDraft.pending,
         conflict,
@@ -644,6 +702,7 @@ export default function SandboxPage() {
       commandPending.current = true;
       setSession(next);
       setPending(true);
+      setSaving(true);
       try {
         const response = await replaceSandboxDocument({
           expectedRevision: next.revision,
@@ -663,19 +722,18 @@ export default function SandboxPage() {
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
           setConflict({ proposedDocument: document, reason: "conflict" });
-          setFeedbackError(
-            "The shared Sandbox changed elsewhere. Reload it, then reapply your proposed document before saving.",
-          );
+          setFeedbackError("Reload the shared draft, then reapply your edits.");
         } else {
           setConflict({ proposedDocument: document, reason: "save-failed" });
           setFeedbackError(
-            "Your change was not saved. It remains local until you reapply it successfully.",
+            "Your change was not saved. Reapply it to try again.",
           );
         }
         return commandFailure(error);
       } finally {
         commandPending.current = false;
         setPending(false);
+        setSaving(false);
       }
     },
     [],
@@ -688,6 +746,12 @@ export default function SandboxPage() {
     },
     [persist, session],
   );
+  useEffect(() => {
+    saveTriggersRef.current = (triggers) =>
+      session
+        ? saveDocument({ ...session.document, triggers })
+        : Promise.reject(new Error("Sandbox is still loading."));
+  });
 
   const change = useCallback(
     async (update: DesignUpdate): Promise<SandboxCommandResult<Design>> => {
@@ -702,8 +766,18 @@ export default function SandboxPage() {
           ok: false,
           error: "A Sandbox change is already being saved.",
         };
-      const nextDesign =
-        typeof update === "function" ? update(session.history.present) : update;
+      let nextDesign: Design;
+      try {
+        nextDesign =
+          typeof update === "function"
+            ? update(session.history.present)
+            : update;
+      } catch (error) {
+        // A design rule the update checks refuses it with its own reason.
+        if (error instanceof SandboxCommandError)
+          return { ok: false, error: error.message };
+        throw error;
+      }
       if (
         nextDesign === session.history.present ||
         JSON.stringify(nextDesign) === JSON.stringify(session.history.present)
@@ -756,7 +830,6 @@ export default function SandboxPage() {
       setLifecycleRecovery(false);
       lifecycleLock.current = false;
     } catch {
-      setMessage("");
       setFeedbackError(
         "Live state could not be refreshed. Retry before changing this item.",
       );
@@ -823,13 +896,10 @@ export default function SandboxPage() {
         );
         setSession(openSandboxDocumentSession(document));
         setFeedbackError("");
-        setMessage(
-          "Live change confirmed. The current design has been refreshed.",
-        );
+        reportDone("Live change confirmed");
         lifecycleLock.current = false;
       } catch {
         setLifecycleRecovery(true);
-        setMessage("");
         setFeedbackError(
           "The live change was confirmed. Reload live state before making another change.",
         );
@@ -907,7 +977,7 @@ export default function SandboxPage() {
           ...(note ? { note } : {}),
         });
         await syncVersionMetadata();
-        setMessage("Checkpoint created.");
+        reportDone("Checkpoint saved");
         return { ok: true, value: version };
       } catch (error) {
         return commandFailure(error);
@@ -931,7 +1001,7 @@ export default function SandboxPage() {
         setSession(openSandboxDocumentSession(response));
         await refreshVersions();
         navigate("Build", false, true);
-        setMessage("Shared Sandbox replaced from the v4 JSON bundle.");
+        reportDone("Draft imported");
         return { ok: true, value: response.document };
       } catch (error) {
         return commandFailure(error);
@@ -955,7 +1025,7 @@ export default function SandboxPage() {
         setSession(openSandboxDocumentSession(response));
         await refreshVersions();
         navigate("Build", false, true);
-        setMessage(`${template.name} template applied to the shared Sandbox.`);
+        reportDone(`${template.name} template applied`);
         return { ok: true, value: response.document };
       } catch (error) {
         return commandFailure(error);
@@ -986,9 +1056,7 @@ export default function SandboxPage() {
         });
         setSession(openSandboxDocumentSession(restored));
         await refreshVersions();
-        setMessage(
-          "Draft restored to the latest published version. Live workspace data was not changed.",
-        );
+        reportDone("Draft reset to the last publish");
         return { ok: true as const, value: restored.document };
       }
       const cleared = openSandboxDocumentSession({
@@ -1004,9 +1072,7 @@ export default function SandboxPage() {
       if (result.ok) {
         clearSandboxViewPreferences();
         setSandboxGeneration((value) => value + 1);
-        setMessage(
-          "Draft changes discarded. Live workspace data was not changed.",
-        );
+        reportDone("Draft changes discarded");
       }
       return result;
     } catch (error) {
@@ -1018,18 +1084,54 @@ export default function SandboxPage() {
 
   function selectIssue(issue: SandboxValidationIssue) {
     if (
+      !commandBusy &&
+      !publicationPending &&
+      !testPending &&
+      conflict === null &&
+      !triggerDraft.pending &&
+      triggerDraft.dirty &&
+      triggerEditsHoldMove(section, issueSection(issue))
+    ) {
+      // Only unsaved triggers hold the page: ask Save, Discard, or Stay.
+      setLeaveRequest(() => () => openIssue(issue));
+      return;
+    }
+    if (
       commandBusy ||
       publicationPending ||
       testPending ||
       conflict !== null ||
-      triggerDraft.dirty ||
       triggerDraft.pending
     ) {
-      setMessage(
-        "Wait for the current action to finish, or save or discard your trigger changes.",
-      );
+      reportError("Finish the current action first.");
       return;
     }
+    openIssue(issue);
+  }
+  /** The section an issue opens. */
+  function issueSection(issue: SandboxValidationIssue): string {
+    const destination = sandboxIssueDestination(
+      issue,
+      new Set(design.rules.map((rule) => rule.id)),
+      new URLSearchParams(),
+    );
+    if (destination.kind === "section") return destination.section;
+    return sectionFromSearch(destination.params.get("section"), null);
+  }
+  /** Names where an issue's button goes: Triggers, Test, or Build. */
+  function issueActionLabel(issue: SandboxValidationIssue): string {
+    const destination = sandboxIssueDestination(
+      issue,
+      new Set(design.rules.map((rule) => rule.id)),
+      new URLSearchParams(),
+    );
+    if (destination.kind === "section")
+      return destination.section === "Test" ? "Open Test" : "Show in Build";
+    return destination.params.get("section") === "triggers"
+      ? "Open trigger"
+      : "Show in Build";
+  }
+  function openIssue(issue: SandboxValidationIssue) {
     const destination = sandboxIssueDestination(
       issue,
       new Set(design.rules.map((rule) => rule.id)),
@@ -1047,9 +1149,7 @@ export default function SandboxPage() {
       setSession(openSandboxDocumentSession(response));
       setConflict(null);
       setFeedbackError("");
-      setMessage(
-        "Shared Sandbox reloaded. Your local unsaved changes were discarded.",
-      );
+      reportDone("Shared draft reloaded");
     } catch (error) {
       setFeedbackError(commandFailure(error).error);
     } finally {
@@ -1066,8 +1166,7 @@ export default function SandboxPage() {
         conflict.proposedDocument,
       );
       const result = await persist(reapplied);
-      if (result.ok)
-        setMessage("Your local draft was reapplied to the shared Sandbox.");
+      if (result.ok) reportDone("Your draft was reapplied");
     } catch (error) {
       setFeedbackError(commandFailure(error).error);
     } finally {
@@ -1117,7 +1216,7 @@ export default function SandboxPage() {
     <section
       data-sandbox-page
       aria-busy={commandBusy || publicationPending || testPending || undefined}
-      className={`space-y-5 ${section === "Build" ? "xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[640px] xl:flex-col xl:gap-5 xl:space-y-0" : ""}`}
+      className="flex flex-col gap-5 xl:min-h-0 xl:flex-1"
     >
       {conflict ? (
         <Alert
@@ -1128,8 +1227,8 @@ export default function SandboxPage() {
           <div className="space-y-1">
             <p>
               {conflict.reason === "conflict"
-                ? "Save conflict: your proposed document is still local."
-                : "Save did not complete: your proposed document is still local."}
+                ? "Not saved: someone else changed this draft. Your edits are still here."
+                : "Not saved. Your edits are still here."}
             </p>
             {feedbackError ? <p>{feedbackError}</p> : null}
           </div>
@@ -1198,7 +1297,33 @@ export default function SandboxPage() {
             >
               Sandbox
             </h1>
-            {loading ? null : <Badge variant="outline">{status.label}</Badge>}
+            {loading ? null : (
+              // One save-state chip: the publish state, then what is
+              // happening to the draft right now (the Four Moments Rule).
+              <Badge
+                data-sandbox-save-state
+                role="status"
+                variant={
+                  conflict
+                    ? "destructive"
+                    : triggerDraft.changes > 0
+                      ? "warning"
+                      : "outline"
+                }
+              >
+                {conflict
+                  ? "Not saved"
+                  : `${status.label} · ${
+                      saving
+                        ? "Saving…"
+                        : triggerDraft.changes > 0
+                          ? `${triggerDraft.changes} unsaved trigger ${
+                              triggerDraft.changes === 1 ? "change" : "changes"
+                            }`
+                          : "Saved"
+                    }`}
+              </Badge>
+            )}
           </div>
           <div className="flex shrink-0 gap-2">
             {section === "Build" ? (
@@ -1237,20 +1362,37 @@ export default function SandboxPage() {
                 </Button>
               </>
             ) : null}
-            <Button
-              disabled={
-                loading ||
-                commandBusy ||
-                testPending ||
-                !status.publishable ||
-                triggerDraft.dirty ||
-                triggerDraft.pending ||
-                designerDraftDirty
+            <DisabledReason
+              reason={
+                loading || commandBusy || testPending || triggerDraft.pending
+                  ? null
+                  : triggerDraft.dirty
+                    ? "Save trigger changes first."
+                    : triggerDraft.kept
+                      ? "Restore or discard trigger changes first."
+                      : designerDraftDirty
+                        ? "Save or cancel your edits first."
+                        : !status.publishable
+                          ? "Nothing to publish yet."
+                          : null
               }
-              onClick={() => setReviewOpen(true)}
             >
-              Review &amp; Publish
-            </Button>
+              <Button
+                disabled={
+                  loading ||
+                  commandBusy ||
+                  testPending ||
+                  !status.publishable ||
+                  triggerDraft.dirty ||
+                  triggerDraft.pending ||
+                  triggerDraft.kept !== null ||
+                  designerDraftDirty
+                }
+                onClick={() => setReviewOpen(true)}
+              >
+                Review &amp; Publish
+              </Button>
+            </DisabledReason>
             <SandboxHeaderActions
               versionsRefreshKey={versionsRefreshKey}
               versionCapacity={versionCapacity}
@@ -1262,14 +1404,18 @@ export default function SandboxPage() {
                 designerDraftDirty ||
                 testPending ||
                 triggerDraft.dirty ||
-                triggerDraft.pending
+                triggerDraft.pending ||
+                triggerDraft.kept !== null
               }
               templatesOpen={templatesOpen}
               onTemplatesOpenChange={setTemplatesOpen}
+              checkpointOpen={checkpointOpen}
+              onCheckpointOpenChange={setCheckpointOpen}
               canCheckpoint={
                 design.departments.length > 0 || design.modules.length > 0
               }
               canDiscard={status.publishable}
+              hasPublish={session?.publishedHash !== undefined}
               onCreateCheckpoint={checkpoint}
               onImport={importFile}
               onApplyTemplate={applyTemplate}
@@ -1284,32 +1430,91 @@ export default function SandboxPage() {
         loading={loading && session === null}
         label="Opening Sandbox"
         skeleton={<SandboxSkeleton build={section === "Build"} />}
-        className={
-          section === "Build" ? sandboxBuildRegionClass : sandboxRegionClass
-        }
+        className={sandboxRegionClass}
       >
         {feedbackError && !conflict ? (
           <Alert variant="destructive">{feedbackError}</Alert>
         ) : null}
-        {message ? <Alert role="status">{message}</Alert> : null}
+        {triggerDraft.kept ? (
+          // Edits kept from before a reload wait here until the person
+          // chooses; nothing is applied on its own.
+          <Alert variant="warning" role="status">
+            <p className="font-medium">Restore unsaved trigger changes?</p>
+            {triggerDraft.kept.baseChanged ? (
+              <p className="mt-1">
+                The saved triggers changed since. Saving yours replaces them.
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {/* Restore would replace edits made since the reload, so it
+                  waits until those are saved or discarded. */}
+              <DisabledReason
+                reason={
+                  triggerDraft.dirty
+                    ? "Save or discard your current trigger edits first."
+                    : null
+                }
+              >
+                <Button
+                  size="sm"
+                  disabled={triggerDraft.dirty}
+                  onClick={() => {
+                    triggerDraft.restoreKept();
+                    if (section !== "Triggers") navigate("Triggers");
+                  }}
+                >
+                  Restore
+                </Button>
+              </DisabledReason>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const dropped = triggerDraft.discardKept();
+                  // Undo offers them again; it never replaces newer edits.
+                  if (dropped)
+                    reportUndoable("Unsaved trigger changes discarded", () =>
+                      triggerDraft.keepAgain(dropped),
+                    );
+                }}
+              >
+                Discard
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
         {issues.length ? (
           <Alert variant="warning" role="status">
             <p>
-              {issues.length} item{issues.length === 1 ? "" : "s"} need
-              attention.
+              {issues.length === 1
+                ? "1 item needs attention."
+                : `${issues.length} items need attention.`}
             </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {issues.slice(0, 3).map((issue) => (
-                <Button
-                  key={`${issue.code}-${issue.targetId ?? ""}`}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => selectIssue(issue)}
+            {/* The fact as text, then a short button that opens it, as in
+                the review's blocker list. */}
+            <ul className="mt-2 grid gap-2">
+              {issues.slice(0, 3).map((issue, index) => (
+                <li
+                  key={`${issue.code}-${issue.targetId ?? ""}-${issue.message}`}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1"
                 >
-                  Review: {issue.message}
-                </Button>
+                  <span id={`sandbox-issue-${index}`}>{issue.message}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-describedby={`sandbox-issue-${index}`}
+                    onClick={() => selectIssue(issue)}
+                  >
+                    {issueActionLabel(issue)}
+                  </Button>
+                </li>
               ))}
-            </div>
+              {issues.length > 3 ? (
+                <li className="text-muted-foreground">
+                  {issues.length - 3} more after these.
+                </li>
+              ) : null}
+            </ul>
           </Alert>
         ) : null}
         {section === "Build" ? (
@@ -1330,7 +1535,9 @@ export default function SandboxPage() {
             design={design}
             change={change}
             initializeLayout={initializeLayout}
-            notify={setMessage}
+            notify={reportDone}
+            notifyError={reportError}
+            notifyUndoable={(text) => reportUndoable(text, () => void undo())}
             onStartFromTemplate={() => setTemplatesOpen(true)}
             pending={
               commandBusy ||
@@ -1345,129 +1552,136 @@ export default function SandboxPage() {
           />
         ) : null}
         {section === "Triggers" && session ? (
-          <TriggerStudio
-            design={session.document.design}
-            triggers={session.document.triggers}
-            runs={triggerRuns}
-            activity={triggerActivity}
-            initialSelectedId={search.get("rule") ?? undefined}
-            onRefreshActivity={refreshTriggerActivity}
-            onChange={(triggers) =>
-              saveDocument({ ...session.document, triggers })
-            }
-            onStateChange={setTriggerDraft}
-          />
+          <div className={sandboxPanelClass}>
+            <TriggerStudio
+              design={session.document.design}
+              triggerDraft={triggerDraft}
+              runs={triggerRuns}
+              activity={triggerActivity}
+              initialSelectedId={search.get("rule") ?? undefined}
+              onRefreshActivity={refreshTriggerActivity}
+            />
+          </div>
         ) : null}
         {section === "Test" && session ? (
-          <TestWorkspace
-            design={session.document.design}
-            triggers={session.document.triggers}
-            runs={testRuns}
-            onRun={async (input) => {
-              const run = await createSandboxTest({
-                expectedRevision: session.revision,
-                ...input,
-              });
-              setTestRuns((current) => [
-                run,
-                ...current.filter((item) => item.id !== run.id),
-              ]);
-            }}
-            onClear={async () => {
-              await clearSandboxTests();
-              setTestRuns([]);
-            }}
-            onPendingChange={setTestPending}
-            draftRevision={session.revision}
-            initialRunId={search.get("run")}
-            onShowOnCanvas={(run) => {
-              const params = new URLSearchParams(search.toString());
-              for (const key of ["inspect", "module", "department", "rule"])
-                params.delete(key);
-              params.set("trace", run.input.moduleId);
-              params.set("run", run.id);
-              params.set("section", "build");
-              router.push(`/sandbox?${params.toString()}`, { scroll: false });
-            }}
-          />
+          <div className={sandboxPanelClass}>
+            <TestWorkspace
+              design={session.document.design}
+              triggers={session.document.triggers}
+              runs={testRuns}
+              onRun={async (input) => {
+                const run = await createSandboxTest({
+                  expectedRevision: session.revision,
+                  ...input,
+                });
+                setTestRuns((current) => [
+                  run,
+                  ...current.filter((item) => item.id !== run.id),
+                ]);
+              }}
+              onClear={async () => {
+                await clearSandboxTests();
+                setTestRuns([]);
+              }}
+              onPendingChange={setTestPending}
+              draftRevision={session.revision}
+              initialRunId={search.get("run")}
+              onShowOnCanvas={(run) => {
+                const params = new URLSearchParams(search.toString());
+                for (const key of ["inspect", "module", "department", "rule"])
+                  params.delete(key);
+                params.set("trace", run.input.moduleId);
+                params.set("run", run.id);
+                params.set("section", "build");
+                router.push(`/sandbox?${params.toString()}`, { scroll: false });
+              }}
+            />
+          </div>
         ) : null}
         {section === "History" ? (
-          <VersionsWorkspace
-            versionCapacity={versionCapacity}
-            refreshKey={versionsRefreshKey}
-            getVersion={async (id) => {
-              try {
-                return {
-                  ok: true as const,
-                  value: await getSandboxVersion(id),
-                };
-              } catch (error) {
-                return commandFailure(error);
+          <div className={sandboxPanelClass}>
+            <VersionsWorkspace
+              versionCapacity={versionCapacity}
+              refreshKey={versionsRefreshKey}
+              getVersion={async (id) => {
+                try {
+                  return {
+                    ok: true as const,
+                    value: await getSandboxVersion(id),
+                  };
+                } catch (error) {
+                  return commandFailure(error);
+                }
+              }}
+              updateVersion={async (id, label) => {
+                if (!session) return sandboxStillLoading();
+                setPending(true);
+                try {
+                  const version = await updateSandboxVersion({
+                    versionId: id,
+                    expectedRevision: session.revision,
+                    label,
+                  });
+                  await syncVersionMetadata();
+                  return { ok: true as const, value: version };
+                } catch (error) {
+                  return commandFailure(error);
+                } finally {
+                  setPending(false);
+                }
+              }}
+              restoreVersion={async (id) => {
+                if (!session) return sandboxStillLoading();
+                setPending(true);
+                try {
+                  const response = await restoreSandboxVersion({
+                    versionId: id,
+                    expectedRevision: session.revision,
+                  });
+                  setSession(openSandboxDocumentSession(response));
+                  await refreshVersions();
+                  return { ok: true as const, value: response };
+                } catch (error) {
+                  return commandFailure(error);
+                } finally {
+                  setPending(false);
+                }
+              }}
+              deleteVersion={async (id) => {
+                if (!session) return sandboxStillLoading();
+                setPending(true);
+                try {
+                  await deleteSandboxVersion({
+                    versionId: id,
+                    expectedRevision: session.revision,
+                  });
+                  await syncVersionMetadata();
+                  return { ok: true as const, value: null };
+                } catch (error) {
+                  return commandFailure(error);
+                } finally {
+                  setPending(false);
+                }
+              }}
+              notifyError={reportError}
+              notifyDone={reportDone}
+              pending={commandBusy}
+              onSaveCheckpoint={() => setCheckpointOpen(true)}
+              canCheckpoint={
+                design.departments.length > 0 || design.modules.length > 0
               }
-            }}
-            updateVersion={async (id, label) => {
-              if (!session) return sandboxStillLoading();
-              setPending(true);
-              try {
-                const version = await updateSandboxVersion({
-                  versionId: id,
-                  expectedRevision: session.revision,
-                  label,
-                });
-                await syncVersionMetadata();
-                return { ok: true as const, value: version };
-              } catch (error) {
-                return commandFailure(error);
-              } finally {
-                setPending(false);
-              }
-            }}
-            restoreVersion={async (id) => {
-              if (!session) return sandboxStillLoading();
-              setPending(true);
-              try {
-                const response = await restoreSandboxVersion({
-                  versionId: id,
-                  expectedRevision: session.revision,
-                });
-                setSession(openSandboxDocumentSession(response));
-                await refreshVersions();
-                return { ok: true as const, value: response };
-              } catch (error) {
-                return commandFailure(error);
-              } finally {
-                setPending(false);
-              }
-            }}
-            deleteVersion={async (id) => {
-              if (!session) return sandboxStillLoading();
-              setPending(true);
-              try {
-                await deleteSandboxVersion({
-                  versionId: id,
-                  expectedRevision: session.revision,
-                });
-                await syncVersionMetadata();
-                return { ok: true as const, value: null };
-              } catch (error) {
-                return commandFailure(error);
-              } finally {
-                setPending(false);
-              }
-            }}
-            notifyError={reportError}
-            notifyDone={reportDone}
-            pending={commandBusy}
-          />
+            />
+          </div>
         ) : null}
         <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
           <span>{counts(design)}</span>
-          <span>
-            Draft
-            {session?.history.past.length
-              ? ` · ${session.history.past.length} ${session.history.past.length === 1 ? "change" : "changes"} you can undo`
-              : ""}
-          </span>
+          {session?.history.past.length ? (
+            <span>
+              {session.history.past.length}{" "}
+              {session.history.past.length === 1 ? "change" : "changes"} you can
+              undo
+            </span>
+          ) : null}
         </footer>
         {session ? (
           <ReviewPublishDialog
@@ -1480,10 +1694,13 @@ export default function SandboxPage() {
               triggerDraft.dirty ||
               triggerDraft.pending
             }
-            localBlockers={triggerPublicationBlockers(
-              session.document.triggers,
-              session.document.design,
-            )}
+            localBlockers={publicationBlockers}
+            onOpenBlocker={(blocker) => {
+              // The review only reads, and it cannot open over unsaved
+              // triggers, so nothing holds this move.
+              setReviewOpen(false);
+              openIssue({ severity: "error", ...blocker });
+            }}
             onOpenChange={setReviewOpen}
             onPendingChange={setPublicationPending}
             onPreview={() =>
@@ -1504,13 +1721,21 @@ export default function SandboxPage() {
             onPublished={async () => {
               await refresh();
               if (section === "Triggers") await refreshTriggerActivity();
-              setMessage(
-                "Your changes are now published to the live workspace.",
-              );
+              reportDone("Changes published");
               setPublishCount((count) => count + 1);
             }}
           />
         ) : null}
+        <TriggerLeaveDialog
+          open={leaveRequest !== null}
+          draft={triggerDraft}
+          onStay={() => setLeaveRequest(null)}
+          onLeave={() => {
+            const resume = leaveRequest;
+            setLeaveRequest(null);
+            resume?.();
+          }}
+        />
         <SandboxLifecycleDialog
           request={
             lifecycleRequest?.operation === "purge" && !purgeEnabled

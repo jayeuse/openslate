@@ -8,7 +8,22 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { TestComparison, TestOutcome } from "./test-run-result";
+import {
+  TEST_OUTCOME_HEADLINE_ID,
+  TEST_RESULT_HEADING_ID,
+  TestComparison,
+  TestOutcome,
+} from "./test-run-result";
+import { Info } from "lucide-react";
+import { AdvancedSection } from "@/components/ui/advanced-section";
+import { DisabledReason } from "@/components/ui/disabled-reason";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
+import { weekdayOptions } from "./trigger-flow";
 import {
   defaultTestTrigger,
   summarizeTestRun,
@@ -165,6 +180,13 @@ export function TestWorkspace({
   const [error, setError] = useState("");
   const workspaceRef = useRef<HTMLElement>(null);
   const [wide, setWide] = useState(false);
+  // Phones switch between Setup and Result; a run moves to the result.
+  const [phone, setPhone] = useState(false);
+  const [phoneView, setPhoneView] = useState<"setup" | "result">(
+    initialRun ? "result" : "setup",
+  );
+  // After a run on a phone, the result heading takes focus once it renders.
+  const [focusResult, setFocusResult] = useState(false);
   const [filter, setFilter] = useState<"relevant" | "all" | "edited">(
     "relevant",
   );
@@ -220,12 +242,23 @@ export function TestWorkspace({
   useEffect(() => {
     const element = workspaceRef.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) =>
-      setWide(entry.contentRect.width >= 1100),
-    );
+    const observer = new ResizeObserver(([entry]) => {
+      setWide(entry.contentRect.width >= 900);
+      setPhone(entry.contentRect.width < 640);
+    });
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  useEffect(() => {
+    if (!focusResult) return;
+    const heading = document.getElementById(TEST_RESULT_HEADING_ID);
+    const headline = document.getElementById(TEST_OUTCOME_HEADLINE_ID);
+    if (!heading || !headline) return;
+    // Show the whole result header, then read the outcome first.
+    heading.scrollIntoView({ block: "start" });
+    headline.focus({ preventScroll: true });
+    setFocusResult(false);
+  }, [focusResult, phoneView, selectedRun?.id]);
   useEffect(() => {
     if (!focusFieldId) return;
     document.getElementById(`sandbox-test-${focusFieldId}`)?.focus();
@@ -341,6 +374,23 @@ export function TestWorkspace({
               previousValue: Number(previousValue),
             };
 
+  // The shown result goes stale as soon as the setup differs from the one
+  // it was shown with (TST-2).
+  const setupKey = JSON.stringify({
+    moduleId,
+    values,
+    event,
+    triggerMode,
+    triggerIds,
+  });
+  const [baseline, setBaseline] = useState(setupKey);
+  const [baselineRunId, setBaselineRunId] = useState(selectedRun?.id ?? null);
+  if ((selectedRun?.id ?? null) !== baselineRunId) {
+    setBaselineRunId(selectedRun?.id ?? null);
+    setBaseline(setupKey);
+  }
+  const inputsChanged = selectedRun !== undefined && setupKey !== baseline;
+
   async function run() {
     if (!moduleId) {
       setError("Add a module with fields before running a test.");
@@ -364,12 +414,13 @@ export function TestWorkspace({
       setError("Enter the previous number before running this test.");
       return;
     }
-    await submit({
+    const ran = await submit({
       moduleId,
       values,
       event,
       ...(triggerMode === "selected" ? { triggerIds } : {}),
     });
+    if (ran) setBaseline(setupKey);
   }
 
   async function submit(input: Parameters<Props["onRun"]>[0]) {
@@ -378,12 +429,18 @@ export function TestWorkspace({
     try {
       await onRun(input);
       setSelectedRunId(null);
+      if (phone) {
+        setPhoneView("result");
+        setFocusResult(true);
+      }
+      return true;
     } catch (reason) {
       setError(
         reason instanceof Error
           ? reason.message
           : "The test could not run. Try again.",
       );
+      return false;
     } finally {
       setPending(false);
     }
@@ -411,34 +468,51 @@ export function TestWorkspace({
     <section
       ref={workspaceRef}
       aria-label="Sandbox test"
-      className="@container/test grid min-w-0 gap-5"
+      className="@container/test flex h-full min-w-0 flex-col gap-5"
     >
       {error ? (
         <Alert variant="destructive" role="alert">
           {error}
         </Alert>
       ) : null}
-      <div className="border-border min-w-0 overflow-hidden rounded-xl border @min-[1100px]/test:h-[calc(100dvh-15rem)]">
+      {phone ? (
+        <ToggleGroup
+          aria-label="Test view"
+          variant="segmented"
+          multiple={false}
+          value={[phoneView]}
+          onValueChange={(selection) => {
+            const next = selection[0];
+            if (next === "setup" || next === "result") setPhoneView(next);
+          }}
+        >
+          <ToggleGroupItem value="setup">Setup</ToggleGroupItem>
+          <ToggleGroupItem value="result">Result</ToggleGroupItem>
+        </ToggleGroup>
+      ) : null}
+      <div className="border-border min-w-0 shrink-0 overflow-clip rounded-xl border @min-[900px]/test:h-[calc(100dvh-15rem)] xl:@min-[900px]/test:h-auto xl:@min-[900px]/test:min-h-0 xl:@min-[900px]/test:flex-1 xl:@min-[900px]/test:shrink">
         <ResizablePanelGroup
           orientation="horizontal"
           disabled={!wide}
-          className="block! h-auto! @min-[1100px]/test:flex! @min-[1100px]/test:h-full!"
+          className="block! h-auto! overflow-visible! @min-[900px]/test:flex! @min-[900px]/test:h-full! @min-[900px]/test:overflow-hidden!"
         >
           <ResizablePanel
+            id="sandbox-test-setup"
             defaultSize="18%"
             minSize={wide ? "20rem" : 0}
-            className="min-w-0 overflow-visible! @min-[1100px]/test:h-full @min-[1100px]/test:overflow-hidden!"
+            className={cn(
+              "min-w-0 overflow-visible! @min-[900px]/test:h-full @min-[900px]/test:overflow-hidden!",
+              phone && phoneView === "result" && "hidden",
+            )}
           >
             <section
               aria-label="Test setup"
-              className="bg-card border-border border-b p-4 @min-[1100px]/test:h-full @min-[1100px]/test:overflow-y-auto @min-[1100px]/test:border-b-0"
+              data-test-setup
+              className="bg-card border-border border-b p-4 @min-[900px]/test:h-full @min-[900px]/test:overflow-y-auto @min-[900px]/test:border-b-0"
             >
-              <h3 data-slot="section-title" className="font-semibold">
+              <h3 data-slot="section-title" className="mb-5 font-semibold">
                 Test setup
               </h3>
-              <p className="text-muted-foreground mt-2 mb-5 text-sm">
-                Choose what happens, then set the values to try.
-              </p>
               <fieldset
                 disabled={pending || clearing}
                 className="grid min-w-0 gap-5 [&_[data-slot=native-select-wrapper]]:w-full [&_select]:w-full"
@@ -566,9 +640,12 @@ export function TestWorkspace({
                             value={weekday}
                             onChange={(event) => setWeekday(event.target.value)}
                           >
-                            {[1, 2, 3, 4, 5, 6, 7].map((day) => (
-                              <NativeSelectOption key={day} value={String(day)}>
-                                Day {day}
+                            {weekdayOptions.map((day) => (
+                              <NativeSelectOption
+                                key={day.value}
+                                value={day.value}
+                              >
+                                {day.label}
                               </NativeSelectOption>
                             ))}
                           </NativeSelect>
@@ -577,70 +654,42 @@ export function TestWorkspace({
                     </>
                   ) : null}
                 </div>
-                <fieldset className="grid gap-2">
-                  <legend className="text-sm font-medium">Triggers</legend>
-                  <Field>
-                    <FieldLabel htmlFor={triggerModeLabelId}>
-                      Choose which to run
-                    </FieldLabel>
-                    <NativeSelect
-                      id={triggerModeLabelId}
-                      value={triggerMode}
-                      onChange={(event) =>
-                        setTriggerMode(event.target.value as "all" | "selected")
-                      }
-                    >
-                      <NativeSelectOption value="all">
-                        All enabled triggers
-                      </NativeSelectOption>
-                      <NativeSelectOption value="selected">
-                        Choose triggers
-                      </NativeSelectOption>
-                    </NativeSelect>
-                  </Field>
-                  {triggerMode === "selected"
-                    ? moduleTriggers.map((recordTrigger) => (
-                        <label
-                          key={recordTrigger.id}
-                          htmlFor={`sandbox-test-trigger-${recordTrigger.id}`}
-                          className="flex min-h-11 items-center gap-2 text-sm"
-                        >
-                          <Checkbox
-                            id={`sandbox-test-trigger-${recordTrigger.id}`}
-                            checked={triggerIds.includes(recordTrigger.id)}
-                            onCheckedChange={(checked) =>
-                              setTriggerIds(
-                                checked
-                                  ? [...triggerIds, recordTrigger.id]
-                                  : triggerIds.filter(
-                                      (id) => id !== recordTrigger.id,
-                                    ),
-                              )
-                            }
+                <fieldset
+                  className="grid gap-3"
+                  aria-labelledby="sandbox-test-values-label"
+                >
+                  <legend className="flex items-center gap-1 text-sm font-medium">
+                    <span id="sandbox-test-values-label">Test values</span>
+                    <Popover>
+                      <PopoverTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label="About Relevant"
+                            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring -my-2 inline-flex size-11 items-center justify-center rounded-sm outline-none focus-visible:outline-2 xl:my-0 xl:size-6"
                           />
-                          {recordTrigger.name}
-                        </label>
-                      ))
-                    : null}
-                </fieldset>
-                <fieldset className="grid gap-3">
-                  <legend className="text-sm font-medium">
-                    Temporary field values
+                        }
+                      >
+                        <Info aria-hidden="true" className="size-3.5" />
+                      </PopoverTrigger>
+                      <PopoverContent side="top" className="w-auto max-w-64">
+                        Relevant: required fields and fields your triggers use.
+                        Hidden fields keep their values.
+                      </PopoverContent>
+                    </Popover>
                   </legend>
-                  <p className="text-muted-foreground mb-2 text-xs">
-                    Relevant: required fields and fields your triggers use.
-                    Hidden fields keep their values.
-                  </p>
-                  <SearchField
-                    label="Find a field"
-                    placeholder="Find a field…"
-                    value={search}
-                    onValueChange={(value) => {
-                      setSearch(value);
-                      setLimit(12);
-                    }}
-                    className="w-full"
-                  />
+                  {fields.length > 12 ? (
+                    <SearchField
+                      label="Find a field"
+                      placeholder="Find a field…"
+                      value={search}
+                      onValueChange={(value) => {
+                        setSearch(value);
+                        setLimit(12);
+                      }}
+                      className="w-full"
+                    />
+                  ) : null}
                   <ToggleGroup
                     aria-label="Input fields"
                     multiple={false}
@@ -658,21 +707,10 @@ export function TestWorkspace({
                       setSearch("");
                       setLimit(12);
                     }}
-                    className="bg-muted flex w-full flex-wrap gap-1 rounded-lg p-1"
+                    variant="segmented"
                   >
                     {(["relevant", "all", "edited"] as const).map((item) => (
-                      <ToggleGroupItem
-                        key={item}
-                        value={item}
-                        aria-label={
-                          item === "all"
-                            ? "All input fields"
-                            : item === "edited"
-                              ? "Edited fields"
-                              : "Relevant fields"
-                        }
-                        className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
-                      >
+                      <ToggleGroupItem key={item} value={item}>
                         {item === "relevant"
                           ? "Relevant"
                           : item === "all"
@@ -696,7 +734,7 @@ export function TestWorkspace({
                         ? "No fields match your search."
                         : filter === "edited"
                           ? "No inputs have been edited."
-                          : "No fields are required for this selection. Use All to enter other values."}
+                          : "No relevant fields."}
                     </p>
                   )}
                   {matchingFields.slice(0, limit).map((field) => {
@@ -738,7 +776,7 @@ export function TestWorkspace({
                           <>
                             <Input
                               id={fieldControlId}
-                              placeholder="Enter a simulated user UUID"
+                              placeholder="Paste the person's ID"
                               aria-invalid={issue ? true : undefined}
                               aria-describedby={
                                 issue
@@ -757,8 +795,8 @@ export function TestWorkspace({
                               id={userHelpId}
                               className="text-muted-foreground text-xs"
                             >
-                              Test values are simulated UUIDs. Sandbox does not
-                              check live user eligibility.
+                              The test uses this ID as is. It does not check
+                              that the person can sign in.
                             </p>
                           </>
                         ) : field.config.kind === "select" ? (
@@ -834,19 +872,84 @@ export function TestWorkspace({
                       Show more fields
                     </Button>
                   )}
-                  <p className="text-muted-foreground text-xs">
-                    Showing {Math.min(limit, matchingFields.length)} of{" "}
-                    {matchingFields.length} matching fields · {fields.length}{" "}
-                    total
-                  </p>
+                  {matchingFields.length > limit || search ? (
+                    <p className="text-muted-foreground text-xs">
+                      Showing {Math.min(limit, matchingFields.length)} of{" "}
+                      {matchingFields.length} matching fields · {fields.length}{" "}
+                      total
+                    </p>
+                  ) : null}
                 </fieldset>
-                <Button
-                  className="min-h-11"
-                  disabled={pending || clearing || !moduleId}
-                  onClick={() => void run()}
+                <AdvancedSection
+                  storageKey="sandbox.test"
+                  setCount={triggerMode === "selected" ? 1 : 0}
                 >
-                  Run test
-                </Button>
+                  <fieldset className="grid gap-2">
+                    <legend className="text-sm font-medium">
+                      Triggers to run
+                    </legend>
+                    <Field>
+                      <FieldLabel htmlFor={triggerModeLabelId}>
+                        Choose which to run
+                      </FieldLabel>
+                      <NativeSelect
+                        id={triggerModeLabelId}
+                        value={triggerMode}
+                        onChange={(event) =>
+                          setTriggerMode(
+                            event.target.value as "all" | "selected",
+                          )
+                        }
+                      >
+                        <NativeSelectOption value="all">
+                          All enabled triggers
+                        </NativeSelectOption>
+                        <NativeSelectOption value="selected">
+                          Choose triggers
+                        </NativeSelectOption>
+                      </NativeSelect>
+                    </Field>
+                    {triggerMode === "selected"
+                      ? moduleTriggers.map((recordTrigger) => (
+                          <label
+                            key={recordTrigger.id}
+                            htmlFor={`sandbox-test-trigger-${recordTrigger.id}`}
+                            className="flex min-h-11 items-center gap-2 text-sm"
+                          >
+                            <Checkbox
+                              id={`sandbox-test-trigger-${recordTrigger.id}`}
+                              checked={triggerIds.includes(recordTrigger.id)}
+                              onCheckedChange={(checked) =>
+                                setTriggerIds(
+                                  checked
+                                    ? [...triggerIds, recordTrigger.id]
+                                    : triggerIds.filter(
+                                        (id) => id !== recordTrigger.id,
+                                      ),
+                                )
+                              }
+                            />
+                            {recordTrigger.name}
+                          </label>
+                        ))
+                      : null}
+                  </fieldset>
+                </AdvancedSection>
+                <div className="bg-card sticky bottom-0 z-10 -mx-4 -mb-4 border-t px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                  <DisabledReason
+                    reason={moduleId ? null : "Add a module first."}
+                  >
+                    <Button
+                      className="min-h-11 w-full"
+                      disabled={clearing || !moduleId}
+                      pending={pending}
+                      pendingLabel="Running…"
+                      onClick={() => void run()}
+                    >
+                      Run test
+                    </Button>
+                  </DisabledReason>
+                </div>
               </fieldset>
             </section>
           </ResizablePanel>
@@ -854,10 +957,19 @@ export function TestWorkspace({
             <ResizableHandle withHandle aria-label="Resize test setup" />
           )}
           <ResizablePanel
+            id="sandbox-test-outcome"
             minSize={wide ? "18rem" : 0}
-            className="min-w-0 overflow-visible! @min-[1100px]/test:h-full @min-[1100px]/test:overflow-hidden!"
+            className={cn(
+              "min-w-0 overflow-visible! @min-[900px]/test:h-full @min-[900px]/test:overflow-hidden!",
+              phone && phoneView === "setup" && "hidden",
+            )}
           >
-            <div className="border-border min-w-0 border-b p-5 @min-[1100px]/test:h-full @min-[1100px]/test:overflow-y-auto @min-[1100px]/test:border-b-0">
+            <div className="border-border min-w-0 border-b p-5 @min-[900px]/test:h-full @min-[900px]/test:overflow-y-auto @min-[900px]/test:border-b-0">
+              {pending ? (
+                <p role="status" className="text-muted-foreground mb-4 text-sm">
+                  Running test…
+                </p>
+              ) : null}
               <TestOutcome
                 design={design}
                 run={selectedRun}
@@ -880,6 +992,8 @@ export function TestWorkspace({
                   document.getElementById(moduleLabelId)?.focus();
                 }}
                 currentModuleId={moduleId}
+                inputsChanged={inputsChanged}
+                onRunCurrent={() => void run()}
                 onShowField={(id) => {
                   setSearch(
                     fields.find((field) => field.id === id)?.name ?? "",
@@ -889,81 +1003,93 @@ export function TestWorkspace({
                   setFocusFieldId(id);
                 }}
               />
-              <section
-                aria-label="Recent test results"
-                className="border-border mt-6 border-t pt-4"
+              <AdvancedSection
+                storageKey="sandbox.test-results"
+                className="mt-6"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3
-                    data-slot="section-title"
-                    className="text-sm font-semibold"
-                  >
-                    Recent results
-                  </h3>
-                  {runs.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      className="min-h-11"
-                      disabled={pending || clearing}
-                      onClick={() => void clear()}
+                <section aria-label="Recent test results">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3
+                      data-slot="section-title"
+                      className="text-sm font-semibold"
                     >
-                      {clearing ? "Clearing results…" : "Clear results"}
-                    </Button>
-                  )}
-                </div>
-                {runs.length ? (
-                  <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto">
-                    {runs.map((item, index) => (
+                      Recent results
+                    </h3>
+                    {runs.length > 0 && (
                       <Button
-                        key={item.id}
-                        aria-label={`View test ${index + 1}`}
-                        aria-pressed={selectedRun?.id === item.id}
-                        variant={
-                          selectedRun?.id === item.id ? "secondary" : "ghost"
-                        }
-                        className="h-auto min-h-11 justify-start px-3 py-2 text-left whitespace-normal"
-                        onClick={() => setSelectedRunId(item.id)}
+                        variant="ghost"
+                        className="min-h-11"
+                        disabled={pending || clearing}
+                        onClick={() => void clear()}
                       >
-                        <span className="min-w-0">
-                          <span className="block truncate">
-                            {design.modules.find(
-                              (entry) => entry.id === item.input.moduleId,
-                            )?.name ?? "Unavailable module"}
-                          </span>
-                          <span className="text-muted-foreground block text-xs">
-                            {new Date(item.createdAt).toLocaleString()} ·{" "}
-                            {item.result.issues.length
-                              ? "Needs attention"
-                              : "Test complete"}
-                          </span>
-                        </span>
+                        {clearing ? "Clearing results…" : "Clear results"}
                       </Button>
-                    ))}
+                    )}
                   </div>
-                ) : (
-                  <p className="text-muted-foreground mt-3 text-sm">
-                    No saved test results yet.
-                  </p>
+                  {runs.length ? (
+                    <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto">
+                      {runs.map((item) => (
+                        <Button
+                          key={item.id}
+                          aria-pressed={selectedRun?.id === item.id}
+                          variant="ghost"
+                          className="h-auto min-h-11 justify-start px-3 py-2 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-pressed:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
+                          onClick={() => setSelectedRunId(item.id)}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate">
+                              {design.modules.find(
+                                (entry) => entry.id === item.input.moduleId,
+                              )?.name ?? "Unavailable module"}
+                            </span>
+                            <span className="text-muted-foreground block text-xs">
+                              {new Date(item.createdAt).toLocaleString()} ·{" "}
+                              {item.result.issues.length
+                                ? "Needs attention"
+                                : "Test complete"}
+                            </span>
+                          </span>
+                        </Button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground mt-3 text-sm">
+                      No saved test results yet.
+                    </p>
+                  )}
+                </section>
+              </AdvancedSection>
+            </div>
+          </ResizablePanel>
+          {/* Field comparison waits for a result: before the first run the
+              outcome's empty state is the one place that says what to do. */}
+          {selectedRun ? (
+            <>
+              {wide && (
+                <ResizableHandle
+                  withHandle
+                  aria-label="Resize field comparison"
+                />
+              )}
+              <ResizablePanel
+                id="sandbox-test-comparison"
+                defaultSize="26%"
+                minSize={wide ? "18rem" : 0}
+                className={cn(
+                  "min-w-0 overflow-visible! @min-[900px]/test:h-full @min-[900px]/test:overflow-hidden!",
+                  phone && phoneView === "setup" && "hidden",
                 )}
-              </section>
-            </div>
-          </ResizablePanel>
-          {wide && (
-            <ResizableHandle withHandle aria-label="Resize field comparison" />
-          )}
-          <ResizablePanel
-            defaultSize="26%"
-            minSize={wide ? "18rem" : 0}
-            className="min-w-0 overflow-visible! @min-[1100px]/test:h-full @min-[1100px]/test:overflow-hidden!"
-          >
-            <div className="bg-card min-w-0 p-4 @min-[1100px]/test:h-full @min-[1100px]/test:overflow-y-auto">
-              <TestComparison
-                key={selectedRun?.id ?? "empty"}
-                design={design}
-                run={selectedRun}
-              />
-            </div>
-          </ResizablePanel>
+              >
+                <div className="bg-card min-w-0 p-4 @min-[900px]/test:h-full @min-[900px]/test:overflow-y-auto">
+                  <TestComparison
+                    key={selectedRun.id}
+                    design={design}
+                    run={selectedRun}
+                  />
+                </div>
+              </ResizablePanel>
+            </>
+          ) : null}
         </ResizablePanelGroup>
       </div>
     </section>

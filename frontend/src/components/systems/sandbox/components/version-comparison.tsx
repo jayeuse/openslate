@@ -91,7 +91,7 @@ export function VersionComparison({
         ].map(({ version, marker, label }) => (
           <div key={marker} className="min-w-0">
             <p className="text-muted-foreground flex items-center gap-2 text-xs">
-              <span className="bg-muted text-foreground flex size-6 shrink-0 items-center justify-center rounded-md font-semibold">
+              <span className="border-action-text/30 bg-action-tint text-action-text flex size-6 shrink-0 items-center justify-center rounded-md border font-semibold">
                 {marker}
               </span>
               {label} · v{version.sequence}

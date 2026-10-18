@@ -116,6 +116,9 @@ export function AppShell({
   const router = useRouter();
   const isComms = pathname === "/comms";
   const isAccess = pathname === "/access";
+  // On desktop (1280px and up) the Sandbox fills the viewport and never
+  // scrolls; its panels do. Phones and tablets scroll the page.
+  const isSandbox = pathname === "/sandbox";
   const isManage = pathname === "/manage";
   const suspended = useWorkspaceInteractionSuspended();
   const queryClient = useQueryClient();
@@ -355,7 +358,9 @@ export function AppShell({
             "app-shell bg-background text-foreground",
             isAccess
               ? "fixed inset-0 h-screen min-h-0 overflow-hidden"
-              : "min-h-screen",
+              : isSandbox
+                ? "min-h-screen xl:fixed xl:inset-0 xl:h-screen xl:min-h-0 xl:overflow-hidden"
+                : "min-h-screen",
           )}
           style={sidebarStyle}
           data-sidebar-resizing={resizing || undefined}
@@ -537,7 +542,11 @@ export function AppShell({
           <div
             className={cn(
               "min-w-0 flex-1",
-              isComms || isAccess ? "h-screen min-h-0" : "min-h-screen",
+              isComms || isAccess
+                ? "h-screen min-h-0"
+                : isSandbox
+                  ? "min-h-screen xl:h-screen xl:min-h-0"
+                  : "min-h-screen",
             )}
           >
             <header
@@ -572,9 +581,11 @@ export function AppShell({
               className={cn(
                 isComms || isAccess
                   ? "flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden"
-                  : isManage
-                    ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3"
-                    : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
+                  : isSandbox
+                    ? "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7 xl:flex xl:h-[calc(100dvh-3.5rem)] xl:min-h-0 xl:flex-col xl:overflow-hidden"
+                    : isManage
+                      ? "min-h-[calc(100vh-3.5rem)] p-3 sm:px-5 sm:py-3"
+                      : "min-h-[calc(100vh-3.5rem)] p-4 sm:px-5 sm:py-7",
               )}
             >
               {children}

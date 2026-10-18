@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import {
   Dialog,
+  DialogCloseButton,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -44,6 +45,29 @@ export function OrganizationTemplateDialog({
   );
   const [error, setError] = useState("");
   const [applying, setApplying] = useState(false);
+  const idPrefix = useId();
+  /** One choice, so the cards are a radio group: arrows move and choose. */
+  function onTemplateKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!step || pending) return;
+    event.preventDefault();
+    const index = SANDBOX_ORGANIZATION_TEMPLATES.findIndex(
+      (template) => template.id === selectedTemplateId,
+    );
+    const count = SANDBOX_ORGANIZATION_TEMPLATES.length;
+    const next = SANDBOX_ORGANIZATION_TEMPLATES[(index + step + count) % count];
+    if (!next) return;
+    setSelectedTemplateId(next.id);
+    setError("");
+    event.currentTarget
+      .querySelector<HTMLElement>(`[data-template-id="${next.id}"]`)
+      ?.focus();
+  }
   const selectedTemplate = SANDBOX_ORGANIZATION_TEMPLATES.find(
     (template) => template.id === selectedTemplateId,
   );
@@ -57,132 +81,164 @@ export function OrganizationTemplateDialog({
         onOpenChange(nextOpen);
       }}
     >
+      {/* The cards scroll; the footer with the warning and the confirm
+          button stays in view, as in the review. */}
       <DialogContent
         aria-busy={applying || undefined}
-        className="max-h-[90dvh] max-w-6xl overflow-y-auto max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11"
+        className="flex max-w-6xl flex-col overflow-hidden p-0 max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11"
       >
-        <DialogTitle>Organization templates</DialogTitle>
-        <DialogDescription>
-          Start from a detailed operating baseline. Nothing is applied until you
-          select a template and confirm the replacement.
-        </DialogDescription>
-        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {SANDBOX_ORGANIZATION_TEMPLATES.map((template) => {
-              const stats = sandboxTemplateStats(template);
-              const selected = template.id === selectedTemplateId;
-              return (
-                <button
-                  key={template.id}
-                  type="button"
-                  aria-label={`Select ${template.name}`}
-                  aria-pressed={selected}
-                  className="focus-visible:outline-ring rounded-xl text-left outline-none focus-visible:outline-2"
-                  disabled={pending}
-                  onClick={() => {
-                    setSelectedTemplateId(template.id);
-                    setError("");
-                  }}
-                >
-                  <Card
-                    className={
-                      selected
-                        ? "border-primary ring-primary h-full ring-1"
-                        : "hover:border-foreground/30 h-full"
-                    }
+        <DialogCloseButton disabled={pending} />
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <DialogTitle className="pr-12">Organization templates</DialogTitle>
+          <DialogDescription>
+            Nothing changes until you confirm.
+          </DialogDescription>
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]">
+            <div
+              role="radiogroup"
+              aria-label="Templates"
+              className="grid gap-3 sm:grid-cols-2"
+              onKeyDown={onTemplateKeyDown}
+            >
+              {SANDBOX_ORGANIZATION_TEMPLATES.map((template) => {
+                const stats = sandboxTemplateStats(template);
+                const selected = template.id === selectedTemplateId;
+                const id = `${idPrefix}-${template.id}`;
+                return (
+                  <button
+                    key={template.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-labelledby={`${id}-name`}
+                    aria-describedby={`${id}-description ${id}-stats`}
+                    tabIndex={selected ? 0 : -1}
+                    data-template-id={template.id}
+                    className="focus-visible:outline-ring rounded-xl text-left outline-hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid"
+                    disabled={pending}
+                    onClick={() => {
+                      setSelectedTemplateId(template.id);
+                      setError("");
+                    }}
                   >
-                    <CardHeader>
-                      <p className="text-muted-foreground text-xs font-medium uppercase">
-                        {template.category}
+                    <Card
+                      className={
+                        selected
+                          ? "border-primary ring-primary h-full ring-1"
+                          : "hover:border-foreground/30 h-full"
+                      }
+                    >
+                      <CardHeader>
+                        <p className="text-muted-foreground text-xs font-medium">
+                          {template.category}
+                        </p>
+                        <CardTitle id={`${id}-name`}>{template.name}</CardTitle>
+                        <CardDescription id={`${id}-description`}>
+                          {template.description}
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent
+                        id={`${id}-stats`}
+                        className="text-muted-foreground text-xs tabular-nums"
+                      >
+                        {stats.departments} departments · {stats.modules}{" "}
+                        modules · {stats.fields} fields
+                      </CardContent>
+                    </Card>
+                  </button>
+                );
+              })}
+            </div>
+            {selectedTemplate ? (
+              <Card className="h-fit lg:sticky lg:top-0">
+                <CardHeader>
+                  <CardTitle>{selectedTemplate.name}</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-4 text-sm">
+                  {(() => {
+                    const stats = sandboxTemplateStats(selectedTemplate);
+                    return (
+                      // Each count stays on one line with its noun.
+                      <p className="text-muted-foreground flex flex-wrap gap-x-1 tabular-nums">
+                        {[
+                          `${stats.departments} departments`,
+                          `${stats.modules} modules`,
+                          `${stats.fields} fields`,
+                          `${stats.relationships} relationships`,
+                          `${stats.triggers} triggers`,
+                        ].map((part, index, parts) => (
+                          // The separator ends its part, so no line starts with it.
+                          <span key={part} className="whitespace-nowrap">
+                            {part}
+                            {index < parts.length - 1 ? " ·" : ""}
+                          </span>
+                        ))}
                       </p>
-                      <CardTitle>{template.name}</CardTitle>
-                      <CardDescription>{template.description}</CardDescription>
-                    </CardHeader>
-                    <CardContent className="text-muted-foreground text-xs tabular-nums">
-                      {stats.departments} departments · {stats.modules} modules
-                      · {stats.fields} fields
-                    </CardContent>
-                  </Card>
-                </button>
-              );
-            })}
+                    );
+                  })()}
+                  <section>
+                    <h3 data-slot="section-title" className="font-medium">
+                      Recommended for
+                    </h3>
+                    <ul className="text-muted-foreground mt-2 list-inside list-disc space-y-1">
+                      {selectedTemplate.recommendedFor.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </section>
+                  <section>
+                    <h3 data-slot="section-title" className="font-medium">
+                      What&apos;s included
+                    </h3>
+                    <ul className="text-muted-foreground mt-2 list-inside list-disc space-y-1">
+                      {selectedTemplate.highlights.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </section>
+                </CardContent>
+              </Card>
+            ) : null}
           </div>
-          {selectedTemplate ? (
-            <Card className="h-fit lg:sticky lg:top-0">
-              <CardHeader>
-                <CardTitle>{selectedTemplate.name}</CardTitle>
-                <CardDescription>
-                  Complete organization baseline
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4 text-sm">
-                {(() => {
-                  const stats = sandboxTemplateStats(selectedTemplate);
-                  return (
-                    <p className="text-muted-foreground tabular-nums">
-                      {stats.departments} departments · {stats.modules} modules
-                      · {stats.fields} fields · {stats.relationships}{" "}
-                      relationships · {stats.triggers} triggers
-                    </p>
-                  );
-                })()}
-                <section>
-                  <h3 className="font-medium">Recommended for</h3>
-                  <ul className="text-muted-foreground mt-2 list-inside list-disc space-y-1">
-                    {selectedTemplate.recommendedFor.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h3 className="font-medium">Included workflow coverage</h3>
-                  <ul className="text-muted-foreground mt-2 list-inside list-disc space-y-1">
-                    {selectedTemplate.highlights.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </section>
-                <Alert variant="warning">
-                  Applying this template replaces the current shared Sandbox
-                  draft. The import is recorded in version history.
-                </Alert>
-              </CardContent>
-            </Card>
-          ) : null}
         </div>
-        {error ? (
-          <Alert role="alert" variant="destructive">
-            {error}
-          </Alert>
-        ) : null}
-        <DialogFooter>
-          <Button
-            variant="outline"
-            disabled={pending}
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
-          </Button>
-          <Button
-            disabled={pending || applying || !selectedTemplate}
-            onClick={async () => {
-              if (!selectedTemplate) return;
-              setError("");
-              setApplying(true);
-              const result = await onApply(selectedTemplate);
-              setApplying(false);
-              if (!result.ok) {
-                setError(result.error);
-                return;
-              }
-              onOpenChange(false);
-            }}
-          >
-            {applying
-              ? "Applying…"
-              : `Use ${selectedTemplate?.name ?? "template"}`}
-          </Button>
-        </DialogFooter>
+        <div className="border-border grid gap-3 border-t px-5 py-4">
+          {error ? (
+            <Alert role="alert" variant="destructive">
+              {error}
+            </Alert>
+          ) : null}
+          <p className="text-warn-text text-sm">
+            Replaces the shared draft. The import is saved in History.
+          </p>
+          <DialogFooter className="mt-0">
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={pending || applying || !selectedTemplate}
+              onClick={async () => {
+                if (!selectedTemplate) return;
+                setError("");
+                setApplying(true);
+                const result = await onApply(selectedTemplate);
+                setApplying(false);
+                if (!result.ok) {
+                  setError(result.error);
+                  return;
+                }
+                onOpenChange(false);
+              }}
+            >
+              {applying
+                ? "Applying…"
+                : `Use ${selectedTemplate?.name ?? "template"}`}
+            </Button>
+          </DialogFooter>
+        </div>
         {applying ? (
           <p role="status" aria-live="polite" className="sr-only">
             Applying template

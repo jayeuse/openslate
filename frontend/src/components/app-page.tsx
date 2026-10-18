@@ -34,6 +34,7 @@ import {
   currentOrganizationId,
   setCurrentOrganizationId,
 } from "@/lib/organization-context";
+import { subscribeIdentityChanges } from "@/lib/session-broadcast";
 import { OrganizationGate } from "@/components/organization-gate";
 import { toast } from "@/components/ui/toast";
 import { Alert } from "@/components/ui/alert";
@@ -113,7 +114,10 @@ function SessionVerificationMessage({
           available.
         </Alert>
       ) : (
-        <p className="text-muted-foreground text-center text-sm" role="status">
+        <p
+          className="text-muted-foreground text-center text-sm text-balance"
+          role="status"
+        >
           Checking your session…
         </p>
       )}
@@ -208,7 +212,7 @@ export function AppPage({ children }: AppPageProps) {
     controller: null,
   });
   const mfa = useMfaController(requestSessionRecheck, finishFactorRemoval);
-  const { bind: bindMfa, hide: hideMfa, clear: clearMfa } = mfa;
+  const { bind: bindMfa, hide: hideMfa, clear: clearMfa, open: mfaOpen } = mfa;
 
   useEffect(() => {
     mounted.current = true;
@@ -299,6 +303,19 @@ export function AppPage({ children }: AppPageProps) {
       });
     }
 
+    // Another tab signed in or out, or the session asked for a check: who is
+    // signed in may have changed, so cover first, then check. A hidden tab
+    // checks when it returns.
+    function concealAndRecheck() {
+      if (signOutAccepted.current) return;
+      concealWorkspace();
+      if (document.visibilityState === "visible")
+        setRetryVersion((version) => version + 1);
+    }
+
+    // Leaving the window does not change who is signed in, so the workspace
+    // stays visible while away. Returning covers it only while the session is
+    // rechecked, which is also when features re-read roles and permissions.
     function recheckOnReturn() {
       if (signOutAccepted.current || document.visibilityState !== "visible")
         return;
@@ -306,29 +323,30 @@ export function AppPage({ children }: AppPageProps) {
       setRetryVersion((version) => version + 1);
     }
 
-    function concealMountedWorkspace() {
-      // The first session request has no protected tree to conceal. Let it
-      // finish while backgrounded; a later focus will supersede and recheck.
-      if (!curtain.current && !mfaRequired) return;
-      concealWorkspace();
+    // MFA setup and verification show credential material, such as the
+    // authenticator QR code; hide it while the window is away.
+    function concealCredentials() {
+      if (mfaRequired || mfaOpen) concealWorkspace();
     }
 
     function onVisibilityChange() {
-      if (document.visibilityState === "hidden") concealMountedWorkspace();
-      else recheckOnReturn();
+      if (document.visibilityState === "visible") recheckOnReturn();
+      else concealCredentials();
     }
 
-    window.addEventListener("blur", concealMountedWorkspace);
+    window.addEventListener("blur", concealCredentials);
     window.addEventListener("focus", recheckOnReturn);
-    window.addEventListener(sessionRecheckEvent, recheckOnReturn);
+    window.addEventListener(sessionRecheckEvent, concealAndRecheck);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    const stopIdentityChanges = subscribeIdentityChanges(concealAndRecheck);
     return () => {
-      window.removeEventListener("blur", concealMountedWorkspace);
+      window.removeEventListener("blur", concealCredentials);
       window.removeEventListener("focus", recheckOnReturn);
-      window.removeEventListener(sessionRecheckEvent, recheckOnReturn);
+      window.removeEventListener(sessionRecheckEvent, concealAndRecheck);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      stopIdentityChanges();
     };
-  }, [hideMfa, mfaRequired]);
+  }, [hideMfa, mfaOpen, mfaRequired]);
 
   useEffect(() => {
     // Commit a newly verified identity (and its keyed workspace) before the

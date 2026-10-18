@@ -1,4 +1,5 @@
-import type { Cell, Graph } from "@antv/x6";
+import { useSyncExternalStore } from "react";
+
 import type { SandboxState } from "@/lib/sandbox/model";
 
 /**
@@ -24,124 +25,123 @@ export function tracedCellIds(
   return traced;
 }
 
-export type SandboxCanvasTrace = {
-  /** Reapply the marks after a sync, which can re-render cell views. */
-  refresh: () => void;
-  /**
-   * Trace a cell while nothing is hovered, for "Show on canvas" from another
-   * view. A blank click clears it. Null clears it too.
-   */
-  pin: (cellId: string | null) => void;
-  /**
-   * Marks field rows (by canvas field id) for a Test run: "trigger" or
-   * "changed". Null clears the marks. Marks survive re-renders.
-   */
-  markFields: (marks: Readonly<Record<string, string>> | null) => void;
-  dispose: () => void;
-};
+export type TraceMark = "on" | "dim" | null;
+export type FieldMarks = Readonly<Record<string, string>>;
 
 /**
  * Hovering a module or relationship marks its connections `data-trace="on"`
  * and fades other modules and relationships (`data-trace="dim"`). Department
- * frames stay as context. The page CSS animates opacity only. A pinned cell
- * traces the same way whenever nothing is hovered.
+ * frames stay as context. A pinned cell ("Show on canvas") traces the same
+ * way whenever nothing is hovered. Field marks show a Test run on the rows.
+ *
+ * Nodes read their own mark through `useTraceMark`, so a hover re-renders
+ * only the nodes whose mark changes.
  */
-export function bindSandboxCanvasTrace({
-  graph,
-  state,
-  onPinCleared,
-}: {
-  graph: Graph;
-  state: { readonly current: SandboxState };
-  /** A click on empty canvas cleared a pinned trace. */
-  onPinCleared?: () => void;
-}): SandboxCanvasTrace {
-  let hovered: string | null = null;
-  let pinned: string | null = null;
-  let fieldMarks: Readonly<Record<string, string>> | null = null;
-  const departmentIds = () =>
-    new Set(state.current.departments.map((item) => item.id));
+export class SandboxCanvasTraceStore {
+  private listeners = new Set<() => void>();
+  private state: SandboxState | null = null;
+  private hovered: string | null = null;
+  private pinnedId: string | null = null;
+  private traced: Set<string> | null = null;
+  private marks: FieldMarks | null = null;
 
-  const refresh = () => {
-    const target = hovered ?? pinned;
-    const traced =
-      target === null ? null : tracedCellIds(state.current, target);
-    const departments = departmentIds();
-    for (const cell of graph.getCells()) {
-      const container = graph.findViewByCell(cell)?.container;
-      if (!container) continue;
-      for (const row of container.querySelectorAll("[data-field-id]")) {
-        const mark = fieldMarks?.[row.getAttribute("data-field-id") ?? ""];
-        if (mark) {
-          row.setAttribute("data-test-mark", mark);
-          // Say the mark too, not only show it.
-          row.setAttribute(
-            "aria-description",
-            [
-              mark.includes("trigger") ? "started the test" : "",
-              mark.includes("changed") ? "changed in the test" : "",
-            ]
-              .filter(Boolean)
-              .join(", "),
-          );
-        } else {
-          row.removeAttribute("data-test-mark");
-          row.removeAttribute("aria-description");
-        }
-      }
-      if (traced === null || departments.has(cell.id))
-        container.removeAttribute("data-trace");
-      else
-        container.setAttribute(
-          "data-trace",
-          traced.has(cell.id) ? "on" : "dim",
-        );
-    }
-  };
-  // A tap on a touch screen fires an emulated mouseenter with no leave, which
-  // would leave the canvas faded after a selection, so only a hovering
-  // pointer traces.
-  const canHover = () =>
-    window.matchMedia("(hover: hover) and (pointer: fine)").matches;
-  const enter = ({ cell }: { cell: Cell }) => {
-    if (!canHover()) return;
-    hovered = cell.id;
-    refresh();
-  };
-  const clear = () => {
-    if (hovered === null && pinned === null) return;
-    const wasPinned = pinned !== null;
-    hovered = null;
-    pinned = null;
-    fieldMarks = null;
-    refresh();
-    if (wasPinned) onPinCleared?.();
-  };
-  // Moving from a department frame onto a module inside it can fire the
-  // frame's leave after the module's enter, so only the hovered cell clears.
-  const leave = ({ cell }: { cell: Cell }) => {
-    if (hovered !== cell.id) return;
-    hovered = null;
-    refresh();
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   };
 
-  graph.on("cell:mouseenter", enter);
-  graph.on("cell:mouseleave", leave);
-  graph.on("blank:click", clear);
-  return {
-    refresh,
-    pin: (cellId) => {
-      pinned = cellId;
-      refresh();
-    },
-    markFields: (marks) => {
-      fieldMarks = marks;
-      refresh();
-    },
-    dispose: () => {
-      graph.off("cell:mouseenter", enter);
-      graph.off("cell:mouseleave", leave);
-      graph.off("blank:click", clear);
-    },
-  };
+  traceOf(cellId: string): TraceMark {
+    if (this.traced === null || this.state === null) return null;
+    if (this.traced.has(cellId)) return "on";
+    return this.state.departments.some((item) => item.id === cellId)
+      ? null
+      : "dim";
+  }
+
+  fieldMarks = (): FieldMarks | null => this.marks;
+
+  get pinned(): string | null {
+    return this.pinnedId;
+  }
+
+  setState(state: SandboxState): void {
+    this.state = state;
+    this.update();
+  }
+
+  hover(cellId: string): void {
+    this.hovered = cellId;
+    this.update();
+  }
+
+  /** Moving from a frame onto a module inside it can fire the frame's leave
+   * after the module's enter, so only the hovered cell clears. */
+  leave(cellId: string): void {
+    if (this.hovered !== cellId) return;
+    this.hovered = null;
+    this.update();
+  }
+
+  pin(cellId: string | null): void {
+    this.pinnedId = cellId;
+    this.update();
+  }
+
+  markFields(marks: FieldMarks | null): void {
+    this.marks = marks;
+    this.emit();
+  }
+
+  /** A click on empty canvas: drop the hover, the pin, and the marks.
+   * Returns whether a pin was cleared. */
+  clear(): boolean {
+    const wasPinned = this.pinnedId !== null;
+    if (this.hovered === null && !wasPinned && this.marks === null)
+      return false;
+    this.hovered = null;
+    this.pinnedId = null;
+    this.marks = null;
+    this.update();
+    return wasPinned;
+  }
+
+  private update(): void {
+    const target = this.hovered ?? this.pinnedId;
+    this.traced =
+      target === null || this.state === null
+        ? null
+        : tracedCellIds(this.state, target);
+    this.emit();
+  }
+
+  private emit(): void {
+    for (const listener of this.listeners) listener();
+  }
+}
+
+export function useTraceMark(
+  store: SandboxCanvasTraceStore,
+  cellId: string,
+): TraceMark {
+  return useSyncExternalStore(
+    store.subscribe,
+    () => store.traceOf(cellId),
+    () => null,
+  );
+}
+
+export function useFieldMarks(
+  store: SandboxCanvasTraceStore,
+): FieldMarks | null {
+  return useSyncExternalStore(store.subscribe, store.fieldMarks, () => null);
+}
+
+/** Says a Test mark, not only shows it. */
+export function fieldMarkDescription(mark: string): string {
+  return [
+    mark.includes("trigger") ? "started the test" : "",
+    mark.includes("changed") ? "changed in the test" : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 }

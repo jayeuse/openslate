@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
 import {
   searchSandboxStructure,
   type SandboxFieldType,
@@ -9,11 +15,15 @@ import {
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  LocateFixed,
   Pencil,
   Search,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
@@ -62,10 +72,17 @@ function commandFailed(
   return result?.ok === false;
 }
 
+/** The tree key of an "Add module" or "Add field" item. */
+function addKey(kind: "module" | "field", parentId: string): string {
+  return `add:${kind}:${parentId}`;
+}
+
+// Hover and selected tint from the look's ink, as in the trigger and
+// version lists. Only the selected row is current; its ancestors stay plain.
 function selectedClasses(selected: boolean): string {
   return selected
-    ? "bg-primary/10 text-foreground ring-primary/50 ring-1"
-    : "hover:bg-muted text-foreground";
+    ? "text-foreground bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
+    : "text-foreground hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)]";
 }
 
 interface OutlineNameProps {
@@ -171,6 +188,10 @@ export function SandboxInspectorOutline({
     () => new Set(),
   );
   const outlineRef = useRef<HTMLDivElement>(null);
+  const treeRef = useRef<HTMLUListElement>(null);
+  // The tree is one Tab stop (roving tabindex): the item focused last, else
+  // the selected item, else the first.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
 
   const department = state.departments.find(
     (item) => item.id === selectedCellId,
@@ -187,6 +208,127 @@ export function SandboxInspectorOutline({
   // before must not keep hiding "Add department".
   const activeQuery = state.departments.length ? structureQuery : "";
   const structureSearch = searchSandboxStructure(state, activeQuery);
+  const query = structureSearch.query;
+  const departmentOpen = (id: string) =>
+    query.length > 0 || !collapsedDepartments.has(id);
+  const moduleOpen = (id: string) =>
+    query.length > 0 || !collapsedModules.has(id);
+  // The visible tree items in screen order, for the tab stop.
+  const treeKeys: string[] = [];
+  for (const departmentItem of state.departments) {
+    const result = structureSearch.departments.get(departmentItem.id);
+    if (!result?.matches) continue;
+    treeKeys.push(departmentItem.id);
+    if (!departmentOpen(departmentItem.id)) continue;
+    for (const moduleItem of result.modules) {
+      treeKeys.push(moduleItem.id);
+      if (!moduleOpen(moduleItem.id)) continue;
+      for (const fieldItem of result.fieldsByModule.get(moduleItem.id) ?? [])
+        treeKeys.push(fieldItem.id);
+      if (!query) treeKeys.push(addKey("field", moduleItem.id));
+    }
+    if (!query) treeKeys.push(addKey("module", departmentItem.id));
+  }
+  const tabKey =
+    activeKey !== null && treeKeys.includes(activeKey)
+      ? activeKey
+      : selectedCellId && treeKeys.includes(selectedCellId)
+        ? selectedCellId
+        : treeKeys[0];
+
+  function toggleOpen(id: string): void {
+    const setter = state.departments.some((item) => item.id === id)
+      ? setCollapsedDepartments
+      : setCollapsedModules;
+    setter((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function itemName(id: string): string {
+    return (
+      state.departments.find((item) => item.id === id)?.name ??
+      state.modules.find((item) => item.id === id)?.name ??
+      state.fields.find((item) => item.id === id)?.name ??
+      ""
+    );
+  }
+
+  /** The WAI-ARIA tree keys: arrows, Home, End, Enter, F2, and type-ahead. */
+  function onTreeKeyDown(event: KeyboardEvent<HTMLUListElement>): void {
+    const target = event.target as HTMLElement;
+    if (target.closest("input, textarea")) return;
+    const item = target.closest<HTMLElement>('[role="treeitem"]');
+    const tree = treeRef.current;
+    if (!item || !tree) return;
+    const items = [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')];
+    const index = items.indexOf(item);
+    const level = Number(item.getAttribute("aria-level"));
+    const expanded = item.getAttribute("aria-expanded");
+    const key = item.dataset.outlineId ?? "";
+    const focus = (next: HTMLElement | undefined) => {
+      event.preventDefault();
+      next?.focus();
+    };
+    switch (event.key) {
+      case "ArrowDown":
+        return focus(items[index + 1]);
+      case "ArrowUp":
+        return focus(items[index - 1]);
+      case "Home":
+        return focus(items[0]);
+      case "End":
+        return focus(items.at(-1));
+      case "ArrowRight":
+        if (expanded === "false") {
+          event.preventDefault();
+          toggleOpen(key);
+        } else if (expanded === "true") focus(items[index + 1]);
+        return;
+      case "ArrowLeft":
+        if (expanded === "true") {
+          event.preventDefault();
+          toggleOpen(key);
+          return;
+        }
+        return focus(
+          items
+            .slice(0, index)
+            .findLast(
+              (other) => Number(other.getAttribute("aria-level")) < level,
+            ),
+        );
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        item.click();
+        return;
+      case "F2":
+        if (key.startsWith("add:") || pending) return;
+        event.preventDefault();
+        beginEdit(key, itemName(key));
+        return;
+    }
+    if (
+      event.key.length === 1 &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
+      const letter = event.key.toLowerCase();
+      const match = [...items.slice(index + 1), ...items.slice(0, index)].find(
+        (other) =>
+          !other.dataset.outlineId?.startsWith("add:") &&
+          (other.getAttribute("aria-label") ?? "")
+            .toLowerCase()
+            .startsWith(letter),
+      );
+      if (match) focus(match);
+    }
+  }
 
   function beginEdit(id: string, value: string): void {
     onSelect(id);
@@ -355,7 +497,7 @@ export function SandboxInspectorOutline({
   }
 
   function dragPayload(
-    event: DragEvent<HTMLButtonElement>,
+    event: DragEvent<HTMLElement>,
     kind: string,
     type?: SandboxFieldType,
   ) {
@@ -371,6 +513,37 @@ export function SandboxInspectorOutline({
     parentId?: string,
     parentName?: string,
   ) {
+    if (kind !== "department" && parentId) {
+      const key = addKey(kind, parentId);
+      const activate = () => {
+        if (pending) return;
+        if (kind === "module") onAddModule(parentId);
+        else onAddField(parentId, "text");
+      };
+      return (
+        <li role="none">
+          <div
+            role="treeitem"
+            aria-level={kind === "module" ? 2 : 3}
+            aria-label={`Add ${kind} to ${parentName}`}
+            aria-disabled={pending || undefined}
+            aria-selected={false}
+            tabIndex={key === tabKey ? 0 : -1}
+            data-outline-id={key}
+            data-kind={kind}
+            data-testid={`inspector-outline-add-${kind}`}
+            draggable={!pending}
+            onDragStart={(event) =>
+              dragPayload(event, kind, kind === "field" ? "text" : undefined)
+            }
+            onClick={activate}
+            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center rounded-[var(--radius)] px-2 text-xs outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid aria-disabled:cursor-not-allowed aria-disabled:opacity-50 max-xl:pl-5 xl:min-h-9"
+          >
+            Add {kind}
+          </div>
+        </li>
+      );
+    }
     return (
       <Button
         variant="ghost"
@@ -407,6 +580,7 @@ export function SandboxInspectorOutline({
     kind: "department" | "module" | "field",
     item: { id: string; name: string; closed?: boolean },
     selected: boolean,
+    tree: { level: number; expanded?: boolean; groupId?: string },
   ) {
     const menuId = `${kind}:${item.id}`;
     return (
@@ -452,12 +626,19 @@ export function SandboxInspectorOutline({
           >
             <ContextMenuTrigger
               render={
-                <button
-                  type="button"
+                <div
+                  role="treeitem"
                   data-testid={`inspector-outline-${kind}-select`}
                   data-outline-id={item.id}
-                  aria-current={selected ? "true" : undefined}
-                  aria-label={`Select ${kind} ${item.name}`}
+                  aria-level={tree.level}
+                  aria-expanded={tree.expanded}
+                  aria-owns={tree.expanded ? tree.groupId : undefined}
+                  aria-selected={selected}
+                  aria-label={item.name}
+                  aria-describedby={
+                    item.closed ? `outline-closed-${item.id}` : undefined
+                  }
+                  tabIndex={item.id === tabKey ? 0 : -1}
                 />
               }
               onClick={() => onSelect(item.id)}
@@ -477,13 +658,17 @@ export function SandboxInspectorOutline({
                   setOpenContextMenu(menuId);
                 }
               }}
-              className={`flex min-h-11 w-full min-w-0 items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs xl:min-h-9 ${kind === "department" ? "font-semibold" : ""} ${selectedClasses(selected)}`}
+              className={`focus-visible:outline-ring flex min-h-11 w-full min-w-0 cursor-default items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid xl:min-h-9 ${kind === "department" ? "font-semibold" : ""} ${kind === "field" ? "max-xl:pl-5" : ""} ${selectedClasses(selected)}`}
             >
               <span className="min-w-0 flex-1 truncate" title={item.name}>
                 {item.name}
               </span>
               {item.closed ? (
-                <Badge variant="secondary" className="text-xs">
+                <Badge
+                  id={`outline-closed-${item.id}`}
+                  variant="secondary"
+                  className="text-xs"
+                >
                   Closed
                 </Badge>
               ) : null}
@@ -506,6 +691,19 @@ export function SandboxInspectorOutline({
     );
   }
 
+  /** The chevron is for the pointer; the keyboard uses Right and Left. */
+  function chevron(id: string, open: boolean) {
+    return (
+      <span
+        aria-hidden="true"
+        className="text-muted-foreground hover:text-foreground flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius)] xl:size-8 [&_svg]:size-4"
+        onClick={() => toggleOpen(id)}
+      >
+        {open ? <ChevronDown /> : <ChevronRight />}
+      </span>
+    );
+  }
+
   function renderDepartment(
     departmentItem: SandboxState["departments"][number],
   ) {
@@ -514,120 +712,93 @@ export function SandboxInspectorOutline({
       return null;
     }
     const { modules: departmentModules } = searchResult;
-    const query = structureSearch.query;
-    const departmentExpanded =
-      query.length > 0 || !collapsedDepartments.has(departmentItem.id);
+    const departmentExpanded = departmentOpen(departmentItem.id);
+    const departmentGroup = `outline-group-${departmentItem.id}`;
     return (
-      <li key={departmentItem.id} data-testid="inspector-outline-department">
+      <li
+        key={departmentItem.id}
+        role="none"
+        data-testid="inspector-outline-department"
+      >
         <div className="flex min-w-0 items-center gap-0.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-11 shrink-0 xl:size-8"
-            aria-label={`${departmentExpanded ? "Collapse" : "Expand"} department ${departmentItem.name}`}
-            aria-expanded={departmentExpanded}
-            onClick={() =>
-              setCollapsedDepartments((current) => {
-                const next = new Set(current);
-                if (next.has(departmentItem.id)) next.delete(departmentItem.id);
-                else next.add(departmentItem.id);
-                return next;
-              })
-            }
-          >
-            {departmentExpanded ? (
-              <ChevronDown aria-hidden="true" />
-            ) : (
-              <ChevronRight aria-hidden="true" />
-            )}
-          </Button>
+          {chevron(departmentItem.id, departmentExpanded)}
           <div className="min-w-0 flex-1">
             {itemRow(
               "department",
               departmentItem,
-              selectedCellId === departmentItem.id ||
-                sandboxModule?.departmentId === departmentItem.id ||
-                selectedFieldModule?.departmentId === departmentItem.id,
+              selectedCellId === departmentItem.id,
+              {
+                level: 1,
+                expanded: departmentExpanded,
+                groupId: departmentGroup,
+              },
             )}
           </div>
         </div>
         {departmentExpanded ? (
-          <ul className="border-border mt-1 ml-6 flex flex-col gap-2 border-l pl-2">
-            {departmentModules.map((moduleItem) => (
-              <li key={moduleItem.id} data-testid="inspector-outline-module">
-                {(() => {
-                  const moduleExpanded =
-                    query.length > 0 || !collapsedModules.has(moduleItem.id);
-                  const visibleFields =
-                    searchResult.fieldsByModule.get(moduleItem.id) ?? [];
-                  return (
-                    <>
-                      <div className="flex min-w-0 items-center gap-0.5">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="size-11 shrink-0 xl:size-8"
-                          aria-label={`${moduleExpanded ? "Collapse" : "Expand"} module ${moduleItem.name}`}
-                          aria-expanded={moduleExpanded}
-                          onClick={() =>
-                            setCollapsedModules((current) => {
-                              const next = new Set(current);
-                              if (next.has(moduleItem.id))
-                                next.delete(moduleItem.id);
-                              else next.add(moduleItem.id);
-                              return next;
-                            })
-                          }
+          <ul
+            id={departmentGroup}
+            role="group"
+            className="border-border mt-1 ml-6 flex flex-col gap-2 border-l pl-2"
+          >
+            {departmentModules.map((moduleItem) => {
+              const moduleExpanded = moduleOpen(moduleItem.id);
+              const visibleFields =
+                searchResult.fieldsByModule.get(moduleItem.id) ?? [];
+              const moduleGroup = `outline-group-${moduleItem.id}`;
+              return (
+                <li
+                  key={moduleItem.id}
+                  role="none"
+                  data-testid="inspector-outline-module"
+                >
+                  <div className="flex min-w-0 items-center gap-0.5">
+                    {chevron(moduleItem.id, moduleExpanded)}
+                    <div className="min-w-0 flex-1">
+                      {itemRow(
+                        "module",
+                        moduleItem,
+                        selectedCellId === moduleItem.id,
+                        {
+                          level: 2,
+                          expanded: moduleExpanded,
+                          groupId: moduleGroup,
+                        },
+                      )}
+                    </div>
+                  </div>
+                  {moduleExpanded ? (
+                    <ul
+                      id={moduleGroup}
+                      role="group"
+                      className="sandbox-field-list border-border mt-1 ml-6 flex flex-col gap-1 border-l pl-2"
+                    >
+                      {visibleFields.map((fieldItem) => (
+                        <li
+                          key={fieldItem.id}
+                          role="none"
+                          data-testid="inspector-outline-field"
                         >
-                          {moduleExpanded ? (
-                            <ChevronDown aria-hidden="true" />
-                          ) : (
-                            <ChevronRight aria-hidden="true" />
-                          )}
-                        </Button>
-                        <div className="min-w-0 flex-1">
                           {itemRow(
-                            "module",
-                            moduleItem,
-                            selectedCellId === moduleItem.id ||
-                              field?.moduleId === moduleItem.id,
+                            "field",
+                            fieldItem,
+                            selectedCellId === fieldItem.id,
+                            { level: 3 },
                           )}
-                        </div>
-                      </div>
-                      {moduleExpanded ? (
-                        <ul className="sandbox-field-list border-border mt-1 ml-6 flex flex-col gap-1 border-l pl-2">
-                          {visibleFields.map((fieldItem) => (
-                            <li
-                              key={fieldItem.id}
-                              data-testid="inspector-outline-field"
-                            >
-                              {itemRow(
-                                "field",
-                                fieldItem,
-                                selectedCellId === fieldItem.id,
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                      {moduleExpanded && !query ? (
-                        <div className="ml-8">
-                          {addRow("field", moduleItem.id, moduleItem.name)}
-                        </div>
-                      ) : null}
-                    </>
-                  );
-                })()}
-              </li>
-            ))}
+                        </li>
+                      ))}
+                      {!query
+                        ? addRow("field", moduleItem.id, moduleItem.name)
+                        : null}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
+            {!query
+              ? addRow("module", departmentItem.id, departmentItem.name)
+              : null}
           </ul>
-        ) : null}
-        {departmentExpanded && !query ? (
-          <div className="ml-6">
-            {addRow("module", departmentItem.id, departmentItem.name)}
-          </div>
         ) : null}
       </li>
     );
@@ -637,76 +808,93 @@ export function SandboxInspectorOutline({
     <div ref={outlineRef}>
       <Card data-testid="inspector-outline" className="border-0 p-0">
         <div className="flex flex-col gap-3">
-          <div>
-            <SectionTitle>Structure</SectionTitle>
-            <p className="text-muted-foreground mt-1 text-xs">
-              Select an item for settings. Use the visible actions to add,
-              rename, or manage items.
-            </p>
-          </div>
-          <div className="flex min-w-0 gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-h-11 min-w-0 flex-1 xl:min-h-8"
-              aria-label="Expand all"
-              disabled={state.departments.length === 0}
-              onClick={() => {
-                setCollapsedDepartments(new Set());
-                setCollapsedModules(new Set());
-              }}
+          <SectionTitle>Structure</SectionTitle>
+          <div className="flex min-w-0 items-center gap-1">
+            <div className="relative min-w-0 flex-1">
+              <Search
+                aria-hidden="true"
+                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+              />
+              <Input
+                type="search"
+                aria-label="Search structure"
+                placeholder="Search structure"
+                disabled={state.departments.length === 0}
+                value={structureQuery}
+                onChange={(event) => setStructureQuery(event.target.value)}
+                className="h-11 pl-8 xl:h-9"
+              />
+            </div>
+            {/* One toggle: it offers whichever of expand or collapse applies. */}
+            {collapsedDepartments.size === 0 && collapsedModules.size === 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11 shrink-0 xl:size-9"
+                aria-label="Collapse all"
+                title="Collapse all"
+                disabled={state.departments.length === 0}
+                onClick={() => {
+                  setCollapsedDepartments(
+                    new Set(state.departments.map((item) => item.id)),
+                  );
+                  setCollapsedModules(
+                    new Set(state.modules.map((item) => item.id)),
+                  );
+                }}
+              >
+                <ChevronsDownUp aria-hidden="true" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11 shrink-0 xl:size-9"
+                aria-label="Expand all"
+                title="Expand all"
+                disabled={state.departments.length === 0}
+                onClick={() => {
+                  setCollapsedDepartments(new Set());
+                  setCollapsedModules(new Set());
+                }}
+              >
+                <ChevronsUpDown aria-hidden="true" />
+              </Button>
+            )}
+            <DisabledReason
+              reason={selectedCellId ? null : "Select an item first."}
             >
-              Expand all
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="min-h-11 min-w-0 flex-1 xl:min-h-8"
-              aria-label="Collapse all"
-              disabled={state.departments.length === 0}
-              onClick={() => {
-                setCollapsedDepartments(
-                  new Set(state.departments.map((item) => item.id)),
-                );
-                setCollapsedModules(
-                  new Set(state.modules.map((item) => item.id)),
-                );
-              }}
-            >
-              Collapse all
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11 shrink-0 xl:size-9"
+                aria-label="Jump to selection"
+                disabled={!selectedCellId}
+                onClick={jumpToSelection}
+              >
+                <LocateFixed aria-hidden="true" />
+              </Button>
+            </DisabledReason>
           </div>
-          <div className="relative">
-            <Search
-              aria-hidden="true"
-              className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-            />
-            <Input
-              type="search"
-              aria-label="Search structure"
-              placeholder="Search structure"
-              disabled={state.departments.length === 0}
-              value={structureQuery}
-              onChange={(event) => setStructureQuery(event.target.value)}
-              className="h-11 pl-8 xl:h-9"
-            />
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="min-h-11 xl:min-h-8"
-            disabled={!selectedCellId}
-            onClick={jumpToSelection}
-          >
-            Jump to selection
-          </Button>
         </div>
 
         {state.departments.length > 0 && structureSearch.hasMatches ? (
-          <ul className="mt-3 flex flex-col gap-3">
+          <ul
+            ref={treeRef}
+            role="tree"
+            aria-label="Structure"
+            className="mt-3 flex flex-col gap-3"
+            onKeyDown={onTreeKeyDown}
+            onFocus={(event) => {
+              const key = (event.target as HTMLElement).closest<HTMLElement>(
+                '[role="treeitem"]',
+              )?.dataset.outlineId;
+              if (key) setActiveKey(key);
+            }}
+          >
             {state.departments.map(renderDepartment)}
           </ul>
         ) : activeQuery.trim() ? (

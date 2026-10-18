@@ -305,6 +305,14 @@
   color: var(--sr-tape-ink);
 }
 
+/* The Sandbox save chip is status beside the page title, not a label:
+   light tape, so it never outweighs the stencil title. */
+[data-theme="stockroom"]
+  [data-slot="badge"][data-sandbox-save-state][data-variant="outline"] {
+  background-color: var(--sr-steel-lite);
+  color: var(--ink);
+}
+
 [data-theme="stockroom"] [data-slot="button"] {
   font-stretch: 88%;
   font-weight: 700;
@@ -367,7 +375,7 @@
    boxes with a paper end label. State strokes stay heavier than idle ones. */
 [data-theme="stockroom"]
   .sandbox-ui
-  .x6-cell:not([data-sandbox-pressed="true"])
+  [data-sandbox-node]:not([data-sandbox-pressed="true"])
   [data-sandbox-kind="department"][data-selected="false"][data-feedback=""] {
   stroke-width: 6px;
 }
