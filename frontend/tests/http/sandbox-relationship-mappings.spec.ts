@@ -1747,9 +1747,10 @@ test("a dropped module stays where it lands while its layout saves", async ({
       ),
     ).not.toContain(`${before.x},${before.y}`);
     releaseSave();
+    // The saved layout now holds the dropped module's position.
     await expect
       .poll(() => sandbox.document().design.layout?.["sample-requests"])
-      .toBeDefined();
+      .toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
     expect(await canvasPosition(node)).toEqual(dropped);
   } finally {
     releaseSave();

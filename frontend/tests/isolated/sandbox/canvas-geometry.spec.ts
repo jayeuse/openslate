@@ -167,7 +167,7 @@ test("frames start small when empty and grow to their modules", () => {
   const boxes = canvasBoxes(nodes);
   for (const { box, departmentId } of boxes.modules) {
     const frame = boxes.departments.find((item) => item.id === departmentId);
-    expect(frame).toBeDefined();
+    expect(frame?.id).toBe(departmentId);
     expect(box.x).toBeGreaterThanOrEqual(frame!.box.x);
     expect(box.y).toBeGreaterThanOrEqual(frame!.box.y);
     expect(box.x + box.width).toBeLessThanOrEqual(

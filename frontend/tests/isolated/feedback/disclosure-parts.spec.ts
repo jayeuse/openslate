@@ -108,7 +108,8 @@ test("a disabled control with a reason stays focusable and says why", () => {
   expect(markup).toContain('aria-disabled="true"');
   expect(markup).not.toMatch(/<button[^>]* disabled=""/);
   const describedBy = markup.match(/aria-describedby="([^"]+)"/)?.[1];
-  expect(describedBy).toBeTruthy();
+  // The description id is a real, non-empty id.
+  expect(describedBy).toMatch(/\S/);
   expect(markup).toContain(`id="${describedBy}"`);
   expect(markup).toContain("Choose a module first.");
 });
