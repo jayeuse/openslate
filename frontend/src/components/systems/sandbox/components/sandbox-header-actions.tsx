@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Download,
@@ -11,6 +11,7 @@ import {
   Upload,
 } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
+import { reportDone } from "@/lib/feedback";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -61,6 +62,8 @@ type Props = {
   canCheckpoint: boolean;
   /** Discard only acts when the draft differs from what was published. */
   canDiscard: boolean;
+  /** With a publish, Discard returns to it; without one, it clears the draft. */
+  hasPublish: boolean;
   onCreateCheckpoint: (
     label: string,
     note: string,
@@ -97,12 +100,23 @@ export function SandboxHeaderActions({
   onCheckpointOpenChange: setCheckpointOpen,
   canCheckpoint,
   canDiscard,
+  hasPublish,
   onCreateCheckpoint,
   onImport,
   onApplyTemplate,
   onDiscard,
 }: Props) {
   const input = useRef<HTMLInputElement | null>(null);
+  const menuId = useId();
+  // A disabled menu item says why on a muted second line.
+  const checkpointReason = canCheckpoint
+    ? null
+    : "Add a department or module first.";
+  const discardReason = canDiscard
+    ? null
+    : hasPublish
+      ? "The draft matches the last publish."
+      : "Nothing to discard yet.";
   const [importOpen, setImportOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [label, setLabel] = useState("");
@@ -205,8 +219,10 @@ export function SandboxHeaderActions({
         mounted.current &&
         !controller.signal.aborted &&
         exportController.current === controller
-      )
+      ) {
         download(bundle.filename, bundle.document);
+        reportDone("Exported");
+      }
     } catch {
       if (
         mounted.current &&
@@ -254,11 +270,28 @@ export function SandboxHeaderActions({
         />
         <DropdownMenuContent align="end">
           <DropdownMenuItem
-            className="min-h-11"
+            className="min-h-11 flex-col items-start justify-center gap-0 data-disabled:opacity-100"
             disabled={!canCheckpoint}
+            aria-labelledby={`${menuId}-checkpoint`}
+            aria-describedby={
+              checkpointReason ? `${menuId}-checkpoint-reason` : undefined
+            }
             onClick={() => setCheckpointOpen(true)}
           >
-            Save checkpoint
+            <span
+              id={`${menuId}-checkpoint`}
+              className={checkpointReason ? "opacity-50" : undefined}
+            >
+              Save checkpoint
+            </span>
+            {checkpointReason ? (
+              <span
+                id={`${menuId}-checkpoint-reason`}
+                className="text-muted-foreground text-xs"
+              >
+                {checkpointReason}
+              </span>
+            ) : null}
           </DropdownMenuItem>
           <DropdownMenuItem
             className="min-h-11"
@@ -274,12 +307,28 @@ export function SandboxHeaderActions({
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            variant="destructive"
-            className="min-h-11"
+            className="text-danger-text data-highlighted:bg-danger-tint data-highlighted:text-danger-text min-h-11 flex-col items-start justify-center gap-0 data-disabled:opacity-100"
             disabled={!canDiscard}
+            aria-labelledby={`${menuId}-discard`}
+            aria-describedby={
+              discardReason ? `${menuId}-discard-reason` : undefined
+            }
             onClick={() => setDiscardOpen(true)}
           >
-            Discard draft changes
+            <span
+              id={`${menuId}-discard`}
+              className={discardReason ? "opacity-50" : undefined}
+            >
+              Discard draft changes
+            </span>
+            {discardReason ? (
+              <span
+                id={`${menuId}-discard-reason`}
+                className="text-muted-foreground text-xs"
+              >
+                {discardReason}
+              </span>
+            ) : null}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -478,8 +527,9 @@ export function SandboxHeaderActions({
           <DialogHeader>
             <DialogTitle>Discard draft changes?</DialogTitle>
             <DialogDescription>
-              Saves a checkpoint, then resets the draft to the last publish.
-              Live data stays.
+              {hasPublish
+                ? "Saves a checkpoint, then resets the draft to the last publish. Live data stays."
+                : "Saves a checkpoint, then clears the draft. Live data stays."}
             </DialogDescription>
           </DialogHeader>
           {error ? <Alert variant="destructive">{error}</Alert> : null}

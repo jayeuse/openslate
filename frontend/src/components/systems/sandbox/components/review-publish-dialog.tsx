@@ -3,11 +3,12 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import {
   Dialog,
   DialogCloseButton,
   DialogContent,
-  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -21,6 +22,7 @@ import {
 } from "./publish-change-groups";
 import type {
   SandboxPublication,
+  SandboxPublicationBlocker,
   SandboxPublicationPreview,
 } from "../state/api";
 
@@ -30,7 +32,10 @@ type Props = {
   disabled: boolean;
   /** The draft being reviewed, so field changes can sit under their module. */
   design: PublishReviewDesign;
-  localBlockers: readonly string[];
+  /** Trigger settings the server cannot publish, found before the review. */
+  localBlockers: readonly SandboxPublicationBlocker[];
+  /** Closes the review and opens the thing that blocks publishing. */
+  onOpenBlocker: (blocker: SandboxPublicationBlocker) => void;
   onOpenChange: (open: boolean) => void;
   onPendingChange?: (pending: boolean) => void;
   onPreview: () => Promise<SandboxPublicationPreview>;
@@ -75,6 +80,7 @@ export function ReviewPublishDialog({
   disabled,
   design,
   localBlockers,
+  onOpenBlocker,
   onOpenChange,
   onPendingChange,
   onPreview,
@@ -98,11 +104,11 @@ export function ReviewPublishDialog({
   const passwordId = useId();
   const passwordHintId = useId();
   const noteId = useId();
+  const blockerId = useId();
   // Each open (and each new draft revision) gets one automatic review. The
   // round number also drops a review that finishes after the dialog closed.
   const round = useRef(0);
   const autoReviewed = useRef<number | null>(null);
-  const localBlocked = localBlockers.length > 0;
 
   useEffect(() => {
     round.current += 1;
@@ -131,19 +137,13 @@ export function ReviewPublishDialog({
     }
   }
   useEffect(() => {
-    if (!open || disabled || localBlocked || pending) return;
+    if (!open || disabled || pending) return;
     if (autoReviewed.current === round.current) return;
     autoReviewed.current = round.current;
     void review();
-  }, [open, expectedRevision, disabled, localBlocked, pending]);
+  }, [open, expectedRevision, disabled, pending]);
   async function publish() {
-    if (
-      !preview ||
-      !password ||
-      preview.blockers.length ||
-      localBlockers.length
-    )
-      return;
+    if (!preview || !password || blockers.length) return;
     setBusy("publish");
     setPublishError("");
     setPasswordRejected(false);
@@ -169,15 +169,22 @@ export function ReviewPublishDialog({
       setBusy(null);
     }
   }
+  // The local check names the trigger, so it replaces the server's
+  // message for the same trigger.
+  const locallyBlocked = new Set(
+    localBlockers.map((blocker) => blocker.targetId),
+  );
   const blockers = [
     ...localBlockers,
-    ...(preview?.blockers ?? []).map((blocker) => blocker.message),
+    ...(preview?.blockers ?? []).filter(
+      (blocker) => !blocker.targetId || !locallyBlocked.has(blocker.targetId),
+    ),
   ];
   const blocked = blockers.length > 0;
   const footerHint = publishError
     ? publishError
     : blocked
-      ? "Publishing is blocked. See the issues above the changes."
+      ? "Fix the blocked items, then reopen this review."
       : !password
         ? "Enter your password to publish."
         : "";
@@ -202,25 +209,38 @@ export function ReviewPublishDialog({
           are never hidden behind it. */}
       <DialogContent className="flex flex-col overflow-hidden p-0 sm:max-w-2xl">
         <DialogCloseButton disabled={busy === "publish"} />
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5 pr-14">
-          <DialogHeader>
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
+          <DialogHeader className="pr-12">
             <DialogTitle>Review and publish</DialogTitle>
-            <DialogDescription>
-              Review what will change before applying this draft to your live
-              workspace.
-            </DialogDescription>
           </DialogHeader>
           {error ? (
             <Alert role="alert" variant="destructive">
               {error}
             </Alert>
           ) : null}
-          {localBlockers.length ? (
+          {blocked ? (
             <Alert role="alert" variant="destructive">
-              <p className="font-medium">Fix these trigger settings first</p>
-              <ul className="mt-2 list-inside list-disc">
-                {localBlockers.map((blocker) => (
-                  <li key={blocker}>{blocker}</li>
+              <p className="font-medium">Publishing is blocked</p>
+              <ul className="mt-2 grid gap-2">
+                {blockers.map((blocker, index) => (
+                  <li
+                    key={`${blocker.code}:${blocker.targetId ?? ""}:${blocker.message}`}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1"
+                  >
+                    <span id={`${blockerId}-${index}`}>{blocker.message}</span>
+                    {blocker.targetId ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-describedby={`${blockerId}-${index}`}
+                        onClick={() => onOpenBlocker(blocker)}
+                      >
+                        {blocker.code.startsWith("trigger")
+                          ? "Open trigger"
+                          : "Show in Build"}
+                      </Button>
+                    ) : null}
+                  </li>
                 ))}
               </ul>
             </Alert>
@@ -234,26 +254,8 @@ export function ReviewPublishDialog({
               <Skeleton className="h-16 w-full" />
               <Skeleton className="h-16 w-full" />
             </div>
-          ) : !preview ? (
-            <Button
-              className="min-h-11 justify-self-start"
-              disabled={disabled || localBlocked}
-              onClick={() => void review()}
-            >
-              {error ? "Try again" : "Review changes"}
-            </Button>
-          ) : (
+          ) : !preview ? null : (
             <>
-              {preview.blockers.length ? (
-                <Alert role="alert" variant="destructive">
-                  <p className="font-medium">Publishing is blocked</p>
-                  <ul className="mt-2 list-inside list-disc">
-                    {preview.blockers.map((blocker) => (
-                      <li key={blocker.message}>{blocker.message}</li>
-                    ))}
-                  </ul>
-                </Alert>
-              ) : null}
               {preview.warnings.length ? (
                 <Alert>
                   <p className="font-medium">Please note</p>
@@ -279,16 +281,18 @@ export function ReviewPublishDialog({
                   </p>
                 )}
               </section>
-              <Field>
-                <FieldLabel htmlFor={noteId}>Note (optional)</FieldLabel>
-                <Textarea
-                  id={noteId}
-                  value={note}
-                  maxLength={1000}
-                  onChange={(event) => setNote(event.target.value)}
-                  disabled={pending || blocked}
-                />
-              </Field>
+              {blocked ? null : (
+                <Field>
+                  <FieldLabel htmlFor={noteId}>Note (optional)</FieldLabel>
+                  <Textarea
+                    id={noteId}
+                    value={note}
+                    maxLength={1000}
+                    onChange={(event) => setNote(event.target.value)}
+                    disabled={pending || blocked}
+                  />
+                </Field>
+              )}
             </>
           )}
         </div>
@@ -315,7 +319,7 @@ export function ReviewPublishDialog({
                     disabled={pending || blocked}
                   />
                 </Field>
-                <div className="flex gap-2">
+                <DialogFooter className="mt-0 max-sm:w-full">
                   {cancel}
                   <Button
                     className="min-h-11"
@@ -324,14 +328,14 @@ export function ReviewPublishDialog({
                   >
                     {busy === "publish" ? "Publishing…" : "Publish changes"}
                   </Button>
-                </div>
+                </DialogFooter>
               </div>
               {footerHint ? (
                 <p
                   id={passwordHintId}
                   role={publishError ? "alert" : undefined}
                   className={
-                    publishError || blocked
+                    publishError
                       ? "text-danger-text text-sm"
                       : "text-muted-foreground text-sm"
                   }
@@ -341,7 +345,22 @@ export function ReviewPublishDialog({
               ) : null}
             </>
           ) : (
-            <div className="flex justify-end">{cancel}</div>
+            <DialogFooter className="mt-0">
+              {cancel}
+              {busy === "review" ? null : (
+                <DisabledReason
+                  reason={disabled ? "Finish the current change first." : null}
+                >
+                  <Button
+                    className="min-h-11"
+                    disabled={disabled}
+                    onClick={() => void review()}
+                  >
+                    {error ? "Try again" : "Review changes"}
+                  </Button>
+                </DisabledReason>
+              )}
+            </DialogFooter>
           )}
         </div>
       </DialogContent>

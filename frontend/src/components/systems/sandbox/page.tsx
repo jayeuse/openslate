@@ -364,14 +364,24 @@ export default function SandboxPage() {
   const skipNextLayoutInitialization = useRef(false);
   const section = sectionFromSearch(search.get("section"), search.get("rule"));
   const design = session?.history.present ?? initialDesign;
+  // Trigger settings that block publishing show here too, so nobody first
+  // meets them inside the review.
+  const publicationBlockers = session
+    ? triggerPublicationBlockers(
+        session.document.triggers,
+        session.document.design,
+      )
+    : [];
   const issues = Array.from(
     new Map(
-      [...validateSandboxDesign(design), ...(session?.issues ?? [])].map(
-        (issue) => [
-          `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
-          issue,
-        ],
-      ),
+      [
+        ...validateSandboxDesign(design),
+        ...(session?.issues ?? []),
+        ...publicationBlockers,
+      ].map((issue) => [
+        `${issue.code}:${issue.targetId ?? ""}:${issue.message}`,
+        issue,
+      ]),
     ).values(),
   );
   const requestedFocusTarget = search.get("inspect");
@@ -1065,6 +1075,19 @@ export default function SandboxPage() {
     }
     openIssue(issue);
   }
+  /** Names where an issue's button goes: Triggers, Test, or Build. */
+  function issueActionLabel(issue: SandboxValidationIssue): string {
+    const destination = sandboxIssueDestination(
+      issue,
+      new Set(design.rules.map((rule) => rule.id)),
+      new URLSearchParams(),
+    );
+    if (destination.kind === "section")
+      return destination.section === "Test" ? "Open Test" : "Show in Build";
+    return destination.params.get("section") === "triggers"
+      ? "Open trigger"
+      : "Show in Build";
+  }
   function openIssue(issue: SandboxValidationIssue) {
     const destination = sandboxIssueDestination(
       issue,
@@ -1236,6 +1259,7 @@ export default function SandboxPage() {
               // happening to the draft right now (the Four Moments Rule).
               <Badge
                 data-sandbox-save-state
+                role="status"
                 variant={
                   conflict
                     ? "destructive"
@@ -1344,6 +1368,7 @@ export default function SandboxPage() {
                 design.departments.length > 0 || design.modules.length > 0
               }
               canDiscard={status.publishable}
+              hasPublish={session?.publishedHash !== undefined}
               onCreateCheckpoint={checkpoint}
               onImport={importFile}
               onApplyTemplate={applyTemplate}
@@ -1366,21 +1391,35 @@ export default function SandboxPage() {
         {issues.length ? (
           <Alert variant="warning" role="status">
             <p>
-              {issues.length} item{issues.length === 1 ? "" : "s"} need
-              attention.
+              {issues.length === 1
+                ? "1 item needs attention."
+                : `${issues.length} items need attention.`}
             </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {issues.slice(0, 3).map((issue) => (
-                <Button
-                  key={`${issue.code}-${issue.targetId ?? ""}`}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => selectIssue(issue)}
+            {/* The fact as text, then a short button that opens it, as in
+                the review's blocker list. */}
+            <ul className="mt-2 grid gap-2">
+              {issues.slice(0, 3).map((issue, index) => (
+                <li
+                  key={`${issue.code}-${issue.targetId ?? ""}-${issue.message}`}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1"
                 >
-                  Review: {issue.message}
-                </Button>
+                  <span id={`sandbox-issue-${index}`}>{issue.message}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-describedby={`sandbox-issue-${index}`}
+                    onClick={() => selectIssue(issue)}
+                  >
+                    {issueActionLabel(issue)}
+                  </Button>
+                </li>
               ))}
-            </div>
+              {issues.length > 3 ? (
+                <li className="text-muted-foreground">
+                  {issues.length - 3} more after these.
+                </li>
+              ) : null}
+            </ul>
           </Alert>
         ) : null}
         {section === "Build" ? (
@@ -1564,10 +1603,13 @@ export default function SandboxPage() {
               triggerDraft.dirty ||
               triggerDraft.pending
             }
-            localBlockers={triggerPublicationBlockers(
-              session.document.triggers,
-              session.document.design,
-            )}
+            localBlockers={publicationBlockers}
+            onOpenBlocker={(blocker) => {
+              // The review only reads, and it cannot open over unsaved
+              // triggers, so nothing holds this move.
+              setReviewOpen(false);
+              openIssue({ severity: "error", ...blocker });
+            }}
             onOpenChange={setReviewOpen}
             onPendingChange={setPublicationPending}
             onPreview={() =>

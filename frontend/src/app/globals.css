@@ -102,7 +102,6 @@
   --canvas-grid: #dde1e7;
   --canvas-grid-major: #c3c9d2;
   --sandbox-node-border: var(--rule-strong);
-  --sandbox-field-stripe: var(--ground);
   --radius: 0.5rem;
   /* Motion. Durations name the job, not a speed: fast for feedback, base
      for routine state, slow for layout and authored moments. Each look sets
@@ -401,16 +400,11 @@ textarea {
   --popover: var(--surface-raised);
   --muted: var(--surface-hover);
   --secondary: var(--surface-hover);
-  --sandbox-field-stripe: var(--ground);
   --border: var(--rule-strong);
 }
 
 .sandbox-ui .sandbox-field-list > li {
   border-radius: var(--radius);
-}
-
-.sandbox-ui .sandbox-field-list > li:nth-child(even) {
-  background-color: var(--sandbox-field-stripe);
 }
 
 .sandbox-ui

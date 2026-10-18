@@ -55,6 +55,7 @@ import type {
   SandboxValueSource,
 } from "../domain/document";
 import type { SandboxTriggerRun } from "../state/api";
+import { issue, type SandboxValidationIssue } from "../domain/validation-types";
 import { dateRangeFits, dateValueInRange } from "../domain/date-values";
 import { reportDone, reportUndoable } from "@/lib/feedback";
 
@@ -268,18 +269,22 @@ function triggerOrigin(
   return recordTrigger.trigger.moduleId ?? firstOpenModule(design);
 }
 
+/**
+ * Trigger settings the server cannot publish. Each one is an issue on its
+ * trigger, so the page's "need attention" list opens that trigger.
+ */
 export function triggerPublicationBlockers(
   triggers: readonly SandboxTrigger[],
   design: SandboxDocumentDesign,
-): string[] {
+): SandboxValidationIssue[] {
   return triggers.flatMap((recordTrigger) => {
     const moduleId = triggerOrigin(recordTrigger, design);
-    const blockers: string[] = [];
+    const messages: string[] = [];
     if (
       recordTrigger.trigger.kind === "schedule" &&
       !recordTrigger.trigger.moduleId
     )
-      blockers.push(`${recordTrigger.name}: scheduled triggers need a module.`);
+      messages.push(`${recordTrigger.name}: scheduled triggers need a module.`);
     for (const condition of recordTrigger.conditionGroup.conditions)
       if (
         condition.field.moduleId !== moduleId ||
@@ -288,13 +293,13 @@ export function triggerPublicationBlockers(
           (condition.value.moduleId !== moduleId ||
             condition.value.relationshipId !== undefined))
       )
-        blockers.push(
+        messages.push(
           `${recordTrigger.name}: conditions must use fields from the same module.`,
         );
     for (const action of recordTrigger.actions) {
       if (action.kind !== "set-field") {
-        blockers.push(
-          `${recordTrigger.name}: ${action.kind} is not supported for publishing.`,
+        messages.push(
+          `${recordTrigger.name}: ${action.kind} actions can't be published yet.`,
         );
         continue;
       }
@@ -305,11 +310,13 @@ export function triggerPublicationBlockers(
           (action.value.moduleId !== moduleId ||
             action.value.relationshipId !== undefined))
       )
-        blockers.push(
+        messages.push(
           `${recordTrigger.name}: Set field must stay in the same module.`,
         );
     }
-    return blockers;
+    return [...new Set(messages)].map((message) =>
+      issue("trigger.publish_blocked", message, recordTrigger.id),
+    );
   });
 }
 
@@ -887,6 +894,13 @@ export function TriggerStudio({
       .find((message): message is string => message !== null);
     if (validationError) {
       setError(validationError);
+      // Bring the error into view and to the screen reader at once.
+      requestAnimationFrame(() => {
+        const alert =
+          settingsRef.current?.querySelector<HTMLElement>("[role=alert]");
+        alert?.scrollIntoView({ block: "nearest" });
+        alert?.focus({ preventScroll: true });
+      });
       return { ok: false, error: validationError };
     }
     setPending(true);
@@ -1239,7 +1253,7 @@ export function TriggerStudio({
                 }}
               >
                 {error && (
-                  <Alert variant="destructive" role="alert">
+                  <Alert variant="destructive" role="alert" tabIndex={-1}>
                     {error}
                   </Alert>
                 )}
@@ -1856,7 +1870,9 @@ function ActionEditor({
           className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `action:${action.id}` ? "bg-accent ring-ring ring-1" : "bg-muted/40"}`}
         >
           <p className="text-sm font-medium">
-            {action.kind === "set-field" ? "Set field" : "Unsupported action"}
+            {action.kind === "set-field"
+              ? "Set field"
+              : `${action.kind.charAt(0).toUpperCase()}${action.kind.slice(1)} · can't publish yet`}
           </p>
           {action.kind === "set-field" ? (
             <SetFieldAction

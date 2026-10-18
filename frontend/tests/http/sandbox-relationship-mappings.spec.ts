@@ -875,7 +875,7 @@ test("a failed delete shows its error inside the delete dialog", async ({
     .click();
   const deletion = page.getByRole("alertdialog");
   await deletion
-    .getByRole("button", { name: "Confirm delete", exact: true })
+    .getByRole("button", { name: "Delete module", exact: true })
     .click();
   await expect(deletion.getByRole("alert")).toHaveText(
     "This Sandbox change could not be saved. Try again.",
@@ -2103,9 +2103,9 @@ test("a trigger issue opens the trigger it identifies", async ({ page }) => {
   });
 
   await page
-    .getByRole("button", {
-      name: "Review: Review the follow-up trigger",
-    })
+    .getByRole("listitem")
+    .filter({ hasText: "Review the follow-up trigger" })
+    .getByRole("button", { name: "Open trigger" })
     .click();
 
   await expect(page.getByLabel("Trigger name")).toHaveValue(
@@ -2388,7 +2388,7 @@ test("a relationship can target a module in another department and publish", asy
       targetModuleId: "sample-customers",
     });
   // A link to another department is not an item that needs attention.
-  await expect(page.getByText(/need attention/)).toHaveCount(0);
+  await expect(page.getByText(/needs? attention/)).toHaveCount(0);
 
   await page.getByRole("button", { name: "Review & Publish" }).click();
   const review = page.getByRole("dialog", { name: "Review and publish" });
@@ -4381,7 +4381,7 @@ test("History deletion failure retains its target and successful deletion select
     .click();
   const dialog = page.getByRole("alertdialog");
   await dialog
-    .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
+    .getByRole("button", { name: "Delete version", exact: true })
     .click();
   await expect.poll(() => deleteAttempts).toBe(1);
   await expect(dialog).toBeVisible();
@@ -4390,13 +4390,10 @@ test("History deletion failure retains its target and successful deletion select
   await expect(failure).toHaveAttribute("data-variant", "destructive");
   await expect(page.getByText("Try deletion again.")).toHaveCount(0);
   await expect(
-    dialog.getByRole("button", {
-      name: "Delete Disposable checkpoint",
-      exact: true,
-    }),
+    dialog.getByRole("button", { name: "Delete version", exact: true }),
   ).toBeEnabled();
   await dialog
-    .getByRole("button", { name: "Delete Disposable checkpoint", exact: true })
+    .getByRole("button", { name: "Delete version", exact: true })
     .click();
   await expect(dialog).toBeHidden();
   await expect(
@@ -4873,7 +4870,7 @@ test("registered shortcuts enabled retain real help fit rename and removal revie
   const review = page.getByRole("alertdialog");
   await expect(review).toContainText("Service requests");
   await expect(
-    review.getByRole("button", { name: "Confirm delete", exact: true }),
+    review.getByRole("button", { name: "Delete module", exact: true }),
   ).toBeVisible();
   await review.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(sandbox.document().design.modules).toHaveLength(3);
@@ -5566,7 +5563,7 @@ test("History deletion of the sole last-page row selects an available version an
     .click();
   await page
     .getByRole("alertdialog")
-    .getByRole("button", { name: "Delete Saved checkpoint 1", exact: true })
+    .getByRole("button", { name: "Delete version", exact: true })
     .click();
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(

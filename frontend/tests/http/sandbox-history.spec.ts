@@ -42,7 +42,7 @@ test("Compare with opens the comparison with that version preselected", async ({
   await timeline.getByRole("button", { name: "View First draft" }).click();
   await inspector
     .getByLabel("Compare with", { exact: true })
-    .selectOption({ label: "Release snapshot · v2" });
+    .selectOption({ label: "v2 · Release snapshot" });
   await inspector.getByRole("button", { name: "Compare", exact: true }).click();
   await expect(
     comparison.getByLabel("Compare first version", { exact: true }),
@@ -52,6 +52,21 @@ test("Compare with opens the comparison with that version preselected", async ({
   ).toHaveValue(versions[1]!.id);
   // The comparison replaces the "Ready to compare" hint.
   await expect(comparison.getByText(/^Ready to compare/)).toHaveCount(0);
+});
+
+test("on a phone, a compare brings the comparison into view", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.goto("/sandbox?section=history");
+  const { timeline, inspector, comparison } = historyRegions(page);
+  await timeline.getByRole("button", { name: "View First draft" }).click();
+  await inspector.getByRole("button", { name: "Compare", exact: true }).click();
+  // The comparison sits under the detail on a phone.
+  const heading = comparison.getByRole("heading", { name: "Compare versions" });
+  await expect(heading).toBeFocused();
+  await expect(heading).toBeInViewport();
 });
 
 test("Delete version sits in Advanced in danger ink", async ({ page }) => {

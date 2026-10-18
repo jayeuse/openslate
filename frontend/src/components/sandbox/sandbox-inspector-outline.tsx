@@ -66,10 +66,12 @@ function commandFailed(
   return result?.ok === false;
 }
 
+// Hover and selected tint from the look's ink, as in the trigger and
+// version lists. Only the selected row is current; its ancestors stay plain.
 function selectedClasses(selected: boolean): string {
   return selected
-    ? "bg-primary/10 text-foreground ring-primary/50 ring-1"
-    : "hover:bg-muted text-foreground";
+    ? "text-foreground bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
+    : "text-foreground hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)]";
 }
 
 interface OutlineNameProps {
@@ -550,9 +552,7 @@ export function SandboxInspectorOutline({
             {itemRow(
               "department",
               departmentItem,
-              selectedCellId === departmentItem.id ||
-                sandboxModule?.departmentId === departmentItem.id ||
-                selectedFieldModule?.departmentId === departmentItem.id,
+              selectedCellId === departmentItem.id,
             )}
           </div>
         </div>
@@ -595,8 +595,7 @@ export function SandboxInspectorOutline({
                           {itemRow(
                             "module",
                             moduleItem,
-                            selectedCellId === moduleItem.id ||
-                              field?.moduleId === moduleItem.id,
+                            selectedCellId === moduleItem.id,
                           )}
                         </div>
                       </div>
@@ -658,40 +657,44 @@ export function SandboxInspectorOutline({
                 className="h-11 pl-8 xl:h-9"
               />
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-11 shrink-0 xl:size-9"
-              aria-label="Expand all"
-              title="Expand all"
-              disabled={state.departments.length === 0}
-              onClick={() => {
-                setCollapsedDepartments(new Set());
-                setCollapsedModules(new Set());
-              }}
-            >
-              <ChevronsUpDown aria-hidden="true" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-11 shrink-0 xl:size-9"
-              aria-label="Collapse all"
-              title="Collapse all"
-              disabled={state.departments.length === 0}
-              onClick={() => {
-                setCollapsedDepartments(
-                  new Set(state.departments.map((item) => item.id)),
-                );
-                setCollapsedModules(
-                  new Set(state.modules.map((item) => item.id)),
-                );
-              }}
-            >
-              <ChevronsDownUp aria-hidden="true" />
-            </Button>
+            {/* One toggle: it offers whichever of expand or collapse applies. */}
+            {collapsedDepartments.size === 0 && collapsedModules.size === 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11 shrink-0 xl:size-9"
+                aria-label="Collapse all"
+                title="Collapse all"
+                disabled={state.departments.length === 0}
+                onClick={() => {
+                  setCollapsedDepartments(
+                    new Set(state.departments.map((item) => item.id)),
+                  );
+                  setCollapsedModules(
+                    new Set(state.modules.map((item) => item.id)),
+                  );
+                }}
+              >
+                <ChevronsDownUp aria-hidden="true" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11 shrink-0 xl:size-9"
+                aria-label="Expand all"
+                title="Expand all"
+                disabled={state.departments.length === 0}
+                onClick={() => {
+                  setCollapsedDepartments(new Set());
+                  setCollapsedModules(new Set());
+                }}
+              >
+                <ChevronsUpDown aria-hidden="true" />
+              </Button>
+            )}
             <DisabledReason
               reason={selectedCellId ? null : "Select an item first."}
             >

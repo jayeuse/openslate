@@ -13,7 +13,6 @@ import {
   sandboxKeys,
   sandboxVersionPageOptions,
 } from "../state/sandbox-queries";
-import { ArrowRight } from "lucide-react";
 import { VersionComparison } from "./version-comparison";
 import {
   VersionCapacityBanner,
@@ -199,14 +198,13 @@ function VersionChoice({
       {(controlId) => (
         <NativeSelect
           id={controlId}
-          className="w-full [&_select]:min-h-11"
+          className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-9"
           value={value}
           onChange={(event) => onChange(event.target.value)}
         >
           {versions.map((version) => (
             <NativeSelectOption key={version.id} value={version.id}>
-              {version.label} · v{version.sequence} ·{" "}
-              {formatVersionDate(version.createdAt)}
+              v{version.sequence} · {version.label}
             </NativeSelectOption>
           ))}
         </NativeSelect>
@@ -424,25 +422,33 @@ export function VersionsWorkspace({
   function clearComparison() {
     setComparison(null);
     setComparing(false);
+    setCompareError("");
   }
   const [comparePending, setComparePending] = useState(false);
+  const [compareError, setCompareError] = useState("");
+  const comparisonHeading = useRef<HTMLHeadingElement | null>(null);
   async function compare(firstId: string, secondId: string) {
     setComparePending(true);
+    setCompareError("");
     const [first, second] = await Promise.all([
       getVersion(firstId),
       getVersion(secondId),
     ]);
     setComparePending(false);
-    if (!first.ok) {
-      notifyError(first.error);
-      return;
+    if (!first.ok) setCompareError(first.error);
+    else if (!second.ok) setCompareError(second.error);
+    else {
+      setComparison({ first: first.value, second: second.value });
+      setComparing(true);
     }
-    if (!second.ok) {
-      notifyError(second.error);
-      return;
-    }
-    setComparison({ first: first.value, second: second.value });
-    setComparing(true);
+    // Below xl the comparison sits under the detail: bring the result or
+    // the error into view.
+    requestAnimationFrame(() => {
+      const heading = comparisonHeading.current;
+      if (!heading || window.matchMedia("(min-width: 80rem)").matches) return;
+      heading.scrollIntoView({ block: "start" });
+      heading.focus({ preventScroll: true });
+    });
   }
   const [compareWith, setCompareWith] = useState("");
   const versionActionReturnFocus = useRef<HTMLElement | null>(null);
@@ -666,7 +672,7 @@ export function VersionsWorkspace({
                     <div className="relative">
                       <span
                         aria-hidden="true"
-                        className="bg-border pointer-events-none absolute inset-y-3 left-2 z-20 w-px"
+                        className="bg-border pointer-events-none absolute inset-y-3 left-3 z-20 w-px -translate-x-1/2"
                       />
                       <ol aria-label="Saved versions" className="space-y-1">
                         {group.versions.map((version) => {
@@ -707,12 +713,12 @@ export function VersionsWorkspace({
                                       {version.label}
                                     </span>
                                     {isComparedFirst ? (
-                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
+                                      <span className="border-action-text/30 bg-action-tint text-action-text shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
                                         A
                                       </span>
                                     ) : null}
                                     {isComparedSecond ? (
-                                      <span className="border-primary/30 bg-primary/10 text-primary shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
+                                      <span className="border-action-text/30 bg-action-tint text-action-text shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
                                         B
                                       </span>
                                     ) : null}
@@ -787,16 +793,21 @@ export function VersionsWorkspace({
 
           <section
             aria-label="Version comparison"
-            className="bg-background border-border relative min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
+            className="bg-background border-border relative min-w-0 border-t p-4 max-xl:order-last xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-t-0 xl:border-r"
           >
             <div>
-              <h2 data-slot="section-title" className="font-semibold">
+              <h2
+                ref={comparisonHeading}
+                tabIndex={-1}
+                data-slot="section-title"
+                className="font-semibold outline-none"
+              >
                 Compare versions
               </h2>
             </div>
 
             {knownVersions.length ? (
-              <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] sm:items-end">
+              <div className="mt-5 grid gap-3">
                 <VersionChoice
                   label="Compare first version"
                   value={selectedCompareA}
@@ -806,12 +817,6 @@ export function VersionsWorkspace({
                     clearComparison();
                   }}
                 />
-                <span
-                  aria-hidden="true"
-                  className="text-muted-foreground hidden items-center justify-center pb-3 sm:flex"
-                >
-                  <ArrowRight size={16} />
-                </span>
                 <VersionChoice
                   label="Compare second version"
                   value={selectedCompareB}
@@ -822,6 +827,8 @@ export function VersionsWorkspace({
                   }}
                 />
                 <Button
+                  variant="outline"
+                  className="justify-self-start"
                   disabled={pending || !selectedCompareA || !selectedCompareB}
                   pending={comparePending}
                   pendingLabel="Comparing…"
@@ -832,6 +839,11 @@ export function VersionsWorkspace({
                   Compare versions
                 </Button>
               </div>
+            ) : null}
+            {compareError ? (
+              <Alert variant="destructive" className="mt-3">
+                {compareError}
+              </Alert>
             ) : null}
 
             {comparing &&
@@ -870,7 +882,7 @@ export function VersionsWorkspace({
               <>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    <p className="text-muted-foreground text-xs font-medium">
                       {versionKindLabel(selectedVersion)}
                     </p>
                     <h2
@@ -890,16 +902,18 @@ export function VersionsWorkspace({
                         {formatVersionDate(selectedVersion.createdAt)}
                       </time>
                       <span className="text-muted-foreground ml-2 text-xs">
-                        Version {selectedVersion.sequence}
+                        v{selectedVersion.sequence}
                       </span>
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-muted-foreground text-xs">Note</dt>
-                    <dd className="mt-1 break-words">
-                      {selectedVersion.note || "No version note provided."}
-                    </dd>
-                  </div>
+                  {selectedVersion.note ? (
+                    <div>
+                      <dt className="text-muted-foreground text-xs">Note</dt>
+                      <dd className="mt-1 break-words">
+                        {selectedVersion.note}
+                      </dd>
+                    </div>
+                  ) : null}
                 </dl>
 
                 {knownVersions.length > 1 ? (
@@ -913,7 +927,7 @@ export function VersionsWorkspace({
                             knownVersions.filter(
                               (version) => version.id !== selectedVersion.id,
                             ),
-                            compareWith,
+                            compareWith || compareB,
                             "first",
                           )}
                           onChange={(event) =>
@@ -929,7 +943,7 @@ export function VersionsWorkspace({
                                 key={version.id}
                                 value={version.id}
                               >
-                                {version.label} · v{version.sequence}
+                                v{version.sequence} · {version.label}
                               </NativeSelectOption>
                             ))}
                         </NativeSelect>
@@ -945,7 +959,7 @@ export function VersionsWorkspace({
                           knownVersions.filter(
                             (version) => version.id !== selectedVersion.id,
                           ),
-                          compareWith,
+                          compareWith || compareB,
                           "first",
                         );
                         setCompareA(selectedVersion.id);
@@ -1146,8 +1160,8 @@ export function VersionsWorkspace({
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {confirm.kind === "delete"
-                  ? `Delete ${confirmVersion.label} from shared history?`
-                  : `Restore the draft from ${confirmVersion.label}? Shared history will add a recovery checkpoint.`}
+                  ? "This can't be undone. Your draft and live data stay as they are."
+                  : "Your current draft is saved as a checkpoint first. Live data stays as it is."}
               </AlertDialogDescription>
             </AlertDialogHeader>
             {actionError ? (
@@ -1170,8 +1184,8 @@ export function VersionsWorkspace({
                 onClick={() => void apply()}
               >
                 {confirm.kind === "delete"
-                  ? `Delete ${confirmVersion.label}`
-                  : `Restore ${confirmVersion.label}`}
+                  ? "Delete version"
+                  : "Restore version"}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>

@@ -3051,7 +3051,7 @@ export function Designer({
               pendingLabel="Deleting…"
               onClick={removeSelected}
             >
-              Confirm delete
+              {currentDeleteImpact?.action ?? "Delete"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

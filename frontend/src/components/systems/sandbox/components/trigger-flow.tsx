@@ -146,7 +146,7 @@ function actionText(
 ): string {
   return action.kind === "set-field"
     ? `Set ${fieldName(design, action.target)} to ${valueName(design, action.target, action.value)}`
-    : `Unsupported action: ${action.kind}`;
+    : `${action.kind.charAt(0).toUpperCase()}${action.kind.slice(1)} · can't publish yet`;
 }
 function Connector() {
   return (
@@ -163,12 +163,15 @@ function FlowNode({
   description,
   icon,
   selected,
+  warn = false,
   onClick,
 }: {
   title: string;
   description: string;
   icon: ReactNode;
   selected: boolean;
+  /** A step that blocks publishing reads in warning ink. */
+  warn?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -191,7 +194,12 @@ function FlowNode({
         <span className="text-muted-foreground mb-1 block text-xs font-medium">
           {title}
         </span>
-        <span className="block text-sm leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap">
+        <span
+          className={cn(
+            "block text-sm leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap",
+            warn && "text-warn-text",
+          )}
+        >
           {description}
         </span>
       </span>
@@ -283,6 +291,7 @@ export function TriggerFlow({
                 title={`Then · Action ${index + 1}`}
                 description={actionText(design, action)}
                 icon={<Pencil />}
+                warn={action.kind !== "set-field"}
                 selected={selectedStep === `action:${action.id}`}
                 onClick={() => onSelect(`action:${action.id}`)}
               />
@@ -320,7 +329,10 @@ export function TriggerFlow({
               {recordTrigger.trigger.kind === "schedule"
                 ? "On a schedule: "
                 : "When "}
-              {trigger}.
+              {recordTrigger.trigger.kind === "record-created"
+                ? trigger.replace(/^An /, "an ")
+                : trigger}
+              .
             </p>
             {conditions.length ? (
               <>
@@ -344,7 +356,16 @@ export function TriggerFlow({
                 <p>Then:</p>
                 <ul className="list-disc space-y-1 pl-5">
                   {recordTrigger.actions.map((action) => (
-                    <li key={action.id}>{actionText(design, action)}</li>
+                    <li
+                      key={action.id}
+                      className={
+                        action.kind === "set-field"
+                          ? undefined
+                          : "text-warn-text"
+                      }
+                    >
+                      {actionText(design, action)}
+                    </li>
                   ))}
                 </ul>
               </>

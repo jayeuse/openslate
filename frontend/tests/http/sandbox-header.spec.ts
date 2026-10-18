@@ -86,3 +86,38 @@ test("the menu ends with Discard, and large dialogs close with X", async ({
   await templates.getByRole("button", { name: "Close", exact: true }).click();
   await expect(templates).toBeHidden();
 });
+
+test("a trigger that cannot publish shows before the review and opens from it", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign);
+  const blocker =
+    "Urgent request alert: notification actions can't be published yet.";
+  const issue = page.getByRole("listitem").filter({ hasText: blocker });
+  // The button names where it goes; the blocker describes it.
+  const open = issue.getByRole("button", { name: "Open trigger" });
+  await expect(open).toHaveAccessibleDescription(blocker);
+  await open.click();
+  await expect(page).toHaveURL(/section=triggers/);
+  await expect(page.getByLabel("Trigger name")).toHaveValue(
+    "Urgent request alert",
+  );
+
+  await page.goto("/sandbox");
+  await page.getByRole("button", { name: "Review & Publish" }).click();
+  const review = page.getByRole("dialog", { name: "Review and publish" });
+  // The change list still loads, so the owner sees what is waiting.
+  await expect(review.getByRole("heading", { name: "Changes" })).toBeVisible();
+  await expect(
+    review.getByRole("button", { name: "Publish changes" }),
+  ).toBeDisabled();
+  await review
+    .getByRole("listitem")
+    .filter({ hasText: blocker })
+    .getByRole("button", { name: "Open trigger" })
+    .click();
+  await expect(review).toBeHidden();
+  await expect(page.getByLabel("Trigger name")).toHaveValue(
+    "Urgent request alert",
+  );
+});

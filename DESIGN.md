@@ -327,6 +327,20 @@ Correct: The If step of a trigger with no conditions shows "Always".
 
 Wrong: "No condition filter is configured." shown twice, once in the flow and once in the summary.
 
+**The page pass (pattern kit).** To bring a workspace page to these rules, take its panels one at a time, with the Sandbox as the worked example (`docs/specs/sandbox-ui-ux-pass.md`):
+
+1. Inventory every control and helper line per panel and selection state, and measure helper words and default-visible controls with one script on fixed data before you change anything.
+2. Classify each control as essential, conditional (shown only in its case), menu, or Advanced; lifecycle actions go to Advanced.
+3. Give every data-changing action its four moments: a consequence or a disabled reason before, a pending label during, the lowest visible channel after, and the error beside the control or in the open dialog.
+4. Cut every helper sentence that explains a control, repeats a fact, or restates a heading; move first-visit guidance to the empty state.
+5. Reuse the shared parts: `AdvancedSection`, `DisabledReason`, the segmented `ToggleGroup`, the Button pending label, Cancel-first dialog footers, `DialogCloseButton` for large dialogs only, and ink-tint row states (6% hover, 14% selected).
+6. Apply the Still Page Rule on desktop and keep phones scrolling; give a phone a list-or-detail view with Back where a desktop shows panels side by side.
+7. Verify at 1440 and 390, light and dark, in all four looks; add one HTTP journey per criterion and a 390 sweep; measure again on the same data.
+
+Correct: History's kind filter becomes one select, Delete version moves into Advanced in danger ink with "Published versions are kept." as its disabled reason, and Restore shows "Draft restored · checkpoint saved".
+
+Wrong: History keeps four filter toggles, adds an Advanced block per version row, and confirms a label edit with a page alert.
+
 ## Colors
 
 The palette is a set of semantic roles, not a hue list. Each look supplies its own values for the same names in light and dark. Prose below names tokens; the values live in the stylesheets.
@@ -675,7 +689,7 @@ The top bar (`data-skin="topbar"`) and sidebar carry the look's frame. Whiteboar
 
 ### Publish status
 
-The Sandbox header names the real state of the draft: "Nothing to publish yet", "Draft saved", "Unpublished changes", "Unsaved changes", or "Published". Review & Publish is available only when publishing would change something; it is disabled for "Nothing to publish yet", "Published", and "Unsaved changes". The review groups changes by kind (departments, modules, fields, relationships, triggers), with a New, Changed, Closed, or Reopened chip on each row, field changes nested under their module, and a "Show all" control on groups longer than five rows.
+The Sandbox header has one save-state chip (`role="status"`). It names the publish state ("Nothing to publish yet", "Not published yet", "Unpublished changes", or "Published"), then what is happening to the draft ("Saving…", "Saved", or "N unsaved trigger changes"). A save conflict turns the whole chip to "Not saved". Review & Publish is available only when publishing would change something, and its disabled state says why ("Nothing to publish yet.", "Save trigger changes first."). Trigger settings that cannot publish show in the page's "need attention" list before the review, and each blocker in the review has a button that opens it. The review groups changes by kind (departments, modules, fields, relationships, triggers), with a New, Changed, Closed, or Reopened chip on each row, field changes nested under their module, and a "Show all" control on groups longer than five rows.
 
 ### Organization look picker
 
