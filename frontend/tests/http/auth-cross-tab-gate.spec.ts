@@ -623,10 +623,10 @@ test("a returning tab starts a new identity check while an old refresh remains p
   await expect(search).toHaveValue("");
 });
 
-// While the window is in the background the curtain hides the workspace but
-// checks nothing until the window returns, so it says that instead of
-// "Checking your session…", which looked stuck in a side-by-side window.
-test("a background window says why the workspace is hidden and shows it again on return", async ({
+// Leaving the window does not change who is signed in, so the workspace stays
+// visible and usable while away; returning covers it only while the session
+// is rechecked.
+test("leaving the window keeps the workspace visible and returning keeps its input", async ({
   page,
 }) => {
   await page.goto("/platform?section=search");
@@ -635,21 +635,70 @@ test("a background window says why the workspace is hidden and shows it again on
   const curtain = page.getByRole("dialog", { name: "Session verification" });
 
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
-  await expect(
-    curtain.getByText(
-      "Your workspace is hidden while you use another window or tab.",
-    ),
-  ).toBeVisible();
-  await expect(curtain.getByText("Checking your session…")).toHaveCount(0);
-  await curtain.getByRole("button", { name: "Show workspace" }).click();
   await expect(curtain).toBeHidden();
-  await expect(search).toHaveValue("still here");
-
-  await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
-  await expect(curtain).toBeVisible();
+  await search.fill("still typing");
+  const recheck = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === "/api/auth/session",
+  );
   await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+  await recheck;
   await expect(curtain).toBeHidden();
-  await expect(search).toHaveValue("still here");
+  await expect(search).toHaveValue("still typing");
+});
+
+// Session cookies are shared by every tab, so a sign-in in another tab covers
+// this one at once and keeps it covered until it opens the new account.
+test("another tab's sign-in covers this tab until it opens the new account", async ({
+  page,
+  context,
+}) => {
+  let activeUser = userA;
+  let holdNextSession = false;
+  const newSession = heldResponse();
+  await page.route("**/api/auth/session", async (route) => {
+    if (holdNextSession) {
+      holdNextSession = false;
+      newSession.enter();
+      await newSession.released;
+    }
+    try {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          authenticated: true,
+          user_id: activeUser,
+          default_organization_blocked: null,
+          setup_required: false,
+        }),
+      });
+    } catch {
+      // A superseded browser request may already have been aborted.
+    }
+  });
+  await page.goto("/platform?section=search");
+  const search = page.getByRole("searchbox", { name: "Search workspace" });
+  await search.fill("A-only draft");
+  const curtain = page.getByRole("dialog", { name: "Session verification" });
+
+  activeUser = userB;
+  holdNextSession = true;
+  const otherTab = await context.newPage();
+  await otherTab.goto("/openview-print.css");
+  try {
+    await otherTab.evaluate(() =>
+      new BroadcastChannel("openslate-session").postMessage({
+        tabId: "another-tab",
+      }),
+    );
+    await expect(curtain).toBeVisible();
+    await page.bringToFront();
+    await newSession.entered;
+    await expect(curtain).toBeVisible();
+  } finally {
+    newSession.release();
+  }
+  await expect(curtain).toBeHidden();
+  await expect(search).toHaveValue("");
 });
 
 test("Retry starts a fresh check when the current session request never settles", async ({

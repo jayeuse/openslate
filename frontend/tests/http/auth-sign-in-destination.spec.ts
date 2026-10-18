@@ -167,6 +167,35 @@ test("a first sign-in with nothing published opens the Sandbox", async ({
   ]);
 });
 
+// Session cookies are shared by every tab, so a sign-in tells this browser's
+// other OpenSlate tabs to recheck who is signed in.
+test("a sign-in tells the browser's other tabs that the account changed", async ({
+  page,
+  context,
+}) => {
+  const listener = await context.newPage();
+  await listener.goto("/openview-print.css");
+  await listener.evaluate(() => {
+    const seen: unknown[] = [];
+    Object.assign(window, { identityMessages: seen });
+    new BroadcastChannel("openslate-session").addEventListener(
+      "message",
+      (event) => seen.push(event.data),
+    );
+  });
+  await signInWith(page, "none");
+  await expect(page).toHaveURL(/\/sandbox$/);
+  await expect
+    .poll(() =>
+      listener.evaluate(
+        () =>
+          (window as unknown as { identityMessages: unknown[] })
+            .identityMessages.length,
+      ),
+    )
+    .toBe(1);
+});
+
 test("a first sign-in without Sandbox access opens OpenView", async ({
   page,
 }) => {

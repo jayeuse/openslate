@@ -952,8 +952,22 @@ test("Audit CSV failure retains its pinned preview and Retry refuses malformed o
 
 test("Audit Close, Escape, route leave and session concealment suppress pending CSV downloads", async ({
   page,
+  context,
 }) => {
   const api = createAuditRoute(makeAuditLogs());
+  // Another tab's sign-in conceals the workspace until the session is checked.
+  let sessionHold: ReturnType<typeof heldResponse> | null = null;
+  await page.route("**/api/auth/session", async (route) => {
+    const held = sessionHold;
+    if (held) {
+      sessionHold = null;
+      held.enter();
+      await held.released;
+    }
+    await route.fallback();
+  });
+  const otherTab = await context.newPage();
+  await otherTab.goto("/openview-print.css");
   // `response` holds the export answer; `handled` is entered once it is sent.
   let hold: {
     response: ReturnType<typeof heldResponse>;
@@ -982,7 +996,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
     }
     await api.handle(route);
   });
-  for (const method of ["Close", "Escape", "leave", "blur"] as const) {
+  for (const method of ["Close", "Escape", "leave", "concealment"] as const) {
     await page.goto("/manage?view=organization");
     await expect(
       page.getByRole("heading", { name: "Organization", exact: true }),
@@ -1002,6 +1016,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
     ).toBeEnabled();
     hold = { response: heldResponse(), handled: heldResponse() };
     const barrier = hold;
+    const session = heldResponse();
     const before = started;
     try {
       await preview
@@ -1017,8 +1032,13 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
           .getByRole("button", { name: "Close preview", exact: true })
           .click();
       if (method === "Escape") await page.keyboard.press("Escape");
-      if (method === "blur") {
-        await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+      if (method === "concealment") {
+        sessionHold = session;
+        await otherTab.evaluate(() =>
+          new BroadcastChannel("openslate-session").postMessage({
+            tabId: "another-tab",
+          }),
+        );
         await expect(
           page.getByRole("dialog", {
             name: "Session verification",
@@ -1036,8 +1056,9 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
       await expect(preview).toBeHidden();
       barrier.response.release();
       await barrier.handled.entered;
-      if (method === "blur") {
-        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      if (method === "concealment") {
+        await session.entered;
+        session.release();
         await expect(
           page.getByRole("dialog", {
             name: "Session verification",
@@ -1058,6 +1079,7 @@ test("Audit Close, Escape, route leave and session concealment suppress pending 
       ).toBeHidden();
     } finally {
       barrier.response.release();
+      session.release();
       hold = null;
     }
   }

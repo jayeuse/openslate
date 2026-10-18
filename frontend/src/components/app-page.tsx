@@ -34,6 +34,7 @@ import {
   currentOrganizationId,
   setCurrentOrganizationId,
 } from "@/lib/organization-context";
+import { subscribeIdentityChanges } from "@/lib/session-broadcast";
 import { OrganizationGate } from "@/components/organization-gate";
 import { toast } from "@/components/ui/toast";
 import { Alert } from "@/components/ui/alert";
@@ -89,15 +90,12 @@ function supersedeSessionCheck(current: CheckQueue) {
 function SessionVerificationMessage({
   draftCleanupFailed,
   unavailable,
-  backgrounded,
   onRetry,
   onSignOut,
   signOutError,
 }: {
   draftCleanupFailed: boolean;
   unavailable: boolean;
-  /** Hidden because the window lost focus; nothing is checked until it returns. */
-  backgrounded: boolean;
   onRetry: () => void;
   onSignOut?: () => void;
   signOutError?: boolean;
@@ -120,18 +118,12 @@ function SessionVerificationMessage({
           className="text-muted-foreground text-center text-sm text-balance"
           role="status"
         >
-          {backgrounded
-            ? "Your workspace is hidden while you use another window or tab."
-            : "Checking your session…"}
+          Checking your session…
         </p>
       )}
       <div className="mt-5 flex flex-wrap justify-center gap-3">
         <Button className="min-h-11" onClick={onRetry} type="button">
-          {unavailable
-            ? "Retry"
-            : backgrounded && !draftCleanupFailed
-              ? "Show workspace"
-              : "Check again"}
+          {unavailable ? "Retry" : "Check again"}
         </Button>
         {onSignOut && (
           <Button
@@ -190,7 +182,6 @@ export function AppPage({ children }: AppPageProps) {
   const [checking, setChecking] = useState(true);
   const [forceFallback, setForceFallback] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
-  const [backgrounded, setBackgrounded] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [networkDenied, setNetworkDenied] = useState(false);
   const [accountProfileAvailable, setAccountProfileAvailable] = useState(false);
@@ -221,7 +212,7 @@ export function AppPage({ children }: AppPageProps) {
     controller: null,
   });
   const mfa = useMfaController(requestSessionRecheck, finishFactorRemoval);
-  const { bind: bindMfa, hide: hideMfa, clear: clearMfa } = mfa;
+  const { bind: bindMfa, hide: hideMfa, clear: clearMfa, open: mfaOpen } = mfa;
 
   useEffect(() => {
     mounted.current = true;
@@ -290,7 +281,7 @@ export function AppPage({ children }: AppPageProps) {
   }, [checking, unavailable, verifiedUserId]);
 
   useEffect(() => {
-    function concealWorkspace(background: boolean) {
+    function concealWorkspace() {
       if (!mounted.current || signOutAccepted.current) return;
       // A tab's cookie identity can change elsewhere. Invalidate an in-flight
       // result and cover even body-level portals before the next browser paint.
@@ -309,40 +300,53 @@ export function AppPage({ children }: AppPageProps) {
       flushSync(() => {
         setChecking(true);
         setUnavailable(false);
-        setBackgrounded(background);
       });
     }
 
+    // Another tab signed in or out, or the session asked for a check: who is
+    // signed in may have changed, so cover first, then check. A hidden tab
+    // checks when it returns.
+    function concealAndRecheck() {
+      if (signOutAccepted.current) return;
+      concealWorkspace();
+      if (document.visibilityState === "visible")
+        setRetryVersion((version) => version + 1);
+    }
+
+    // Leaving the window does not change who is signed in, so the workspace
+    // stays visible while away. Returning covers it only while the session is
+    // rechecked, which is also when features re-read roles and permissions.
     function recheckOnReturn() {
       if (signOutAccepted.current || document.visibilityState !== "visible")
         return;
-      concealWorkspace(false);
+      concealWorkspace();
       setRetryVersion((version) => version + 1);
     }
 
-    function concealMountedWorkspace() {
-      // The first session request has no protected tree to conceal. Let it
-      // finish while backgrounded; a later focus will supersede and recheck.
-      if (!curtain.current && !mfaRequired) return;
-      concealWorkspace(true);
+    // MFA setup and verification show credential material, such as the
+    // authenticator QR code; hide it while the window is away.
+    function concealCredentials() {
+      if (mfaRequired || mfaOpen) concealWorkspace();
     }
 
     function onVisibilityChange() {
-      if (document.visibilityState === "hidden") concealMountedWorkspace();
-      else recheckOnReturn();
+      if (document.visibilityState === "visible") recheckOnReturn();
+      else concealCredentials();
     }
 
-    window.addEventListener("blur", concealMountedWorkspace);
+    window.addEventListener("blur", concealCredentials);
     window.addEventListener("focus", recheckOnReturn);
-    window.addEventListener(sessionRecheckEvent, recheckOnReturn);
+    window.addEventListener(sessionRecheckEvent, concealAndRecheck);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    const stopIdentityChanges = subscribeIdentityChanges(concealAndRecheck);
     return () => {
-      window.removeEventListener("blur", concealMountedWorkspace);
+      window.removeEventListener("blur", concealCredentials);
       window.removeEventListener("focus", recheckOnReturn);
-      window.removeEventListener(sessionRecheckEvent, recheckOnReturn);
+      window.removeEventListener(sessionRecheckEvent, concealAndRecheck);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      stopIdentityChanges();
     };
-  }, [hideMfa, mfaRequired]);
+  }, [hideMfa, mfaOpen, mfaRequired]);
 
   useEffect(() => {
     // Commit a newly verified identity (and its keyed workspace) before the
@@ -361,8 +365,6 @@ export function AppPage({ children }: AppPageProps) {
 
   useEffect(() => {
     if (signOutAccepted.current) return;
-    // A check is about to run, so the curtain says so.
-    setBackgrounded(false);
     const current = queue.current;
     current.queued = {
       pathname,
@@ -702,7 +704,6 @@ export function AppPage({ children }: AppPageProps) {
   function retrySessionCheck() {
     hideMfa();
     supersedeSessionCheck(queue.current);
-    setBackgrounded(false);
     setUnavailable(false);
     setDraftCleanupFailed(false);
     setRetryVersion((version) => version + 1);
@@ -876,7 +877,6 @@ export function AppPage({ children }: AppPageProps) {
     <SessionVerificationMessage
       draftCleanupFailed={draftCleanupFailed}
       unavailable={unavailable}
-      backgrounded={backgrounded}
       onRetry={retrySessionCheck}
       onSignOut={mfaRequired ? () => void signOutFromGate() : undefined}
       signOutError={signOutError}

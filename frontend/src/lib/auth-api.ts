@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ApiError, apiFetch, refreshBrowserSession } from "@/lib/api";
+import { announceIdentityChange } from "@/lib/session-broadcast";
 import {
   currentOrganizationId,
   setCurrentOrganizationId,
@@ -202,18 +203,22 @@ export async function acceptOrganizationInvitation(
 }
 
 export async function signIn(email: string, password: string) {
-  return apiFetch("/auth/login", authenticatedResponse, {
+  const session = await apiFetch("/auth/login", authenticatedResponse, {
     method: "POST",
     body: JSON.stringify({ email, password }),
     refreshOnUnauthorized: false,
   });
+  announceIdentityChange();
+  return session;
 }
 
 export async function signOut() {
-  return apiFetch("/auth/logout", noContentResponse, {
+  const result = await apiFetch("/auth/logout", noContentResponse, {
     method: "POST",
     refreshOnUnauthorized: false,
   });
+  announceIdentityChange();
+  return result;
 }
 
 /** This landing-page probe never refreshes an occupied or expired browser context. */
@@ -244,12 +249,19 @@ export async function completeEmailChange(
   tokenHash: string,
   signal?: AbortSignal,
 ) {
-  return apiFetch("/auth/email/complete", emailConfirmationResponse, {
-    method: "POST",
-    body: JSON.stringify({ token_hash: tokenHash }),
-    signal,
-    refreshOnUnauthorized: false,
-  });
+  const confirmation = await apiFetch(
+    "/auth/email/complete",
+    emailConfirmationResponse,
+    {
+      method: "POST",
+      body: JSON.stringify({ token_hash: tokenHash }),
+      signal,
+      refreshOnUnauthorized: false,
+    },
+  );
+  // A confirmation that signs this browser in changes the signed-in account.
+  if (confirmation.authenticated) announceIdentityChange();
+  return confirmation;
 }
 
 function isStaleOrganization(error: unknown): boolean {
