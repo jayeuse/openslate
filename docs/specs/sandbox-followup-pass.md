@@ -146,6 +146,8 @@ It runs last because it touches strings in every section, including the strings 
 
 The pre-push gate runs only when the owner asks to push.
 
+**Exit results (2026-10-18).** Lint, build, 220 isolated and 149 Sandbox HTTP tests pass. The exit `ui-reviewer` found no regressions and three fixes, all applied in `02fd7ce8`: canvas field names give way to longer type words; Review & Publish waits while kept edits wait, and the prompt's Discard has Undo; tree field and Add rows line up below 1280 px. Restore also waits while newer edits are unsaved. Pre-existing and out of scope: on dense templates, relationship label chips can cover field rows on the canvas.
+
 ## Risks
 
 | Risk                                                                                                                                                  | Solution                                                                                                        |

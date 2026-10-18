@@ -1445,15 +1445,26 @@ export default function SandboxPage() {
               </p>
             ) : null}
             <div className="mt-2 flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                onClick={() => {
-                  triggerDraft.restoreKept();
-                  if (section !== "Triggers") navigate("Triggers");
-                }}
+              {/* Restore would replace edits made since the reload, so it
+                  waits until those are saved or discarded. */}
+              <DisabledReason
+                reason={
+                  triggerDraft.dirty
+                    ? "Save or discard your current trigger edits first."
+                    : null
+                }
               >
-                Restore
-              </Button>
+                <Button
+                  size="sm"
+                  disabled={triggerDraft.dirty}
+                  onClick={() => {
+                    triggerDraft.restoreKept();
+                    if (section !== "Triggers") navigate("Triggers");
+                  }}
+                >
+                  Restore
+                </Button>
+              </DisabledReason>
               <Button
                 size="sm"
                 variant="outline"
