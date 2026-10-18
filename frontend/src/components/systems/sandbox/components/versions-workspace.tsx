@@ -152,6 +152,16 @@ function formatVersionDate(value: string): string {
   }).format(date);
 }
 
+/** The time alone, for timeline rows under their day heading. */
+function formatVersionTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function formatVersionDay(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -520,7 +530,7 @@ export function VersionsWorkspace({
   return (
     <div className="flex h-full min-w-0 flex-col">
       <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border xl:min-h-0 xl:flex-1 xl:shrink">
-        <div className="grid min-w-0 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(30rem,2fr)_minmax(18rem,1.2fr)]">
+        <div className="grid min-w-0 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(16rem,1fr)_minmax(26rem,1.7fr)_minmax(18rem,1.1fr)]">
           <section
             aria-label="Version timeline"
             className="bg-card border-border relative min-w-0 border-b p-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:border-r xl:border-b-0"
@@ -706,20 +716,22 @@ export function VersionsWorkspace({
                                         B
                                       </span>
                                     ) : null}
+                                  </span>
+                                  <span
+                                    id={detailId}
+                                    className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs"
+                                    title={version.createdAt}
+                                  >
+                                    {/* The kind sits with the date, so a long
+                                        name keeps the row's full width. */}
                                     <Badge
                                       variant="outline"
                                       className="shrink-0 px-1 py-0 text-xs"
                                     >
                                       {versionKindLabel(version)}
                                     </Badge>
-                                  </span>
-                                  <span
-                                    id={detailId}
-                                    className="text-muted-foreground mt-1 block text-xs"
-                                    title={version.createdAt}
-                                  >
                                     <time dateTime={version.createdAt}>
-                                      {formatVersionDate(version.createdAt)}
+                                      {formatVersionTime(version.createdAt)}
                                     </time>{" "}
                                     · v{version.sequence}
                                   </span>
