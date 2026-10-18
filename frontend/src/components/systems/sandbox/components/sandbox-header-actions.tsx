@@ -25,6 +25,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -107,6 +108,7 @@ export function SandboxHeaderActions({
   const [label, setLabel] = useState("");
   const [note, setNote] = useState("");
   const [staged, setStaged] = useState<SandboxDocumentV4 | null>(null);
+  const [stagedName, setStagedName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [includeVersions, setIncludeVersions] = useState(false);
@@ -171,6 +173,7 @@ export function SandboxHeaderActions({
     if (!file) return;
     const result = parseSandboxDocument(await file.text());
     setStaged(result.ok ? result.document : null);
+    setStagedName(result.ok ? file.name : "");
     setError(result.ok ? "" : result.error);
   }
   async function importDocument() {
@@ -252,12 +255,6 @@ export function SandboxHeaderActions({
         <DropdownMenuContent align="end">
           <DropdownMenuItem
             className="min-h-11"
-            onClick={() => onTemplatesOpenChange(true)}
-          >
-            Start from a template
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="min-h-11"
             disabled={!canCheckpoint}
             onClick={() => setCheckpointOpen(true)}
           >
@@ -265,11 +262,19 @@ export function SandboxHeaderActions({
           </DropdownMenuItem>
           <DropdownMenuItem
             className="min-h-11"
+            onClick={() => onTemplatesOpenChange(true)}
+          >
+            Start from a template
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="min-h-11"
             onClick={() => setImportOpen(true)}
           >
             Import or export
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem
+            variant="destructive"
             className="min-h-11"
             disabled={!canDiscard}
             onClick={() => setDiscardOpen(true)}
@@ -288,12 +293,9 @@ export function SandboxHeaderActions({
         open={checkpointOpen}
         onOpenChange={(open) => !busy && setCheckpointOpen(open)}
       >
-        <DialogContent>
+        <DialogContent className="grid gap-4">
           <DialogHeader>
             <DialogTitle>Save checkpoint</DialogTitle>
-            <DialogDescription>
-              Save this draft so you can compare or restore it later.
-            </DialogDescription>
           </DialogHeader>
           <VersionCapacityBanner
             {...versionCapacity}
@@ -301,7 +303,9 @@ export function SandboxHeaderActions({
           />
           {error ? <Alert variant="destructive">{error}</Alert> : null}
           <Field>
-            <FieldLabel htmlFor="sandbox-checkpoint-label">Name</FieldLabel>
+            <FieldLabel htmlFor="sandbox-checkpoint-label">
+              Checkpoint name
+            </FieldLabel>
             <Input
               id="sandbox-checkpoint-label"
               value={label}
@@ -320,7 +324,7 @@ export function SandboxHeaderActions({
               onChange={(event) => setNote(event.target.value)}
             />
           </Field>
-          <DialogFooter>
+          <DialogFooter className="mt-1">
             <Button
               variant="outline"
               className="min-h-11"
@@ -331,7 +335,9 @@ export function SandboxHeaderActions({
             </Button>
             <Button
               className="min-h-11"
-              disabled={pending || busy}
+              disabled={pending}
+              pending={busy}
+              pendingLabel="Saving…"
               onClick={() => void checkpoint()}
             >
               <Save />
@@ -432,7 +438,10 @@ export function SandboxHeaderActions({
             onChange={(event) => void stageImport(event)}
           />
           {staged ? (
-            <p className="text-sm">This file will replace the current draft.</p>
+            <p className="text-sm">
+              <span className="font-medium">{stagedName}</span> · Replaces your
+              draft
+            </p>
           ) : null}
           <DialogFooter>
             <Button
@@ -449,7 +458,9 @@ export function SandboxHeaderActions({
             {staged ? (
               <Button
                 className="min-h-11"
-                disabled={pending || busy || exportBusy}
+                disabled={pending || exportBusy}
+                pending={busy}
+                pendingLabel="Importing…"
                 onClick={() => void importDocument()}
               >
                 <FileDown />
@@ -463,35 +474,36 @@ export function SandboxHeaderActions({
         open={discardOpen}
         onOpenChange={(open) => !busy && setDiscardOpen(open)}
       >
-        <DialogContent>
+        <DialogContent className="grid gap-4">
           <DialogHeader>
             <DialogTitle>Discard draft changes?</DialogTitle>
             <DialogDescription>
-              A checkpoint is saved first. This restores the latest published
-              draft when available; otherwise it starts with an empty draft.
-              Live workspace data is never changed here.
+              Saves a checkpoint, then resets the draft to the last publish.
+              Live data stays.
             </DialogDescription>
           </DialogHeader>
           {error ? <Alert variant="destructive">{error}</Alert> : null}
-          <div className="flex justify-end gap-2">
+          <DialogFooter className="mt-1">
             <Button
               variant="outline"
               className="min-h-11"
               disabled={busy}
               onClick={() => setDiscardOpen(false)}
             >
-              Keep editing
+              Cancel
             </Button>
             <Button
               variant="destructive"
               className="min-h-11"
-              disabled={pending || busy}
+              disabled={pending}
+              pending={busy}
+              pendingLabel="Discarding…"
               onClick={() => void discard()}
             >
               <RotateCcw />
               Discard draft
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

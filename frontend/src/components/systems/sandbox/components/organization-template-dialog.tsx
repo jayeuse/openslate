@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import {
   Dialog,
+  DialogCloseButton,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -61,10 +62,10 @@ export function OrganizationTemplateDialog({
         aria-busy={applying || undefined}
         className="max-h-[90dvh] max-w-6xl overflow-y-auto max-xl:[&_button]:min-h-11 max-xl:[&_button]:min-w-11"
       >
-        <DialogTitle>Organization templates</DialogTitle>
+        <DialogCloseButton disabled={pending} />
+        <DialogTitle className="pr-12">Organization templates</DialogTitle>
         <DialogDescription>
-          Start from a detailed operating baseline. Nothing is applied until you
-          select a template and confirm the replacement.
+          Nothing changes until you confirm.
         </DialogDescription>
         <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]">
           <div className="grid gap-3 sm:grid-cols-2">

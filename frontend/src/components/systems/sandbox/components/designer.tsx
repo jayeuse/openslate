@@ -339,6 +339,8 @@ export function Designer({
   change,
   initializeLayout,
   notify,
+  notifyError,
+  notifyUndoable,
   onStartFromTemplate,
   pending,
   bindings,
@@ -361,7 +363,12 @@ export function Designer({
     commandKey?: string,
   ) => Promise<SandboxCommandResult<Design>>;
   initializeLayout: (layout: SandboxCanvasLayout) => void;
+  /** A done notice (toast). */
   notify: (s: string) => void;
+  /** An error notice for a failure with no control to show it beside. */
+  notifyError: (s: string) => void;
+  /** A done notice whose Undo undoes the last design change. */
+  notifyUndoable: (s: string) => void;
   onStartFromTemplate: () => void;
   pending: boolean;
   bindings: readonly SandboxBinding[] | null;
@@ -719,8 +726,8 @@ export function Designer({
     });
     if (!result.ok || !selectedId.current) return;
     setSelected(selectedId.current);
-    notify(
-      `${target.kind.charAt(0).toUpperCase()}${target.kind.slice(1)} duplicated. Undo restores the previous design.`,
+    notifyUndoable(
+      `${target.kind.charAt(0).toUpperCase()}${target.kind.slice(1)} duplicated`,
     );
   }
 
@@ -778,7 +785,7 @@ export function Designer({
       }
       return previous;
     });
-    if (!result.ok) notify(result.error);
+    if (!result.ok) notifyError(result.error);
     return result;
   }
   // The Structure outline reads lifecycle state from its deferred inputs; every
@@ -896,7 +903,7 @@ export function Designer({
         ),
       };
     }, `sandbox.design.department:${id}`);
-    if (!result.ok) notify(result.error);
+    if (!result.ok) notifyError(result.error);
     return result;
   }
   async function renameModule(
@@ -915,7 +922,7 @@ export function Designer({
         ),
       };
     }, `sandbox.design.module:${id}`);
-    if (!result.ok) notify(result.error);
+    if (!result.ok) notifyError(result.error);
     return result;
   }
   async function moveModule(
@@ -1000,7 +1007,7 @@ export function Designer({
       return previous;
     });
     if (!result.ok) {
-      notify(result.error);
+      notifyError(result.error);
       return;
     }
     setSelected(
@@ -1031,6 +1038,10 @@ export function Designer({
   async function removeSelected(): Promise<void> {
     if (!deleteTarget) return;
     if (pending) return;
+    const deletedKindLabel =
+      deleteTarget.kind === "link"
+        ? "Relationship"
+        : `${deleteTarget.kind.charAt(0).toUpperCase()}${deleteTarget.kind.slice(1)}`;
     const fallbackId =
       deleteTarget.kind === "module"
         ? design.modules.find((item) => item.id === deleteTarget.id)?.department
@@ -1121,10 +1132,10 @@ export function Designer({
     }
     setDeleteTarget(null);
     setSelected(nextFallbackId.current || fallbackId || "");
-    notify(
+    notifyUndoable(
       removedMappings.current > 0
-        ? `${removedFieldName.current} deleted. ${plural(removedMappings.current, "relationship field mapping")} removed. Undo restores the complete change.`
-        : "Item deleted from the design. Undo restores it.",
+        ? `${removedFieldName.current} deleted · ${plural(removedMappings.current, "relationship field mapping")} removed`
+        : `${deletedKindLabel} deleted`,
     );
   }
   function deleteFinalFocus(): HTMLElement | null {
@@ -1204,7 +1215,7 @@ export function Designer({
       setEditor("");
       setPane("Structure");
       setWorkbenchTab("Inspector");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
     if (editor === "module" && department) {
@@ -1233,7 +1244,7 @@ export function Designer({
       setEditor("");
       setPane("Structure");
       setWorkbenchTab("Inspector");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
     if (editor === "rename") {
@@ -1271,7 +1282,7 @@ export function Designer({
         return;
       }
       setEditor("");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
     if (editor === "field" && selectedModule) {
@@ -1341,7 +1352,7 @@ export function Designer({
         return;
       }
       setEditor("");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
     if (editor === "relationship" && source && target) {
@@ -1424,7 +1435,7 @@ export function Designer({
         return;
       }
       setEditor("");
-      notify(`${submittedName} saved in the design.`);
+      // The new item shows in place (inline feedback).
       return;
     }
   }
@@ -2567,7 +2578,7 @@ export function Designer({
                               layout: arrangedLayout(previous),
                             }));
                             if (!result.ok) {
-                              notify(result.error);
+                              notifyError(result.error);
                               return;
                             }
                             setCanvasAction("Canvas automatically arranged.");
@@ -2650,7 +2661,7 @@ export function Designer({
                                 layout: resetLayout(previous),
                               }));
                               if (!result.ok) {
-                                notify(result.error);
+                                notifyError(result.error);
                                 return;
                               }
                               setCanvasAction("Canvas layout reset.");
@@ -2881,7 +2892,7 @@ export function Designer({
                             : previous.modules,
                         };
                       }, "sandbox.design.layout");
-                      if (!result.ok) notify(result.error);
+                      if (!result.ok) notifyError(result.error);
                       return result;
                     }}
                   />

@@ -13,7 +13,7 @@ import {
 } from "../manage/adapters/workspace-api";
 import { ApiContractError, ApiError } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api-errors";
-import { reportDone, reportError } from "@/lib/feedback";
+import { reportDone, reportError, reportUndoable } from "@/lib/feedback";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -192,7 +192,7 @@ function publishStatus(
   )
     return { label: "Unpublished changes", publishable: true };
   if (published) return { label: "Published", publishable: false };
-  return { label: "Draft saved", publishable: true };
+  return { label: "Not published yet", publishable: true };
 }
 
 function emptyDocument(): SandboxDocumentV4 {
@@ -322,7 +322,8 @@ export default function SandboxPage() {
     ),
     enabled: session !== null && !historyAccess.denied,
   });
-  const [message, setMessage] = useState("");
+  // A design save in flight, for the header's save-state chip.
+  const [saving, setSaving] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
   // Bumped by each successful Publish; the look's title signature plays once.
   const [publishCount, setPublishCount] = useState(0);
@@ -503,8 +504,8 @@ export default function SandboxPage() {
       });
       await refreshCapacity();
       setVersionRecovery(false);
-      setMessage(
-        `${result.deletedCount} old version${result.deletedCount === 1 ? "" : "s"} deleted.`,
+      reportDone(
+        `${result.deletedCount} old version${result.deletedCount === 1 ? "" : "s"} deleted`,
       );
       return { ok: true, value: result.deletedCount };
     } catch (error) {
@@ -663,6 +664,7 @@ export default function SandboxPage() {
       commandPending.current = true;
       setSession(next);
       setPending(true);
+      setSaving(true);
       try {
         const response = await replaceSandboxDocument({
           expectedRevision: next.revision,
@@ -695,6 +697,7 @@ export default function SandboxPage() {
       } finally {
         commandPending.current = false;
         setPending(false);
+        setSaving(false);
       }
     },
     [],
@@ -785,7 +788,6 @@ export default function SandboxPage() {
       setLifecycleRecovery(false);
       lifecycleLock.current = false;
     } catch {
-      setMessage("");
       setFeedbackError(
         "Live state could not be refreshed. Retry before changing this item.",
       );
@@ -852,13 +854,10 @@ export default function SandboxPage() {
         );
         setSession(openSandboxDocumentSession(document));
         setFeedbackError("");
-        setMessage(
-          "Live change confirmed. The current design has been refreshed.",
-        );
+        reportDone("Live change confirmed");
         lifecycleLock.current = false;
       } catch {
         setLifecycleRecovery(true);
-        setMessage("");
         setFeedbackError(
           "The live change was confirmed. Reload live state before making another change.",
         );
@@ -936,7 +935,7 @@ export default function SandboxPage() {
           ...(note ? { note } : {}),
         });
         await syncVersionMetadata();
-        setMessage("Checkpoint created.");
+        reportDone("Checkpoint saved");
         return { ok: true, value: version };
       } catch (error) {
         return commandFailure(error);
@@ -960,7 +959,7 @@ export default function SandboxPage() {
         setSession(openSandboxDocumentSession(response));
         await refreshVersions();
         navigate("Build", false, true);
-        setMessage("Shared Sandbox replaced from the v4 JSON bundle.");
+        reportDone("Draft imported");
         return { ok: true, value: response.document };
       } catch (error) {
         return commandFailure(error);
@@ -984,7 +983,7 @@ export default function SandboxPage() {
         setSession(openSandboxDocumentSession(response));
         await refreshVersions();
         navigate("Build", false, true);
-        setMessage(`${template.name} template applied to the shared Sandbox.`);
+        reportDone(`${template.name} template applied`);
         return { ok: true, value: response.document };
       } catch (error) {
         return commandFailure(error);
@@ -1015,9 +1014,7 @@ export default function SandboxPage() {
         });
         setSession(openSandboxDocumentSession(restored));
         await refreshVersions();
-        setMessage(
-          "Draft restored to the latest published version. Live workspace data was not changed.",
-        );
+        reportDone("Draft reset to the last publish");
         return { ok: true as const, value: restored.document };
       }
       const cleared = openSandboxDocumentSession({
@@ -1033,9 +1030,7 @@ export default function SandboxPage() {
       if (result.ok) {
         clearSandboxViewPreferences();
         setSandboxGeneration((value) => value + 1);
-        setMessage(
-          "Draft changes discarded. Live workspace data was not changed.",
-        );
+        reportDone("Draft changes discarded");
       }
       return result;
     } catch (error) {
@@ -1047,18 +1042,30 @@ export default function SandboxPage() {
 
   function selectIssue(issue: SandboxValidationIssue) {
     if (
+      !commandBusy &&
+      !publicationPending &&
+      !testPending &&
+      conflict === null &&
+      !triggerDraft.pending &&
+      triggerDraft.dirty
+    ) {
+      // Only unsaved triggers hold the page: ask Save, Discard, or Stay.
+      setLeaveRequest(() => () => openIssue(issue));
+      return;
+    }
+    if (
       commandBusy ||
       publicationPending ||
       testPending ||
       conflict !== null ||
-      triggerDraft.dirty ||
       triggerDraft.pending
     ) {
-      setMessage(
-        "Wait for the current action to finish, or save or discard your trigger changes.",
-      );
+      reportError("Finish the current action first.");
       return;
     }
+    openIssue(issue);
+  }
+  function openIssue(issue: SandboxValidationIssue) {
     const destination = sandboxIssueDestination(
       issue,
       new Set(design.rules.map((rule) => rule.id)),
@@ -1076,9 +1083,7 @@ export default function SandboxPage() {
       setSession(openSandboxDocumentSession(response));
       setConflict(null);
       setFeedbackError("");
-      setMessage(
-        "Shared Sandbox reloaded. Your local unsaved changes were discarded.",
-      );
+      reportDone("Shared draft reloaded");
     } catch (error) {
       setFeedbackError(commandFailure(error).error);
     } finally {
@@ -1095,8 +1100,7 @@ export default function SandboxPage() {
         conflict.proposedDocument,
       );
       const result = await persist(reapplied);
-      if (result.ok)
-        setMessage("Your local draft was reapplied to the shared Sandbox.");
+      if (result.ok) reportDone("Your draft was reapplied");
     } catch (error) {
       setFeedbackError(commandFailure(error).error);
     } finally {
@@ -1227,13 +1231,32 @@ export default function SandboxPage() {
             >
               Sandbox
             </h1>
-            {loading ? null : <Badge variant="outline">{status.label}</Badge>}
-            {triggerDraft.changes > 0 ? (
-              <Badge variant="warning">
-                {triggerDraft.changes} unsaved trigger{" "}
-                {triggerDraft.changes === 1 ? "change" : "changes"}
+            {loading ? null : (
+              // One save-state chip: the publish state, then what is
+              // happening to the draft right now (the Four Moments Rule).
+              <Badge
+                data-sandbox-save-state
+                variant={
+                  conflict
+                    ? "destructive"
+                    : triggerDraft.changes > 0
+                      ? "warning"
+                      : "outline"
+                }
+              >
+                {conflict
+                  ? "Not saved"
+                  : `${status.label} · ${
+                      saving
+                        ? "Saving…"
+                        : triggerDraft.changes > 0
+                          ? `${triggerDraft.changes} unsaved trigger ${
+                              triggerDraft.changes === 1 ? "change" : "changes"
+                            }`
+                          : "Saved"
+                    }`}
               </Badge>
-            ) : null}
+            )}
           </div>
           <div className="flex shrink-0 gap-2">
             {section === "Build" ? (
@@ -1340,7 +1363,6 @@ export default function SandboxPage() {
         {feedbackError && !conflict ? (
           <Alert variant="destructive">{feedbackError}</Alert>
         ) : null}
-        {message ? <Alert role="status">{message}</Alert> : null}
         {issues.length ? (
           <Alert variant="warning" role="status">
             <p>
@@ -1379,7 +1401,9 @@ export default function SandboxPage() {
             design={design}
             change={change}
             initializeLayout={initializeLayout}
-            notify={setMessage}
+            notify={reportDone}
+            notifyError={reportError}
+            notifyUndoable={(text) => reportUndoable(text, () => void undo())}
             onStartFromTemplate={() => setTemplatesOpen(true)}
             pending={
               commandBusy ||
@@ -1521,12 +1545,13 @@ export default function SandboxPage() {
         ) : null}
         <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
           <span>{counts(design)}</span>
-          <span>
-            Draft
-            {session?.history.past.length
-              ? ` · ${session.history.past.length} ${session.history.past.length === 1 ? "change" : "changes"} you can undo`
-              : ""}
-          </span>
+          {session?.history.past.length ? (
+            <span>
+              {session.history.past.length}{" "}
+              {session.history.past.length === 1 ? "change" : "changes"} you can
+              undo
+            </span>
+          ) : null}
         </footer>
         {session ? (
           <ReviewPublishDialog
@@ -1563,9 +1588,7 @@ export default function SandboxPage() {
             onPublished={async () => {
               await refresh();
               if (section === "Triggers") await refreshTriggerActivity();
-              setMessage(
-                "Your changes are now published to the live workspace.",
-              );
+              reportDone("Changes published");
               setPublishCount((count) => count + 1);
             }}
           />

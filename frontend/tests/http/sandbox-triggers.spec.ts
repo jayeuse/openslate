@@ -51,9 +51,7 @@ test("unsaved triggers show their count and hold Review and Publish", async ({
   await openTriggers(page);
   await expect(page.getByText(/unsaved trigger/)).toHaveCount(0);
   await page.getByLabel("Trigger name").fill("Renamed trigger");
-  await expect(
-    page.getByText("1 unsaved trigger change", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/· 1 unsaved trigger change$/)).toBeVisible();
   const publish = page.getByRole("button", { name: "Review & Publish" });
   await expect(publish).toHaveAttribute("aria-disabled", "true");
   await expect(publish).toHaveAccessibleDescription(
@@ -70,9 +68,7 @@ test("unsaved triggers show their count and hold Review and Publish", async ({
   ).toBeVisible();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.getByLabel("Trigger name")).toHaveValue("Renamed trigger");
-  await expect(
-    page.getByText("1 unsaved trigger change", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/· 1 unsaved trigger change$/)).toBeVisible();
 });
 
 test("leaving with unsaved triggers asks Save, Discard, or Stay", async ({

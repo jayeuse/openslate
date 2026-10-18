@@ -233,7 +233,7 @@ async function publishDraft(
   expect(response.status()).toBe(201);
   onPublished?.();
   await expect(
-    page.getByText("Your changes are now published to the live workspace."),
+    page.getByText("Changes published", { exact: true }),
   ).toBeVisible();
 }
 
@@ -254,8 +254,9 @@ async function addDepartment(page: Page, name: string): Promise<void> {
   await page
     .getByRole("button", { name: "Create department", exact: true })
     .click();
+  // A created item shows in place: Properties opens on it.
   await expect(
-    page.getByText(`${name} saved in the design.`, { exact: true }),
+    page.getByRole("heading", { name, level: 2, exact: true }),
   ).toBeVisible();
 }
 
@@ -270,14 +271,17 @@ async function addModuleAndField(
     .getByRole("button", { name: "Create module", exact: true })
     .click();
   await expect(
-    page.getByText(`${moduleName} saved in the design.`, { exact: true }),
+    page.getByRole("heading", { name: moduleName, level: 2, exact: true }),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Add field", exact: true }).click();
   await page.getByLabel("Field name", { exact: true }).fill(fieldName);
   await page.getByRole("button", { name: "Create field", exact: true }).click();
   await expect(
-    page.getByText(`${fieldName} saved in the design.`, { exact: true }),
+    page.getByRole("group", {
+      name: `${fieldName} field settings`,
+      exact: true,
+    }),
   ).toBeVisible();
 }
 

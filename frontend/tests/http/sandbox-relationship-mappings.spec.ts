@@ -415,10 +415,13 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
         .getByLabel(`${field.name} field settings`, { exact: true })
         .getByText(field.type, { exact: true }),
     ).toBeVisible();
-  const confirmedStatus = page.getByRole("status").filter({
-    hasText: "Live change confirmed. The current design has been refreshed.",
+  // A notice's title is a heading; its text also sits in a live region.
+  const confirmedStatus = page.getByRole("heading", {
+    name: "Live change confirmed",
+    exact: true,
   });
-  await expect(confirmedStatus).toBeVisible();
+  await expect(confirmedStatus.first()).toBeVisible();
+  const confirmedBefore = await confirmedStatus.count();
   async function confirmModuleChange(action: "Close module" | "Reopen module") {
     await page.getByRole("button", { name: action, exact: true }).click();
     const review = page.getByRole("dialog", { name: action, exact: true });
@@ -439,7 +442,15 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
       "The live change was confirmed. Reload live state before making another change.",
   });
   await expect(recoveryError).toBeVisible();
-  await expect.soft(confirmedStatus).toHaveCount(0);
+  // The failed refresh adds no success notice (earlier ones may still be
+  // fading out).
+  await expect
+    .soft(async () =>
+      expect(await confirmedStatus.count()).toBeLessThanOrEqual(
+        confirmedBefore,
+      ),
+    )
+    .toPass();
   await page
     .getByRole("button", { name: "Reload live state", exact: true })
     .click();
@@ -448,7 +459,7 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
   ).toBeEnabled();
   await expect.soft(recoveryError).toHaveCount(0);
   await confirmModuleChange("Close module");
-  await expect(confirmedStatus).toBeVisible();
+  await expect(confirmedStatus.first()).toBeVisible();
   await expect.soft(recoveryError).toHaveCount(0);
   expect(sandbox.documentWrites()).toBe(writes);
 });
@@ -1762,7 +1773,7 @@ test("a refused layout puts the dropped module back", async ({ page }) => {
   const before = await canvasPosition(equipment);
   await dragCanvasNode(page, equipment);
   await expect(
-    page.getByText("A Sandbox change is already being saved."),
+    page.getByText("A Sandbox change is already being saved.").first(),
   ).toBeVisible();
   // Within 2 px: the selected outline is wider than the idle one.
   await expect
@@ -1790,9 +1801,7 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
     0,
   );
 
-  await expect(
-    page.getByText("Nothing to publish yet", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/^Nothing to publish yet ·/)).toBeVisible();
   await expect(publish).toBeDisabled();
   await expect(
     canvas.getByRole("heading", { name: "Design your organization" }),
@@ -1829,9 +1838,7 @@ test("an empty, never-published Sandbox offers one start and nothing to publish"
   await expect(
     canvas.getByRole("heading", { name: "Design your organization" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByText("Unpublished changes", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/^Unpublished changes ·/)).toBeVisible();
   await expect(publish).toBeEnabled();
 });
 
@@ -1867,7 +1874,7 @@ test("a published Sandbox with no new changes has nothing to publish", async ({
     hasUnpublishedChanges: false,
   });
 
-  await expect(page.getByText("Published", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Published ·/)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
   ).toBeDisabled();
@@ -2388,7 +2395,7 @@ test("a relationship can target a module in another department and publish", asy
   await review.getByLabel("Your password").fill("local password");
   await review.getByRole("button", { name: "Publish changes" }).click();
   await expect(
-    page.getByText("Your changes are now published to the live workspace."),
+    page.getByText("Changes published", { exact: true }),
   ).toBeVisible();
   expect(published).toHaveLength(1);
 });
@@ -2497,7 +2504,7 @@ test("a successful Publish plays the look's title signature once", async ({
   await dialog.getByRole("button", { name: "Publish changes" }).click();
 
   await expect(
-    page.getByText("Your changes are now published to the live workspace."),
+    page.getByText("Changes published", { exact: true }),
   ).toBeVisible();
   await expect(title).toHaveAttribute("data-signature", "play");
   expect(published).toEqual([
@@ -2691,9 +2698,10 @@ test("closing a mapped field removes its relationship mappings", async ({
     .getByRole("button", { name: "Close field" })
     .click();
   await expect(
-    page.getByRole("status").filter({
-      hasText: "Request number closed. 1 relationship field mapping removed.",
-    }),
+    page.getByText(
+      "Request number closed. 1 relationship field mapping removed.",
+      { exact: true },
+    ),
   ).toBeVisible();
 
   await page
@@ -2740,7 +2748,8 @@ test("a failed structural save remains visibly unsaved until the shared draft is
     saveFailure: "Sandbox storage is unavailable.",
     hasUnpublishedChanges: false,
   });
-  await expect(page.getByText("Draft saved", { exact: true })).toBeVisible();
+  const saveState = page.locator("[data-sandbox-save-state]");
+  await expect(saveState).toHaveText("Not published yet · Saved");
 
   await page
     .getByRole("tablist", { name: "Workbench view" })
@@ -2760,10 +2769,7 @@ test("a failed structural save remains visibly unsaved until the shared draft is
       "Save did not complete: your proposed document is still local.",
     ),
   ).toBeVisible();
-  await expect(
-    page.getByText("Unsaved changes", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Draft saved", { exact: true })).toHaveCount(0);
+  await expect(saveState).toHaveText("Not saved");
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
   ).toBeDisabled();
@@ -3824,7 +3830,9 @@ test("refused capacity is unavailable rather than guessed or usable", async ({
 test("Save checkpoint can be cancelled without saving", async ({ page }) => {
   const sandbox = await openAuthenticatedSandbox(page);
   const checkpoint = await openCheckpointDialog(page);
-  await checkpoint.getByLabel("Name", { exact: true }).fill("Not kept");
+  await checkpoint
+    .getByLabel("Checkpoint name", { exact: true })
+    .fill("Not kept");
   await checkpoint.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(checkpoint).toBeHidden();
   expect(sandbox.checkpointRequests()).toEqual([]);
@@ -3850,7 +3858,7 @@ test("prune cancel and pending readback preserve checkpoint input and use refres
   const before = sandbox.document();
   const checkpoint = await openCheckpointDialog(page);
   await checkpoint
-    .getByLabel("Name", { exact: true })
+    .getByLabel("Checkpoint name", { exact: true })
     .fill("Retained authored name");
   await checkpoint.getByLabel("Note (optional)").fill("Retained authored note");
   const prune = checkpoint.getByRole("button", {
@@ -3895,9 +3903,9 @@ test("prune cancel and pending readback preserve checkpoint input and use refres
       exact: true,
     }),
   ).toHaveCount(0);
-  await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
-    "Retained authored name",
-  );
+  await expect(
+    checkpoint.getByLabel("Checkpoint name", { exact: true }),
+  ).toHaveValue("Retained authored name");
   await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
     "Retained authored note",
   );
@@ -4003,7 +4011,7 @@ for (const failure of ["stale", "readback"] as const) {
     const before = sandbox.document();
     const checkpoint = await openCheckpointDialog(page);
     await checkpoint
-      .getByLabel("Name", { exact: true })
+      .getByLabel("Checkpoint name", { exact: true })
       .fill("Keep this label");
     await checkpoint.getByLabel("Note (optional)").fill("Keep this note");
     await expect(
@@ -4030,9 +4038,9 @@ for (const failure of ["stale", "readback"] as const) {
     await confirmation
       .getByRole("button", { name: "Cancel", exact: true })
       .click();
-    await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
-      "Keep this label",
-    );
+    await expect(
+      checkpoint.getByLabel("Checkpoint name", { exact: true }),
+    ).toHaveValue("Keep this label");
     await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
       "Keep this note",
     );
@@ -4080,7 +4088,7 @@ test("full history checkpoint reports authored version_limit copy and preserves 
   );
   const checkpoint = await openCheckpointDialog(page);
   await checkpoint
-    .getByLabel("Name", { exact: true })
+    .getByLabel("Checkpoint name", { exact: true })
     .fill("Preserved full-cap label");
   await checkpoint
     .getByLabel("Note (optional)")
@@ -4094,9 +4102,9 @@ test("full history checkpoint reports authored version_limit copy and preserves 
       { exact: true },
     ),
   ).toBeVisible();
-  await expect(checkpoint.getByLabel("Name", { exact: true })).toHaveValue(
-    "Preserved full-cap label",
-  );
+  await expect(
+    checkpoint.getByLabel("Checkpoint name", { exact: true }),
+  ).toHaveValue("Preserved full-cap label");
   await expect(checkpoint.getByLabel("Note (optional)")).toHaveValue(
     "Preserved full-cap note",
   );

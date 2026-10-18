@@ -52,7 +52,7 @@ async function publishDraft(page: Page, password: string): Promise<number> {
   const response = await published;
   expect(response.status()).toBe(201);
   await expect(
-    page.getByText("Your changes are now published to the live workspace."),
+    page.getByText("Changes published", { exact: true }),
   ).toBeVisible();
   const body = (await response.json()) as { version: { sequence: number } };
   return body.version.sequence;
@@ -1567,9 +1567,7 @@ test.describe("Sandbox", () => {
 
     await applyTemplate(page, "Inventory & procurement");
     await expect(
-      page.getByText(
-        "Inventory & procurement template applied to the shared Sandbox.",
-      ),
+      page.getByText("Inventory & procurement template applied"),
     ).toBeVisible();
     const publishedSequence = await publishDraft(page, credentials.password);
     journey.publishedSequence = publishedSequence;
@@ -1749,7 +1747,7 @@ test.describe("Sandbox", () => {
       await page.getByRole("link", { name: "Build", exact: true }).click();
       await applyTemplate(page, name);
       await expect(
-        page.getByText(`${name} template applied to the shared Sandbox.`),
+        page.getByText(`${name} template applied`, { exact: true }),
       ).toBeVisible();
       await publishDraft(page, runFixture.admin.password);
     });

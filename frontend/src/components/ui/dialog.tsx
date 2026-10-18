@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { X } from "lucide-react";
 import type { ComponentProps, HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 import { useWorkspaceInteractionSuspended } from "@/components/systems/shared/runtime/workspace-identity";
@@ -35,6 +36,18 @@ export function Dialog({
 }
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogClose = DialogPrimitive.Close;
+/** A close (X) button for large dialogs; place it inside DialogContent. */
+export function DialogCloseButton({ disabled }: { disabled?: boolean }) {
+  return (
+    <DialogPrimitive.Close
+      aria-label="Close"
+      disabled={disabled}
+      className="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:outline-ring absolute top-3 right-3 z-10 inline-flex size-11 items-center justify-center rounded-md outline-none focus-visible:outline-2 disabled:opacity-50 xl:size-8"
+    >
+      <X aria-hidden="true" className="size-4" />
+    </DialogPrimitive.Close>
+  );
+}
 export type DialogContentProps = Omit<
   ComponentProps<typeof DialogPrimitive.Popup>,
   "className"
