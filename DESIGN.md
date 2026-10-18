@@ -309,6 +309,24 @@ Correct: the Triplicate block sets `--button-edge: var(--action); --button-ink: 
 
 Wrong: `[data-theme="triplicate"] [data-slot="button"][data-variant="outline"] { border-color: var(--action); color: var(--action); }` (every outline button turns blue, and no call site can change it back).
 
+**The Advanced Last Rule.** A panel shows the controls that its common task needs. Every other control goes in one closed **Advanced** block (`AdvancedSection`), the last block of the panel. Advanced remembers its state for each viewer, and when closed its header counts the controls whose value differs from the default ("Advanced · 2 set"). Lifecycle actions (Close, Reopen, Delete, Permanently delete) always live in Advanced. A control that applies only in one case appears only in that case.
+
+Correct: The module panel shows the name, the field list, and "Add field", then "Advanced · 1 set" (closed).
+
+Wrong: The module panel opens with "Close module" above "Move module to department", "Record title field", and the field list.
+
+**The Four Moments Rule.** Every action gives feedback before (a risky action states its consequence in one line, and a disabled control states why), during (the control shows its pending label and keeps its width; only the affected item locks), and after, through the lowest channel the person can see: inline when the result is visible, a toast (with Undo when the action can be undone) when it is not, a dialog only before an action that cannot be undone or that changes the live workspace, and a page alert only for a blocking state. Errors appear next to the control that failed, or inside the open dialog.
+
+Correct: Deleting a trigger removes it from the list and shows the toast "Trigger deleted · Undo".
+
+Wrong: Renaming a module shows the page alert "Products saved in the design.", which stays until another message replaces it.
+
+**The Few Words Rule.** A label has three words or fewer. A helper line is one sentence of twelve words or fewer, and only for a consequence, a limit, or an error. A sentence that explains how to use a control means the control needs fixing. A fact appears in one place. Numbers, marks, and state chips replace sentences, and guidance for a first visit lives in empty states and the Help drawer.
+
+Correct: The If step of a trigger with no conditions shows "Always".
+
+Wrong: "No condition filter is configured." shown twice, once in the flow and once in the summary.
+
 ## Colors
 
 The palette is a set of semantic roles, not a hue list. Each look supplies its own values for the same names in light and dark. Prose below names tokens; the values live in the stylesheets.
@@ -620,7 +638,7 @@ A tinted band per signal: warning, destructive, and success use the signal's `-t
 
 ### Request feedback
 
-Keep feedback where the person can act on it. Preserve working inline notices; use a toast when the action leaves no inline surface.
+Keep feedback where the person can act on it. Preserve working inline notices; use a toast when the action leaves no inline surface. The Four Moments Rule sets the order of channels; this table applies it.
 
 | Situation | Feedback |
 | --- | --- |
@@ -661,7 +679,7 @@ A radio group of four tiles (two columns from 640px, four from 1280px). Each til
 
 ### Sandbox canvas (signature)
 
-An ERD-style canvas of the owner's own structure, drawn in the same materials as the website and the film. Departments are named frames on their own sheet (`--dept-n-sheet`) with a head band (`--dept-n-band`), a 3px top edge in the department color (the frame's own shape, clipped), an identity mark, and the name in `--font-display`. Modules are compact 232px table cards on `--dept-n-module`: a 34px header (`--dept-n-card`) with a table glyph and the table name, then 26px field rows with the name on the left in `--canvas-field-ink` and the type label on the right in `--font-code` and `--canvas-type-ink`, on `--dept-n-stripe` for alternate rows. A filled dot marks a required field; a hollow dot marks an optional one. Lines join tables at 1.6px and end in an arrowhead: a relationship is dashed in `--action`, a handoff is solid in `--canvas-edge` (the Dash Means Link Rule). Each line has a label chip (`--canvas-label-*`; `--action-text` ink on relationships) at the middle of the line, or at the first stop along it (35%, 65%, 20%, 80%) that no other line crosses and no table covers. Hovering a module or line traces its connections in `--flow`, and only traced lines drift (2.4s per cycle) in Slate and Triplicate; Whiteboard and Stockroom turn the drift off. The Key (closed by default, opens upward) names relationship, handoff, required field, and optional field, and says in one line what a module and a line are. The minimap hides text and lines and shows frames and tables. Under reduced motion, the drift and the trace fade stop.
+An ERD-style canvas of the owner's own structure, drawn in the same materials as the website and the film. Departments are named frames on their own sheet (`--dept-n-sheet`) with a head band (`--dept-n-band`), a 3px top edge in the department color (the frame's own shape, clipped), an identity mark, and the name in `--font-display`. Modules are compact 232px table cards on `--dept-n-module`: a 34px header (`--dept-n-card`) with a table glyph and the table name, then 26px field rows with the name on the left in `--canvas-field-ink` and the type label on the right in `--font-code` and `--canvas-type-ink`, on `--dept-n-stripe` for alternate rows. A filled dot marks a required field; a hollow dot marks an optional one. Lines join tables at 1.6px and end in an arrowhead: a relationship is dashed in `--action`, a handoff is solid in `--canvas-edge` (the Dash Means Link Rule). Each line has a label chip (`--canvas-label-*`; `--action-text` ink on relationships) at the middle of the line, or at the first stop along it (35%, 65%, 20%, 80%) that no other line crosses, no table covers, and no other label overlaps. Hovering a module or line traces its connections in `--flow`, and only traced lines drift (2.4s per cycle) in Slate and Triplicate; Whiteboard and Stockroom turn the drift off. The Key (closed by default, opens upward) names relationship, handoff, required field, and optional field, and says in one line what a module and a line are. The minimap hides text and lines and shows frames and tables. Under reduced motion, the drift and the trace fade stop.
 
 ## Do's and Don'ts
 
@@ -674,6 +692,7 @@ An ERD-style canvas of the owner's own structure, drawn in the same materials as
 - **Do** put a department's identity color beside its name every time it appears.
 - **Do** time every transition with the motion tokens and give it a `prefers-reduced-motion` path that keeps meaning (fades, color) and drops travel.
 - **Do** show `SampleDataNote` on every screen that runs on sample data, and name the real publish state in the Sandbox header.
+- **Do** put a panel's less common controls in its one closed Advanced block, last in the panel, and give every disabled control its reason.
 
 ### Don't:
 
