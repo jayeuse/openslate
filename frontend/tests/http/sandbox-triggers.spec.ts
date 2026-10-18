@@ -126,6 +126,7 @@ test("a reload offers to restore unsaved trigger edits", async ({ page }) => {
     .filter({ hasText: "Restore unsaved trigger changes?" });
   // Nothing can be typed over the kept edits while the prompt waits.
   await expect(name).toBeDisabled();
+  await expect(page.getByRole("switch", { name: "Trigger On" })).toBeDisabled();
   await prompt.getByRole("button", { name: "Restore", exact: true }).click();
   await expect(prompt).toHaveCount(0);
   await expect(name).toBeEnabled();
@@ -175,6 +176,17 @@ test("Undo of a discarded prompt never replaces newer trigger edits", async ({
   ).toHaveAccessibleDescription(
     "Save or discard your current trigger edits first.",
   );
+  // The newer edit stays editable, so it can be resolved here.
+  await expect(name).toBeEnabled();
+  await page.getByRole("button", { name: "Discard changes" }).click();
+  await expect(name).toBeDisabled();
+  await expect(
+    prompt.getByRole("button", { name: "Restore", exact: true }),
+  ).toBeEnabled();
+  // The kept edit is still stored: a reload offers it, and Restore applies it.
+  await page.reload();
+  await prompt.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(name).toHaveValue("Older edit");
 });
 
 test("unsaved triggers are marked, a step Save will refuse warns first, and Ctrl+S saves", async ({

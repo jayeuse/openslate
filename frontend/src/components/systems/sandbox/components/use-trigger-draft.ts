@@ -228,10 +228,12 @@ export function useTriggerDraft({
       });
       stored.current = true;
     } else if (stored.current) {
-      writeKeptTriggerDraft(browserStorage(), storageKey, null);
+      // Edits kept from before a reload take the stored copy back while
+      // their prompt still waits.
+      writeKeptTriggerDraft(browserStorage(), storageKey, kept);
       stored.current = false;
     }
-  }, [base, confirmed, dirty, edits, storageKey]);
+  }, [base, confirmed, dirty, edits, kept, storageKey]);
 
   // Edits that match triggers the server confirmed (a reapplied draft) are
   // no longer edits.

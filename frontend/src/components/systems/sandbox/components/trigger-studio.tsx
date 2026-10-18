@@ -988,7 +988,9 @@ export function TriggerStudio({
   );
   // While edits kept from before a reload wait for Restore or Discard, the
   // studio is read-only, so nothing new can be typed over them.
-  const locked = triggerDraft.kept !== null;
+  // Newer unsaved edits stay editable, so they can be saved or discarded
+  // first (the prompt's Restore waits for that).
+  const locked = triggerDraft.kept !== null && !dirty;
   return (
     <section
       ref={studioRef}
@@ -1227,6 +1229,7 @@ export function TriggerStudio({
                       design={design}
                       trigger={selected}
                       pending={pending}
+                      locked={locked}
                       onChange={update}
                       selectedStep={phone ? "" : selectedStep}
                     />
@@ -1279,12 +1282,15 @@ function TriggerEditor({
   design,
   trigger: recordTrigger,
   pending,
+  locked,
   onChange,
   selectedStep,
 }: {
   design: SandboxDocumentDesign;
   trigger: SandboxTrigger;
   pending: boolean;
+  /** Read-only while kept edits wait; the fieldset does not reach Switch. */
+  locked: boolean;
   onChange: (recordTrigger: SandboxTrigger) => void;
   selectedStep: string;
 }) {
@@ -1356,7 +1362,7 @@ function TriggerEditor({
           <div className="flex h-11 items-center xl:h-9">
             <Switch
               id={enabledId}
-              disabled={pending}
+              disabled={pending || locked}
               checked={recordTrigger.enabled}
               onCheckedChange={(checked) =>
                 onChange({ ...recordTrigger, enabled: checked })
