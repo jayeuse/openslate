@@ -16,7 +16,8 @@ test("The Sandbox designer publishes a change @sandbox", async ({ page }) => {
     .first();
   await field.focus();
   await field.press("Enter");
-  const settings = page.getByRole("region", { name: "Notes field settings" });
+  const settings = page.getByRole("group", { name: "Notes field settings" });
+  await settings.getByRole("button", { name: /^Advanced/ }).click();
   await settings
     .getByRole("textbox", { name: "Notes description" })
     .fill(`Smoke check ${Date.now()}: free text about the customer`);

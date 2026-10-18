@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronRight } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import {
   Collapsible,
@@ -63,11 +63,9 @@ export function AdvancedSection({
   children,
   className,
 }: AdvancedSectionProps) {
-  const [open, setOpen] = useState(false);
-  // The first render is always closed; the remembered state follows.
-  useEffect(() => {
-    setOpen(readAdvancedOpen(storageKey));
-  }, [storageKey]);
+  // Signed-in pages render in the browser, so the remembered state applies
+  // on the first render and an expanded row never flashes closed.
+  const [open, setOpen] = useState(() => readAdvancedOpen(storageKey));
 
   return (
     <Collapsible
@@ -86,10 +84,12 @@ export function AdvancedSection({
         />
         <span>Advanced</span>
         {!open && setCount > 0 ? (
-          <span className="text-xs font-normal">· {setCount} set</span>
+          <span className="text-xs font-normal"> · {setCount} set</span>
         ) : null}
       </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-4 pt-2 pb-1">
+      {/* Kept mounted (hidden while closed) so every branch renders as soon
+          as its panel does, and nothing inside resets when it opens. */}
+      <CollapsibleContent keepMounted className="space-y-4 pt-2 pb-1">
         {children}
       </CollapsibleContent>
     </Collapsible>

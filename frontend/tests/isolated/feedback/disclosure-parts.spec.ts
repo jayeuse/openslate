@@ -31,7 +31,10 @@ test("an Advanced block starts closed and counts what is set inside it", () => {
   expect(markup).toContain('aria-expanded="false"');
   expect(markup).toContain("Advanced");
   expect(markup).toContain("· 2 set");
-  expect(markup).not.toContain("Title field");
+  // The content stays mounted but hidden, so nothing inside resets on open.
+  expect(markup).toMatch(
+    /<div[^>]*hidden=""[^>]*data-slot="collapsible-content"[^>]*>Title field</,
+  );
 });
 
 test("an Advanced block with nothing set shows no count", () => {

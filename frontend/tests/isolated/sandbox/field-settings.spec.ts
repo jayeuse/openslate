@@ -13,14 +13,12 @@ import { staticMarkup } from "./static-markup";
 for (const row of [
   {
     type: "Checkbox",
-    shown: ["Status default checked"],
+    shown: ["Status checked by default"],
     hidden: ["Status default value"],
   },
   {
     type: "User",
-    shown: [
-      "User values are assigned on individual records, so this field has no shared default user.",
-    ],
+    shown: ["No default: each record sets its user."],
     hidden: ["Status default value"],
   },
   {

@@ -32,6 +32,19 @@ import {
   sandboxDocumentFromDesign,
 } from "../helpers/sandbox-fixtures";
 
+// These journeys exercise lifecycle and settings, not disclosure, so they
+// start as a viewer who left every Advanced block open. The closed default
+// and its memory are covered in sandbox-inspector.spec.ts.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    for (const panel of ["module", "department", "field"])
+      window.localStorage.setItem(
+        `openslate:advanced:sandbox.${panel}`,
+        "open",
+      );
+  });
+});
+
 function configuredDesignWithLegacyMapping(): Design {
   const design = structuredClone(configuredSandboxDesign);
   const relationship = design.relationships[0];
@@ -2690,6 +2703,11 @@ test("the Designer saves offset Date/Time bounds in chronological order", async 
   await page
     .getByRole("button", { name: "Show Request number settings" })
     .click();
+  // Save appears once the row has an edit; the bounds stay as loaded.
+  await page
+    .getByLabel("Request number field settings")
+    .getByLabel("Request number description")
+    .fill("Opened within the bounds");
   await page
     .getByLabel("Request number field settings")
     .getByRole("button", { name: "Save field changes" })
@@ -3306,7 +3324,9 @@ test("removing an unsaved selected choice requires an explicit new default", asy
     settings.getByText("Default value must match a select option."),
   ).toBeVisible();
   expect(sandbox.documentWrites()).toBe(0);
-  await settings.getByLabel("Status default value").selectOption("");
+  await settings
+    .getByLabel("Status default value")
+    .selectOption({ label: "Open" });
   await settings.getByRole("button", { name: "Save field changes" }).click();
   await expect.poll(sandbox.documentWrites).toBe(1);
 });
@@ -3330,7 +3350,7 @@ test("the Designer saves a module record title field in the current v4 draft", a
   const sandbox = await openAuthenticatedSandbox(page, design);
 
   await page
-    .getByLabel("Record title field", { exact: true })
+    .getByLabel("Title field", { exact: true })
     .selectOption(titleField.id);
   await expect.poll(sandbox.documentWrites).toBe(1);
 
@@ -3342,7 +3362,7 @@ test("the Designer saves a module record title field in the current v4 draft", a
     document.design.modules.find((item) => item.id === targetModule.id)
       ?.titleFieldId,
   ).toBe(titleField.id);
-  const titleSelector = page.getByLabel("Record title field", { exact: true });
+  const titleSelector = page.getByLabel("Title field", { exact: true });
   await expect(titleSelector).toHaveValue(titleField.id);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
@@ -3354,10 +3374,10 @@ test("the Designer saves a module record title field in the current v4 draft", a
   const closeField = titleSettings.getByRole("button", {
     name: "Close field",
   });
-  await expect(
-    titleSettings.getByText(/selected as the record title/i),
-  ).toBeVisible();
   await expect(closeField).toBeDisabled();
+  await expect(closeField).toHaveAccessibleDescription(
+    "This is the module's title field.",
+  );
 
   const originalViewport = page.viewportSize();
   const originalScrollY = await page.evaluate(() => window.scrollY);
@@ -3385,15 +3405,13 @@ test("the Designer saves a module record title field in the current v4 draft", a
 
   await titleSelector.selectOption("");
   await expect.poll(sandbox.documentWrites).toBe(2);
-  await expect(
-    titleSettings.getByText(/selected as the record title/i),
-  ).toHaveCount(0);
   const showSettings = titleSettings.getByRole("button", {
     name: "Show Title settings",
     exact: true,
   });
   if (await showSettings.isVisible()) await showSettings.click();
   await expect(closeField).toBeEnabled();
+  await expect(closeField).toHaveAccessibleDescription("");
 });
 
 test("a failed record title field change shows its error under the select", async ({
@@ -3406,7 +3424,7 @@ test("a failed record title field change shows its error under the select", asyn
   await openAuthenticatedSandbox(page, configuredSandboxDesign, {
     saveFailure: "Sandbox storage is unavailable.",
   });
-  const titleSelector = page.getByLabel("Record title field", { exact: true });
+  const titleSelector = page.getByLabel("Title field", { exact: true });
   await titleSelector.selectOption(titleField.id);
   await expect(titleSelector).toHaveAttribute("aria-invalid", "true");
   await expect(titleSelector).toHaveAccessibleDescription(

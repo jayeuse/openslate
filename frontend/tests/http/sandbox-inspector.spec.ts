@@ -1,0 +1,82 @@
+import { expect, test } from "./helpers/test";
+import { openAuthenticatedSandbox } from "./helpers/sandbox-api";
+import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
+
+// The Advanced Last Rule (DESIGN.md): Properties shows the essentials, keeps
+// rare and lifecycle controls in one closed Advanced block, counts what is
+// set inside it, and remembers the viewer's choice.
+test("a module panel shows its essentials first and remembers Advanced", async ({
+  page,
+}) => {
+  const design = structuredClone(configuredSandboxDesign);
+  design.modules[0]!.titleFieldId = "sample-field-Title";
+  await openAuthenticatedSandbox(page, design);
+  await page.goto("/sandbox?module=sample-requests");
+  const inspector = page.getByRole("complementary", {
+    name: "Design inspector",
+  });
+  await expect(
+    inspector.getByRole("heading", { name: "Service requests", level: 2 }),
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole("heading", { name: "Fields 4", exact: true }),
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole("heading", { name: "Relationships 1", exact: true }),
+  ).toBeVisible();
+  const advanced = inspector.getByRole("button", { name: /^Advanced/ });
+  await expect(advanced).toHaveAttribute("aria-expanded", "false");
+  await expect(advanced).toHaveText("Advanced · 1 set");
+  await expect(
+    inspector.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeHidden();
+
+  await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  await expect(advanced).toHaveText("Advanced");
+  await expect(
+    inspector.getByLabel("Title field", { exact: true }),
+  ).toHaveValue("sample-field-Title");
+  await page.reload();
+  await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    inspector.getByRole("button", { name: "Close module", exact: true }),
+  ).toBeVisible();
+
+  await advanced.click();
+  await page.reload();
+  await expect(advanced).toHaveAttribute("aria-expanded", "false");
+});
+
+test("Delete is reachable from Properties for a module and a field", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page);
+  await page.goto("/sandbox?module=sample-requests");
+  const inspector = page.getByRole("complementary", {
+    name: "Design inspector",
+  });
+  await inspector.getByRole("button", { name: /^Advanced/ }).click();
+  await inspector
+    .getByRole("button", { name: "Delete module", exact: true })
+    .click();
+  const deletion = page.getByRole("alertdialog");
+  await expect(deletion).toContainText("Service requests");
+  await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(deletion).toBeHidden();
+
+  const field = inspector.getByRole("group", {
+    name: "Priority field settings",
+    exact: true,
+  });
+  await field
+    .getByRole("button", { name: "Show Priority settings", exact: true })
+    .click();
+  await field.getByRole("button", { name: /^Advanced/ }).click();
+  await field
+    .getByRole("button", { name: "Delete field", exact: true })
+    .click();
+  await expect(deletion).toContainText("Priority");
+  await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(deletion).toBeHidden();
+});

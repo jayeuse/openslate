@@ -9,6 +9,9 @@ import {
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  LocateFixed,
   Pencil,
   Search,
   Trash2,
@@ -637,34 +640,45 @@ export function SandboxInspectorOutline({
     <div ref={outlineRef}>
       <Card data-testid="inspector-outline" className="border-0 p-0">
         <div className="flex flex-col gap-3">
-          <div>
-            <SectionTitle>Structure</SectionTitle>
-            <p className="text-muted-foreground mt-1 text-xs">
-              Select an item for settings. Use the visible actions to add,
-              rename, or manage items.
-            </p>
-          </div>
-          <div className="flex min-w-0 gap-2">
+          <SectionTitle>Structure</SectionTitle>
+          <div className="flex min-w-0 items-center gap-1">
+            <div className="relative min-w-0 flex-1">
+              <Search
+                aria-hidden="true"
+                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+              />
+              <Input
+                type="search"
+                aria-label="Search structure"
+                placeholder="Search structure"
+                disabled={state.departments.length === 0}
+                value={structureQuery}
+                onChange={(event) => setStructureQuery(event.target.value)}
+                className="h-11 pl-8 xl:h-9"
+              />
+            </div>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className="min-h-11 min-w-0 flex-1 xl:min-h-8"
+              variant="ghost"
+              size="icon"
+              className="size-11 shrink-0 xl:size-9"
               aria-label="Expand all"
+              title="Expand all"
               disabled={state.departments.length === 0}
               onClick={() => {
                 setCollapsedDepartments(new Set());
                 setCollapsedModules(new Set());
               }}
             >
-              Expand all
+              <ChevronsUpDown aria-hidden="true" />
             </Button>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              className="min-h-11 min-w-0 flex-1 xl:min-h-8"
+              variant="ghost"
+              size="icon"
+              className="size-11 shrink-0 xl:size-9"
               aria-label="Collapse all"
+              title="Collapse all"
               disabled={state.departments.length === 0}
               onClick={() => {
                 setCollapsedDepartments(
@@ -675,34 +689,21 @@ export function SandboxInspectorOutline({
                 );
               }}
             >
-              Collapse all
+              <ChevronsDownUp aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-11 shrink-0 xl:size-9"
+              aria-label="Jump to selection"
+              title="Jump to selection"
+              disabled={!selectedCellId}
+              onClick={jumpToSelection}
+            >
+              <LocateFixed aria-hidden="true" />
             </Button>
           </div>
-          <div className="relative">
-            <Search
-              aria-hidden="true"
-              className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-            />
-            <Input
-              type="search"
-              aria-label="Search structure"
-              placeholder="Search structure"
-              disabled={state.departments.length === 0}
-              value={structureQuery}
-              onChange={(event) => setStructureQuery(event.target.value)}
-              className="h-11 pl-8 xl:h-9"
-            />
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="min-h-11 xl:min-h-8"
-            disabled={!selectedCellId}
-            onClick={jumpToSelection}
-          >
-            Jump to selection
-          </Button>
         </div>
 
         {state.departments.length > 0 && structureSearch.hasMatches ? (

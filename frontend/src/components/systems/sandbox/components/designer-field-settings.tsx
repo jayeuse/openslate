@@ -4,13 +4,8 @@ import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { AdvancedSection } from "@/components/ui/advanced-section";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
@@ -37,6 +32,7 @@ import {
 } from "../domain/model";
 import { dateValueInRange } from "../domain/date-values";
 import type { SandboxCommandResult } from "../state/commands";
+import { cn } from "@/lib/utils";
 
 type FieldDraft = {
   name: string;
@@ -340,6 +336,29 @@ export function buildField(field: Field, draft: FieldDraft): Field | string {
   };
 }
 
+/**
+ * Controls in a field's Advanced block whose value differs from the default
+ * (the Advanced Last Rule): description, default value, any limit, and a
+ * closed state. The count shows while Advanced is closed.
+ */
+export function advancedFieldSetCount(field: Field): number {
+  const draft = draftForField(field);
+  const limits = [
+    draft.maxLength,
+    draft.min,
+    draft.max,
+    draft.type === "Integer" ? "" : draft.step,
+    draft.earliest,
+    draft.latest,
+  ].some((value) => value !== "");
+  return [
+    draft.description.trim() !== "",
+    draft.defaultValue !== "" || draft.checked,
+    limits,
+    field.closed === true,
+  ].filter(Boolean).length;
+}
+
 export function FieldSettings({
   field,
   index,
@@ -347,11 +366,13 @@ export function FieldSettings({
   onSave,
   onMove,
   onLifecycle,
+  onDelete,
   titleFieldId,
   autoFocus = false,
   pending = false,
   lifecycleClosed,
   lifecycleDisabled = false,
+  lifecycleReason,
   onPurge,
   draftId,
   onDraftStateChange,
@@ -362,11 +383,15 @@ export function FieldSettings({
   onSave: (field: Field) => Promise<SandboxCommandResult<unknown>>;
   onMove: (delta: number) => Promise<SandboxCommandResult<unknown>>;
   onLifecycle: () => Promise<SandboxCommandResult<unknown>>;
+  /** Opens the delete confirmation for this field. */
+  onDelete?: () => void;
   titleFieldId: string | null;
   autoFocus?: boolean;
   pending?: boolean;
   lifecycleClosed?: boolean;
   lifecycleDisabled?: boolean;
+  /** Why closing is unavailable, when it is. */
+  lifecycleReason?: string | null;
   onPurge?: () => Promise<SandboxCommandResult<unknown>>;
   draftId: string;
   onDraftStateChange: (id: string, dirty: boolean) => void;
@@ -384,6 +409,7 @@ export function FieldSettings({
   );
   const selectOptions = selectOptionsForDraft(field, draft);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     setDraft(draftForField(field));
     setError("");
@@ -406,15 +432,24 @@ export function FieldSettings({
     }));
     setError("");
   };
+  // Visible labels drop the field name that the row already shows; each
+  // control's accessible name keeps it ("Status options"), which still
+  // contains the visible text (WCAG 2.5.3).
   const prefix = field.name;
   const controlId = (suffix: string) => `sandbox-field-${field.id}-${suffix}`;
+  const closeReason = isRecordTitle
+    ? "This is the module's title field."
+    : lifecycleDisabled
+      ? (lifecycleReason ?? null)
+      : null;
   return (
-    <FieldGroup className="mt-3 gap-3">
+    <FieldGroup className="gap-3 pt-1">
       <fieldset disabled={pending} className="contents">
         <FormField>
-          <FieldLabel htmlFor={controlId("name")}>{prefix} name</FieldLabel>
+          <FieldLabel htmlFor={controlId("name")}>Name</FieldLabel>
           <Input
             id={controlId("name")}
+            aria-label={`${prefix} name`}
             autoFocus={autoFocus}
             data-sandbox-field-name={field.id}
             value={draft.name}
@@ -422,239 +457,57 @@ export function FieldSettings({
             onChange={(event) => update("name", event.target.value)}
           />
         </FormField>
-        <FormField>
-          <FieldLabel htmlFor={controlId("description")}>
-            {prefix} description
-          </FieldLabel>
-          <Input
-            id={controlId("description")}
-            value={draft.description}
-            maxLength={1000}
-            onChange={(event) => update("description", event.target.value)}
-          />
-        </FormField>
-        <FormField>
-          <FieldLabel htmlFor={controlId("type")}>
-            {prefix} field type
-          </FieldLabel>
-          <NativeSelect
-            id={controlId("type")}
-            className="w-full [&_select]:min-h-10"
-            value={draft.type}
-            onChange={(event) =>
-              update("type", event.target.value as FieldTypeName)
-            }
-          >
-            {FIELD_TYPES.map((entry) => (
-              <NativeSelectOption key={entry.kind} value={entry.name}>
-                {entry.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </FormField>
-        {draft.type === "Checkbox" ? (
-          <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
-            <Checkbox
-              id={controlId("default-checked")}
-              checked={draft.checked}
-              onCheckedChange={(checked) => update("checked", checked)}
-            />
-            <FieldLabel htmlFor={controlId("default-checked")}>
-              {prefix} default checked
-            </FieldLabel>
-          </FormField>
-        ) : draft.type === "User" ? (
-          <div className="space-y-1">
-            <p className="text-sm font-medium">Default value</p>
-            {/* A plain note: there is no control here, so no Field root. */}
-            <p className="text-muted-foreground text-sm">
-              User values are assigned on individual records, so this field has
-              no shared default user.
-            </p>
-          </div>
-        ) : draft.type === "Select" ? (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
           <FormField>
-            <FieldLabel htmlFor={controlId("default-value")}>
-              {prefix} default value
-            </FieldLabel>
+            <FieldLabel htmlFor={controlId("type")}>Type</FieldLabel>
             <NativeSelect
-              id={controlId("default-value")}
-              value={draft.defaultValue}
+              id={controlId("type")}
+              aria-label={`${prefix} field type`}
+              className="w-full [&_select]:min-h-10"
+              value={draft.type}
               onChange={(event) =>
-                update("defaultValue", event.currentTarget.value)
+                update("type", event.target.value as FieldTypeName)
               }
             >
-              <NativeSelectOption value="">No default</NativeSelectOption>
-              {selectOptions.map((option) => (
-                <NativeSelectOption key={option.id} value={option.id}>
-                  {option.label}
+              {FIELD_TYPES.map((entry) => (
+                <NativeSelectOption key={entry.kind} value={entry.name}>
+                  {entry.name}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
           </FormField>
-        ) : (
-          <FormField>
-            <FieldLabel htmlFor={controlId("default-value")}>
-              {prefix} default value
-            </FieldLabel>
-            <Input
-              id={controlId("default-value")}
-              type={
-                draft.type === "Date"
-                  ? "date"
-                  : draft.type === "Date/Time"
-                    ? "datetime-local"
-                    : draft.type === "Number" || draft.type === "Integer"
-                      ? "number"
-                      : "text"
-              }
-              value={draft.defaultValue}
-              onChange={(event) => update("defaultValue", event.target.value)}
+          <FormField className="min-h-10 flex-row items-center gap-2">
+            <Checkbox
+              id={controlId("required")}
+              checked={draft.required}
+              onCheckedChange={(checked) => update("required", checked)}
             />
+            <FieldLabel htmlFor={controlId("required")}>Required</FieldLabel>
           </FormField>
-        )}
-        {["Text", "Long text", "Email", "URL"].includes(draft.type) ? (
-          <FormField>
-            <FieldLabel htmlFor={controlId("maximum-length")}>
-              {prefix} maximum length
-            </FieldLabel>
-            <Input
-              id={controlId("maximum-length")}
-              type="number"
-              min="1"
-              value={draft.maxLength}
-              onChange={(event) => update("maxLength", event.target.value)}
-            />
-          </FormField>
-        ) : null}
-        {draft.type === "Number" || draft.type === "Integer" ? (
-          <FieldGroup className="grid grid-cols-2 gap-2">
-            <FormField>
-              <FieldLabel htmlFor={controlId("minimum")}>
-                {prefix} minimum
-              </FieldLabel>
-              <Input
-                id={controlId("minimum")}
-                type="number"
-                value={draft.min}
-                onChange={(event) => update("min", event.target.value)}
-              />
-            </FormField>
-            <FormField>
-              <FieldLabel htmlFor={controlId("maximum")}>
-                {prefix} maximum
-              </FieldLabel>
-              <Input
-                id={controlId("maximum")}
-                type="number"
-                value={draft.max}
-                onChange={(event) => update("max", event.target.value)}
-              />
-            </FormField>
-            <FormField data-disabled={draft.type === "Integer" || undefined}>
-              <FieldLabel htmlFor={controlId("step")}>{prefix} step</FieldLabel>
-              <Input
-                id={controlId("step")}
-                type="number"
-                value={draft.type === "Integer" ? "1" : draft.step}
-                disabled={draft.type === "Integer"}
-                onChange={(event) => update("step", event.target.value)}
-              />
-            </FormField>
-          </FieldGroup>
-        ) : null}
-        {draft.type === "Date" || draft.type === "Date/Time" ? (
-          <FieldGroup className="grid grid-cols-2 gap-2">
-            <FormField>
-              <FieldLabel htmlFor={controlId("earliest")}>
-                {prefix} earliest
-              </FieldLabel>
-              <Input
-                id={controlId("earliest")}
-                type={draft.type === "Date" ? "date" : "datetime-local"}
-                value={draft.earliest}
-                onChange={(event) => update("earliest", event.target.value)}
-              />
-            </FormField>
-            <FormField>
-              <FieldLabel htmlFor={controlId("latest")}>
-                {prefix} latest
-              </FieldLabel>
-              <Input
-                id={controlId("latest")}
-                type={draft.type === "Date" ? "date" : "datetime-local"}
-                value={draft.latest}
-                onChange={(event) => update("latest", event.target.value)}
-              />
-            </FormField>
-          </FieldGroup>
-        ) : null}
+        </div>
         {draft.type === "Select" ? (
           <FormField>
-            <FieldLabel htmlFor={controlId("options")}>
-              {prefix} options
-            </FieldLabel>
+            <FieldLabel htmlFor={controlId("options")}>Options</FieldLabel>
             <Input
               id={controlId("options")}
+              aria-label={`${prefix} options`}
               value={draft.options}
+              placeholder="Open, Closed"
               onChange={(event) => updateOptions(event.target.value)}
             />
           </FormField>
         ) : null}
-        <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
-          <Checkbox
-            id={controlId("required")}
-            checked={draft.required}
-            onCheckedChange={(checked) => update("required", checked)}
-          />
-          <FieldLabel htmlFor={controlId("required")}>Required</FieldLabel>
-        </FormField>
-        <FormField data-invalid={Boolean(error) || undefined}>
-          <FieldError className="text-xs">{error}</FieldError>
-        </FormField>
-        {isRecordTitle ? (
-          <p className="text-muted-foreground text-sm">
-            Selected as the record title. Choose another title field or clear
-            this setting before closing this field.
-          </p>
+        {error ? (
+          <FormField data-invalid>
+            <FieldError className="text-xs">{error}</FieldError>
+          </FormField>
         ) : null}
-        <ButtonGroup
-          aria-label={`${field.name} field actions`}
-          className="w-full flex-wrap justify-between"
-        >
-          <ButtonGroup aria-label={`${field.name} save actions`}>
-            <Button
-              size="sm"
-              disabled={pending}
-              onClick={async () => {
-                const result = buildField(field, draft);
-                if (typeof result === "string") setError(result);
-                else {
-                  const saved = await onSave(result);
-                  if (!saved.ok) setError(saved.error);
-                }
-              }}
-            >
-              Save field changes
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={() => {
-                setDraft(draftForField(field));
-                setError("");
-              }}
-            >
-              Cancel
-            </Button>
-          </ButtonGroup>
-          <ButtonGroup
-            aria-label={`${field.name} ordering and lifecycle actions`}
-          >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <ButtonGroup aria-label={`${field.name} ordering actions`}>
             <Button
               size="icon"
               variant="outline"
+              className="size-11 xl:size-8"
               aria-label={`Move ${field.name} up`}
               disabled={pending || index === 0}
               onClick={async () => {
@@ -667,6 +520,7 @@ export function FieldSettings({
             <Button
               size="icon"
               variant="outline"
+              className="size-11 xl:size-8"
               aria-label={`Move ${field.name} down`}
               disabled={pending || index === count - 1}
               onClick={async () => {
@@ -676,21 +530,232 @@ export function FieldSettings({
             >
               <ArrowDown aria-hidden="true" />
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pending || lifecycleDisabled || isRecordTitle}
-              onClick={async () => {
-                const result = await onLifecycle();
-                if (!result.ok) setError(result.error);
-              }}
+          </ButtonGroup>
+          {dirty ? (
+            <div
+              role="group"
+              aria-label={`${field.name} save actions`}
+              className="flex gap-2"
             >
-              {closed ? "Reopen" : "Close"} field
-            </Button>
-            {onPurge ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending || saving}
+                onClick={() => {
+                  setDraft(draftForField(field));
+                  setError("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                pending={saving}
+                pendingLabel="Saving…"
+                disabled={pending}
+                onClick={async () => {
+                  const result = buildField(field, draft);
+                  if (typeof result === "string") {
+                    setError(result);
+                    return;
+                  }
+                  setSaving(true);
+                  const saved = await onSave(result);
+                  setSaving(false);
+                  if (!saved.ok) setError(saved.error);
+                }}
+              >
+                Save field changes
+              </Button>
+            </div>
+          ) : null}
+        </div>
+        <AdvancedSection
+          storageKey="sandbox.field"
+          setCount={advancedFieldSetCount(field)}
+        >
+          <FormField>
+            <FieldLabel htmlFor={controlId("description")}>
+              Description
+            </FieldLabel>
+            <Input
+              id={controlId("description")}
+              aria-label={`${prefix} description`}
+              value={draft.description}
+              maxLength={1000}
+              onChange={(event) => update("description", event.target.value)}
+            />
+          </FormField>
+          {draft.type === "Checkbox" ? (
+            <FormField className="min-h-11 flex-row items-center gap-2 xl:min-h-0">
+              <Checkbox
+                id={controlId("default-checked")}
+                aria-label={`${prefix} checked by default`}
+                checked={draft.checked}
+                onCheckedChange={(checked) => update("checked", checked)}
+              />
+              <FieldLabel htmlFor={controlId("default-checked")}>
+                Checked by default
+              </FieldLabel>
+            </FormField>
+          ) : draft.type === "User" ? (
+            <p className="text-muted-foreground text-sm">
+              No default: each record sets its user.
+            </p>
+          ) : draft.type === "Select" ? (
+            <FormField>
+              <FieldLabel htmlFor={controlId("default-value")}>
+                Default value
+              </FieldLabel>
+              <NativeSelect
+                id={controlId("default-value")}
+                aria-label={`${prefix} default value`}
+                value={draft.defaultValue}
+                onChange={(event) =>
+                  update("defaultValue", event.currentTarget.value)
+                }
+              >
+                <NativeSelectOption value="">No default</NativeSelectOption>
+                {selectOptions.map((option) => (
+                  <NativeSelectOption key={option.id} value={option.id}>
+                    {option.label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </FormField>
+          ) : (
+            <FormField>
+              <FieldLabel htmlFor={controlId("default-value")}>
+                Default value
+              </FieldLabel>
+              <Input
+                id={controlId("default-value")}
+                aria-label={`${prefix} default value`}
+                type={
+                  draft.type === "Date"
+                    ? "date"
+                    : draft.type === "Date/Time"
+                      ? "datetime-local"
+                      : draft.type === "Number" || draft.type === "Integer"
+                        ? "number"
+                        : "text"
+                }
+                value={draft.defaultValue}
+                onChange={(event) => update("defaultValue", event.target.value)}
+              />
+            </FormField>
+          )}
+          {["Text", "Long text", "Email", "URL"].includes(draft.type) ? (
+            <FormField>
+              <FieldLabel htmlFor={controlId("maximum-length")}>
+                Maximum length
+              </FieldLabel>
+              <Input
+                id={controlId("maximum-length")}
+                aria-label={`${prefix} maximum length`}
+                type="number"
+                min="1"
+                value={draft.maxLength}
+                onChange={(event) => update("maxLength", event.target.value)}
+              />
+            </FormField>
+          ) : null}
+          {draft.type === "Number" || draft.type === "Integer" ? (
+            <FieldGroup className="grid grid-cols-2 gap-2">
+              <FormField>
+                <FieldLabel htmlFor={controlId("minimum")}>Minimum</FieldLabel>
+                <Input
+                  id={controlId("minimum")}
+                  aria-label={`${prefix} minimum`}
+                  type="number"
+                  value={draft.min}
+                  onChange={(event) => update("min", event.target.value)}
+                />
+              </FormField>
+              <FormField>
+                <FieldLabel htmlFor={controlId("maximum")}>Maximum</FieldLabel>
+                <Input
+                  id={controlId("maximum")}
+                  aria-label={`${prefix} maximum`}
+                  type="number"
+                  value={draft.max}
+                  onChange={(event) => update("max", event.target.value)}
+                />
+              </FormField>
+              {draft.type === "Integer" ? null : (
+                <FormField>
+                  <FieldLabel htmlFor={controlId("step")}>Step</FieldLabel>
+                  <Input
+                    id={controlId("step")}
+                    aria-label={`${prefix} step`}
+                    type="number"
+                    value={draft.step}
+                    onChange={(event) => update("step", event.target.value)}
+                  />
+                </FormField>
+              )}
+            </FieldGroup>
+          ) : null}
+          {draft.type === "Date" || draft.type === "Date/Time" ? (
+            <FieldGroup className="grid grid-cols-2 gap-2">
+              <FormField>
+                <FieldLabel htmlFor={controlId("earliest")}>
+                  Earliest
+                </FieldLabel>
+                <Input
+                  id={controlId("earliest")}
+                  aria-label={`${prefix} earliest`}
+                  type={draft.type === "Date" ? "date" : "datetime-local"}
+                  value={draft.earliest}
+                  onChange={(event) => update("earliest", event.target.value)}
+                />
+              </FormField>
+              <FormField>
+                <FieldLabel htmlFor={controlId("latest")}>Latest</FieldLabel>
+                <Input
+                  id={controlId("latest")}
+                  aria-label={`${prefix} latest`}
+                  type={draft.type === "Date" ? "date" : "datetime-local"}
+                  value={draft.latest}
+                  onChange={(event) => update("latest", event.target.value)}
+                />
+              </FormField>
+            </FieldGroup>
+          ) : null}
+          <div
+            role="group"
+            aria-label={`${field.name} lifecycle actions`}
+            className="flex flex-wrap gap-2"
+          >
+            <DisabledReason reason={closeReason}>
               <Button
                 variant="outline"
                 size="sm"
+                disabled={pending || lifecycleDisabled || isRecordTitle}
+                onClick={async () => {
+                  const result = await onLifecycle();
+                  if (!result.ok) setError(result.error);
+                }}
+              >
+                {closed ? "Reopen" : "Close"} field
+              </Button>
+            </DisabledReason>
+            {onDelete ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-danger-text"
+                disabled={pending}
+                onClick={onDelete}
+              >
+                Delete field
+              </Button>
+            ) : null}
+            {onPurge ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-danger-text"
                 disabled={pending || lifecycleDisabled}
                 onClick={async () => {
                   const result = await onPurge();
@@ -700,19 +765,19 @@ export function FieldSettings({
                 Permanently delete field
               </Button>
             ) : null}
-          </ButtonGroup>
-        </ButtonGroup>
-        {dirty && lifecycleDisabled ? (
-          <p className="text-muted-foreground text-xs">
-            Save or cancel your edits before changing live state.
-          </p>
-        ) : null}
+          </div>
+        </AdvancedSection>
       </fieldset>
     </FieldGroup>
   );
 }
 
-export function FieldDisclosure({
+/**
+ * One field in the module's field list: a hairline row with the required
+ * mark, the name, and the type in the code face (the canvas row rhythm).
+ * The row opens its settings in place.
+ */
+export function FieldRow({
   field,
   selected,
   children,
@@ -728,31 +793,49 @@ export function FieldDisclosure({
   }, [selected]);
 
   return (
-    <Collapsible className="group" open={open} onOpenChange={setOpen}>
-      <Card aria-label={`${field.name} field settings`} className="w-full">
-        <CardHeader className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 p-3">
-          <div className="min-w-0">
-            <CardTitle className="truncate text-sm">{field.name}</CardTitle>
-            <CardDescription className="mt-1">
-              <Badge variant={field.closed ? "outline" : "secondary"}>
-                {field.closed ? "Closed" : field.type}
-              </Badge>
-            </CardDescription>
-          </div>
-          <CollapsibleTrigger
-            aria-label={`${open ? "Hide" : "Show"} ${field.name} settings`}
-            render={<Button size="icon" variant="ghost" />}
-          >
-            <ChevronDown
-              aria-hidden="true"
-              className="transition-transform group-data-open:rotate-180 motion-reduce:transition-none"
-            />
-          </CollapsibleTrigger>
-        </CardHeader>
-        <CollapsibleContent>
-          <CardContent className="border-t p-3">{children}</CardContent>
-        </CollapsibleContent>
-      </Card>
+    <Collapsible
+      role="group"
+      aria-label={`${field.name} field settings`}
+      data-selected={selected ? "true" : "false"}
+      className="group border-border border-b last:border-b-0"
+      open={open}
+      onOpenChange={setOpen}
+    >
+      <CollapsibleTrigger
+        aria-label={`${open ? "Hide" : "Show"} ${field.name} settings`}
+        className="hover:bg-surface-hover focus-visible:outline-ring group-data-[selected=true]:bg-accent flex min-h-11 w-full items-center gap-2.5 rounded-sm px-2 text-left text-sm outline-none focus-visible:outline-2 xl:min-h-9"
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            "size-1.5 shrink-0 rounded-full border border-current",
+            field.required ? "bg-current" : "bg-transparent",
+            "text-muted-foreground",
+          )}
+        />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate font-medium",
+            field.closed && "text-muted-foreground",
+          )}
+        >
+          {field.name}
+        </span>
+        {field.closed ? (
+          <Badge variant="outline">Closed</Badge>
+        ) : (
+          <span className="text-muted-foreground font-mono text-xs">
+            {field.type}
+          </span>
+        )}
+        <ChevronDown
+          aria-hidden="true"
+          className="text-muted-foreground size-4 shrink-0 transition-transform duration-(--motion-fast) group-data-[open]:rotate-180 motion-reduce:transition-none"
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="px-2 pt-1 pb-4">
+        {children}
+      </CollapsibleContent>
     </Collapsible>
   );
 }
