@@ -829,8 +829,8 @@ test("bound draft deletion explains retained live data while unbound copy remain
   await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("tab", { name: "Structure", exact: true }).click();
   await page
-    .getByRole("button", {
-      name: `Select module ${design.modules.find((module) => module.id === relationship.source)!.name}`,
+    .getByRole("treeitem", {
+      name: `${design.modules.find((module) => module.id === relationship.source)!.name}`,
       exact: true,
     })
     .click({ button: "right" });
@@ -844,8 +844,8 @@ test("bound draft deletion explains retained live data while unbound copy remain
   await page.goto(`/sandbox?module=${relationship.target}`);
   await page.getByRole("tab", { name: "Structure", exact: true }).click();
   await page
-    .getByRole("button", {
-      name: `Select module ${design.modules.find((module) => module.id === relationship.target)!.name}`,
+    .getByRole("treeitem", {
+      name: `${design.modules.find((module) => module.id === relationship.target)!.name}`,
       exact: true,
     })
     .click({ button: "right" });
@@ -868,7 +868,7 @@ test("a failed delete shows its error inside the delete dialog", async ({
   // proposal keeps the same designer and its open dialog.
   await page.getByRole("tab", { name: "Structure", exact: true }).click();
   await page
-    .getByRole("button", { name: "Select module Customers", exact: true })
+    .getByRole("treeitem", { name: "Customers", exact: true })
     .click({ button: "right" });
   await page
     .getByRole("menuitem", { name: "Delete module", exact: true })
@@ -1191,8 +1191,8 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
       ["department", department],
       ["module", targetModule],
     ] as const) {
-      const row = page.getByRole("button", {
-        name: `Select ${kind} ${item.name}`,
+      const row = page.getByRole("treeitem", {
+        name: item.name,
         exact: true,
       });
       await row.click({ button: "right" });
@@ -1208,8 +1208,8 @@ for (const state of ["disabled", "unknown", "unavailable"] as const) {
       await page.keyboard.press("Escape");
     }
     await page
-      .getByRole("button", {
-        name: `Select department ${department.name}`,
+      .getByRole("treeitem", {
+        name: `${department.name}`,
         exact: true,
       })
       .click();
@@ -1438,8 +1438,8 @@ test("the bound department outline reviews blockers and reopens with explicit co
     .getByRole("tablist", { name: "Workbench view" })
     .getByRole("tab", { name: "Structure" })
     .click();
-  const row = page.getByRole("button", {
-    name: `Select department ${department.name}`,
+  const row = page.getByRole("treeitem", {
+    name: `${department.name}`,
     exact: true,
   });
   await row.click({ button: "right" });
@@ -1908,7 +1908,7 @@ test("an empty Sandbox authors and persists a complete connected organization", 
       .getByRole("tab", { name: "Structure" })
       .click();
     await page
-      .getByRole("button", { name: "Add module to Operations", exact: true })
+      .getByRole("treeitem", { name: "Add module to Operations", exact: true })
       .click();
     await page.getByLabel("Module name").fill(moduleName);
     await page.getByRole("button", { name: "Create module" }).click();
@@ -4913,8 +4913,8 @@ test("registered shortcuts preserve native text editing modal guards and standar
   await expect.poll(() => sandbox.document().design.layout).toEqual(arranged);
   await page.getByRole("tab", { name: "Structure", exact: true }).click();
   await page
-    .getByRole("button", {
-      name: "Select module Service requests",
+    .getByRole("treeitem", {
+      name: "Service requests",
       exact: true,
     })
     .click({ button: "right" });

@@ -174,3 +174,62 @@ test("overlapping frames show a notice that Auto-arrange clears and Undo brings 
   await notice.getByRole("button", { name: "Dismiss" }).click();
   await expect(notice).toHaveCount(0);
 });
+
+// Phase 4 of the Sandbox follow-up pass: Structure is a tree (T1, T2).
+test("Structure is one Tab stop and works from the keyboard", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page);
+  await page.goto("/sandbox?module=sample-requests");
+  await page
+    .getByRole("tablist", { name: "Workbench view" })
+    .getByRole("tab", { name: "Structure" })
+    .click();
+  const tree = page.getByRole("tree", { name: "Structure" });
+  const item = (name: string) =>
+    tree.getByRole("treeitem", { name, exact: true });
+
+  // One Tab stop, on the selected module.
+  await expect(tree.locator('[role="treeitem"][tabindex="0"]')).toHaveCount(1);
+  await expect(item("Service requests")).toHaveAttribute("tabindex", "0");
+  await expect(item("Service requests")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  await item("Service requests").focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(item("Request number")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(item("Service requests")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(item("Service requests")).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await page.keyboard.press("ArrowRight");
+  await expect(item("Service requests")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+
+  // A letter jumps to the next name that starts with it; Enter selects.
+  await page.keyboard.press("e");
+  await expect(item("Equipment")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(item("Equipment")).toHaveAttribute("aria-selected", "true");
+  await expect(item("Service requests")).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+
+  await page.keyboard.press("End");
+  await expect(item("Add module to Commercial")).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(item("Operations")).toBeFocused();
+
+  // F2 renames the focused item.
+  await page.keyboard.press("F2");
+  await expect(page.getByLabel("Edit department name")).toBeFocused();
+  await page.keyboard.press("Escape");
+});

@@ -2733,7 +2733,8 @@ export function Designer({
                     </p>
                     <p className="text-muted-foreground mt-1">
                       Use the visible Undo and Redo controls for design changes.
-                      Use Structure for complete keyboard editing.
+                      Structure works fully from the keyboard: arrow keys move,
+                      Enter selects, F2 renames.
                     </p>
                     <p className="text-muted-foreground mt-1">
                       {keyboardShortcuts === true

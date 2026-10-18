@@ -333,6 +333,12 @@ Correct: Back from Triggers to Build keeps the edit; the chip reads "· 1 unsave
 
 Wrong: Back unmounts the editor and the edit is gone, with the chip back at "Saved".
 
+**The Tree Keys Rule.** A hierarchy that people edit (the Sandbox Structure outline) is a WAI-ARIA tree: one Tab stop, Up and Down move, Right opens or goes to the first child, Left closes or goes to the parent, Home and End, a letter jumps to the next name, Enter selects, F2 renames, and the context-menu key opens the item's actions. "Add …" rows are items in the tree, not extra Tab stops. Only the selected item is `aria-selected`; "Closed" is the item's description, not part of its name.
+
+Correct: Tab lands on the selected module; ArrowDown reaches its first field; "e" jumps to Equipment.
+
+Wrong: Tab walks through every department, module, field, and "Add field" button.
+
 **The page pass (pattern kit).** To bring a workspace page to these rules, take its panels one at a time, with the Sandbox as the worked example (`docs/specs/sandbox-ui-ux-pass.md`):
 
 1. Inventory every control and helper line per panel and selection state, and measure helper words and default-visible controls with one script on fixed data before you change anything.
