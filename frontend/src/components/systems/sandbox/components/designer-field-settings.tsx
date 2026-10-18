@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/native-select";
 import {
   FIELD_TYPES,
+  fieldTypeLabel,
   normalizeField,
   type Field,
   type FieldConfig,
@@ -471,7 +472,7 @@ export function FieldSettings({
             >
               {FIELD_TYPES.map((entry) => (
                 <NativeSelectOption key={entry.kind} value={entry.name}>
-                  {entry.name}
+                  {fieldTypeLabel(entry.name)}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
@@ -838,7 +839,7 @@ export function FieldRow({
           <Badge variant="outline">Closed</Badge>
         ) : (
           <span className="text-muted-foreground font-mono text-xs">
-            {field.type}
+            {fieldTypeLabel(field.type)}
           </span>
         )}
         {field.required ? <span className="sr-only">, required</span> : null}

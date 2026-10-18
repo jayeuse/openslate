@@ -127,6 +127,7 @@ import {
 
 import {
   FIELD_TYPES,
+  fieldTypeLabel,
   canonicalFieldType,
   counts,
   compactDefaultLayout,
@@ -1169,7 +1170,7 @@ export function Designer({
     setSelected(nextFallbackId.current || fallbackId || "");
     notifyUndoable(
       removedMappings.current > 0
-        ? `${removedFieldName.current} deleted · ${plural(removedMappings.current, "relationship field mapping")} removed`
+        ? `${removedFieldName.current} deleted · ${plural(removedMappings.current, "linked field")} removed`
         : `${deletedKindLabel} deleted`,
     );
   }
@@ -1435,7 +1436,7 @@ export function Designer({
           ).length !== fieldMappings.length
         )
           throw new SandboxCommandError(
-            "Each field mapping must use open, compatible source and target fields without duplicates.",
+            "Each linked field must pair two open fields of a matching type, once.",
           );
         return {
           ...previous,
@@ -1547,7 +1548,7 @@ export function Designer({
               >
                 {FIELD_TYPES.map((entry) => (
                   <NativeSelectOption key={entry.kind} value={entry.name}>
-                    {entry.name}
+                    {fieldTypeLabel(entry.name)}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
@@ -1569,7 +1570,7 @@ export function Designer({
             {type === "Select" && (
               <FormField>
                 <FieldLabel htmlFor="sandbox-editor-select-options">
-                  Select options (comma separated)
+                  Choices (comma separated)
                 </FieldLabel>
                 <Input
                   id="sandbox-editor-select-options"
@@ -1654,7 +1655,7 @@ export function Designer({
             {fieldMappings.length ? (
               <fieldset className="border-border flex flex-col gap-3 rounded-md border p-3">
                 <legend className="px-1 text-sm font-medium">
-                  Legacy field mappings
+                  Older linked fields
                 </legend>
                 <Alert variant="warning">
                   These imported mappings are not supported for publishing.
@@ -2154,7 +2155,7 @@ export function Designer({
                             if (result.ok && closedFieldName.current)
                               notify(
                                 removedMappings.current > 0
-                                  ? `${closedFieldName.current} closed. ${plural(removedMappings.current, "relationship field mapping")} removed.`
+                                  ? `${closedFieldName.current} closed. ${plural(removedMappings.current, "linked field")} removed.`
                                   : `${closedFieldName.current} closed.`,
                               );
                             return result;

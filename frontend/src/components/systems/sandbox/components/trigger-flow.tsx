@@ -21,9 +21,9 @@ import type {
 } from "../domain/document";
 
 const comparison = {
-  "=": "equals",
-  "!=": "does not equal",
-  ">": "is greater than",
+  "=": "is",
+  "!=": "is not",
+  ">": "is more than",
   ">=": "is at least",
   "<": "is less than",
   "<=": "is at most",
@@ -37,20 +37,12 @@ const weekdays = [
   "Saturday",
   "Sunday",
 ];
-const symbol = {
-  "=": "=",
-  "!=": "≠",
-  ">": ">",
-  ">=": "≥",
-  "<": "<",
-  "<=": "≤",
-} as const;
-const triggerOperators = [">", ">=", "<", "<=", "=", "!="] as const;
+const triggerOperators = ["=", "!=", ">", ">=", "<", "<="] as const;
 
 /** The operator choices for conditions and thresholds, in display order. */
 export const triggerOperatorOptions = triggerOperators.map((operator) => ({
   value: operator,
-  label: `${comparison[operator]} (${symbol[operator]})`,
+  label: comparison[operator],
 }));
 
 /** The weekday choices for a weekly schedule; stored values are 1 to 7. */
@@ -89,7 +81,7 @@ function valueName(
   if (value.value === true) return "Checked";
   if (value.value === false) return "Unchecked";
   if (value.value === null) return "empty";
-  if (value.value === "") return '"" (empty text)';
+  if (value.value === "") return "(empty)";
   const config = findField(design, field)?.config;
   if (config?.kind === "select")
     return (

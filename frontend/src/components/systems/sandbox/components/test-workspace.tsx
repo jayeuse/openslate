@@ -776,7 +776,7 @@ export function TestWorkspace({
                           <>
                             <Input
                               id={fieldControlId}
-                              placeholder="Enter a simulated user UUID"
+                              placeholder="Paste the person's ID"
                               aria-invalid={issue ? true : undefined}
                               aria-describedby={
                                 issue
@@ -795,8 +795,8 @@ export function TestWorkspace({
                               id={userHelpId}
                               className="text-muted-foreground text-xs"
                             >
-                              Test values are simulated UUIDs. Sandbox does not
-                              check live user eligibility.
+                              The test uses this ID as is. It does not check
+                              that the person can sign in.
                             </p>
                           </>
                         ) : field.config.kind === "select" ? (

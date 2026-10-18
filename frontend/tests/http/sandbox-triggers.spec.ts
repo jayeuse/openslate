@@ -27,7 +27,7 @@ test("a select condition offers option labels and stores the option ID", async (
     page
       .getByRole("region", { name: "Flow preview" })
       .getByRole("button", { name: /^Condition 1\b/ }),
-  ).toContainText("Status equals In progress");
+  ).toContainText("Status is In progress");
 
   await page.getByRole("button", { name: "Save triggers" }).click();
   await expect.poll(sandbox.documentWrites).toBe(1);

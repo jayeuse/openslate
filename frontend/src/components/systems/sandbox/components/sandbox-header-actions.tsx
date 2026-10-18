@@ -221,7 +221,7 @@ export function SandboxHeaderActions({
         exportController.current === controller
       ) {
         download(bundle.filename, bundle.document);
-        reportDone("Exported");
+        reportDone("Backup downloaded");
       }
     } catch {
       if (
@@ -407,8 +407,8 @@ export function SandboxHeaderActions({
           <DialogHeader>
             <DialogTitle>Import or export</DialogTitle>
             <DialogDescription>
-              Export a portable JSON file, or replace this draft with one you
-              previously exported.
+              Download a backup file of this draft, or replace the draft with a
+              backup you downloaded before.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -467,7 +467,7 @@ export function SandboxHeaderActions({
               onClick={() => void exportDocument()}
             >
               <Download />
-              {exportBusy ? "Exporting…" : "Export JSON"}
+              {exportBusy ? "Downloading…" : "Download a backup"}
             </Button>
             <Button
               variant="outline"
@@ -476,7 +476,7 @@ export function SandboxHeaderActions({
               onClick={() => input.current?.click()}
             >
               <Upload />
-              Import from file
+              Load a backup
             </Button>
           </div>
           <input

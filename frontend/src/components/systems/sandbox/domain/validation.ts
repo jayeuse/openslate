@@ -443,7 +443,7 @@ export function validateSandboxDesign(
       issues.push(
         issue(
           "relationship.mapping_limit",
-          "Relationship field mapping limit exceeded",
+          "Too many linked fields on one relationship",
           relationship.id,
         ),
       );
@@ -510,7 +510,7 @@ export function validateSandboxDesign(
         issues.push(
           issue(
             "relationship.mapping_duplicate",
-            "Relationship mapping duplicates an existing field mapping",
+            "This linked field is already on the relationship",
             relationship.id,
           ),
         );

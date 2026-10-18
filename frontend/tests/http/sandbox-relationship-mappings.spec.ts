@@ -233,7 +233,7 @@ for (const theme of ["light", "dark"] as const) {
       const [download] = await Promise.all([
         page.waitForEvent("download"),
         dialog
-          .getByRole("button", { name: "Export JSON", exact: true })
+          .getByRole("button", { name: "Download a backup", exact: true })
           .click(),
       ]);
       await download.path();
@@ -271,11 +271,11 @@ for (const theme of ["light", "dark"] as const) {
       await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
       try {
         await dialog
-          .getByRole("button", { name: "Export JSON", exact: true })
+          .getByRole("button", { name: "Download a backup", exact: true })
           .click();
         await pending.entered;
         await expect(
-          dialog.getByRole("button", { name: "Exporting…", exact: true }),
+          dialog.getByRole("button", { name: "Downloading…", exact: true }),
         ).toBeDisabled();
         await expectNoBusySandboxRegionsAtReviewSizes(page, theme);
         const completedDownload = page.waitForEvent("download");
@@ -413,7 +413,10 @@ test("bound module lifecycle uses the live name and refreshes the saved design",
     await expect(
       inspector
         .getByLabel(`${field.name} field settings`, { exact: true })
-        .getByText(field.type, { exact: true }),
+        // The fixture has Text and Select fields; Select reads "Choice list".
+        .getByText(field.type === "Select" ? "Choice list" : field.type, {
+          exact: true,
+        }),
     ).toBeVisible();
   // A notice's title is a heading; its text also sits in a live region.
   const confirmedStatus = page.getByRole("heading", {
@@ -991,7 +994,7 @@ test("bound field lifecycle resolves its parent and preserves dirty settings", a
     })
     .click();
   await expect(
-    page.getByRole("dialog").getByText("Legacy field mappings"),
+    page.getByRole("dialog").getByText("Older linked fields"),
   ).toHaveCount(0);
 });
 
@@ -1491,9 +1494,7 @@ test("an organization template replaces the empty draft only after confirmation"
   await expect(
     dialog.getByRole("radio", { name: "Inventory & procurement" }),
   ).toBeVisible();
-  await dialog
-    .getByRole("radio", { name: "Inventory & procurement" })
-    .click();
+  await dialog.getByRole("radio", { name: "Inventory & procurement" }).click();
   await expect(
     dialog.getByText(/departments.*modules.*fields.*relationships/i),
   ).toBeVisible();
@@ -1766,9 +1767,7 @@ test("a refused layout puts the dropped module back", async ({ page }) => {
   // A failed save keeps that change local and refuses later changes.
   await dragCanvasNode(page, requests);
   await expect(
-    page.getByText(
-      "Your change was not saved. It remains local until you reapply it successfully.",
-    ),
+    page.getByText("Your change was not saved. Reapply it to try again."),
   ).toBeVisible();
   const before = await canvasPosition(equipment);
   await dragCanvasNode(page, equipment);
@@ -1961,9 +1960,11 @@ test("creating a Select field saves a typed default as its choice ID", async ({
   await page
     .getByRole("textbox", { name: "Field name", exact: true })
     .fill("Review stage");
-  await page.getByLabel("Field type", { exact: true }).selectOption("Select");
   await page
-    .getByLabel("Select options (comma separated)", { exact: true })
+    .getByLabel("Field type", { exact: true })
+    .selectOption("Choice list");
+  await page
+    .getByLabel("Choices (comma separated)", { exact: true })
     .fill("Open, On hold");
   await page.getByLabel("Default value", { exact: true }).fill("Open");
   await page.getByRole("button", { name: "Create field" }).click();
@@ -2672,7 +2673,7 @@ test("legacy relationship mappings can be removed before publishing", async ({
   await expect(
     dialog.getByRole("heading", { name: "Create relationship" }),
   ).toHaveCount(0);
-  await expect(dialog.getByText("Legacy field mappings")).toBeVisible();
+  await expect(dialog.getByText("Older linked fields")).toBeVisible();
   await dialog.getByRole("button", { name: "Remove mapping" }).click();
   await dialog.getByRole("button", { name: "Save relationship" }).click();
   await expect(dialog).toBeHidden();
@@ -2681,7 +2682,7 @@ test("legacy relationship mappings can be removed before publishing", async ({
       name: "Edit outgoing relationship Uses equipment",
     })
     .click();
-  await expect(dialog.getByText("Legacy field mappings")).toHaveCount(0);
+  await expect(dialog.getByText("Older linked fields")).toHaveCount(0);
 });
 
 test("closing a mapped field removes its relationship mappings", async ({
@@ -2698,10 +2699,9 @@ test("closing a mapped field removes its relationship mappings", async ({
     .getByRole("button", { name: "Close field" })
     .click();
   await expect(
-    page.getByText(
-      "Request number closed. 1 relationship field mapping removed.",
-      { exact: true },
-    ),
+    page.getByText("Request number closed. 1 linked field removed.", {
+      exact: true,
+    }),
   ).toBeVisible();
 
   await page
@@ -2710,7 +2710,7 @@ test("closing a mapped field removes its relationship mappings", async ({
     })
     .click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Legacy field mappings")).toHaveCount(0);
+  await expect(dialog.getByText("Older linked fields")).toHaveCount(0);
 });
 
 test("the Designer saves offset Date/Time bounds in chronological order", async ({
@@ -2765,9 +2765,7 @@ test("a failed structural save remains visibly unsaved until the shared draft is
   await expect(saveFailure).toBeVisible();
   await expect(saveFailure).toHaveAttribute("data-variant", "destructive");
   await expect(
-    page.getByText(
-      "Save did not complete: your proposed document is still local.",
-    ),
+    page.getByText("Not saved. Your edits are still here."),
   ).toBeVisible();
   await expect(saveState).toHaveText("Not saved");
   await expect(
@@ -2776,9 +2774,7 @@ test("a failed structural save remains visibly unsaved until the shared draft is
 
   await page.getByRole("button", { name: "Reapply my draft" }).click();
   await expect(
-    page.getByText(
-      "Save did not complete: your proposed document is still local.",
-    ),
+    page.getByText("Not saved. Your edits are still here."),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
@@ -2786,9 +2782,7 @@ test("a failed structural save remains visibly unsaved until the shared draft is
 
   await page.getByRole("button", { name: "Reload shared draft" }).click();
   await expect(
-    page.getByText(
-      "Save did not complete: your proposed document is still local.",
-    ),
+    page.getByText("Not saved. Your edits are still here."),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
@@ -3488,12 +3482,10 @@ test("Sandbox Test treats User values as simulated UUIDs without live eligibilit
   });
   await page.getByRole("link", { name: "Test", exact: true }).click();
   const setup = page.getByRole("region", { name: "Test setup", exact: true });
-  await expect(
-    setup.getByText(/simulat(?:ed|ion).*UUID|UUID.*simulat(?:ed|ion)/i),
-  ).toBeVisible();
+  // The help says the ID is used as typed and nobody's access is checked.
   await expect(
     setup.getByText(
-      /eligibility.*(?:not|never).*(?:check|verify)|(?:does not|never).*(?:check|verify).*eligibility/i,
+      "The test uses this ID as is. It does not check that the person can sign in.",
     ),
   ).toBeVisible();
 
@@ -4819,7 +4811,7 @@ for (const preference of ["off", "pending"] as const) {
       await page.keyboard.press("Enter");
       await expect(field).toHaveAttribute("aria-pressed", "true");
       const status = node.getByRole("button", {
-        name: "Status, Select, optional",
+        name: "Status, Choice list, optional",
         exact: true,
       });
       await status.focus();
@@ -5914,7 +5906,9 @@ test("a filtered 28-version history exports its complete document and snapshots"
   ).toBeVisible();
   const [without] = await Promise.all([
     page.waitForEvent("download"),
-    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+    dialog
+      .getByRole("button", { name: "Download a backup", exact: true })
+      .click(),
   ]);
   expect(without.suggestedFilename()).toBe("owned-sandbox-history.json");
   const withoutPath = await without.path();
@@ -5927,7 +5921,9 @@ test("a filtered 28-version history exports its complete document and snapshots"
   await include.check();
   const [withHistory] = await Promise.all([
     page.waitForEvent("download"),
-    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+    dialog
+      .getByRole("button", { name: "Download a backup", exact: true })
+      .click(),
   ]);
   expect(withHistory.suggestedFilename()).toBe("owned-sandbox-history.json");
   const withPath = await withHistory.path();
@@ -6004,7 +6000,9 @@ test("export history uses complete global total and downloads both boolean varia
   ).toBeVisible();
   const [without] = await Promise.all([
     page.waitForEvent("download"),
-    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+    dialog
+      .getByRole("button", { name: "Download a backup", exact: true })
+      .click(),
   ]);
   expect(without.suggestedFilename()).toBe("owned-history-51.json");
   const withoutPath = await without.path();
@@ -6017,7 +6015,9 @@ test("export history uses complete global total and downloads both boolean varia
   await include.check();
   const [withHistory] = await Promise.all([
     page.waitForEvent("download"),
-    dialog.getByRole("button", { name: "Export JSON", exact: true }).click(),
+    dialog
+      .getByRole("button", { name: "Download a backup", exact: true })
+      .click(),
   ]);
   expect(withHistory.suggestedFilename()).toBe("owned-history-51.json");
   const withPath = await withHistory.path();
@@ -6048,7 +6048,7 @@ test("export count loads without guessing or enabling a premature export", async
       dialog.getByText("Loading version count…", { exact: true }),
     ).toBeVisible();
     await expect(
-      dialog.getByRole("button", { name: "Export JSON", exact: true }),
+      dialog.getByRole("button", { name: "Download a backup", exact: true }),
     ).toBeDisabled();
     await expect(
       dialog.getByText("0 saved versions", { exact: true }),
@@ -6060,7 +6060,7 @@ test("export count loads without guessing or enabling a premature export", async
     dialog.getByText("2 saved versions", { exact: true }),
   ).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeEnabled();
 });
 
@@ -6080,7 +6080,7 @@ test("export count failure stays unavailable until an authoritative Retry", asyn
     dialog.getByText("0 saved versions", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeDisabled();
   options.versionListFailure = undefined;
   await dialog
@@ -6090,7 +6090,7 @@ test("export count failure stays unavailable until an authoritative Retry", asyn
     dialog.getByText("2 saved versions", { exact: true }),
   ).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeEnabled();
 });
 
@@ -6128,7 +6128,7 @@ test("unavailable export keeps history selection and produces no download", asyn
   await expect(include).toBeVisible();
   await include.check();
   await dialog
-    .getByRole("button", { name: "Export JSON", exact: true })
+    .getByRole("button", { name: "Download a backup", exact: true })
     .click();
   await expect(
     dialog.getByText("Export could not be completed. Try again.", {
@@ -6137,7 +6137,7 @@ test("unavailable export keeps history selection and produces no download", asyn
   ).toBeVisible();
   await expect(include).toBeChecked();
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeEnabled();
   expect(downloads).toBe(0);
   expect(requests).toEqual(["true"]);
@@ -6176,12 +6176,12 @@ test("pending export is single and cancellation refuses its late download", asyn
   await expect(include).toBeVisible();
   await include.check();
   await dialog
-    .getByRole("button", { name: "Export JSON", exact: true })
+    .getByRole("button", { name: "Download a backup", exact: true })
     .click();
   try {
     await expect.poll(() => requests).toBe(1);
     await expect(
-      dialog.getByRole("button", { name: "Exporting…", exact: true }),
+      dialog.getByRole("button", { name: "Downloading…", exact: true }),
     ).toBeDisabled();
     await expect(include).toBeDisabled();
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -6196,7 +6196,7 @@ test("pending export is single and cancellation refuses its late download", asyn
   await openImportExport(page);
   await expect(include).toBeChecked();
   await expect(
-    dialog.getByRole("button", { name: "Export JSON", exact: true }),
+    dialog.getByRole("button", { name: "Download a backup", exact: true }),
   ).toBeEnabled();
 });
 
@@ -6245,7 +6245,7 @@ for (const transition of ["unmount", "account"] as const) {
       .getByRole("checkbox", { name: "Include version history", exact: true })
       .check();
     await dialog
-      .getByRole("button", { name: "Export JSON", exact: true })
+      .getByRole("button", { name: "Download a backup", exact: true })
       .click();
     try {
       await expect.poll(() => started).toBe(true);
@@ -6294,7 +6294,7 @@ test("import admission still refuses more than 50 snapshots before any write", a
   const dialog = await openImportExport(page);
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
-    dialog.getByRole("button", { name: "Import from file", exact: true }).click(),
+    dialog.getByRole("button", { name: "Load a backup", exact: true }).click(),
   ]);
   await chooser.setFiles({
     name: "owned-history-51.json",

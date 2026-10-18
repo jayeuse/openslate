@@ -722,13 +722,11 @@ export default function SandboxPage() {
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
           setConflict({ proposedDocument: document, reason: "conflict" });
-          setFeedbackError(
-            "The shared Sandbox changed elsewhere. Reload it, then reapply your proposed document before saving.",
-          );
+          setFeedbackError("Reload the shared draft, then reapply your edits.");
         } else {
           setConflict({ proposedDocument: document, reason: "save-failed" });
           setFeedbackError(
-            "Your change was not saved. It remains local until you reapply it successfully.",
+            "Your change was not saved. Reapply it to try again.",
           );
         }
         return commandFailure(error);
@@ -1229,8 +1227,8 @@ export default function SandboxPage() {
           <div className="space-y-1">
             <p>
               {conflict.reason === "conflict"
-                ? "Save conflict: your proposed document is still local."
-                : "Save did not complete: your proposed document is still local."}
+                ? "Not saved: someone else changed this draft. Your edits are still here."
+                : "Not saved. Your edits are still here."}
             </p>
             {feedbackError ? <p>{feedbackError}</p> : null}
           </div>

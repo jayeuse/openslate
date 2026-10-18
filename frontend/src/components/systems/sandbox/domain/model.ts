@@ -16,6 +16,21 @@ export const FIELD_TYPES = [
 ] as const;
 
 export type FieldTypeName = (typeof FIELD_TYPES)[number]["name"];
+
+/**
+ * The word a person reads for a field type. Stored designs keep the type
+ * name ("Integer"); only the screen says "Whole number".
+ */
+const FIELD_TYPE_LABELS: Partial<Record<FieldTypeName, string>> = {
+  Integer: "Whole number",
+  "Date/Time": "Date and time",
+  Select: "Choice list",
+  URL: "Web link",
+};
+
+export function fieldTypeLabel(type: string): string {
+  return FIELD_TYPE_LABELS[type as FieldTypeName] ?? type;
+}
 export type SelectOption = { id: string; label: string };
 export type FieldConfig =
   | {

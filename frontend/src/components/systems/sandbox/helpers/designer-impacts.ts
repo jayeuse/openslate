@@ -157,7 +157,7 @@ export function deletionImpact(
     );
     return {
       title: `Delete field ${name}?`,
-      detail: `Removes it from its module${mappings ? ` with ${plural(mappings, "relationship field mapping")}` : ""}.${triggerNote(ruleReferences)} Undo restores the complete change.`,
+      detail: `Removes it from its module${mappings ? ` with ${plural(mappings, "linked field")}` : ""}.${triggerNote(ruleReferences)} Undo restores the complete change.`,
       action: "Delete field",
     };
   }

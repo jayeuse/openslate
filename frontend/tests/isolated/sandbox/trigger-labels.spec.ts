@@ -88,7 +88,7 @@ function flowMarkup(recordTrigger: SandboxTrigger): string {
 test("trigger summaries name a select choice by its label", () => {
   const markup = flowMarkup(statusTrigger("0460bb8e-open"));
 
-  expect(markup).toContain("Status equals Open");
+  expect(markup).toContain("Status is Open");
   expect(markup).toContain("Set Status to On hold");
   expect(markup).not.toContain("0460bb8e-open");
   expect(markup).not.toContain("7c1d2f30-hold");
@@ -96,7 +96,7 @@ test("trigger summaries name a select choice by its label", () => {
 
 test("trigger summaries keep a select value that matches no choice", () => {
   expect(flowMarkup(statusTrigger("retired-choice"))).toContain(
-    "Status equals retired-choice",
+    "Status is retired-choice",
   );
 });
 
@@ -112,13 +112,13 @@ test("weekly schedule choices show weekday names and store 1 to 7", () => {
   ]);
 });
 
-test("operator choices show the summary words with their symbol", () => {
+test("operator choices use the summary words, with is first", () => {
   expect(triggerOperatorOptions).toEqual([
-    { value: ">", label: "is greater than (>)" },
-    { value: ">=", label: "is at least (≥)" },
-    { value: "<", label: "is less than (<)" },
-    { value: "<=", label: "is at most (≤)" },
-    { value: "=", label: "equals (=)" },
-    { value: "!=", label: "does not equal (≠)" },
+    { value: "=", label: "is" },
+    { value: "!=", label: "is not" },
+    { value: ">", label: "is more than" },
+    { value: ">=", label: "is at least" },
+    { value: "<", label: "is less than" },
+    { value: "<=", label: "is at most" },
   ]);
 });

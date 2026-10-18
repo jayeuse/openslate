@@ -119,7 +119,9 @@ Each phase ends with its focused tests, the Sandbox batch (lint, build, isolated
 
 It runs last because it touches strings in every section, including the strings that phases 1 to 5 add.
 
-**Proposed glossary (waiting for the owner's approval).** Display words only; stored values and wire formats stay.
+**Owner decisions (2026-10-18).** Applied: G3 (field type words, display only), G4 (operators, "is" first), G6 (conflict text), G7 (backups), G8 (person's ID), G10 (linked field), G11 ("(empty)"). Kept: G2 (One-to-many and the others stay; the owner prefers them). G5 keeps "live state"; the owner accepted either, and "what your team sees" reads badly inside sentences ("Reload what your team sees"). G1 waits for a better word: "table" already means a real database table on other pages, while a module is a table that the owner creates. G9 follows G1.
+
+**Proposed glossary.** Display words only; stored values and wire formats stay.
 
 | #   | Now                                                     | Proposed                                                                                 | Where                                                   | UI / tests                           |
 | --- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------ |

@@ -72,14 +72,14 @@ export interface SandboxFieldTypeMeta {
 export const FIELD_TYPE_META: Record<SandboxFieldType, SandboxFieldTypeMeta> = {
   text: { label: "Text", icon: "Type" },
   "long-text": { label: "Long text", icon: "AlignLeft" },
-  int: { label: "Integer", icon: "Hash" },
+  int: { label: "Whole number", icon: "Hash" },
   decimal: { label: "Number", icon: "Calculator" },
   boolean: { label: "Checkbox", icon: "ToggleLeft" },
   date: { label: "Date", icon: "Calendar" },
-  datetime: { label: "Date/Time", icon: "CalendarClock" },
-  select: { label: "Select", icon: "List" },
+  datetime: { label: "Date and time", icon: "CalendarClock" },
+  select: { label: "Choice list", icon: "List" },
   email: { label: "Email", icon: "Mail" },
-  url: { label: "URL", icon: "Link" },
+  url: { label: "Web link", icon: "Link" },
 };
 
 type SandboxFieldSource = readonly SandboxField[] | Map<string, SandboxField>;
