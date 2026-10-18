@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/test";
+import { expect, expectNoPageScroll, test } from "./helpers/test";
 import {
   fieldRowTrigger,
   openAuthenticatedSandbox,
@@ -109,3 +109,44 @@ test("collapsing a field row keeps its unsaved edit and says so", async ({
   await expect(header).toHaveAccessibleName("Priority Long text");
   await expect(field.getByText("Unsaved", { exact: true })).toBeHidden();
 });
+
+// Pages fill the viewport and never scroll; their panels do (DESIGN.md).
+// Screen-reader text inside a panel once stretched the page past it.
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test(`the Build page does not scroll at ${viewport.width}px with everything open`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.addInitScript(() => {
+      for (const panel of ["module", "field"])
+        window.localStorage.setItem(
+          `openslate:advanced:sandbox.${panel}`,
+          "open",
+        );
+    });
+    await openAuthenticatedSandbox(page);
+    await page.goto("/sandbox?module=sample-requests");
+    if (viewport.width < 1280)
+      await page.getByRole("tab", { name: "Properties", exact: true }).click();
+    const field = page.getByRole("group", {
+      name: "Status field settings",
+      exact: true,
+    });
+    await fieldRowTrigger(field, "Status").click();
+    await expect(
+      field.getByLabel("Status description", { exact: true }),
+    ).toBeVisible();
+    await expectNoPageScroll(page);
+
+    for (const section of ["Triggers", "Test", "History"]) {
+      await page.goto(`/sandbox?section=${section.toLowerCase()}`);
+      await expect(
+        page.getByRole("heading", { name: "Sandbox", level: 1 }),
+      ).toBeVisible();
+      await expectNoPageScroll(page);
+    }
+  });
+}

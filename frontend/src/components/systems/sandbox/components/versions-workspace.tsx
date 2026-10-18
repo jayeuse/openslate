@@ -493,8 +493,8 @@ export function VersionsWorkspace({
   }
 
   return (
-    <div className="min-w-0">
-      <div className="border-border min-w-0 overflow-hidden rounded-xl border xl:h-[calc(100dvh-15rem)]">
+    <div className="flex h-full min-w-0 flex-col">
+      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border xl:min-h-0 xl:flex-1 xl:shrink">
         <div className="grid min-w-0 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(30rem,2fr)_minmax(18rem,1.2fr)]">
           <section
             aria-label="Version timeline"

@@ -433,6 +433,20 @@ export async function expectNoHorizontalScroll(page: Page): Promise<void> {
   ).toBe(true);
 }
 
+/** The page itself does not scroll at the current viewport; panels may. */
+export async function expectNoPageScroll(page: Page): Promise<void> {
+  baseExpect(
+    await page.evaluate(() => {
+      const main = document.getElementById("main-content");
+      const root = document.documentElement;
+      return {
+        document: root.scrollHeight <= root.clientHeight,
+        main: main ? main.scrollHeight <= main.clientHeight : true,
+      };
+    }),
+  ).toEqual({ document: true, main: true });
+}
+
 /**
  * Replaces the browser `EventSource` with one that never connects or emits,
  * for journeys that drive the session gate and must not see a stream resync.

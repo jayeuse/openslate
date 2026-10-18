@@ -202,11 +202,13 @@ function emptyDocument(): SandboxDocumentV4 {
   };
 }
 
-// LoadingRegion wraps its content in one unstyled element, so the section's
-// spacing and the Build section's wide-screen column carry through `*:`.
-const sandboxRegionClass = "*:space-y-5";
-const sandboxBuildRegionClass =
-  "*:space-y-5 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:*:flex xl:*:min-h-0 xl:*:flex-1 xl:*:flex-col xl:*:gap-5 xl:*:space-y-0";
+// The page fills the viewport and never scrolls; its panels do. LoadingRegion
+// wraps its content in one unstyled element, so the column carries through `*:`.
+const sandboxRegionClass =
+  "flex min-h-0 flex-1 flex-col *:flex *:min-h-0 *:flex-1 *:flex-col *:gap-5";
+// One scroll panel for a section whose own layout does not fill the height
+// (phones, narrow windows). `relative` keeps screen-reader text inside it.
+const sandboxPanelClass = "relative min-h-0 flex-1 overflow-y-auto";
 
 /**
  * The Build canvas and its properties panel (phones and tablets: the pane
@@ -217,9 +219,9 @@ function SandboxSkeleton({ build }: { build: boolean }) {
   return (
     <>
       {build ? (
-        <div className="flex flex-col gap-3 xl:min-h-0 xl:flex-1">
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
           <Skeleton className="h-13 w-full xl:hidden" />
-          <div className="sandbox-ui border-card-edge bg-card shadow-card flex overflow-hidden rounded-xl border xl:min-h-0 xl:flex-1">
+          <div className="sandbox-ui border-card-edge bg-card shadow-card flex min-h-0 flex-1 overflow-hidden rounded-xl border">
             <div className="border-border flex min-w-0 flex-1 flex-col xl:border-r">
               <div className="flex items-center gap-2 border-b px-4 py-1">
                 <Skeleton className="hidden h-4 w-24 sm:block" />
@@ -231,7 +233,7 @@ function SandboxSkeleton({ build }: { build: boolean }) {
                   <Skeleton className="h-11 w-16" />
                 </div>
               </div>
-              <div className="flex h-[420px] flex-wrap content-start gap-6 overflow-hidden p-6 xl:h-auto xl:min-h-0 xl:flex-1">
+              <div className="flex min-h-0 flex-1 flex-wrap content-start gap-6 overflow-hidden p-6">
                 <Skeleton className="h-36 w-56 rounded-xl" />
                 <Skeleton className="h-36 w-56 rounded-xl" />
                 <Skeleton className="h-36 w-56 rounded-xl" />
@@ -251,7 +253,7 @@ function SandboxSkeleton({ build }: { build: boolean }) {
           </div>
         </div>
       ) : (
-        <div className="border-card-edge bg-card shadow-card flex flex-col gap-4 rounded-xl border p-4">
+        <div className="border-card-edge bg-card shadow-card flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-xl border p-4">
           <Skeleton className="h-6 w-48" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
@@ -1128,7 +1130,7 @@ export default function SandboxPage() {
     <section
       data-sandbox-page
       aria-busy={commandBusy || publicationPending || testPending || undefined}
-      className={`space-y-5 ${section === "Build" ? "xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[640px] xl:flex-col xl:gap-5 xl:space-y-0" : ""}`}
+      className="flex min-h-0 flex-1 flex-col gap-5"
     >
       {conflict ? (
         <Alert
@@ -1295,9 +1297,7 @@ export default function SandboxPage() {
         loading={loading && session === null}
         label="Opening Sandbox"
         skeleton={<SandboxSkeleton build={section === "Build"} />}
-        className={
-          section === "Build" ? sandboxBuildRegionClass : sandboxRegionClass
-        }
+        className={sandboxRegionClass}
       >
         {feedbackError && !conflict ? (
           <Alert variant="destructive">{feedbackError}</Alert>
@@ -1356,120 +1356,126 @@ export default function SandboxPage() {
           />
         ) : null}
         {section === "Triggers" && session ? (
-          <TriggerStudio
-            design={session.document.design}
-            triggers={session.document.triggers}
-            runs={triggerRuns}
-            activity={triggerActivity}
-            initialSelectedId={search.get("rule") ?? undefined}
-            onRefreshActivity={refreshTriggerActivity}
-            onChange={(triggers) =>
-              saveDocument({ ...session.document, triggers })
-            }
-            onStateChange={setTriggerDraft}
-          />
+          <div className={sandboxPanelClass}>
+            <TriggerStudio
+              design={session.document.design}
+              triggers={session.document.triggers}
+              runs={triggerRuns}
+              activity={triggerActivity}
+              initialSelectedId={search.get("rule") ?? undefined}
+              onRefreshActivity={refreshTriggerActivity}
+              onChange={(triggers) =>
+                saveDocument({ ...session.document, triggers })
+              }
+              onStateChange={setTriggerDraft}
+            />
+          </div>
         ) : null}
         {section === "Test" && session ? (
-          <TestWorkspace
-            design={session.document.design}
-            triggers={session.document.triggers}
-            runs={testRuns}
-            onRun={async (input) => {
-              const run = await createSandboxTest({
-                expectedRevision: session.revision,
-                ...input,
-              });
-              setTestRuns((current) => [
-                run,
-                ...current.filter((item) => item.id !== run.id),
-              ]);
-            }}
-            onClear={async () => {
-              await clearSandboxTests();
-              setTestRuns([]);
-            }}
-            onPendingChange={setTestPending}
-            draftRevision={session.revision}
-            initialRunId={search.get("run")}
-            onShowOnCanvas={(run) => {
-              const params = new URLSearchParams(search.toString());
-              for (const key of ["inspect", "module", "department", "rule"])
-                params.delete(key);
-              params.set("trace", run.input.moduleId);
-              params.set("run", run.id);
-              params.set("section", "build");
-              router.push(`/sandbox?${params.toString()}`, { scroll: false });
-            }}
-          />
+          <div className={sandboxPanelClass}>
+            <TestWorkspace
+              design={session.document.design}
+              triggers={session.document.triggers}
+              runs={testRuns}
+              onRun={async (input) => {
+                const run = await createSandboxTest({
+                  expectedRevision: session.revision,
+                  ...input,
+                });
+                setTestRuns((current) => [
+                  run,
+                  ...current.filter((item) => item.id !== run.id),
+                ]);
+              }}
+              onClear={async () => {
+                await clearSandboxTests();
+                setTestRuns([]);
+              }}
+              onPendingChange={setTestPending}
+              draftRevision={session.revision}
+              initialRunId={search.get("run")}
+              onShowOnCanvas={(run) => {
+                const params = new URLSearchParams(search.toString());
+                for (const key of ["inspect", "module", "department", "rule"])
+                  params.delete(key);
+                params.set("trace", run.input.moduleId);
+                params.set("run", run.id);
+                params.set("section", "build");
+                router.push(`/sandbox?${params.toString()}`, { scroll: false });
+              }}
+            />
+          </div>
         ) : null}
         {section === "History" ? (
-          <VersionsWorkspace
-            versionCapacity={versionCapacity}
-            refreshKey={versionsRefreshKey}
-            getVersion={async (id) => {
-              try {
-                return {
-                  ok: true as const,
-                  value: await getSandboxVersion(id),
-                };
-              } catch (error) {
-                return commandFailure(error);
-              }
-            }}
-            updateVersion={async (id, label) => {
-              if (!session) return sandboxStillLoading();
-              setPending(true);
-              try {
-                const version = await updateSandboxVersion({
-                  versionId: id,
-                  expectedRevision: session.revision,
-                  label,
-                });
-                await syncVersionMetadata();
-                return { ok: true as const, value: version };
-              } catch (error) {
-                return commandFailure(error);
-              } finally {
-                setPending(false);
-              }
-            }}
-            restoreVersion={async (id) => {
-              if (!session) return sandboxStillLoading();
-              setPending(true);
-              try {
-                const response = await restoreSandboxVersion({
-                  versionId: id,
-                  expectedRevision: session.revision,
-                });
-                setSession(openSandboxDocumentSession(response));
-                await refreshVersions();
-                return { ok: true as const, value: response };
-              } catch (error) {
-                return commandFailure(error);
-              } finally {
-                setPending(false);
-              }
-            }}
-            deleteVersion={async (id) => {
-              if (!session) return sandboxStillLoading();
-              setPending(true);
-              try {
-                await deleteSandboxVersion({
-                  versionId: id,
-                  expectedRevision: session.revision,
-                });
-                await syncVersionMetadata();
-                return { ok: true as const, value: null };
-              } catch (error) {
-                return commandFailure(error);
-              } finally {
-                setPending(false);
-              }
-            }}
-            notifyError={reportError}
-            notifyDone={reportDone}
-            pending={commandBusy}
-          />
+          <div className={sandboxPanelClass}>
+            <VersionsWorkspace
+              versionCapacity={versionCapacity}
+              refreshKey={versionsRefreshKey}
+              getVersion={async (id) => {
+                try {
+                  return {
+                    ok: true as const,
+                    value: await getSandboxVersion(id),
+                  };
+                } catch (error) {
+                  return commandFailure(error);
+                }
+              }}
+              updateVersion={async (id, label) => {
+                if (!session) return sandboxStillLoading();
+                setPending(true);
+                try {
+                  const version = await updateSandboxVersion({
+                    versionId: id,
+                    expectedRevision: session.revision,
+                    label,
+                  });
+                  await syncVersionMetadata();
+                  return { ok: true as const, value: version };
+                } catch (error) {
+                  return commandFailure(error);
+                } finally {
+                  setPending(false);
+                }
+              }}
+              restoreVersion={async (id) => {
+                if (!session) return sandboxStillLoading();
+                setPending(true);
+                try {
+                  const response = await restoreSandboxVersion({
+                    versionId: id,
+                    expectedRevision: session.revision,
+                  });
+                  setSession(openSandboxDocumentSession(response));
+                  await refreshVersions();
+                  return { ok: true as const, value: response };
+                } catch (error) {
+                  return commandFailure(error);
+                } finally {
+                  setPending(false);
+                }
+              }}
+              deleteVersion={async (id) => {
+                if (!session) return sandboxStillLoading();
+                setPending(true);
+                try {
+                  await deleteSandboxVersion({
+                    versionId: id,
+                    expectedRevision: session.revision,
+                  });
+                  await syncVersionMetadata();
+                  return { ok: true as const, value: null };
+                } catch (error) {
+                  return commandFailure(error);
+                } finally {
+                  setPending(false);
+                }
+              }}
+              notifyError={reportError}
+              notifyDone={reportDone}
+              pending={commandBusy}
+            />
+          </div>
         ) : null}
         <footer className="border-border text-muted-foreground flex flex-wrap justify-between gap-2 border-t pt-3 text-xs">
           <span>{counts(design)}</span>

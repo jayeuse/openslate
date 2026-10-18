@@ -810,9 +810,9 @@ export function TriggerStudio({
     <section
       ref={studioRef}
       aria-labelledby="trigger-studio-title"
-      className="@container/studio min-w-0"
+      className="@container/studio flex h-full min-w-0 flex-col"
     >
-      <div className="border-border min-w-0 overflow-hidden rounded-xl border @min-[1100px]/studio:h-[calc(100dvh-15rem)]">
+      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border @min-[1100px]/studio:min-h-0 @min-[1100px]/studio:flex-1 @min-[1100px]/studio:shrink">
         <ResizablePanelGroup
           orientation="horizontal"
           disabled={!wide}

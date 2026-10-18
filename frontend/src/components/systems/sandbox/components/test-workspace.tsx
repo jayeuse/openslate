@@ -412,14 +412,14 @@ export function TestWorkspace({
     <section
       ref={workspaceRef}
       aria-label="Sandbox test"
-      className="@container/test grid min-w-0 gap-5"
+      className="@container/test flex h-full min-w-0 flex-col gap-5"
     >
       {error ? (
         <Alert variant="destructive" role="alert">
           {error}
         </Alert>
       ) : null}
-      <div className="border-border min-w-0 overflow-hidden rounded-xl border @min-[1100px]/test:h-[calc(100dvh-15rem)]">
+      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border @min-[1100px]/test:min-h-0 @min-[1100px]/test:flex-1 @min-[1100px]/test:shrink">
         <ResizablePanelGroup
           orientation="horizontal"
           disabled={!wide}
