@@ -308,25 +308,30 @@
     box-sizing: border-box;
   }
 
-  /* Quiet Scrollbar Rule (DESIGN.md): 6px, no track, a thumb tinted from
-     the look's muted ink that darkens under the pointer. Never hidden: it is
-     the only cue that a panel has more below the fold. Chromium ignores
-     these pseudo-elements once `scrollbar-width` or `scrollbar-color` is
-     set, so the standard properties are for Firefox only. */
+  /* Quiet Scrollbar Rule (DESIGN.md): a 4px thumb in an 8px lane, no
+     track, tinted from the look's muted ink; under the pointer it widens to
+     6px and darkens. The transparent border draws the thin thumb while the
+     lane stays easy to grab. Never hidden: it is the only cue that a panel
+     has more below the fold. Chromium ignores these pseudo-elements once
+     `scrollbar-width` or `scrollbar-color` is set, so the standard
+     properties are for Firefox only. */
   *::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
   *::-webkit-scrollbar-track,
   *::-webkit-scrollbar-corner {
     background: transparent;
   }
   *::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
     border-radius: 999px;
-    background: color-mix(in oklab, var(--ink-muted) 60%, transparent);
+    background-clip: padding-box;
+    background-color: color-mix(in oklab, var(--ink-muted) 60%, transparent);
   }
   *::-webkit-scrollbar-thumb:hover {
-    background: var(--ink-muted);
+    border-width: 1px;
+    background-color: var(--ink-muted);
   }
   @supports not selector(::-webkit-scrollbar) {
     * {
@@ -770,9 +775,9 @@ textarea {
   stroke-width: 1.65;
 }
 
-/* The sidebar keeps the 6px bar (Quiet Scrollbar Rule) in its own ink. */
+/* The sidebar's thumb (Quiet Scrollbar Rule) uses its own ink. */
 .app-sidebar-scroll::-webkit-scrollbar-thumb {
-  background: var(--sidebar-muted);
+  background-color: var(--sidebar-muted);
 }
 
 @supports not selector(::-webkit-scrollbar) {

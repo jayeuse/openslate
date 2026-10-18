@@ -462,7 +462,7 @@ The rhythm is a 4px base: 8px and 12px gaps inside groups, 16px between groups, 
 
 **The Still Page Rule.** On desktop (1280px and wider) a workspace page fills the viewport and never scrolls; its panels do. The shell header, the page header, and the footer line stay in place, and each panel (canvas, Structure, Properties, a section body) scrolls on its own. Scroll panels are `relative`, so screen-reader text inside them cannot stretch the page. Phones and tablets scroll the page. The Sandbox follows it now; the other workspaces follow it when their pass comes.
 
-**The Quiet Scrollbar Rule.** Every scroll area uses a 6px scrollbar with no track and a thumb tinted from `--ink-muted` that darkens under the pointer, in every look (Firefox draws its standard thin bar). It is never hidden: it is the only cue that a panel has more below the fold. The sidebar tints its thumb with `--sidebar-muted`.
+**The Quiet Scrollbar Rule.** Every scroll area uses a 4px thumb in an 8px lane with no track, tinted from `--ink-muted`; under the pointer it widens to 6px and darkens, in every look (Firefox draws its standard thin bar, which cannot be narrower). It is never hidden: it is the only cue that a panel has more below the fold. The sidebar tints its thumb with `--sidebar-muted`.
 
 Targets stay reachable: sidebar items are at least 44px tall. Below 640px, shell buttons and inputs are at least 44px. In the Sandbox and its dialogs, controls are at least 44px below 1280px, and inline toggles inside a list row keep 24px so rows keep one rhythm. Breadcrumb links keep a 24px target.
 
