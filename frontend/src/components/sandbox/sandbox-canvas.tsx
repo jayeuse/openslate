@@ -76,6 +76,11 @@ import {
   type SandboxCanvasActions,
 } from "./sandbox-canvas-nodes";
 import { SandboxCanvasTraceStore } from "./sandbox-canvas-trace";
+import {
+  LineLabelStops,
+  lineFromPath,
+  placeLineLabels,
+} from "./sandbox-canvas-labels";
 import { useStableHandlers } from "@/lib/use-stable-handlers";
 
 type SandboxCommand =
@@ -282,6 +287,7 @@ function SandboxFlowCanvas({
   );
   const edgesRef = useRef(edges);
   const [trace] = useState(() => new SandboxCanvasTraceStore());
+  const [labels] = useState(() => new LineLabelStops());
 
   const pendingPositionsRef = useRef<Map<string, { x: number; y: number }>>(
     new Map(),
@@ -682,6 +688,7 @@ function SandboxFlowCanvas({
   });
   const [actions] = useState<SandboxCanvasActions>(() => ({
     trace,
+    labels,
     ...nodeActions,
   }));
 
@@ -722,6 +729,44 @@ function SandboxFlowCanvas({
       if (zoomed) callbacksRef.current.onZoomChange?.(transform[2]);
     });
   }, [flowStore]);
+
+  // Line labels move off shared corridors, tables, and each other once the
+  // geometry settles; never during a drag (sandbox-canvas-labels.ts).
+  useEffect(() => {
+    if (movingNodeId !== null) return;
+    const timer = setTimeout(() => {
+      const container = containerRef.current;
+      if (container === null) return;
+      const boxes = absoluteBoxes(nodesRef.current);
+      const tables = nodesRef.current.flatMap((node) => {
+        const box = node.type === "module" ? boxes.get(node.id) : undefined;
+        return box ? [box] : [];
+      });
+      const lines = edgesRef.current.flatMap((edge) => {
+        const id = CSS.escape(edge.id);
+        const path = container.querySelector<SVGPathElement>(
+          `[data-sandbox-edge="${id}"] [data-sandbox-line]`,
+        );
+        if (path === null) return [];
+        const label = edge.data?.label
+          ? container.querySelector<HTMLElement>(
+              `[data-sandbox-edge-label="${id}"]`,
+            )
+          : null;
+        return [
+          lineFromPath(
+            edge.id,
+            path,
+            label
+              ? { width: label.offsetWidth, height: label.offsetHeight }
+              : null,
+          ),
+        ];
+      });
+      labels.set(placeLineLabels(lines, tables));
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [nodes, edges, movingNodeId, labels]);
 
   // React Flow marks its root role="application", which would switch screen
   // readers out of browse mode; the region above already names the canvas.
@@ -1263,7 +1308,7 @@ function SandboxFlowCanvas({
         aria-describedby="sandbox-canvas-keyboard-alternative"
         tabIndex={0}
         data-connecting={connecting ? "true" : undefined}
-        className="sandbox-flow focus:ring-ring absolute inset-0 outline-none focus:ring-2 focus:ring-inset"
+        className="sandbox-flow focus-visible:ring-ring absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset"
         onKeyDown={handleKeyDown}
       >
         <SandboxCanvasActionsProvider value={actions}>

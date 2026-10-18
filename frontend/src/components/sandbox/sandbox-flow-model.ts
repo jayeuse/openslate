@@ -210,6 +210,11 @@ function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
+// React Flow announces every node as a "node"; name them in the product's
+// words. Shared objects keep unchanged nodes identical between renders.
+const DEPARTMENT_ROLE = { "aria-roledescription": "department" } as const;
+const MODULE_ROLE = { "aria-roledescription": "module" } as const;
+
 export interface DeriveNodesInput {
   state: SandboxState;
   /** The nodes on screen now: the geometry truth for existing nodes. */
@@ -335,6 +340,7 @@ export function deriveFlowNodes({
             // A named group for assistive technology, not a focus stop.
             ariaRole: "group",
             ariaLabel: department.name,
+            domAttributes: DEPARTMENT_ROLE,
             position: { x: frame.x, y: frame.y },
             data: {
               name: department.name,
@@ -365,6 +371,7 @@ export function deriveFlowNodes({
             type: "module",
             ariaRole: "group",
             ariaLabel: item.data.name,
+            domAttributes: MODULE_ROLE,
             parentId: item.departmentId,
             position: { x: box.x - frame.x, y: box.y - frame.y },
             data: item.data,

@@ -489,6 +489,14 @@ textarea {
   fill: var(--dept-4-sheet);
 }
 
+/* Frames keep a one-pixel outline at any minimap scale, since a pale sheet
+   on the pale canvas does not read. */
+.sandbox-minimap .sandbox-minimap-department {
+  stroke: var(--canvas-dept-frame);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
 /* Card fills sit too close to the frames to read at minimap scale, in light
    and dark alike, so tables take the strong rule color. */
 .sandbox-minimap .sandbox-minimap-module {
@@ -588,11 +596,21 @@ textarea {
 
 /* Hovering a module or relationship traces its connections
    (sandbox-canvas-trace.ts). Only opacity animates. */
-.sandbox-ui :is([data-sandbox-node], [data-sandbox-edge])[data-trace] {
+.sandbox-ui
+  :is(
+    [data-sandbox-node],
+    [data-sandbox-edge],
+    [data-sandbox-edge-label]
+  )[data-trace] {
   transition: opacity 150ms ease-out;
 }
 
-.sandbox-ui :is([data-sandbox-node], [data-sandbox-edge])[data-trace="dim"] {
+.sandbox-ui
+  :is(
+    [data-sandbox-node],
+    [data-sandbox-edge],
+    [data-sandbox-edge-label]
+  )[data-trace="dim"] {
   opacity: 0.35;
 }
 
@@ -631,7 +649,12 @@ textarea {
     animation: none;
   }
 
-  .sandbox-ui :is([data-sandbox-node], [data-sandbox-edge])[data-trace] {
+  .sandbox-ui
+    :is(
+      [data-sandbox-node],
+      [data-sandbox-edge],
+      [data-sandbox-edge-label]
+    )[data-trace] {
     transition: none;
   }
 }
@@ -645,7 +668,11 @@ textarea {
 
 [data-motion="reduced"]
   .sandbox-ui
-  :is([data-sandbox-node], [data-sandbox-edge])[data-trace] {
+  :is(
+    [data-sandbox-node],
+    [data-sandbox-edge],
+    [data-sandbox-edge-label]
+  )[data-trace] {
   transition: none;
 }
 

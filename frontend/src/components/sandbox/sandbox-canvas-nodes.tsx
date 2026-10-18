@@ -11,6 +11,7 @@ import {
   type PointerEvent,
 } from "react";
 import {
+  EdgeLabelRenderer,
   getSmoothStepPath,
   Handle,
   Position,
@@ -36,7 +37,9 @@ import {
   useFieldMarks,
   useTraceMark,
   type SandboxCanvasTraceStore,
+  type TraceMark,
 } from "./sandbox-canvas-trace";
+import { useLineLabelStop, type LineLabelStops } from "./sandbox-canvas-labels";
 
 /**
  * Node and line views for the Sandbox canvas. Each draws the same SVG the
@@ -55,6 +58,7 @@ export interface CanvasEditRequest {
 
 export interface SandboxCanvasActions {
   trace: SandboxCanvasTraceStore;
+  labels: LineLabelStops;
   openEditor: (request: CanvasEditRequest) => void;
   startResize: (departmentId: string, event: PointerEvent<SVGElement>) => void;
   resizeByKey: (departmentId: string, event: KeyboardEvent<SVGElement>) => void;
@@ -506,7 +510,10 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
   );
 }
 
-/** Line arrowheads, one per line color; ids are shared by every line. */
+/**
+ * Line arrowheads, one per line color; ids are shared by every line. A traced
+ * line turns the flow color (globals.css), and so does its arrowhead.
+ */
 export function RelationshipMarkers() {
   return (
     <svg aria-hidden="true" width={0} height={0} className="absolute">
@@ -516,6 +523,7 @@ export function RelationshipMarkers() {
             ["relationship", relationshipLineAttrs(false, false).stroke],
             ["handoff", relationshipLineAttrs(false, true).stroke],
             ["selected", relationshipLineAttrs(true, false).stroke],
+            ["trace", "var(--flow)"],
           ] as const
         ).map(([kind, color]) => (
           <marker
@@ -539,58 +547,94 @@ export function RelationshipMarkers() {
 
 const LABEL_PADDING = { x: 7, y: 3 } as const;
 
+/**
+ * A line's name, drawn in React Flow's label layer above the tables (as X6
+ * drew it), so a table over the line's middle never hides it. It fades with
+ * its line during a hover trace.
+ */
 function LineLabel({
+  id,
   x,
   y,
   text,
   handoff,
+  trace,
 }: {
+  id: string;
   x: number;
   y: number;
   text: string;
   handoff: boolean;
+  trace: TraceMark;
 }) {
   const textRef = useRef<SVGTextElement | null>(null);
   // Approximate from the 12px text until the look's face can be measured.
   const [size, setSize] = useState({ width: text.length * 6.6, height: 15 });
   useLayoutEffect(() => {
-    const box = textRef.current?.getBBox();
-    if (box && box.width > 0)
-      setSize((current) =>
-        current.width === box.width && current.height === box.height
-          ? current
-          : { width: box.width, height: box.height },
-      );
+    const measure = () => {
+      const box = textRef.current?.getBBox();
+      if (box && box.width > 0)
+        setSize((current) =>
+          current.width === box.width && current.height === box.height
+            ? current
+            : { width: box.width, height: box.height },
+        );
+    };
+    measure();
+    // The look's face may load after the first paint; measure it again then.
+    let active = true;
+    void document.fonts.ready.then(() => {
+      if (active) measure();
+    });
+    return () => {
+      active = false;
+    };
   }, [text]);
   const width = size.width + LABEL_PADDING.x * 2;
   const height = size.height + LABEL_PADDING.y * 2;
   return (
-    <g transform={`translate(${x} ${y})`} pointerEvents="none">
-      <rect
-        // Corners come from the look's --radius (globals.css).
-        data-sandbox-part="line-label"
-        x={-width / 2}
-        y={-height / 2}
-        width={width}
-        height={height}
-        rx={6}
-        ry={6}
-        fill="var(--canvas-label-fill)"
-        stroke="var(--canvas-label-frame)"
-        strokeWidth={1}
-      />
-      <text
-        ref={textRef}
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontSize={12}
-        fontWeight={500}
-        // A relationship's label takes its line's action ink.
-        fill={handoff ? "var(--canvas-label-ink)" : "var(--action-text)"}
+    <EdgeLabelRenderer>
+      <div
+        data-sandbox-edge-label={id}
+        data-trace={trace ?? undefined}
+        aria-hidden="true"
+        className="nodrag nopan pointer-events-none absolute top-0 left-0"
+        style={{
+          transform: `translate(-50%, -50%) translate(${x}px, ${y}px)`,
+          // Above the tables (z-index 1), which React Flow draws later.
+          zIndex: 2,
+        }}
       >
-        {text}
-      </text>
-    </g>
+        <svg width={width} height={height} overflow="visible" className="block">
+          <rect
+            // Corners come from the look's --radius (globals.css).
+            data-sandbox-part="line-label"
+            x={0.5}
+            y={0.5}
+            width={width - 1}
+            height={height - 1}
+            rx={6}
+            ry={6}
+            fill="var(--canvas-label-fill)"
+            stroke="var(--canvas-label-frame)"
+            strokeWidth={1}
+          />
+          <text
+            ref={textRef}
+            x={width / 2}
+            y={height / 2}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={12}
+            fontWeight={500}
+            // A relationship's label takes its line's action ink.
+            fill={handoff ? "var(--canvas-label-ink)" : "var(--action-text)"}
+          >
+            {text}
+          </text>
+        </svg>
+      </div>
+    </EdgeLabelRenderer>
   );
 }
 
@@ -606,6 +650,9 @@ function RelationshipEdgeView({
 }: EdgeProps<RelationshipFlowEdge>) {
   const actions = useCanvasActions();
   const trace = useTraceMark(actions.trace, id);
+  const stop = useLineLabelStop(actions.labels, id);
+  const lineRef = useRef<SVGPathElement | null>(null);
+  const [labelAt, setLabelAt] = useState<{ x: number; y: number } | null>(null);
   const selected = data?.selected ?? false;
   const handoff = data?.handoff ?? false;
   const line = relationshipLineAttrs(selected, handoff);
@@ -619,25 +666,56 @@ function RelationshipEdgeView({
     borderRadius: 8,
     offset: 24,
   });
+  // The label sits at its placed share of the line's length
+  // (sandbox-canvas-labels.ts).
+  const label = data?.label ?? "";
+  useLayoutEffect(() => {
+    const line = lineRef.current;
+    if (line === null || label === "") return;
+    const point = line.getPointAtLength(line.getTotalLength() * stop);
+    setLabelAt((current) =>
+      current?.x === point.x && current.y === point.y
+        ? current
+        : { x: point.x, y: point.y },
+    );
+  }, [path, stop, label]);
+  const arrow =
+    trace === "on"
+      ? "trace"
+      : selected
+        ? "selected"
+        : handoff
+          ? "handoff"
+          : "relationship";
   return (
-    <g data-sandbox-edge={id} data-trace={trace ?? undefined}>
-      {/* A wide transparent stroke so a 1.6px line is easy to click. */}
-      <path d={path} fill="none" stroke="transparent" strokeWidth={16} />
-      <path
-        d={path}
-        fill="none"
-        data-sandbox-line={line["data-sandbox-line"]}
-        data-sandbox-edge-kind={line["data-sandbox-edge-kind"]}
-        stroke={line.stroke}
-        strokeWidth={line.strokeWidth}
-        strokeDasharray={line.strokeDasharray || undefined}
-        strokeLinecap="round"
-        markerEnd={`url(#sandbox-arrow-${selected ? "selected" : handoff ? "handoff" : "relationship"})`}
-      />
-      {data?.label ? (
-        <LineLabel x={labelX} y={labelY} text={data.label} handoff={handoff} />
+    <>
+      <g data-sandbox-edge={id} data-trace={trace ?? undefined}>
+        {/* A wide transparent stroke so a 1.6px line is easy to click. */}
+        <path d={path} fill="none" stroke="transparent" strokeWidth={16} />
+        <path
+          ref={lineRef}
+          d={path}
+          fill="none"
+          data-sandbox-line={line["data-sandbox-line"]}
+          data-sandbox-edge-kind={line["data-sandbox-edge-kind"]}
+          stroke={line.stroke}
+          strokeWidth={line.strokeWidth}
+          strokeDasharray={line.strokeDasharray || undefined}
+          strokeLinecap="round"
+          markerEnd={`url(#sandbox-arrow-${arrow})`}
+        />
+      </g>
+      {label !== "" ? (
+        <LineLabel
+          id={id}
+          x={labelAt?.x ?? labelX}
+          y={labelAt?.y ?? labelY}
+          text={label}
+          handoff={handoff}
+          trace={trace}
+        />
       ) : null}
-    </g>
+    </>
   );
 }
 
