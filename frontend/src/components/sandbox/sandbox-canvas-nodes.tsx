@@ -474,7 +474,15 @@ function ModuleNodeView({ id, data }: NodeProps<ModuleFlowNode>) {
               >
                 {field === undefined
                   ? "No fields yet"
-                  : truncateLabel(field.name, 18)}
+                  : // A longer type word ("Date and time") takes room from
+                    // the name, so the two never touch in the 232 px card.
+                    truncateLabel(
+                      field.name,
+                      Math.min(
+                        18,
+                        28 - FIELD_TYPE_META[field.type].label.length,
+                      ),
+                    )}
               </text>
               {field === undefined ? null : (
                 <text

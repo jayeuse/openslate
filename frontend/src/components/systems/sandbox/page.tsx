@@ -1368,11 +1368,13 @@ export default function SandboxPage() {
                   ? null
                   : triggerDraft.dirty
                     ? "Save trigger changes first."
-                    : designerDraftDirty
-                      ? "Save or cancel your edits first."
-                      : !status.publishable
-                        ? "Nothing to publish yet."
-                        : null
+                    : triggerDraft.kept
+                      ? "Restore or discard trigger changes first."
+                      : designerDraftDirty
+                        ? "Save or cancel your edits first."
+                        : !status.publishable
+                          ? "Nothing to publish yet."
+                          : null
               }
             >
               <Button
@@ -1383,6 +1385,7 @@ export default function SandboxPage() {
                   !status.publishable ||
                   triggerDraft.dirty ||
                   triggerDraft.pending ||
+                  triggerDraft.kept !== null ||
                   designerDraftDirty
                 }
                 onClick={() => setReviewOpen(true)}
@@ -1454,7 +1457,13 @@ export default function SandboxPage() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={triggerDraft.discardKept}
+                onClick={() => {
+                  const dropped = triggerDraft.discardKept();
+                  if (dropped)
+                    reportUndoable("Unsaved trigger changes discarded", () =>
+                      triggerDraft.restore(dropped),
+                    );
+                }}
               >
                 Discard
               </Button>

@@ -130,12 +130,20 @@ test("a reload offers to restore unsaved trigger edits", async ({ page }) => {
     /· 1 unsaved trigger change$/,
   );
 
-  // Discard drops the kept edits for good.
+  // While the prompt waits, publishing waits too.
   await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Review & Publish" }),
+  ).toHaveAccessibleDescription("Restore or discard trigger changes first.");
+  // Discard can be undone from its notice.
   await prompt.getByRole("button", { name: "Discard", exact: true }).click();
   await expect(page.getByLabel("Trigger name")).toHaveValue(
     "Urgent request alert",
   );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByLabel("Trigger name")).toHaveValue("Survives reload");
+  // Discarding in the editor drops them for good.
+  await page.getByRole("button", { name: "Discard changes" }).click();
   await page.reload();
   await expect(page.getByLabel("Trigger name")).toHaveValue(
     "Urgent request alert",

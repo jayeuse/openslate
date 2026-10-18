@@ -36,7 +36,8 @@ export type TriggerDraft = {
   discard: () => SandboxTrigger[] | null;
   restore: (edits: SandboxTrigger[]) => void;
   restoreKept: () => void;
-  discardKept: () => void;
+  /** Drops the kept edits and returns them, so Undo can put them back. */
+  discardKept: () => SandboxTrigger[] | null;
 };
 
 export type KeptTriggerDraft = {
@@ -266,8 +267,8 @@ export function useTriggerDraft({
         typeof next === "function"
           ? next(editsRef.current ?? current.saved)
           : next;
-      // New edits replace edits kept from before a reload.
-      setKept(null);
+      // Edits kept from before a reload stay offered until the person
+      // chooses Restore or Discard; nothing drops them silently.
       setError("");
       // Typing back to the saved triggers leaves nothing to save.
       if (JSON.stringify(value) === current.savedKey) {
@@ -338,9 +339,13 @@ export function useTriggerDraft({
   }, [kept, setEdits]);
 
   const discardKept = useCallback(() => {
+    const dropped = kept?.triggers ?? null;
     setKept(null);
-    writeKeptTriggerDraft(browserStorage(), storageKey, null);
-  }, [storageKey]);
+    // New edits made meanwhile keep their own stored copy.
+    if (!editsRef.current)
+      writeKeptTriggerDraft(browserStorage(), storageKey, null);
+    return dropped;
+  }, [kept, storageKey]);
 
   return {
     draft,

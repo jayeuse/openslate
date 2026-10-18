@@ -537,7 +537,7 @@ export function SandboxInspectorOutline({
               dragPayload(event, kind, kind === "field" ? "text" : undefined)
             }
             onClick={activate}
-            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center rounded-[var(--radius)] px-2 text-xs outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 xl:min-h-9"
+            className="text-muted-foreground hover:text-foreground focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center rounded-[var(--radius)] px-2 text-xs outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid aria-disabled:cursor-not-allowed aria-disabled:opacity-50 max-xl:pl-5 xl:min-h-9"
           >
             Add {kind}
           </div>
@@ -658,7 +658,7 @@ export function SandboxInspectorOutline({
                   setOpenContextMenu(menuId);
                 }
               }}
-              className={`focus-visible:outline-ring flex min-h-11 w-full min-w-0 cursor-default items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 xl:min-h-9 ${kind === "department" ? "font-semibold" : ""} ${selectedClasses(selected)}`}
+              className={`focus-visible:outline-ring flex min-h-11 w-full min-w-0 cursor-default items-center gap-1 rounded-[var(--radius)] px-2 text-left text-xs outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid xl:min-h-9 ${kind === "department" ? "font-semibold" : ""} ${kind === "field" ? "max-xl:pl-5" : ""} ${selectedClasses(selected)}`}
             >
               <span className="min-w-0 flex-1 truncate" title={item.name}>
                 {item.name}
