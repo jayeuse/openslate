@@ -684,7 +684,7 @@ export function VersionsWorkspace({
                                 }
                                 // Hover and selected tint from the look's ink, as
                                 // in the trigger list.
-                                className="relative z-10 h-auto min-h-16 w-full justify-start py-3 pr-2 pl-8 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_8%,transparent)] aria-pressed:bg-[color-mix(in_oklab,var(--ink)_12%,transparent)]"
+                                className="relative z-10 h-auto min-h-16 w-full justify-start py-3 pr-2 pl-8 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-pressed:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
                                 onClick={() => setSelectedVersionId(version.id)}
                               >
                                 <span

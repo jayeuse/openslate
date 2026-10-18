@@ -102,7 +102,7 @@ function NotTriggeredReason({
         size="sm"
         className="min-h-9"
         disabled={pending}
-        aria-label={`Test ${recordTrigger.name} instead`}
+        aria-label={`Test this instead: ${recordTrigger.name}`}
         onClick={() => onTryTrigger(recordTrigger.trigger)}
       >
         Test this instead
@@ -129,8 +129,10 @@ type OutcomeProps = {
   onRunCurrent?: () => void;
 };
 
-/** The id of the result heading, which takes focus after a run on phones. */
+/** The id of the result heading, which a run on a phone scrolls to. */
 export const TEST_RESULT_HEADING_ID = "sandbox-test-result-heading";
+/** The id of the outcome headline, which takes focus after that run. */
+export const TEST_OUTCOME_HEADLINE_ID = "sandbox-test-outcome-headline";
 export function TestOutcome({
   design,
   run,
@@ -164,7 +166,6 @@ export function TestOutcome({
     );
   const rows = comparisonRows(run);
   const changed = rows.filter((row) => row.changed);
-  const missing = rows.filter((row) => row.after === undefined).length;
   const stale = summary?.stale ?? null;
   const issues = summary?.issues ?? [];
   return (
@@ -202,29 +203,34 @@ export function TestOutcome({
         <Alert className="mt-4">
           Module removed. Choose another module to test.
         </Alert>
-      ) : inputsChanged || stale === "older-draft" ? (
-        // One stale bar (copy cut 15): the result no longer matches what
-        // the user sees, and Run again is the way back.
-        <div
-          role="status"
-          className="bg-warn-tint text-warn-text mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium"
-        >
-          <span>{inputsChanged ? "Inputs changed" : "Draft changed"}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            className="max-xl:min-h-11"
-            pending={pending}
-            pendingLabel="Running…"
-            onClick={() =>
-              inputsChanged && onRunCurrent ? onRunCurrent() : onRunAgain(run)
-            }
-          >
-            Run again
-          </Button>
-        </div>
       ) : null}
-      <p className="mt-4 text-lg font-semibold">
+      {/* One stale bar (copy cut 15). The live region is always present, so
+          screen readers announce the bar when it appears. */}
+      <div role="status">
+        {stale !== "module-gone" &&
+        (inputsChanged || stale === "older-draft") ? (
+          <div className="bg-warn-tint text-warn-text mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium">
+            <span>{inputsChanged ? "Inputs changed" : "Draft changed"}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="max-xl:min-h-11"
+              pending={pending}
+              pendingLabel="Running…"
+              onClick={() =>
+                inputsChanged && onRunCurrent ? onRunCurrent() : onRunAgain(run)
+              }
+            >
+              Run again
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      <h4
+        id={TEST_OUTCOME_HEADLINE_ID}
+        tabIndex={-1}
+        className="mt-4 text-lg font-semibold outline-none"
+      >
         {run.result.issues.length
           ? stale
             ? "Issues from this earlier test"
@@ -232,14 +238,14 @@ export function TestOutcome({
           : changed.length
             ? `${changed.length} field${changed.length === 1 ? "" : "s"} changed in this test`
             : "No field changes in this test"}
-      </p>
+      </h4>
       {run.result.issues.length > 0 && (
         <Alert variant="warning" className="mt-4">
-          <p className="mb-2 font-medium">
-            {stale
-              ? "These were found in the earlier test. The current draft may differ."
-              : "Review these issues before relying on the result."}
-          </p>
+          {stale ? null : (
+            <p className="mb-2 font-medium">
+              Review these issues before relying on the result.
+            </p>
+          )}
           <ul className="space-y-3">
             {issues.map((issue) => {
               const field =
@@ -285,9 +291,6 @@ export function TestOutcome({
             {moduleName(design, run.input.moduleId)}
           </p>
           <p>{eventDescription(design, run)}</p>
-          <p className="text-muted-foreground text-xs">
-            Using the temporary values saved with this test.
-          </p>
         </Stage>
         <Connector />
         <Stage title="Trigger outcomes" icon={<GitBranch />}>
@@ -343,12 +346,6 @@ export function TestOutcome({
           {changed.length > 3 && (
             <p className="text-muted-foreground">
               {changed.length - 3} more changes in Field comparison.
-            </p>
-          )}
-          {missing > 0 && (
-            <p className="text-warning">
-              {missing} field{missing === 1 ? " has" : "s have"} no value after
-              the test. Review all result fields.
             </p>
           )}
         </Stage>

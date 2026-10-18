@@ -1097,7 +1097,7 @@ export function TriggerStudio({
                     className={cn(
                       // Hover and selected tint from the look's ink, so both
                       // read in every look, light and dark.
-                      "relative h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_8%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_12%,transparent)]",
+                      "relative h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
                       phone && "pr-9",
                     )}
                     onClick={() => {

@@ -94,9 +94,8 @@ test("on a phone, a run moves to the result and focuses it", async ({
     "true",
   );
   await expect(setup).toBeHidden();
-  await expect(
-    page.getByRole("heading", { name: "Test result" }),
-  ).toBeFocused();
+  // The outcome headline takes focus, so the outcome is read first.
+  await expect(page.getByRole("heading", { level: 4 }).first()).toBeFocused();
 });
 
 test("Run test without a module says why it is unavailable", async ({

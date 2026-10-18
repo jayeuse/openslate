@@ -3730,7 +3730,9 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
   );
   await page
     .getByRole("region", { name: "Recent test results", exact: true })
-    .getByRole("button", { name: "View test 2", exact: true })
+    // Rows are named by what they show; the second is the older result.
+    .locator("button[aria-pressed]")
+    .nth(1)
     .click();
   await expect(
     comparison.getByRole("row", { name: /Needs review/ }),

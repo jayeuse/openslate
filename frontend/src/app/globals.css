@@ -871,6 +871,13 @@ html {
 #main-content :where(button, a, input, select, textarea, [tabindex], [id]) {
   scroll-margin-block: 4.5rem 1rem;
 }
+/* The Test setup's sticky Run test bar must not cover the focused input
+   (WCAG 2.4.11). */
+#main-content
+  [data-test-setup]
+  :where(button, a, input, select, textarea, [tabindex]) {
+  scroll-margin-block-end: 5rem;
+}
 @media (prefers-contrast: more) {
   #main-content[data-skin="page"] {
     --border: var(--foreground);

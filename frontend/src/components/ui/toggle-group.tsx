@@ -14,7 +14,7 @@ import { toggleVariants } from "@/components/ui/toggle";
 const segmentedGroup =
   "flex w-full flex-wrap gap-1 rounded-lg bg-[var(--surface-sunken)] p-1 shadow-[inset_0_0_0_1px_var(--rule)]";
 const segmentedItem =
-  "h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal text-muted-foreground hover:bg-[var(--surface-hover)] aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:text-action-text aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)] xl:min-h-9";
+  "h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal text-muted-foreground hover:bg-transparent hover:text-foreground aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:text-action-text aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_color-mix(in_oklab,var(--ink-muted)_60%,transparent)] xl:min-h-9";
 
 const ToggleGroupContext = React.createContext<
   VariantProps<typeof toggleVariants> & {

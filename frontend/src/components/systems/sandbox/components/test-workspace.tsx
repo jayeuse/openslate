@@ -9,6 +9,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import {
+  TEST_OUTCOME_HEADLINE_ID,
   TEST_RESULT_HEADING_ID,
   TestComparison,
   TestOutcome,
@@ -251,9 +252,11 @@ export function TestWorkspace({
   useEffect(() => {
     if (!focusResult) return;
     const heading = document.getElementById(TEST_RESULT_HEADING_ID);
-    if (!heading) return;
+    const headline = document.getElementById(TEST_OUTCOME_HEADLINE_ID);
+    if (!heading || !headline) return;
+    // Show the whole result header, then read the outcome first.
     heading.scrollIntoView({ block: "start" });
-    heading.focus({ preventScroll: true });
+    headline.focus({ preventScroll: true });
     setFocusResult(false);
   }, [focusResult, phoneView, selectedRun?.id]);
   useEffect(() => {
@@ -386,10 +389,7 @@ export function TestWorkspace({
     setBaselineRunId(selectedRun?.id ?? null);
     setBaseline(setupKey);
   }
-  const inputsChanged =
-    selectedRun !== undefined &&
-    selectedRun.input.moduleId === moduleId &&
-    setupKey !== baseline;
+  const inputsChanged = selectedRun !== undefined && setupKey !== baseline;
 
   async function run() {
     if (!moduleId) {
@@ -506,6 +506,7 @@ export function TestWorkspace({
           >
             <section
               aria-label="Test setup"
+              data-test-setup
               className="bg-card border-border border-b p-4 @min-[900px]/test:h-full @min-[900px]/test:overflow-y-auto @min-[900px]/test:border-b-0"
             >
               <h3 data-slot="section-title" className="mb-5 font-semibold">
@@ -652,9 +653,12 @@ export function TestWorkspace({
                     </>
                   ) : null}
                 </div>
-                <fieldset className="grid gap-3">
+                <fieldset
+                  className="grid gap-3"
+                  aria-labelledby="sandbox-test-values-label"
+                >
                   <legend className="flex items-center gap-1 text-sm font-medium">
-                    Test values
+                    <span id="sandbox-test-values-label">Test values</span>
                     <Popover>
                       <PopoverTrigger
                         render={
@@ -729,7 +733,7 @@ export function TestWorkspace({
                         ? "No fields match your search."
                         : filter === "edited"
                           ? "No inputs have been edited."
-                          : "No fields are required for this selection. Use All to enter other values."}
+                          : "No relevant fields."}
                     </p>
                   )}
                   {matchingFields.slice(0, limit).map((field) => {
@@ -867,11 +871,13 @@ export function TestWorkspace({
                       Show more fields
                     </Button>
                   )}
-                  <p className="text-muted-foreground text-xs">
-                    Showing {Math.min(limit, matchingFields.length)} of{" "}
-                    {matchingFields.length} matching fields · {fields.length}{" "}
-                    total
-                  </p>
+                  {matchingFields.length > limit || search ? (
+                    <p className="text-muted-foreground text-xs">
+                      Showing {Math.min(limit, matchingFields.length)} of{" "}
+                      {matchingFields.length} matching fields · {fields.length}{" "}
+                      total
+                    </p>
+                  ) : null}
                 </fieldset>
                 <AdvancedSection
                   storageKey="sandbox.test"
@@ -1020,13 +1026,12 @@ export function TestWorkspace({
                   </div>
                   {runs.length ? (
                     <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto">
-                      {runs.map((item, index) => (
+                      {runs.map((item) => (
                         <Button
                           key={item.id}
-                          aria-label={`View test ${index + 1}`}
                           aria-pressed={selectedRun?.id === item.id}
                           variant="ghost"
-                          className="h-auto min-h-11 justify-start px-3 py-2 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_8%,transparent)] aria-pressed:bg-[color-mix(in_oklab,var(--ink)_12%,transparent)]"
+                          className="h-auto min-h-11 justify-start px-3 py-2 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-pressed:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
                           onClick={() => setSelectedRunId(item.id)}
                         >
                           <span className="min-w-0">
