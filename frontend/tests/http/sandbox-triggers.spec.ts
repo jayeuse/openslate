@@ -117,15 +117,19 @@ test("Back from Triggers keeps unsaved trigger edits", async ({ page }) => {
 
 test("a reload offers to restore unsaved trigger edits", async ({ page }) => {
   const sandbox = await openTriggers(page);
-  await page.getByLabel("Trigger name").fill("Survives reload");
+  const name = page.getByLabel("Trigger name");
+  await name.fill("Survives reload");
   page.on("dialog", (dialog) => void dialog.accept());
   await page.reload();
   const prompt = page
     .getByRole("status")
     .filter({ hasText: "Restore unsaved trigger changes?" });
+  // Nothing can be typed over the kept edits while the prompt waits.
+  await expect(name).toBeDisabled();
   await prompt.getByRole("button", { name: "Restore", exact: true }).click();
   await expect(prompt).toHaveCount(0);
-  await expect(page.getByLabel("Trigger name")).toHaveValue("Survives reload");
+  await expect(name).toBeEnabled();
+  await expect(name).toHaveValue("Survives reload");
   await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
     /· 1 unsaved trigger change$/,
   );
@@ -135,21 +139,42 @@ test("a reload offers to restore unsaved trigger edits", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Review & Publish" }),
   ).toHaveAccessibleDescription("Restore or discard trigger changes first.");
-  // Discard can be undone from its notice.
+  // Discard can be undone from its notice: the prompt comes back.
   await prompt.getByRole("button", { name: "Discard", exact: true }).click();
-  await expect(page.getByLabel("Trigger name")).toHaveValue(
-    "Urgent request alert",
-  );
+  await expect(name).toHaveValue("Urgent request alert");
   await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await expect(page.getByLabel("Trigger name")).toHaveValue("Survives reload");
-  // Discarding in the editor drops them for good.
-  await page.getByRole("button", { name: "Discard changes" }).click();
+  await expect(prompt).toBeVisible();
+  await expect(name).toBeDisabled();
+  // Discard again, then a reload offers nothing.
+  await prompt.getByRole("button", { name: "Discard", exact: true }).click();
   await page.reload();
-  await expect(page.getByLabel("Trigger name")).toHaveValue(
-    "Urgent request alert",
-  );
+  await expect(name).toHaveValue("Urgent request alert");
   await expect(prompt).toHaveCount(0);
   expect(sandbox.documentWrites()).toBe(0);
+});
+
+test("Undo of a discarded prompt never replaces newer trigger edits", async ({
+  page,
+}) => {
+  await openTriggers(page);
+  const name = page.getByLabel("Trigger name");
+  await name.fill("Older edit");
+  page.on("dialog", (dialog) => void dialog.accept());
+  await page.reload();
+  const prompt = page
+    .getByRole("status")
+    .filter({ hasText: "Restore unsaved trigger changes?" });
+  await prompt.getByRole("button", { name: "Discard", exact: true }).click();
+  await name.fill("Newer edit");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  // The prompt is back, the newer edit stays, and Restore waits for it.
+  await expect(prompt).toBeVisible();
+  await expect(name).toHaveValue("Newer edit");
+  await expect(
+    prompt.getByRole("button", { name: "Restore", exact: true }),
+  ).toHaveAccessibleDescription(
+    "Save or discard your current trigger edits first.",
+  );
 });
 
 test("unsaved triggers are marked, a step Save will refuse warns first, and Ctrl+S saves", async ({

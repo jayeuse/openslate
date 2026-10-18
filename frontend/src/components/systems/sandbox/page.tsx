@@ -1404,7 +1404,8 @@ export default function SandboxPage() {
                 designerDraftDirty ||
                 testPending ||
                 triggerDraft.dirty ||
-                triggerDraft.pending
+                triggerDraft.pending ||
+                triggerDraft.kept !== null
               }
               templatesOpen={templatesOpen}
               onTemplatesOpenChange={setTemplatesOpen}
@@ -1470,9 +1471,10 @@ export default function SandboxPage() {
                 variant="outline"
                 onClick={() => {
                   const dropped = triggerDraft.discardKept();
+                  // Undo offers them again; it never replaces newer edits.
                   if (dropped)
                     reportUndoable("Unsaved trigger changes discarded", () =>
-                      triggerDraft.restore(dropped),
+                      triggerDraft.keepAgain(dropped),
                     );
                 }}
               >

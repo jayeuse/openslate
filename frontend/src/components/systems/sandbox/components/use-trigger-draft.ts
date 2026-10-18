@@ -36,9 +36,14 @@ export type TriggerDraft = {
   discard: () => SandboxTrigger[] | null;
   restore: (edits: SandboxTrigger[]) => void;
   restoreKept: () => void;
-  /** Drops the kept edits and returns them, so Undo can put them back. */
-  discardKept: () => SandboxTrigger[] | null;
+  /** Drops the kept edits and returns them, so Undo can offer them again. */
+  discardKept: () => KeptTriggerRecord | null;
+  /** Offers kept edits again (Undo after Discard on the prompt). */
+  keepAgain: (record: KeptTriggerRecord) => void;
 };
+
+/** Kept edits as stored: the saved triggers they began from, and the edits. */
+export type KeptTriggerRecord = { base: string; triggers: SandboxTrigger[] };
 
 export type KeptTriggerDraft = {
   triggers: SandboxTrigger[];
@@ -46,7 +51,7 @@ export type KeptTriggerDraft = {
   baseChanged: boolean;
 };
 
-type StoredTriggerDraft = { base: string; triggers: SandboxTrigger[] };
+type StoredTriggerDraft = KeptTriggerRecord;
 type DraftStorage = Pick<
   Storage,
   "getItem" | "setItem" | "removeItem" | "key" | "length"
@@ -339,13 +344,23 @@ export function useTriggerDraft({
   }, [kept, setEdits]);
 
   const discardKept = useCallback(() => {
-    const dropped = kept?.triggers ?? null;
+    const dropped = kept;
     setKept(null);
     // New edits made meanwhile keep their own stored copy.
     if (!editsRef.current)
       writeKeptTriggerDraft(browserStorage(), storageKey, null);
     return dropped;
   }, [kept, storageKey]);
+
+  const keepAgain = useCallback(
+    (record: KeptTriggerRecord) => {
+      setKept(record);
+      // Newer unsaved edits own the stored copy until they are resolved.
+      if (!editsRef.current)
+        writeKeptTriggerDraft(browserStorage(), storageKey, record);
+    },
+    [storageKey],
+  );
 
   return {
     draft,
@@ -364,5 +379,6 @@ export function useTriggerDraft({
     restore,
     restoreKept,
     discardKept,
+    keepAgain,
   };
 }

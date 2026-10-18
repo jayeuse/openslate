@@ -986,277 +986,291 @@ export function TriggerStudio({
       </CollapsibleContent>
     </Collapsible>
   );
+  // While edits kept from before a reload wait for Restore or Discard, the
+  // studio is read-only, so nothing new can be typed over them.
+  const locked = triggerDraft.kept !== null;
   return (
     <section
       ref={studioRef}
       aria-labelledby="trigger-studio-title"
       className="@container/studio flex h-full min-w-0 flex-col"
     >
-      <div className="border-border min-w-0 shrink-0 overflow-clip rounded-xl border @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
-        <ResizablePanelGroup
-          orientation="horizontal"
-          disabled={!wide}
-          className="block! h-auto! overflow-visible! @min-[900px]/studio:flex! @min-[900px]/studio:h-full! @min-[900px]/studio:overflow-hidden!"
-        >
-          <ResizablePanel
-            id="trigger-list"
-            defaultSize="18.2rem"
-            minSize={wide ? "18.2rem" : 0}
-            groupResizeBehavior="preserve-pixel-size"
-            className={cn(
-              "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
-              phone && phoneView === "detail" && "hidden",
-            )}
+      {locked ? (
+        <p role="status" className="text-warn-text mb-3 text-sm">
+          Restore or discard the kept trigger changes above to edit.
+        </p>
+      ) : null}
+      <fieldset disabled={locked} className="contents">
+        <div className="border-border min-w-0 shrink-0 overflow-clip rounded-xl border @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
+          <ResizablePanelGroup
+            orientation="horizontal"
+            disabled={!wide}
+            className="block! h-auto! overflow-visible! @min-[900px]/studio:flex! @min-[900px]/studio:h-full! @min-[900px]/studio:overflow-hidden!"
           >
-            <aside
-              ref={listRef}
-              aria-label="Trigger list"
-              className="bg-card border-border min-w-0 border-b p-4 @min-[900px]/studio:h-full @min-[900px]/studio:overflow-y-auto @min-[900px]/studio:border-b-0"
+            <ResizablePanel
+              id="trigger-list"
+              defaultSize="18.2rem"
+              minSize={wide ? "18.2rem" : 0}
+              groupResizeBehavior="preserve-pixel-size"
+              className={cn(
+                "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
+                phone && phoneView === "detail" && "hidden",
+              )}
             >
-              <div className="mb-4 flex items-center justify-between gap-2">
-                <h2
-                  data-slot="section-title"
-                  id="trigger-studio-title"
-                  className="font-semibold"
-                >
-                  Triggers
-                </h2>
-                <span className="text-muted-foreground text-xs">
-                  {draft.length}
-                </span>
-              </div>
-              <Button
-                variant="outline"
-                className="mb-4 min-h-11 w-full"
-                onClick={() => {
-                  const next = defaultTrigger(design);
-                  setSelectedId(next.id);
-                  setSelectedStep("trigger");
-                  updateDraft([...draft, next]);
-                  openDetail();
-                }}
-                disabled={pending || draft.length >= 500}
-              >
-                <Plus aria-hidden="true" />
-                New trigger
-              </Button>
-              <nav
+              <aside
+                ref={listRef}
                 aria-label="Trigger list"
-                className={cn(
-                  "grid gap-1 @min-[900px]/studio:max-h-none",
-                  !phone && "max-h-64 overflow-y-auto",
-                )}
+                className="bg-card border-border min-w-0 border-b p-4 @min-[900px]/studio:h-full @min-[900px]/studio:overflow-y-auto @min-[900px]/studio:border-b-0"
               >
-                {draft.map((recordTrigger) => (
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <h2
+                    data-slot="section-title"
+                    id="trigger-studio-title"
+                    className="font-semibold"
+                  >
+                    Triggers
+                  </h2>
+                  <span className="text-muted-foreground text-xs">
+                    {draft.length}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  className="mb-4 min-h-11 w-full"
+                  onClick={() => {
+                    const next = defaultTrigger(design);
+                    setSelectedId(next.id);
+                    setSelectedStep("trigger");
+                    updateDraft([...draft, next]);
+                    openDetail();
+                  }}
+                  disabled={pending || draft.length >= 500}
+                >
+                  <Plus aria-hidden="true" />
+                  New trigger
+                </Button>
+                <nav
+                  aria-label="Trigger list"
+                  className={cn(
+                    "grid gap-1 @min-[900px]/studio:max-h-none",
+                    !phone && "max-h-64 overflow-y-auto",
+                  )}
+                >
+                  {draft.map((recordTrigger) => (
+                    <Button
+                      key={recordTrigger.id}
+                      variant="ghost"
+                      aria-current={
+                        recordTrigger.id === selectedId ? "true" : undefined
+                      }
+                      className={cn(
+                        // Hover and selected tint from the look's ink, so both
+                        // read in every look, light and dark.
+                        "relative h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
+                        phone && "pr-9",
+                      )}
+                      onClick={() => {
+                        setSelectedId(recordTrigger.id);
+                        setSelectedStep("trigger");
+                        openDetail();
+                      }}
+                    >
+                      {phone ? (
+                        <ChevronRight
+                          aria-hidden="true"
+                          className="text-muted-foreground absolute top-1/2 right-3 -translate-y-1/2"
+                        />
+                      ) : null}
+                      <span className="w-full [overflow-wrap:anywhere] break-words">
+                        {recordTrigger.name || "Untitled trigger"}
+                      </span>
+                      <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-normal">
+                        {triggerEventLabel(recordTrigger)}
+                        {!recordTrigger.enabled ? " · Off" : ""}
+                        {/* Which triggers Save will write (the Build field-row
+                          pattern). */}
+                        {triggerDraft.unsaved.has(recordTrigger.id) ? (
+                          <Badge variant="warning">Unsaved</Badge>
+                        ) : null}
+                      </span>
+                    </Button>
+                  ))}
+                </nav>
+              </aside>
+            </ResizablePanel>
+            {wide && (
+              <ResizableHandle withHandle aria-label="Resize trigger list" />
+            )}
+            <ResizablePanel
+              id="trigger-graph"
+              minSize={wide ? "18rem" : 0}
+              className={cn(
+                "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
+                phone && phoneView === "list" && "hidden",
+              )}
+            >
+              <div className="border-border min-w-0 border-b p-5 @min-[900px]/studio:h-full @min-[900px]/studio:overflow-y-auto @min-[900px]/studio:border-b-0">
+                {phone ? (
                   <Button
-                    key={recordTrigger.id}
                     variant="ghost"
-                    aria-current={
-                      recordTrigger.id === selectedId ? "true" : undefined
-                    }
-                    className={cn(
-                      // Hover and selected tint from the look's ink, so both
-                      // read in every look, light and dark.
-                      "relative h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]",
-                      phone && "pr-9",
-                    )}
+                    className="mb-3 -ml-2 min-h-11"
                     onClick={() => {
-                      setSelectedId(recordTrigger.id);
-                      setSelectedStep("trigger");
-                      openDetail();
+                      setPhoneView("list");
+                      focusCurrentRow();
                     }}
                   >
-                    {phone ? (
-                      <ChevronRight
-                        aria-hidden="true"
-                        className="text-muted-foreground absolute top-1/2 right-3 -translate-y-1/2"
-                      />
-                    ) : null}
-                    <span className="w-full [overflow-wrap:anywhere] break-words">
-                      {recordTrigger.name || "Untitled trigger"}
-                    </span>
-                    <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-normal">
-                      {triggerEventLabel(recordTrigger)}
-                      {!recordTrigger.enabled ? " · Off" : ""}
-                      {/* Which triggers Save will write (the Build field-row
-                          pattern). */}
-                      {triggerDraft.unsaved.has(recordTrigger.id) ? (
-                        <Badge variant="warning">Unsaved</Badge>
-                      ) : null}
-                    </span>
+                    <ChevronLeft aria-hidden="true" />
+                    <span className="sr-only">Back to </span>
+                    Triggers
                   </Button>
-                ))}
-              </nav>
-            </aside>
-          </ResizablePanel>
-          {wide && (
-            <ResizableHandle withHandle aria-label="Resize trigger list" />
-          )}
-          <ResizablePanel
-            id="trigger-graph"
-            minSize={wide ? "18rem" : 0}
-            className={cn(
-              "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
-              phone && phoneView === "list" && "hidden",
-            )}
-          >
-            <div className="border-border min-w-0 border-b p-5 @min-[900px]/studio:h-full @min-[900px]/studio:overflow-y-auto @min-[900px]/studio:border-b-0">
-              {phone ? (
-                <Button
-                  variant="ghost"
-                  className="mb-3 -ml-2 min-h-11"
-                  onClick={() => {
-                    setPhoneView("list");
-                    focusCurrentRow();
-                  }}
-                >
-                  <ChevronLeft aria-hidden="true" />
-                  <span className="sr-only">Back to </span>
-                  Triggers
-                </Button>
-              ) : null}
-              {selected ? (
-                <>
-                  <div className="border-border mb-5 flex items-start justify-between gap-3 border-b pb-5">
-                    <div className="min-w-0">
-                      <h2
-                        ref={detailHeadingRef}
-                        tabIndex={-1}
-                        data-slot="section-title"
-                        className="text-lg font-semibold [overflow-wrap:anywhere] break-words outline-none"
-                      >
-                        {selected.name || "Untitled trigger"}
-                      </h2>
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-11 shrink-0"
-                            aria-label="Trigger options"
-                            disabled={pending}
-                          />
-                        }
-                      >
-                        <MoreHorizontal aria-hidden="true" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          variant="destructive"
-                          disabled={pending}
-                          onClick={() => deleteTrigger(selected)}
-                        >
-                          <Trash2 aria-hidden="true" />
-                          Delete trigger
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                  <TriggerFlow
-                    trigger={selected}
-                    design={design}
-                    stepErrors={triggerStepErrors(selected, design)}
-                    selectedStep={selectedStep}
-                    onSelect={selectStep}
-                    summaryOnly={phone}
-                  />
-                </>
-              ) : (
-                <p className="text-muted-foreground py-10 text-sm">
-                  Create a trigger to define its event, conditions, and actions.
-                </p>
-              )}
-              {phone ? null : recentActivity}
-            </div>
-          </ResizablePanel>
-          {wide && (
-            <ResizableHandle withHandle aria-label="Resize trigger settings" />
-          )}
-          <ResizablePanel
-            id="trigger-settings"
-            defaultSize="26rem"
-            minSize={wide ? "13rem" : 0}
-            groupResizeBehavior="preserve-pixel-size"
-            className={cn(
-              "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
-              phone && phoneView === "list" && "hidden",
-            )}
-          >
-            <section
-              aria-label="Trigger settings"
-              className="bg-card @container/settings flex min-w-0 flex-col @min-[900px]/studio:h-full @min-[900px]/studio:min-h-0"
-            >
-              <div className="border-border border-b px-5 py-4">
-                <h2 data-slot="section-title" className="font-semibold">
-                  Trigger settings
-                </h2>
-              </div>
-              <div
-                ref={settingsRef}
-                className="min-w-0 flex-1 space-y-4 p-4 @min-[900px]/studio:overflow-y-auto [&_[data-slot=native-select-wrapper]]:w-full [&_input]:min-w-0 [&_select]:w-full"
-                onFocusCapture={(event) => {
-                  const target = (
-                    event.target as HTMLElement
-                  ).closest<HTMLElement>("[data-rule-target]")?.dataset
-                    .ruleTarget;
-                  if (target) setSelectedStep(target);
-                }}
-              >
-                {error && (
-                  <Alert variant="destructive" role="alert" tabIndex={-1}>
-                    {error}
-                  </Alert>
-                )}
+                ) : null}
                 {selected ? (
-                  <TriggerEditor
-                    design={design}
-                    trigger={selected}
-                    pending={pending}
-                    onChange={update}
-                    selectedStep={phone ? "" : selectedStep}
-                  />
+                  <>
+                    <div className="border-border mb-5 flex items-start justify-between gap-3 border-b pb-5">
+                      <div className="min-w-0">
+                        <h2
+                          ref={detailHeadingRef}
+                          tabIndex={-1}
+                          data-slot="section-title"
+                          className="text-lg font-semibold [overflow-wrap:anywhere] break-words outline-none"
+                        >
+                          {selected.name || "Untitled trigger"}
+                        </h2>
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-11 shrink-0"
+                              aria-label="Trigger options"
+                              disabled={pending}
+                            />
+                          }
+                        >
+                          <MoreHorizontal aria-hidden="true" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            variant="destructive"
+                            disabled={pending}
+                            onClick={() => deleteTrigger(selected)}
+                          >
+                            <Trash2 aria-hidden="true" />
+                            Delete trigger
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                    <TriggerFlow
+                      trigger={selected}
+                      design={design}
+                      stepErrors={triggerStepErrors(selected, design)}
+                      selectedStep={selectedStep}
+                      onSelect={selectStep}
+                      summaryOnly={phone}
+                    />
+                  </>
                 ) : (
-                  <p className="text-muted-foreground text-sm">
-                    Select or create a trigger to edit its settings.
+                  <p className="text-muted-foreground py-10 text-sm">
+                    Create a trigger to define its event, conditions, and
+                    actions.
                   </p>
                 )}
-                {phone ? recentActivity : null}
+                {phone ? null : recentActivity}
               </div>
-              {dirty || pending ? (
-                <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 border-t p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-                  {triggerDraft.baseChanged ? (
-                    <p
-                      role="status"
-                      className="text-warn-text mr-auto min-w-0 text-sm"
-                    >
-                      The saved triggers changed while you edited. Saving
-                      replaces them with yours.
-                    </p>
-                  ) : null}
-                  <Button
-                    variant="outline"
-                    className="min-h-11"
-                    onClick={() => discard()}
-                    disabled={pending}
-                  >
-                    Discard changes
-                  </Button>
-                  <Button
-                    className="min-h-11"
-                    onClick={() => void save()}
-                    pending={pending}
-                    pendingLabel="Saving…"
-                  >
-                    Save triggers
-                  </Button>
+            </ResizablePanel>
+            {wide && (
+              <ResizableHandle
+                withHandle
+                aria-label="Resize trigger settings"
+              />
+            )}
+            <ResizablePanel
+              id="trigger-settings"
+              defaultSize="26rem"
+              minSize={wide ? "13rem" : 0}
+              groupResizeBehavior="preserve-pixel-size"
+              className={cn(
+                "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
+                phone && phoneView === "list" && "hidden",
+              )}
+            >
+              <section
+                aria-label="Trigger settings"
+                className="bg-card @container/settings flex min-w-0 flex-col @min-[900px]/studio:h-full @min-[900px]/studio:min-h-0"
+              >
+                <div className="border-border border-b px-5 py-4">
+                  <h2 data-slot="section-title" className="font-semibold">
+                    Trigger settings
+                  </h2>
                 </div>
-              ) : null}
-            </section>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </div>
+                <div
+                  ref={settingsRef}
+                  className="min-w-0 flex-1 space-y-4 p-4 @min-[900px]/studio:overflow-y-auto [&_[data-slot=native-select-wrapper]]:w-full [&_input]:min-w-0 [&_select]:w-full"
+                  onFocusCapture={(event) => {
+                    const target = (
+                      event.target as HTMLElement
+                    ).closest<HTMLElement>("[data-rule-target]")?.dataset
+                      .ruleTarget;
+                    if (target) setSelectedStep(target);
+                  }}
+                >
+                  {error && (
+                    <Alert variant="destructive" role="alert" tabIndex={-1}>
+                      {error}
+                    </Alert>
+                  )}
+                  {selected ? (
+                    <TriggerEditor
+                      design={design}
+                      trigger={selected}
+                      pending={pending}
+                      onChange={update}
+                      selectedStep={phone ? "" : selectedStep}
+                    />
+                  ) : (
+                    <p className="text-muted-foreground text-sm">
+                      Select or create a trigger to edit its settings.
+                    </p>
+                  )}
+                  {phone ? recentActivity : null}
+                </div>
+                {dirty || pending ? (
+                  <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 border-t p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+                    {triggerDraft.baseChanged ? (
+                      <p
+                        role="status"
+                        className="text-warn-text mr-auto min-w-0 text-sm"
+                      >
+                        The saved triggers changed while you edited. Saving
+                        replaces them with yours.
+                      </p>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={() => discard()}
+                      disabled={pending}
+                    >
+                      Discard changes
+                    </Button>
+                    <Button
+                      className="min-h-11"
+                      onClick={() => void save()}
+                      pending={pending}
+                      pendingLabel="Saving…"
+                    >
+                      Save triggers
+                    </Button>
+                  </div>
+                ) : null}
+              </section>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+      </fieldset>
     </section>
   );
 }
