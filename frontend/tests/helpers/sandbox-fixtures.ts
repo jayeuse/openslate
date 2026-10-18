@@ -104,8 +104,10 @@ export const configuredSandboxDesign: Design = {
       name: "Equipment",
       closed: false,
       fields: fields(["Asset tag", "Name", "Status", "Location"]),
-      x: 340,
-      y: 0,
+      // Under Service requests, so the Operations frame stays clear of
+      // Commercial (overlappingSandboxDesign keeps the old spot).
+      x: 0,
+      y: 200,
     },
     {
       id: "sample-customers",
@@ -113,8 +115,8 @@ export const configuredSandboxDesign: Design = {
       name: "Customers",
       closed: false,
       fields: fields(["Customer ID", "Name", "Status", "Email"]),
-      x: 170,
-      y: 360,
+      x: 384,
+      y: 0,
     },
   ],
   relationships: [
@@ -137,4 +139,19 @@ export const configuredSandboxDesign: Design = {
       enabled: true,
     },
   ],
+};
+
+/**
+ * The default test draft with Equipment beside Service requests, as older
+ * drafts placed it: the Operations frame then grows over Commercial.
+ */
+export const overlappingSandboxDesign: Design = {
+  ...configuredSandboxDesign,
+  modules: configuredSandboxDesign.modules.map((item) =>
+    item.id === "sample-equipment"
+      ? { ...item, x: 340, y: 0 }
+      : item.id === "sample-customers"
+        ? { ...item, x: 170, y: 360 }
+        : item,
+  ),
 };

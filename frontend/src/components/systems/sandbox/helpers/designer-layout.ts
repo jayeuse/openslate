@@ -1,5 +1,6 @@
 import { compactDefaultLayout, type Design } from "../domain/model";
 import type { SandboxCanvasLayout } from "@/lib/sandbox/model";
+import { moduleTableHeight } from "@/lib/sandbox/canvas-geometry";
 
 export function arrangedLayout(design: Design): SandboxCanvasLayout {
   const current = design.layout ?? compactDefaultLayout;
@@ -9,13 +10,15 @@ export function arrangedLayout(design: Design): SandboxCanvasLayout {
     const modules = design.modules.filter(
       (item) => item.department === department.id,
     );
+    // Rows are as tall as the tables the canvas draws (header plus one row
+    // per field); a stored height can be older than the module's fields.
+    const heights = modules.map((moduleItem) =>
+      moduleTableHeight(moduleItem.fields.length),
+    );
     const rowHeights: number[] = [];
-    modules.forEach((moduleItem, index) => {
+    heights.forEach((height, index) => {
       const row = Math.floor(index / 2);
-      rowHeights[row] = Math.max(
-        rowHeights[row] ?? 0,
-        current[moduleItem.id]?.height ?? 176,
-      );
+      rowHeights[row] = Math.max(rowHeights[row] ?? 0, height);
     });
     const rowOffsets = rowHeights.map((_, row) =>
       rowHeights
@@ -40,7 +43,7 @@ export function arrangedLayout(design: Design): SandboxCanvasLayout {
         x: 48 + (index % 2) * 328,
         y: departmentY + 48 + rowOffsets[Math.floor(index / 2)],
         width: existing?.width ?? 304,
-        height: existing?.height ?? 176,
+        height: heights[index]!,
       };
     });
     departmentY += departmentHeight + 32;

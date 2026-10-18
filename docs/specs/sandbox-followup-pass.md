@@ -82,6 +82,8 @@ Each phase ends with its focused tests, the Sandbox batch (lint, build, isolated
 | O2  | The canvas notice bar shows "Some departments or modules overlap." with **Auto-arrange** and **Dismiss**. Dismiss holds until the layout changes. The default test draft overlaps today; give it a layout that does not overlap in the same commit, and add a separate overlap fixture for O2. | HTTP: overlap fixture shows the notice; Auto-arrange clears it; Undo restores; the full batch catches position-dependent tests |
 | O3  | Auto-arrange spaces rows by the real table height, so it never makes an overlap.                                                                                                                                                                                                               | Isolated test with a 12-field module                                                                                           |
 
+**Phase 3 findings (during the work).** R5 was real: with a 12-field table, Auto-arrange put the next row inside it. The default test draft overlapped only because its old-format module positions put Equipment outside its frame; it now has a clean layout, and `overlappingSandboxDesign` keeps the old spot for the notice test. No position-dependent test broke.
+
 ### Phase 4: Structure outline as a tree (card 2)
 
 | ID  | Change                                                                                                                                                                                                                                                     | Proof                                                     |

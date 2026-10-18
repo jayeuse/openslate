@@ -3,7 +3,10 @@ import {
   fieldRowTrigger,
   openAuthenticatedSandbox,
 } from "./helpers/sandbox-api";
-import { configuredSandboxDesign } from "../helpers/sandbox-fixtures";
+import {
+  configuredSandboxDesign,
+  overlappingSandboxDesign,
+} from "../helpers/sandbox-fixtures";
 
 // The Advanced Last Rule (DESIGN.md): Properties shows the essentials, keeps
 // rare and lifecycle controls in one closed Advanced block, counts what is
@@ -149,3 +152,25 @@ for (const viewport of [
     }
   });
 }
+
+// Phase 3 of the Sandbox follow-up pass: overlap notice (F2, O2).
+test("overlapping frames show a notice that Auto-arrange clears and Undo brings back", async ({
+  page,
+}) => {
+  const sandbox = await openAuthenticatedSandbox(
+    page,
+    overlappingSandboxDesign,
+  );
+  const notice = page
+    .getByRole("status")
+    .filter({ hasText: "Some departments or modules overlap." });
+  await expect(notice).toBeVisible();
+  await notice.getByRole("button", { name: "Auto-arrange" }).click();
+  await expect(notice).toHaveCount(0);
+  await expect.poll(sandbox.documentWrites).toBe(1);
+
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(notice).toBeVisible();
+  await notice.getByRole("button", { name: "Dismiss" }).click();
+  await expect(notice).toHaveCount(0);
+});

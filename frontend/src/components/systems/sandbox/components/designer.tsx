@@ -83,6 +83,11 @@ import {
   type SandboxDropKind,
 } from "@/components/sandbox/sandbox-canvas";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
+import {
+  canvasBoxes,
+  canvasOverlaps,
+  deriveFlowNodes,
+} from "@/components/sandbox/sandbox-flow-model";
 import { SANDBOX_ZOOM } from "@/lib/sandbox/canvas-geometry";
 import type { TestTraceStep } from "../domain/test-run-summary";
 import type { SandboxDesignTarget as SandboxInspectorTarget } from "../domain/model";
@@ -425,6 +430,17 @@ export function Designer({
   const [canvasNotice, setCanvasNotice] = useState<"trace" | "partial" | null>(
     traceTargetId ? "trace" : null,
   );
+  async function autoArrange(): Promise<void> {
+    const result = await change((previous) => ({
+      ...previous,
+      layout: arrangedLayout(previous),
+    }));
+    if (!result.ok) {
+      notifyError(result.error);
+      return;
+    }
+    setCanvasAction("Canvas automatically arranged.");
+  }
   function fitCanvas(): void {
     const fitted = graphRef.current?.fit() ?? true;
     setCanvasAction(
@@ -648,6 +664,25 @@ export function Designer({
   const projected = useMemo(
     () => JSON.parse(projectedJson) as SandboxState,
     [projectedJson],
+  );
+  // Frames or tables that cover each other in the saved layout, as the
+  // canvas draws it. Dismiss holds until the layout changes.
+  const layout = design.layout ?? compactDefaultLayout;
+  const layoutKey = JSON.stringify(layout);
+  const overlapping = useMemo(() => {
+    const overlaps = canvasOverlaps(
+      canvasBoxes(
+        deriveFlowNodes({
+          state: JSON.parse(projectedJson) as SandboxState,
+          previous: [],
+          layout,
+        }),
+      ),
+    );
+    return overlaps.departments.length > 0 || overlaps.modules.length > 0;
+  }, [layout, projectedJson]);
+  const [overlapDismissedFor, setOverlapDismissedFor] = useState<string | null>(
+    null,
   );
   const keyboardTarget: SandboxInspectorTarget | null = selectedField
     ? { kind: "field", id: selected }
@@ -2572,17 +2607,7 @@ export function Designer({
                       >
                         <DropdownMenuItem
                           className="min-h-11 min-w-11 xl:min-h-0 xl:min-w-0"
-                          onClick={async () => {
-                            const result = await change((previous) => ({
-                              ...previous,
-                              layout: arrangedLayout(previous),
-                            }));
-                            if (!result.ok) {
-                              notifyError(result.error);
-                              return;
-                            }
-                            setCanvasAction("Canvas automatically arranged.");
-                          }}
+                          onClick={() => void autoArrange()}
                         >
                           <LayoutGrid aria-hidden="true" />
                           Auto-arrange
@@ -2804,6 +2829,34 @@ export function Designer({
                         }}
                       >
                         {canvasNotice === "trace" ? "Clear" : "Dismiss"}
+                      </Button>
+                    </span>
+                  </div>
+                ) : overlapping && overlapDismissedFor !== layoutKey ? (
+                  <div
+                    role="status"
+                    className="border-border bg-muted flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b px-4 py-1 text-sm"
+                  >
+                    <span className="min-w-0">
+                      Some departments or modules overlap.
+                    </span>
+                    <span className="flex flex-wrap gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="min-h-9"
+                        disabled={pending}
+                        onClick={() => void autoArrange()}
+                      >
+                        Auto-arrange
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="min-h-9"
+                        onClick={() => setOverlapDismissedFor(layoutKey)}
+                      >
+                        Dismiss
                       </Button>
                     </span>
                   </div>

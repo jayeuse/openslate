@@ -155,6 +155,41 @@ export function canvasBoxes(nodes: readonly SandboxFlowNode[]): CanvasBoxes {
   return { departments, modules };
 }
 
+/** Pairs of drawn boxes that cover each other; touching edges do not count. */
+export type CanvasOverlaps = {
+  departments: [string, string][];
+  modules: [string, string][];
+};
+
+function boxesOverlap(a: CanvasBox, b: CanvasBox): boolean {
+  return (
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height
+  );
+}
+
+/**
+ * Department frames that overlap other frames, and module tables that
+ * overlap other tables in any department, as the canvas draws them.
+ */
+export function canvasOverlaps(boxes: CanvasBoxes): CanvasOverlaps {
+  const pairs = <T extends { id: string; box: CanvasBox }>(
+    items: readonly T[],
+  ) =>
+    items.flatMap((item, index) =>
+      items
+        .slice(index + 1)
+        .filter((other) => boxesOverlap(item.box, other.box))
+        .map((other): [string, string] => [item.id, other.id]),
+    );
+  return {
+    departments: pairs(boxes.departments),
+    modules: pairs(boxes.modules),
+  };
+}
+
 function sameRows(a: readonly CanvasRow[], b: readonly CanvasRow[]): boolean {
   return (
     a.length === b.length &&
