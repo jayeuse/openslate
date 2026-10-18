@@ -219,6 +219,9 @@ export function moduleTableAttrs(
       "aria-hidden": "true",
     },
     headerTitle: {
+      // The header bar under it takes the pointer, so the whole header is one
+      // target.
+      pointerEvents: "none",
       x: 32,
       y: headerHeight / 2,
       textAnchor: "start",
@@ -270,6 +273,7 @@ export function moduleTableAttrs(
       };
     }
     attrs[`name${i}`] = {
+      "data-sandbox-part": "field-name",
       pointerEvents: "none",
       x: 26,
       y: rowCenter,

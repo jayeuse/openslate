@@ -1,5 +1,5 @@
 import { Point, routerPresets } from "@antv/x6";
-import type { Graph, History, Node } from "@antv/x6";
+import type { Edge, Graph, History, Node } from "@antv/x6";
 import { placeEdgeLabels } from "./sandbox-canvas-labels";
 import {
   fieldsForModule,
@@ -28,6 +28,18 @@ import {
 } from "./sandbox-canvas-graph";
 
 type MutableCurrent<T> = { current: T };
+
+/**
+ * Engine-neutral hooks on each canvas node and line, for styles and tests:
+ * `data-sandbox-node` / `data-sandbox-edge` hold the domain id.
+ */
+function markCellRoot(
+  graph: Graph,
+  cell: Node | Edge,
+  name: "data-sandbox-node" | "data-sandbox-edge",
+): void {
+  graph.findViewByCell(cell)?.container.setAttribute(name, cell.id);
+}
 
 /**
  * X6 compares routers by value but functions by identity, and the manhattan
@@ -159,6 +171,7 @@ export function synchronizeSandboxCanvas({
         departmentId: department.id,
       });
       departmentNodes.set(department.id, departmentNode);
+      markCellRoot(graph, departmentNode, "data-sandbox-node");
     }
 
     for (const [departmentIndex, department] of state.departments.entries()) {
@@ -277,6 +290,7 @@ export function synchronizeSandboxCanvas({
           );
         }
         moduleNodes.set(sandboxModule.id, moduleNode);
+        markCellRoot(graph, moduleNode, "data-sandbox-node");
       }
     }
 
@@ -418,6 +432,7 @@ export function synchronizeSandboxCanvas({
       edge.setAttrs(linkAttrs);
       edge.setLabels(linkLabels);
       edge.setData({ kind: "link", linkId: link.id });
+      markCellRoot(graph, edge, "data-sandbox-edge");
     }
 
     graph.cleanSelection();

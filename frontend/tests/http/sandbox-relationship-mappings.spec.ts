@@ -1062,7 +1062,7 @@ test("bound module purge reviews stale challenges and refreshes removal without 
   await expect(
     page
       .getByRole("region", { name: "Organization canvas" })
-      .locator(`.x6-cell[data-cell-id="${targetModule.id}"]`),
+      .locator(`[data-sandbox-node="${targetModule.id}"]`),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Undo", exact: true }),
@@ -1627,7 +1627,10 @@ async function dragCanvasNode(
   node: ReturnType<Page["locator"]>,
   beforeDrop: () => Promise<void> = async () => {},
 ) {
-  const box = (await node.locator("text").first().boundingBox())!;
+  const box = (await node
+    .locator('[data-sandbox-part="header"]')
+    .first()
+    .boundingBox())!;
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
   await page.mouse.move(x, y);
@@ -1637,10 +1640,9 @@ async function dragCanvasNode(
   await page.mouse.up();
 }
 
-function translation(transform: string | null) {
-  const match = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(transform ?? "");
-  if (!match) throw new Error(`No translation in ${transform}`);
-  return { x: Number(match[1]), y: Number(match[2]) };
+async function canvasPosition(node: ReturnType<Page["locator"]>) {
+  const box = (await node.boundingBox())!;
+  return { x: Math.round(box.x), y: Math.round(box.y) };
 }
 
 test("a dropped module stays where it lands while its layout saves", async ({
@@ -1657,8 +1659,8 @@ test("a dropped module stays where it lands while its layout saves", async ({
     { saveDelay },
   );
   const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const node = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
-  const before = await node.getAttribute("transform");
+  const node = canvas.locator('[data-sandbox-node="sample-requests"]');
+  const before = await canvasPosition(node);
   const save = page.waitForRequest(
     (request) =>
       request.method() === "PUT" &&
@@ -1670,14 +1672,20 @@ test("a dropped module stays where it lands while its layout saves", async ({
       node.evaluate((element) => {
         const seen: string[] = [];
         Object.assign(window, { droppedPositions: seen });
-        new MutationObserver(() =>
-          seen.push(element.getAttribute("transform") ?? ""),
-        ).observe(element, { attributeFilter: ["transform"] });
+        const region = element.closest('[aria-label="Organization canvas"]')!;
+        new MutationObserver(() => {
+          const box = element.getBoundingClientRect();
+          seen.push(`${Math.round(box.x)},${Math.round(box.y)}`);
+        }).observe(region, {
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["transform", "style"],
+        });
       }),
     );
     await save;
-    await expect.poll(() => node.getAttribute("transform")).not.toBe(before);
-    const dropped = await node.getAttribute("transform");
+    await expect.poll(() => canvasPosition(node)).not.toEqual(before);
+    const dropped = await canvasPosition(node);
     // The drag-end sync once re-applied the last saved layout, so the module
     // jumped back to its old place before the new layout arrived.
     expect(
@@ -1686,15 +1694,12 @@ test("a dropped module stays where it lands while its layout saves", async ({
           (window as unknown as { droppedPositions: string[] })
             .droppedPositions,
       ),
-    ).not.toContain(before);
+    ).not.toContain(`${before.x},${before.y}`);
     releaseSave();
     await expect
-      .poll(() => {
-        const box = sandbox.document().design.layout?.["sample-requests"];
-        return box ? { x: box.x, y: box.y } : null;
-      })
-      .toEqual(translation(dropped));
-    await expect(node).toHaveAttribute("transform", dropped!);
+      .poll(() => sandbox.document().design.layout?.["sample-requests"])
+      .toBeDefined();
+    expect(await canvasPosition(node)).toEqual(dropped);
   } finally {
     releaseSave();
   }
@@ -1706,8 +1711,8 @@ test("a refused layout puts the dropped module back", async ({ page }) => {
     saveFailure: "Sandbox storage is unavailable",
   });
   const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const requests = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
-  const equipment = canvas.locator('.x6-cell[data-cell-id="sample-equipment"]');
+  const requests = canvas.locator('[data-sandbox-node="sample-requests"]');
+  const equipment = canvas.locator('[data-sandbox-node="sample-equipment"]');
   // A failed save keeps that change local and refuses later changes.
   await dragCanvasNode(page, requests);
   await expect(
@@ -1715,12 +1720,18 @@ test("a refused layout puts the dropped module back", async ({ page }) => {
       "Your change was not saved. It remains local until you reapply it successfully.",
     ),
   ).toBeVisible();
-  const before = await equipment.getAttribute("transform");
+  const before = await canvasPosition(equipment);
   await dragCanvasNode(page, equipment);
   await expect(
     page.getByText("A Sandbox change is already being saved."),
   ).toBeVisible();
-  await expect(equipment).toHaveAttribute("transform", before!);
+  // Within 2 px: the selected outline is wider than the idle one.
+  await expect
+    .poll(async () => {
+      const now = await canvasPosition(equipment);
+      return Math.abs(now.x - before.x) <= 2 && Math.abs(now.y - before.y) <= 2;
+    })
+    .toBe(true);
 });
 
 test("an empty, never-published Sandbox offers one start and nothing to publish", async ({
@@ -2194,7 +2205,7 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
   await openAuthenticatedSandbox(page, design);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
   const line = (id: string) =>
-    canvas.locator(`.x6-cell[data-cell-id="${id}"] [data-sandbox-line]`);
+    canvas.locator(`[data-sandbox-edge="${id}"] [data-sandbox-line]`);
 
   await expect(line("sample-uses")).toHaveAttribute(
     "data-sandbox-edge-kind",
@@ -2217,8 +2228,12 @@ test("a line to another department is drawn as a handoff", async ({ page }) => {
       const dash = (selector: string) =>
         getComputedStyle(document.querySelector(selector)!).strokeDasharray;
       return {
-        relationship: dash('[data-cell-id="sample-uses"] [data-sandbox-line]'),
-        handoff: dash('[data-cell-id="sample-billing"] [data-sandbox-line]'),
+        relationship: dash(
+          '[data-sandbox-edge="sample-uses"] [data-sandbox-line]',
+        ),
+        handoff: dash(
+          '[data-sandbox-edge="sample-billing"] [data-sandbox-line]',
+        ),
         keyRelationship: dash(
           '[data-sandbox-line="key"][data-sandbox-edge-kind="relationship"]',
         ),
@@ -2350,11 +2365,11 @@ test("leaving Connect modules after choosing another department saves nothing", 
   expect(
     sandbox.document().design.relationships.map((item) => item.id),
   ).toEqual(["sample-uses"]);
-  await expect(
-    page
-      .getByRole("region", { name: "Organization canvas" })
-      .locator('[data-sandbox-edge-kind="handoff"]'),
-  ).toHaveCount(0);
+  const lines = page
+    .getByRole("region", { name: "Organization canvas" })
+    .locator("[data-sandbox-edge] [data-sandbox-line]");
+  await expect(lines).toHaveCount(1);
+  await expect(lines).toHaveAttribute("data-sandbox-edge-kind", "relationship");
 });
 
 test("a rejected password is reported beside Publish, not above the list", async ({
@@ -2454,7 +2469,8 @@ test("hovering a module or relationship traces its connections", async ({
   await page.setViewportSize({ width: 1440, height: 900 });
   await openAuthenticatedSandbox(page);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
+  const cell = (id: string) =>
+    canvas.locator(`[data-sandbox-node="${id}"], [data-sandbox-edge="${id}"]`);
   await page.getByRole("button", { name: "Fit canvas" }).click();
 
   await cell("sample-requests").hover();
@@ -2466,7 +2482,7 @@ test("hovering a module or relationship traces its connections", async ({
   await expect(cell("sample-uses")).toHaveAttribute("data-trace", "on");
 
   await page.mouse.move(5, 5);
-  await expect(canvas.locator('.x6-cell[data-trace="dim"]')).toHaveCount(0);
+  await expect(canvas.locator('[data-trace="dim"]')).toHaveCount(0);
 });
 
 test("a pending publication review protects browser exits", async ({
@@ -4371,7 +4387,8 @@ test("a Test result from an older draft says so and can show its module on the c
   await outcome.getByRole("button", { name: "Show test on canvas" }).click();
   await expect(page).toHaveURL(/section=build/);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const cell = (id: string) => canvas.locator(`.x6-cell[data-cell-id="${id}"]`);
+  const cell = (id: string) =>
+    canvas.locator(`[data-sandbox-node="${id}"], [data-sandbox-edge="${id}"]`);
   await expect(cell("sample-requests")).toHaveAttribute("data-trace", "on");
   await expect(cell("sample-uses")).toHaveAttribute("data-trace", "on");
   await expect(cell("sample-requests")).toBeInViewport();
@@ -4437,7 +4454,7 @@ test("a Test run plays out on the canvas in three still steps", async ({
   await expect(page.getByText("Step 3 of 3: Result")).toBeHidden();
 });
 
-test("personal text scaling leaves canvas SVG key editor and geometry unchanged", async ({
+test("personal text scaling leaves the canvas key, editor, and geometry unchanged", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -4445,8 +4462,8 @@ test("personal text scaling leaves canvas SVG key editor and geometry unchanged"
   const frame = page.getByLabel("Module design canvas");
   await expect(frame.locator("[data-sandbox-body]").first()).toBeVisible();
   await frame.getByText("Key", { exact: true }).click();
-  const node = frame.locator('.x6-cell[data-cell-id="sample-requests"]');
-  await node.locator("text").first().dblclick();
+  const node = frame.locator('[data-sandbox-node="sample-requests"]');
+  await node.locator('[data-sandbox-part="header"]').first().dblclick();
   await expect(
     page.getByRole("textbox", { name: "Canvas name editor" }),
   ).toBeVisible();
@@ -4457,7 +4474,9 @@ test("personal text scaling leaves canvas SVG key editor and geometry unchanged"
       const editor = frame.querySelector(
         'input[aria-label="Canvas name editor"]',
       )!;
-      const body = frame.querySelector('[data-sandbox-kind="module"]')!;
+      const node = frame.querySelector(
+        '[data-sandbox-node="sample-requests"]',
+      )!;
       const grid = frame.querySelector('[data-testid="sandbox-grid"]')!;
       return {
         keyFont: getComputedStyle(key).fontSize,
@@ -4465,12 +4484,13 @@ test("personal text scaling leaves canvas SVG key editor and geometry unchanged"
         editorFont: getComputedStyle(editor).fontSize,
         editorHeight: editor.getBoundingClientRect().height,
         editorRadius: getComputedStyle(editor).borderRadius,
-        nodeRadius: getComputedStyle(body).rx,
-        nodeWidth: body.getAttribute("width"),
+        nodeWidth: Math.round(node.getBoundingClientRect().width),
         grid: getComputedStyle(grid).backgroundSize,
-        svgFonts: [...frame.querySelectorAll("svg text")].map(
-          (text) => getComputedStyle(text).fontSize,
-        ),
+        fieldFonts: [
+          ...frame.querySelectorAll(
+            '[data-sandbox-part="field-name"], [data-sandbox-part="field-type"]',
+          ),
+        ].map((text) => getComputedStyle(text).fontSize),
       };
     });
   const baseline = await metrics();
@@ -4581,11 +4601,13 @@ test("disabled convenience shortcuts preserve canvas buttons and essential arrow
   ).toContainText("Canvas");
   const node = page
     .getByRole("region", { name: "Organization canvas" })
-    .locator('.x6-cell[data-cell-id="sample-requests"]');
-  await node.locator("text").first().click();
-  const before = await node.getAttribute("transform");
+    .locator('[data-sandbox-node="sample-requests"]');
+  await node.locator('[data-sandbox-part="header"]').first().click();
+  const before = await canvasPosition(node);
   await page.keyboard.press("ArrowRight");
-  await expect(node).not.toHaveAttribute("transform", before ?? "");
+  await expect
+    .poll(async () => (await canvasPosition(node)).x)
+    .toBeGreaterThan(before.x);
   await page.getByRole("button", { name: "View canvas", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Canvas help", exact: true })
@@ -4622,8 +4644,8 @@ for (const preference of ["off", "pending"] as const) {
     try {
       const sandbox = await openAuthenticatedSandbox(page);
       const canvas = page.getByRole("region", { name: "Organization canvas" });
-      const node = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
-      await node.locator("text").first().click();
+      const node = canvas.locator('[data-sandbox-node="sample-requests"]');
+      await node.locator('[data-sandbox-part="header"]').first().click();
       await canvas.focus();
       await page.keyboard.press("F2");
       await expect(
@@ -4670,8 +4692,8 @@ test("registered shortcuts enabled retain real help fit rename and removal revie
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
   const canvas = page.getByRole("region", { name: "Organization canvas" });
-  const node = canvas.locator('.x6-cell[data-cell-id="sample-requests"]');
-  await node.locator("text").first().click();
+  const node = canvas.locator('[data-sandbox-node="sample-requests"]');
+  await node.locator('[data-sandbox-part="header"]').first().click();
   await canvas.focus();
   await page.keyboard.press("?");
   await expect(
