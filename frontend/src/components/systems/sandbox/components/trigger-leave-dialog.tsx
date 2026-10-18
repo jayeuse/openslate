@@ -44,7 +44,7 @@ export function TriggerLeaveDialog({
       <DialogContent className="grid gap-4">
         <DialogTitle>Unsaved trigger changes</DialogTitle>
         <DialogDescription>
-          {plural(draft.changes, "trigger change")} not saved yet.
+          Discard removes {plural(draft.changes, "unsaved change")}.
         </DialogDescription>
         {error ? (
           <Alert role="alert" variant="destructive">

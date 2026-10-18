@@ -159,14 +159,12 @@ function Connector() {
   );
 }
 function FlowNode({
-  label,
   title,
   description,
   icon,
   selected,
   onClick,
 }: {
-  label: string;
   title: string;
   description: string;
   icon: ReactNode;
@@ -176,7 +174,6 @@ function FlowNode({
   return (
     <button
       type="button"
-      aria-label={label}
       aria-pressed={selected}
       onClick={onClick}
       className={cn(
@@ -236,7 +233,6 @@ export function TriggerFlow({
         )}
         <div className="mx-auto my-7 w-full max-w-md">
           <FlowNode
-            label="Edit trigger"
             title={`When · ${triggerEventLabel(recordTrigger)}`}
             description={trigger}
             icon={
@@ -270,7 +266,6 @@ export function TriggerFlow({
               {conditions.map((condition, index) => (
                 <FlowNode
                   key={condition.id}
-                  label={`Edit condition ${index + 1}`}
                   title={`Condition ${index + 1}${index ? (any ? " · OR" : " · AND") : ""}`}
                   description={conditionText(design, condition)}
                   icon={<Filter />}
@@ -285,7 +280,6 @@ export function TriggerFlow({
             {recordTrigger.actions.map((action, index) => (
               <FlowNode
                 key={action.id}
-                label={`Edit action ${index + 1}`}
                 title={`Then · Action ${index + 1}`}
                 description={actionText(design, action)}
                 icon={<Pencil />}
@@ -299,60 +293,67 @@ export function TriggerFlow({
                 onClick={() => onSelect("actions")}
                 className="border-border text-muted-foreground focus-visible:outline-ring rounded-xl border border-dashed p-5 text-sm focus-visible:outline-2"
               >
-                Add an action to define what changes.
+                Add action
               </button>
             )}
           </div>
         </div>
       </section>
-      <section
-        aria-label="Trigger summary"
-        className={cn("border-border min-w-0", !summaryOnly && "border-t pt-5")}
-      >
-        <h3 data-slot="section-title" className="font-semibold">
-          Trigger summary
-        </h3>
-        {summaryOnly && !recordTrigger.enabled ? (
-          <p className="text-muted-foreground mt-1 text-sm">
-            Off · won&apos;t run after publish
-          </p>
-        ) : null}
-        <div className="mt-3 space-y-2 text-sm leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap">
-          <p>
-            {recordTrigger.trigger.kind === "schedule"
-              ? "On a schedule: "
-              : "When "}
-            {trigger}.
-          </p>
-          {conditions.length ? (
-            <>
-              <p>
-                Continue when{" "}
-                {any ? "any condition matches" : "all conditions match"}:
-              </p>
-              <ul className="list-disc space-y-1 pl-5">
-                {conditions.map((condition) => (
-                  <li key={condition.id}>{conditionText(design, condition)}</li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <p>Always continues.</p>
+      {summaryOnly ? (
+        <section
+          aria-label="Trigger summary"
+          className={cn(
+            "border-border min-w-0",
+            !summaryOnly && "border-t pt-5",
           )}
-          {recordTrigger.actions.length ? (
-            <>
-              <p>Then:</p>
-              <ul className="list-disc space-y-1 pl-5">
-                {recordTrigger.actions.map((action) => (
-                  <li key={action.id}>{actionText(design, action)}</li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <p>No actions are configured.</p>
-          )}
-        </div>
-      </section>
+        >
+          <h3 data-slot="section-title" className="font-semibold">
+            Trigger summary
+          </h3>
+          {summaryOnly && !recordTrigger.enabled ? (
+            <p className="text-muted-foreground mt-1 text-sm">
+              Off · won&apos;t run after publish
+            </p>
+          ) : null}
+          <div className="mt-3 space-y-2 text-sm leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap">
+            <p>
+              {recordTrigger.trigger.kind === "schedule"
+                ? "On a schedule: "
+                : "When "}
+              {trigger}.
+            </p>
+            {conditions.length ? (
+              <>
+                <p>
+                  Continue when{" "}
+                  {any ? "any condition matches" : "all conditions match"}:
+                </p>
+                <ul className="list-disc space-y-1 pl-5">
+                  {conditions.map((condition) => (
+                    <li key={condition.id}>
+                      {conditionText(design, condition)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p>Always continues.</p>
+            )}
+            {recordTrigger.actions.length ? (
+              <>
+                <p>Then:</p>
+                <ul className="list-disc space-y-1 pl-5">
+                  {recordTrigger.actions.map((action) => (
+                    <li key={action.id}>{actionText(design, action)}</li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p>No actions yet.</p>
+            )}
+          </div>
+        </section>
+      ) : null}
     </>
   );
 }

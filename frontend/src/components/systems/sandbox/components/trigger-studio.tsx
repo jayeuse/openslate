@@ -6,7 +6,6 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
-import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,7 +56,7 @@ import type {
 } from "../domain/document";
 import type { SandboxTriggerRun } from "../state/api";
 import { dateRangeFits, dateValueInRange } from "../domain/date-values";
-import { reportUndoable } from "@/lib/feedback";
+import { reportDone, reportUndoable } from "@/lib/feedback";
 
 export type TriggerStudioProps = {
   design: SandboxDocumentDesign;
@@ -595,15 +594,36 @@ function ValueEditor({
   value: SandboxValueSource;
   onChange: (value: SandboxValueSource) => void;
 }) {
-  const sourceId = useId();
   const literalId = useId();
   const referenceId = useId();
   const references = compatibleReferenceOptions(design, recordTrigger, target);
+  // Another field as the value is rare: one quiet toggle beside the label,
+  // shown only when a compatible field exists.
+  const sourceToggle = references[0] ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="text-muted-foreground -my-1 px-2 max-xl:min-h-11"
+      onClick={() =>
+        onChange(
+          value.kind === "literal"
+            ? { kind: "field-reference", ...references[0]!.reference }
+            : defaultLiteral(target),
+        )
+      }
+    >
+      {value.kind === "literal" ? "Use a field" : "Use fixed value"}
+    </Button>
+  ) : null;
   return (
-    <div className="grid min-w-0 gap-3 @min-[450px]/settings:grid-cols-2">
+    <div className="min-w-0">
       {value.kind === "literal" ? (
         <Field>
-          <FieldLabel htmlFor={literalId}>Value</FieldLabel>
+          <div className="flex items-center justify-between gap-2">
+            <FieldLabel htmlFor={literalId}>Value</FieldLabel>
+            {sourceToggle}
+          </div>
           {target?.config.kind === "select" ? (
             <NativeSelect
               id={literalId}
@@ -710,7 +730,10 @@ function ValueEditor({
         </Field>
       ) : (
         <Field>
-          <FieldLabel htmlFor={referenceId}>Referenced field</FieldLabel>
+          <div className="flex items-center justify-between gap-2">
+            <FieldLabel htmlFor={referenceId}>Another field</FieldLabel>
+            {sourceToggle}
+          </div>
           <NativeSelect
             id={referenceId}
             value={fieldReferenceOptionValue(value)}
@@ -730,34 +753,6 @@ function ValueEditor({
           </NativeSelect>
         </Field>
       )}
-      <AdvancedSection
-        storageKey="sandbox.trigger-value"
-        setCount={value.kind === "field-reference" ? 1 : 0}
-        className="col-span-full"
-      >
-        <Field>
-          <FieldLabel htmlFor={sourceId}>Value source</FieldLabel>
-          <NativeSelect
-            id={sourceId}
-            value={value.kind}
-            onChange={(event) =>
-              onChange(
-                event.target.value === "field-reference" && references[0]
-                  ? { kind: "field-reference", ...references[0].reference }
-                  : defaultLiteral(target),
-              )
-            }
-          >
-            <NativeSelectOption value="literal">Fixed value</NativeSelectOption>
-            <NativeSelectOption
-              value="field-reference"
-              disabled={!references.length}
-            >
-              Another field
-            </NativeSelectOption>
-          </NativeSelect>
-        </Field>
-      </AdvancedSection>
     </div>
   );
 }
@@ -846,7 +841,8 @@ export function TriggerStudio({
   });
   const [stableActions] = useState(() => ({
     save: () => saveRef.current(),
-    discard: () => discardRef.current(),
+    // The leave dialog navigates away, so its discard offers no Undo.
+    discard: () => discardRef.current(false),
   }));
   useEffect(
     () => onStateChange?.({ dirty, pending, changes, ...stableActions }),
@@ -866,11 +862,23 @@ export function TriggerStudio({
     setDraft(next);
     setError("");
   }
-  function discard() {
+  function discard(withUndo = true) {
+    const snapshot = { draft, selectedId };
     setDraft(triggers);
-    setSelectedId(triggers[0]?.id ?? "");
+    setSelectedId(
+      triggers.some((item) => item.id === selectedId)
+        ? selectedId
+        : (triggers[0]?.id ?? ""),
+    );
     setSelectedStep("trigger");
     setError("");
+    if (withUndo)
+      reportUndoable("Changes discarded", () => {
+        setDraft(snapshot.draft);
+        setSelectedId(snapshot.selectedId);
+        setSelectedStep("trigger");
+        setError("");
+      });
   }
   async function save(): Promise<{ ok: true } | { ok: false; error: string }> {
     const snapshot = structuredClone(draft);
@@ -884,7 +892,10 @@ export function TriggerStudio({
     setPending(true);
     const result = await saveStudioDraft(snapshot, onChange);
     setPending(false);
-    if (result.ok) return { ok: true };
+    if (result.ok) {
+      reportDone("Triggers saved");
+      return { ok: true };
+    }
     const failure =
       "The trigger change could not be saved. Your draft is still available.";
     setError(failure);
@@ -901,14 +912,25 @@ export function TriggerStudio({
       detailHeadingRef.current?.focus({ preventScroll: true });
     });
   }
+  /** Focuses the selected row, or New trigger when the list is empty. */
+  function focusCurrentRow() {
+    requestAnimationFrame(() =>
+      (
+        listRef.current?.querySelector<HTMLElement>("[aria-current=true]") ??
+        listRef.current?.querySelector<HTMLElement>("button")
+      )?.focus(),
+    );
+  }
   function deleteTrigger(recordTrigger: SandboxTrigger) {
     const index = draft.findIndex((item) => item.id === recordTrigger.id);
-    updateDraft(draft.filter((item) => item.id !== recordTrigger.id));
+    const remaining = draft.filter((item) => item.id !== recordTrigger.id);
+    updateDraft(remaining);
+    // The menu that had focus is gone with the trigger; land on its
+    // neighbor in the list.
+    setSelectedId((remaining[index] ?? remaining[index - 1])?.id ?? "");
+    setSelectedStep("trigger");
     setPhoneView("list");
-    // The menu that had focus is gone with the trigger; land on the list.
-    requestAnimationFrame(() =>
-      listRef.current?.querySelector<HTMLElement>("button")?.focus(),
-    );
+    focusCurrentRow();
     reportUndoable("Trigger deleted", () => {
       setDraft((current) =>
         current.some((item) => item.id === recordTrigger.id)
@@ -922,23 +944,99 @@ export function TriggerStudio({
       setSelectedId(recordTrigger.id);
       setSelectedStep("trigger");
       setError("");
+      focusCurrentRow();
     });
   }
   function update(next: SandboxTrigger) {
     const index = draft.findIndex((item) => item.id === next.id);
     if (index >= 0) updateDraft(replaceAt(draft, index, next));
   }
+  // Recent activity is occasional: last in the flow column, and on phones
+  // after the settings (the Advanced Last Rule).
+  const recentActivity = (
+    <Collapsible className="border-border mt-6 border-t pt-4">
+      <h3>
+        <CollapsibleTrigger className="focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center justify-between text-sm font-medium focus-visible:outline-2">
+          Recent activity
+          <ChevronDown className="size-4" aria-hidden="true" />
+        </CollapsibleTrigger>
+      </h3>
+      <CollapsibleContent keepMounted>
+        <section
+          aria-label="Recent activity details"
+          className="mt-4 grid gap-3"
+        >
+          <div>
+            <p className="text-muted-foreground mt-1 text-sm">
+              See what published triggers did in the live workspace.
+            </p>
+            <Button
+              variant="outline"
+              className="mt-2 min-h-11"
+              disabled={activity.loading}
+              onClick={() => void onRefreshActivity()}
+            >
+              {activity.loading ? "Refreshing…" : "Refresh activity"}
+            </Button>
+          </div>
+          {activity.error ? (
+            <Alert variant="destructive">
+              {activity.error}{" "}
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-h-11"
+                onClick={() => void onRefreshActivity()}
+              >
+                Retry
+              </Button>
+            </Alert>
+          ) : null}
+          {runs.length ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {runs.map((run) => (
+                <Card key={run.id}>
+                  <CardHeader className="gap-1">
+                    <CardTitle className="text-base">
+                      {run.triggerName}
+                    </CardTitle>
+                    <p className="text-muted-foreground text-xs">
+                      <time dateTime={run.createdAt}>
+                        {new Date(run.createdAt).toLocaleString()}
+                      </time>
+                    </p>
+                  </CardHeader>
+                  <CardContent className="grid gap-1 text-sm">
+                    <p className="font-medium">{triggerRunStatus(run)}</p>
+                    <p className="text-muted-foreground">{runDetail(run)}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : activity.loading ? (
+            <p className="text-muted-foreground text-sm" role="status">
+              Loading recent activity…
+            </p>
+          ) : activity.error ? null : (
+            <p className="text-muted-foreground text-sm">
+              No published trigger activity yet.
+            </p>
+          )}
+        </section>
+      </CollapsibleContent>
+    </Collapsible>
+  );
   return (
     <section
       ref={studioRef}
       aria-labelledby="trigger-studio-title"
       className="@container/studio flex h-full min-w-0 flex-col"
     >
-      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
+      <div className="border-border min-w-0 shrink-0 overflow-clip rounded-xl border @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
         <ResizablePanelGroup
           orientation="horizontal"
           disabled={!wide}
-          className="block! h-auto! @min-[900px]/studio:flex! @min-[900px]/studio:h-full!"
+          className="block! h-auto! overflow-visible! @min-[900px]/studio:flex! @min-[900px]/studio:h-full! @min-[900px]/studio:overflow-hidden!"
         >
           <ResizablePanel
             id="trigger-list"
@@ -1001,6 +1099,8 @@ export function TriggerStudio({
                     className={cn(
                       "relative h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal",
                       phone && "pr-9",
+                      recordTrigger.id === selectedId &&
+                        "text-action-text shadow-[inset_2px_0_0_var(--action)]",
                     )}
                     onClick={() => {
                       setSelectedId(recordTrigger.id);
@@ -1044,14 +1144,11 @@ export function TriggerStudio({
                   className="mb-3 -ml-2 min-h-11"
                   onClick={() => {
                     setPhoneView("list");
-                    requestAnimationFrame(() =>
-                      listRef.current
-                        ?.querySelector<HTMLElement>("[aria-current=true]")
-                        ?.focus(),
-                    );
+                    focusCurrentRow();
                   }}
                 >
                   <ChevronLeft aria-hidden="true" />
+                  <span className="sr-only">Back to </span>
                   Triggers
                 </Button>
               ) : null}
@@ -1107,84 +1204,7 @@ export function TriggerStudio({
                   Create a trigger to define its event, conditions, and actions.
                 </p>
               )}
-              <Collapsible className="border-border mt-6 border-t pt-4">
-                <h3>
-                  <CollapsibleTrigger className="focus-visible:outline-ring flex min-h-11 w-full cursor-pointer items-center justify-between text-sm font-medium focus-visible:outline-2">
-                    Recent activity
-                    <ChevronDown className="size-4" aria-hidden="true" />
-                  </CollapsibleTrigger>
-                </h3>
-                <CollapsibleContent keepMounted>
-                  <section
-                    aria-label="Recent activity details"
-                    className="mt-4 grid gap-3"
-                  >
-                    <div>
-                      <p className="text-muted-foreground mt-1 text-sm">
-                        See what published triggers did in the live workspace.
-                      </p>
-                      <Button
-                        variant="outline"
-                        className="mt-2 min-h-11"
-                        disabled={activity.loading}
-                        onClick={() => void onRefreshActivity()}
-                      >
-                        {activity.loading ? "Refreshing…" : "Refresh activity"}
-                      </Button>
-                    </div>
-                    {activity.error ? (
-                      <Alert variant="destructive">
-                        {activity.error}{" "}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="min-h-11"
-                          onClick={() => void onRefreshActivity()}
-                        >
-                          Retry
-                        </Button>
-                      </Alert>
-                    ) : null}
-                    {runs.length ? (
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {runs.map((run) => (
-                          <Card key={run.id}>
-                            <CardHeader className="gap-1">
-                              <CardTitle className="text-base">
-                                {run.triggerName}
-                              </CardTitle>
-                              <p className="text-muted-foreground text-xs">
-                                <time dateTime={run.createdAt}>
-                                  {new Date(run.createdAt).toLocaleString()}
-                                </time>
-                              </p>
-                            </CardHeader>
-                            <CardContent className="grid gap-1 text-sm">
-                              <p className="font-medium">
-                                {triggerRunStatus(run)}
-                              </p>
-                              <p className="text-muted-foreground">
-                                {runDetail(run)}
-                              </p>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    ) : activity.loading ? (
-                      <p
-                        className="text-muted-foreground text-sm"
-                        role="status"
-                      >
-                        Loading recent activity…
-                      </p>
-                    ) : activity.error ? null : (
-                      <p className="text-muted-foreground text-sm">
-                        No published trigger activity yet.
-                      </p>
-                    )}
-                  </section>
-                </CollapsibleContent>
-              </Collapsible>
+              {phone ? null : recentActivity}
             </div>
           </ResizablePanel>
           {wide && (
@@ -1231,20 +1251,21 @@ export function TriggerStudio({
                     trigger={selected}
                     pending={pending}
                     onChange={update}
-                    selectedStep={selectedStep}
+                    selectedStep={phone ? "" : selectedStep}
                   />
                 ) : (
                   <p className="text-muted-foreground text-sm">
                     Select or create a trigger to edit its settings.
                   </p>
                 )}
+                {phone ? recentActivity : null}
               </div>
               {dirty || pending ? (
-                <div className="border-border flex flex-wrap items-center justify-end gap-3 border-t p-4">
+                <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 border-t p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
                   <Button
                     variant="outline"
                     className="min-h-11"
-                    onClick={discard}
+                    onClick={() => discard()}
                     disabled={pending}
                   >
                     Discard changes

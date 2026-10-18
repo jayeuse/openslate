@@ -127,15 +127,15 @@ Wrong: "No condition filter is configured." shown twice, in the flow and in the 
 
 ## Shared parts (Phase 1)
 
-| Part                  | Contract                                                                                                                                                                                                 |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AdvancedSection`     | A disclosure with the label "Advanced". Takes a stable key and a count of set controls. Closed by default; remembers its state (R1.3). Keyboard: Enter or Space toggles; the header has `aria-expanded`. |
-| Pending action        | A button that shows its pending label ("Saving…", "Deleting…") with `aria-busy`, and keeps its width. One component or one helper for every data-changing button.                                        |
-| Save-state chip       | The header chip. Publish state ("Unpublished changes", "Published", "Nothing to publish yet") plus save state ("Saving…", "Saved", "Not saved · Retry", "N unsaved trigger changes").                    |
-| `DisabledReason`      | Gives a disabled control a reason: a tooltip on hover and focus, `aria-describedby`, and a tap reveal on touch. Uses `aria-disabled` so the control stays focusable.                                     |
-| Dialog footer         | One order everywhere: Cancel (outline) on the left, the commit button on the right (primary, or destructive for a destructive commit). One label: "Cancel".                                              |
-| `DepartmentMark`      | An 8 px rounded square in `var(--dept-n)`. It appears beside a department or module name outside the canvas.                                                                                             |
-| Single-select filters | Use `Tabs` (or a toggle with a visible pressed state) so the selected option shows in every look.                                                                                                        |
+| Part                  | Contract                                                                                                                                                                                                                                                         |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AdvancedSection`     | A disclosure with the label "Advanced". Takes a stable key and a count of set controls. Closed by default; remembers its state (R1.3). Keyboard: Enter or Space toggles; the header has `aria-expanded`.                                                         |
+| Pending action        | A button that shows its pending label ("Saving…", "Deleting…") with `aria-busy`, and keeps its width. One component or one helper for every data-changing button.                                                                                                |
+| Save-state chip       | The header chip. Publish state ("Unpublished changes", "Published", "Nothing to publish yet") plus save state ("Saving…", "Saved", "Not saved · Retry", "N unsaved trigger changes").                                                                            |
+| `DisabledReason`      | Gives a disabled control a reason: a tooltip on hover and focus, `aria-describedby`, and a tap reveal on touch. Uses `aria-disabled` so the control stays focusable.                                                                                             |
+| Dialog footer         | One order everywhere: Cancel (outline) on the left, the commit button on the right (primary, or destructive for a destructive commit). One label: "Cancel". Exception: the Triggers leave dialog (D1) uses Stay · Discard · Save, with Stay in the cancel place. |
+| `DepartmentMark`      | An 8 px rounded square in `var(--dept-n)`. It appears beside a department or module name outside the canvas.                                                                                                                                                     |
+| Single-select filters | Use `Tabs` (or a toggle with a visible pressed state) so the selected option shows in every look.                                                                                                                                                                |
 
 ## Classification
 
@@ -210,20 +210,20 @@ Wrong: "No condition filter is configured." shown twice, in the flow and in the 
 
 ### Triggers
 
-| Control                                                   | Place                                                              | Reason                                                                      |
-| --------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| New trigger, trigger list                                 | E                                                                  | Entry point                                                                 |
-| Trigger menu: Delete trigger (Undo notice, D5)            | M                                                                  | Occasional                                                                  |
-| Name, On switch (D4)                                      | E                                                                  | Common                                                                      |
-| When: event, module                                       | E                                                                  | Common                                                                      |
-| When: field; operator and value; frequency, time, weekday | C (by event), E                                                    | Needed for that event                                                       |
-| If: conditions, Add condition                             | E                                                                  | Common; when empty, the step shows "Always" and one "Add condition" control |
-| If: All or Any                                            | C (2 or more conditions)                                           | Matters only then                                                           |
-| Then: actions (field, value), Add action                  | E                                                                  | Common                                                                      |
-| Value: Fixed value or Another field (D4)                  | A (inside the value editor)                                        | Rare                                                                        |
-| Recent activity                                           | A                                                                  | Occasional, already collapsed                                               |
-| Save triggers, Discard changes                            | E (sticky bar, shown when changes exist)                           | D1                                                                          |
-| Flow preview                                              | E (desktop column); the summary at the top of the detail on 390 px | Reading aid                                                                 |
+| Control                                                   | Place                                                                                                       | Reason                                                                      |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| New trigger, trigger list                                 | E                                                                                                           | Entry point                                                                 |
+| Trigger menu: Delete trigger (Undo notice, D5)            | M                                                                                                           | Occasional                                                                  |
+| Name, On switch (D4)                                      | E                                                                                                           | Common                                                                      |
+| When: event, module                                       | E                                                                                                           | Common                                                                      |
+| When: field; operator and value; frequency, time, weekday | C (by event), E                                                                                             | Needed for that event                                                       |
+| If: conditions, Add condition                             | E                                                                                                           | Common; when empty, the step shows "Always" and one "Add condition" control |
+| If: All or Any                                            | C (2 or more conditions)                                                                                    | Matters only then                                                           |
+| Then: actions (field, value), Add action                  | E                                                                                                           | Common                                                                      |
+| Value: Fixed value or Another field (D4)                  | C (a compatible field exists): one inline toggle beside the Value label ("Use a field" / "Use fixed value") | Rare; one Advanced block per value was noise (Phase 4 review)               |
+| Recent activity                                           | A                                                                                                           | Occasional, already collapsed                                               |
+| Save triggers, Discard changes                            | E (sticky bar, shown when changes exist)                                                                    | D1                                                                          |
+| Flow preview                                              | E (desktop column); the summary at the top of the detail on 390 px                                          | Reading aid                                                                 |
 
 ### Test
 

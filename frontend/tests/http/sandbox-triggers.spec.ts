@@ -26,11 +26,12 @@ test("a select condition offers option labels and stores the option ID", async (
   await expect(
     page
       .getByRole("region", { name: "Flow preview" })
-      .getByRole("button", { name: "Edit condition 1" }),
+      .getByRole("button", { name: /^Condition 1\b/ }),
   ).toContainText("Status equals In progress");
 
   await page.getByRole("button", { name: "Save triggers" }).click();
   await expect.poll(sandbox.documentWrites).toBe(1);
+  await expect(page.getByText("Triggers saved", { exact: true })).toBeVisible();
   const document = sandbox.document();
   const condition = document.triggers[0]!.conditionGroup.conditions[0]!;
   const status = document.design.modules
@@ -63,6 +64,15 @@ test("unsaved triggers show their count and hold Review and Publish", async ({
   await expect(page.getByRole("button", { name: "Save triggers" })).toHaveCount(
     0,
   );
+  // Discard can be undone from its notice.
+  await expect(
+    page.getByText("Changes discarded", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByLabel("Trigger name")).toHaveValue("Renamed trigger");
+  await expect(
+    page.getByText("1 unsaved trigger change", { exact: true }),
+  ).toBeVisible();
 });
 
 test("leaving with unsaved triggers asks Save, Discard, or Stay", async ({
@@ -74,7 +84,7 @@ test("leaving with unsaved triggers asks Save, Discard, or Stay", async ({
 
   await page.getByLabel("Trigger name").fill("Stay with me");
   await build.click();
-  await expect(dialog).toContainText("1 trigger change not saved yet.");
+  await expect(dialog).toContainText("Discard removes 1 unsaved change.");
   await dialog.getByRole("button", { name: "Stay", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(page).toHaveURL(/section=triggers/);
@@ -104,6 +114,8 @@ test("deleting a trigger can be undone from its notice", async ({ page }) => {
   await page.getByRole("button", { name: "Trigger options" }).click();
   await page.getByRole("menuitem", { name: "Delete trigger" }).click();
   await expect(list.getByRole("button", { name })).toHaveCount(0);
+  // The only trigger is gone, so focus lands on New trigger, not the page.
+  await expect(page.getByRole("button", { name: "New trigger" })).toBeFocused();
   const notice = page.getByText("Trigger deleted", { exact: true });
   await expect(notice).toBeVisible();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
@@ -111,6 +123,7 @@ test("deleting a trigger can be undone from its notice", async ({ page }) => {
     "aria-current",
     "true",
   );
+  await expect(list.getByRole("button", { name })).toBeFocused();
   await expect(page.getByText(/unsaved trigger/)).toHaveCount(0);
   expect(sandbox.documentWrites()).toBe(0);
 });
@@ -139,6 +152,8 @@ test("on a phone, choosing a trigger shows its detail first, with Back", async (
     page.getByRole("region", { name: "Trigger settings" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Triggers", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Back to Triggers", exact: true })
+    .click();
   await expect(list.getByRole("button", { name })).toBeFocused();
 });

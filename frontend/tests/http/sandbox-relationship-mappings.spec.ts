@@ -2937,24 +2937,25 @@ test("daily Test history with a nullable weekday loads and a failed clear remain
   await expect(clear).toBeEnabled();
 });
 
-test("trigger flow preview and summary follow the unsaved rule draft", async ({
+test("the trigger flow preview follows the unsaved rule draft", async ({
   page,
 }) => {
   const sandbox = await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
 
   const flow = page.getByRole("region", { name: "Flow preview" });
-  const summary = page.getByRole("region", { name: "Trigger summary" });
+  // On desktop the flow carries every fact; the summary is for phones.
+  await expect(
+    page.getByRole("region", { name: "Trigger summary" }),
+  ).toHaveCount(0);
   const settings = page.getByRole("region", { name: "Trigger settings" });
   await expect(settings).toBeVisible();
+  await expect(flow.getByRole("button", { name: /^When ·/ })).toBeVisible();
   await expect(
-    flow.getByRole("button", { name: "Edit trigger" }),
+    flow.getByRole("button", { name: /^Condition 1\b/ }),
   ).toBeVisible();
   await expect(
-    flow.getByRole("button", { name: "Edit condition 1" }),
-  ).toBeVisible();
-  await expect(
-    flow.getByRole("button", { name: "Edit action 1" }),
+    flow.getByRole("button", { name: /^Then · Action 1\b/ }),
   ).toBeVisible();
 
   const savedTriggers = sandbox.document().triggers;
@@ -2964,39 +2965,36 @@ test("trigger flow preview and summary follow the unsaved rule draft", async ({
   const conditionValue = settings.getByLabel("Value", { exact: true }).first();
   await conditionValue.fill("Needs immediate review");
   await expect(
-    flow.getByRole("button", { name: "Edit condition 1" }),
+    flow.getByRole("button", { name: /^Condition 1\b/ }),
   ).toContainText("Needs immediate review");
-  await expect(summary).toContainText("Needs immediate review");
   expect(sandbox.document().triggers).toEqual(savedTriggers);
 
   // All or Any appears only once there are two conditions.
   await expect(page.getByLabel("Condition group operator")).toHaveCount(0);
   await page.getByRole("button", { name: "Add condition" }).click();
   await expect(
-    flow.getByRole("button", { name: "Edit condition 2" }),
+    flow.getByRole("button", { name: /^Condition 2\b/ }),
   ).toBeVisible();
   await page.getByLabel("Condition group operator").selectOption("any");
   await expect(flow).toContainText(/any condition/i);
-  await expect(summary).toContainText(/any condition/i);
   await page.getByRole("button", { name: "Remove condition" }).last().click();
   await expect(
-    flow.getByRole("button", { name: "Edit condition 2" }),
+    flow.getByRole("button", { name: /^Condition 2\b/ }),
   ).toHaveCount(0);
 
   await page.getByRole("button", { name: "Add action" }).click();
   await expect(
-    flow.getByRole("button", { name: "Edit action 2" }),
+    flow.getByRole("button", { name: /^Then · Action 2\b/ }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Remove action" }).last().click();
-  await expect(flow.getByRole("button", { name: "Edit action 2" })).toHaveCount(
-    0,
-  );
+  await expect(
+    flow.getByRole("button", { name: /^Then · Action 2\b/ }),
+  ).toHaveCount(0);
 
   await page.getByLabel("Event", { exact: true }).selectOption("schedule");
-  await expect(
-    flow.getByRole("button", { name: "Edit trigger" }),
-  ).toContainText(/schedule/i);
-  await expect(summary).toContainText(/schedule/i);
+  await expect(flow.getByRole("button", { name: /^When ·/ })).toContainText(
+    /schedule/i,
+  );
 });
 
 test("keyboard activation on a trigger flow node focuses its editor", async ({
@@ -3008,7 +3006,7 @@ test("keyboard activation on a trigger flow node focuses its editor", async ({
   const flow = page.getByRole("region", { name: "Flow preview" });
   const condition = page.getByLabel("Condition 1 field");
   const conditionNode = flow.getByRole("button", {
-    name: "Edit condition 1",
+    name: /^Condition 1\b/,
   });
   await conditionNode.focus();
   await page.keyboard.press("Enter");
