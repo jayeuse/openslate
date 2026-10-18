@@ -267,7 +267,9 @@ export function ReviewPublishDialog({
                 </Alert>
               ) : null}
               <section className="mt-2">
-                <h3 className="font-medium">Changes</h3>
+                <h3 data-slot="section-title" className="font-medium">
+                  Changes
+                </h3>
                 {preview.changes.length ? (
                   <div className="mt-2">
                     <PublishChangeGroups

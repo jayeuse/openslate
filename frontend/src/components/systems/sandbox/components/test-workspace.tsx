@@ -497,6 +497,7 @@ export function TestWorkspace({
           className="block! h-auto! overflow-visible! @min-[900px]/test:flex! @min-[900px]/test:h-full! @min-[900px]/test:overflow-hidden!"
         >
           <ResizablePanel
+            id="sandbox-test-setup"
             defaultSize="18%"
             minSize={wide ? "20rem" : 0}
             className={cn(
@@ -956,6 +957,7 @@ export function TestWorkspace({
             <ResizableHandle withHandle aria-label="Resize test setup" />
           )}
           <ResizablePanel
+            id="sandbox-test-outcome"
             minSize={wide ? "18rem" : 0}
             className={cn(
               "min-w-0 overflow-visible! @min-[900px]/test:h-full @min-[900px]/test:overflow-hidden!",
@@ -1059,25 +1061,35 @@ export function TestWorkspace({
               </AdvancedSection>
             </div>
           </ResizablePanel>
-          {wide && (
-            <ResizableHandle withHandle aria-label="Resize field comparison" />
-          )}
-          <ResizablePanel
-            defaultSize="26%"
-            minSize={wide ? "18rem" : 0}
-            className={cn(
-              "min-w-0 overflow-visible! @min-[900px]/test:h-full @min-[900px]/test:overflow-hidden!",
-              phone && phoneView === "setup" && "hidden",
-            )}
-          >
-            <div className="bg-card min-w-0 p-4 @min-[900px]/test:h-full @min-[900px]/test:overflow-y-auto">
-              <TestComparison
-                key={selectedRun?.id ?? "empty"}
-                design={design}
-                run={selectedRun}
-              />
-            </div>
-          </ResizablePanel>
+          {/* Field comparison waits for a result: before the first run the
+              outcome's empty state is the one place that says what to do. */}
+          {selectedRun ? (
+            <>
+              {wide && (
+                <ResizableHandle
+                  withHandle
+                  aria-label="Resize field comparison"
+                />
+              )}
+              <ResizablePanel
+                id="sandbox-test-comparison"
+                defaultSize="26%"
+                minSize={wide ? "18rem" : 0}
+                className={cn(
+                  "min-w-0 overflow-visible! @min-[900px]/test:h-full @min-[900px]/test:overflow-hidden!",
+                  phone && phoneView === "setup" && "hidden",
+                )}
+              >
+                <div className="bg-card min-w-0 p-4 @min-[900px]/test:h-full @min-[900px]/test:overflow-y-auto">
+                  <TestComparison
+                    key={selectedRun.id}
+                    design={design}
+                    run={selectedRun}
+                  />
+                </div>
+              </ResizablePanel>
+            </>
+          ) : null}
         </ResizablePanelGroup>
       </div>
     </section>

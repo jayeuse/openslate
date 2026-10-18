@@ -22,7 +22,7 @@ function fixture(expectedBaseURL: string | undefined): Fixture {
 async function applyTemplate(page: Page, name: string) {
   await page.getByRole("button", { name: "More Sandbox actions" }).click();
   await page.getByRole("menuitem", { name: "Start from a template" }).click();
-  await page.getByRole("button", { name: `Select ${name}` }).click();
+  await page.getByRole("radio", { name }).click();
   await page.getByRole("button", { name: `Use ${name}` }).click();
 }
 

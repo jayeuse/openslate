@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,6 +45,29 @@ export function OrganizationTemplateDialog({
   );
   const [error, setError] = useState("");
   const [applying, setApplying] = useState(false);
+  const idPrefix = useId();
+  /** One choice, so the cards are a radio group: arrows move and choose. */
+  function onTemplateKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!step || pending) return;
+    event.preventDefault();
+    const index = SANDBOX_ORGANIZATION_TEMPLATES.findIndex(
+      (template) => template.id === selectedTemplateId,
+    );
+    const count = SANDBOX_ORGANIZATION_TEMPLATES.length;
+    const next = SANDBOX_ORGANIZATION_TEMPLATES[(index + step + count) % count];
+    if (!next) return;
+    setSelectedTemplateId(next.id);
+    setError("");
+    event.currentTarget
+      .querySelector<HTMLElement>(`[data-template-id="${next.id}"]`)
+      ?.focus();
+  }
   const selectedTemplate = SANDBOX_ORGANIZATION_TEMPLATES.find(
     (template) => template.id === selectedTemplateId,
   );
@@ -71,17 +94,27 @@ export function OrganizationTemplateDialog({
             Nothing changes until you confirm.
           </DialogDescription>
           <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.7fr)]">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div
+              role="radiogroup"
+              aria-label="Templates"
+              className="grid gap-3 sm:grid-cols-2"
+              onKeyDown={onTemplateKeyDown}
+            >
               {SANDBOX_ORGANIZATION_TEMPLATES.map((template) => {
                 const stats = sandboxTemplateStats(template);
                 const selected = template.id === selectedTemplateId;
+                const id = `${idPrefix}-${template.id}`;
                 return (
                   <button
                     key={template.id}
                     type="button"
-                    aria-label={`Select ${template.name}`}
-                    aria-pressed={selected}
-                    className="focus-visible:outline-ring rounded-xl text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-labelledby={`${id}-name`}
+                    aria-describedby={`${id}-description ${id}-stats`}
+                    tabIndex={selected ? 0 : -1}
+                    data-template-id={template.id}
+                    className="focus-visible:outline-ring rounded-xl text-left outline-hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid"
                     disabled={pending}
                     onClick={() => {
                       setSelectedTemplateId(template.id);
@@ -99,12 +132,15 @@ export function OrganizationTemplateDialog({
                         <p className="text-muted-foreground text-xs font-medium">
                           {template.category}
                         </p>
-                        <CardTitle>{template.name}</CardTitle>
-                        <CardDescription>
+                        <CardTitle id={`${id}-name`}>{template.name}</CardTitle>
+                        <CardDescription id={`${id}-description`}>
                           {template.description}
                         </CardDescription>
                       </CardHeader>
-                      <CardContent className="text-muted-foreground text-xs tabular-nums">
+                      <CardContent
+                        id={`${id}-stats`}
+                        className="text-muted-foreground text-xs tabular-nums"
+                      >
                         {stats.departments} departments · {stats.modules}{" "}
                         modules · {stats.fields} fields
                       </CardContent>
@@ -141,7 +177,9 @@ export function OrganizationTemplateDialog({
                     );
                   })()}
                   <section>
-                    <h3 className="font-medium">Recommended for</h3>
+                    <h3 data-slot="section-title" className="font-medium">
+                      Recommended for
+                    </h3>
                     <ul className="text-muted-foreground mt-2 list-inside list-disc space-y-1">
                       {selectedTemplate.recommendedFor.map((item) => (
                         <li key={item}>{item}</li>
@@ -149,7 +187,9 @@ export function OrganizationTemplateDialog({
                     </ul>
                   </section>
                   <section>
-                    <h3 className="font-medium">What&apos;s included</h3>
+                    <h3 data-slot="section-title" className="font-medium">
+                      What&apos;s included
+                    </h3>
                     <ul className="text-muted-foreground mt-2 list-inside list-disc space-y-1">
                       {selectedTemplate.highlights.map((item) => (
                         <li key={item}>{item}</li>

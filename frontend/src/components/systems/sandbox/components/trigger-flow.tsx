@@ -183,8 +183,13 @@ function FlowNode({
       aria-pressed={selected}
       onClick={onClick}
       className={cn(
-        "bg-card hover:bg-accent focus-visible:outline-ring grid w-full grid-cols-[1.25rem_minmax(0,1fr)] gap-3 rounded-xl border p-4 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 motion-reduce:transition-none",
-        selected ? "border-primary bg-accent" : "border-border",
+        "bg-card focus-visible:outline-ring grid w-full grid-cols-[1.25rem_minmax(0,1fr)] gap-3 rounded-xl border p-4 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 motion-reduce:transition-none",
+        // The selected step takes the ink tint of the lists, not a blue
+        // edge (decision F3); hover is the lighter tint.
+        "border-border",
+        selected
+          ? "bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
+          : "hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)]",
       )}
     >
       <span

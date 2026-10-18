@@ -59,7 +59,11 @@ test("editing an input marks the shown result stale at once", async ({
   page,
 }) => {
   const setup = await openTest(page);
+  const comparison = page.getByRole("region", { name: "Field comparison" });
+  // Before the first run, only the outcome says what to do.
+  await expect(comparison).toHaveCount(0);
   await page.getByRole("button", { name: "Run test", exact: true }).click();
+  await expect(comparison).toBeVisible();
   const outcome = page.getByRole("region", { name: "Test outcome" });
   await expect(
     outcome.getByRole("heading", { name: "Test result" }),

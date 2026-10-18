@@ -121,3 +121,28 @@ test("a trigger that cannot publish shows before the review and opens from it", 
     "Urgent request alert",
   );
 });
+
+test("template cards are one radio group that arrow keys move through", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign);
+  await page
+    .getByRole("button", { name: "More Sandbox actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Start from a template", exact: true })
+    .click();
+  const group = page.getByRole("radiogroup", { name: "Templates" });
+  const first = group.getByRole("radio", { name: "Inventory & procurement" });
+  await expect(first).toHaveAttribute("aria-checked", "true");
+  await first.focus();
+  await page.keyboard.press("ArrowRight");
+  const second = group.getByRole("radio", {
+    name: "Finance, accounting & sales",
+  });
+  await expect(second).toBeFocused();
+  await expect(second).toHaveAttribute("aria-checked", "true");
+  await expect(
+    page.getByRole("button", { name: "Use Finance, accounting & sales" }),
+  ).toBeVisible();
+});

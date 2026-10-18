@@ -42,7 +42,7 @@ test("Compare with opens the comparison with that version preselected", async ({
   await timeline.getByRole("button", { name: "View First draft" }).click();
   await inspector
     .getByLabel("Compare with", { exact: true })
-    .selectOption({ label: "v2 · Release snapshot" });
+    .selectOption({ label: "Release snapshot" });
   await inspector.getByRole("button", { name: "Compare", exact: true }).click();
   await expect(
     comparison.getByLabel("Compare first version", { exact: true }),
@@ -52,6 +52,9 @@ test("Compare with opens the comparison with that version preselected", async ({
   ).toHaveValue(versions[1]!.id);
   // The comparison replaces the "Ready to compare" hint.
   await expect(comparison.getByText(/^Ready to compare/)).toHaveCount(0);
+  const firstDraft = timeline.getByRole("button", { name: "View First draft" });
+  await expect(firstDraft).toHaveAttribute("aria-current", "true");
+  await expect(firstDraft).toHaveAccessibleDescription(/^Compared as A\./);
 });
 
 test("on a phone, a compare brings the comparison into view", async ({

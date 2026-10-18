@@ -476,7 +476,7 @@ export function SandboxHeaderActions({
               onClick={() => input.current?.click()}
             >
               <Upload />
-              Choose JSON
+              Import from file
             </Button>
           </div>
           <input

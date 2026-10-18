@@ -1489,10 +1489,10 @@ test("an organization template replaces the empty draft only after confirmation"
   await page.getByRole("menuitem", { name: "Start from a template" }).click();
   const dialog = page.getByRole("dialog", { name: "Organization templates" });
   await expect(
-    dialog.getByRole("button", { name: "Select Inventory & procurement" }),
+    dialog.getByRole("radio", { name: "Inventory & procurement" }),
   ).toBeVisible();
   await dialog
-    .getByRole("button", { name: "Select Inventory & procurement" })
+    .getByRole("radio", { name: "Inventory & procurement" })
     .click();
   await expect(
     dialog.getByText(/departments.*modules.*fields.*relationships/i),
@@ -5578,11 +5578,11 @@ test("History deletion of the sole last-page row selects an available version an
       exact: true,
     }),
   ).toBeVisible();
+  // Back on the first page: the 25 left fit one page, so paging is gone
+  // (it stays while the range is past the first page).
   await expect(
-    timeline
-      .getByRole("navigation", { name: "History pages", exact: true })
-      .getByRole("button", { name: "previous page" }),
-  ).toBeDisabled();
+    timeline.getByRole("navigation", { name: "History pages", exact: true }),
+  ).toHaveCount(0);
   await expect(
     timeline.getByText("No saved versions yet", { exact: true }),
   ).toHaveCount(0);
@@ -6294,7 +6294,7 @@ test("import admission still refuses more than 50 snapshots before any write", a
   const dialog = await openImportExport(page);
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
-    dialog.getByRole("button", { name: "Choose JSON", exact: true }).click(),
+    dialog.getByRole("button", { name: "Import from file", exact: true }).click(),
   ]);
   await chooser.setFiles({
     name: "owned-history-51.json",

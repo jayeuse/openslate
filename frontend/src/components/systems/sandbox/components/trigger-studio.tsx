@@ -1333,24 +1333,28 @@ function TriggerEditor({
             }
           />
         </Field>
-        <Field className="min-h-11 flex-row items-center justify-between gap-3 @min-[350px]/settings:flex-col @min-[350px]/settings:items-end">
+        <Field className="flex-row items-center justify-between gap-3 @min-[350px]/settings:flex-col @min-[350px]/settings:items-end">
           <FieldLabel htmlFor={enabledId}>
             <span className="sr-only">Trigger </span>On
           </FieldLabel>
-          <Switch
-            id={enabledId}
-            disabled={pending}
-            checked={recordTrigger.enabled}
-            onCheckedChange={(checked) =>
-              onChange({ ...recordTrigger, enabled: checked })
-            }
-          />
+          {/* As tall as the name input, so the switch sits on its center
+              line and "On" lines up with "Trigger name". */}
+          <div className="flex h-11 items-center xl:h-9">
+            <Switch
+              id={enabledId}
+              disabled={pending}
+              checked={recordTrigger.enabled}
+              onCheckedChange={(checked) =>
+                onChange({ ...recordTrigger, enabled: checked })
+              }
+            />
+          </div>
         </Field>
       </div>
       <section
         data-rule-target="trigger"
         tabIndex={-1}
-        className={`border-border grid grid-cols-1 gap-3 rounded-xl border p-4 @min-[450px]/settings:grid-cols-3 ${selectedStep === "trigger" ? "ring-ring ring-1" : ""}`}
+        className={`border-border grid grid-cols-1 gap-3 rounded-xl border p-4 @min-[450px]/settings:grid-cols-3 ${selectedStep === "trigger" ? "ring-1 ring-[var(--ink-muted)]" : ""}`}
       >
         <h3 data-slot="section-title" className="col-span-full font-semibold">
           When
@@ -1706,7 +1710,7 @@ function ConditionEditor({
             key={condition.id}
             data-rule-target={`condition:${condition.id}`}
             tabIndex={-1}
-            className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `condition:${condition.id}` ? "bg-accent ring-ring ring-1" : "bg-muted/40"}`}
+            className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `condition:${condition.id}` ? "bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] ring-1 ring-[var(--ink-muted)]" : "bg-muted/40"}`}
           >
             <div className="grid gap-2 @min-[350px]/settings:grid-cols-2">
               <NativeSelect
@@ -1772,6 +1776,10 @@ function ConditionEditor({
             />
             <Button
               variant="ghost"
+              size="sm"
+              // A small, quiet remove beside its condition, not a full-width
+              // button that outweighs the fields.
+              className="text-muted-foreground hover:text-danger-text justify-self-end font-normal"
               onClick={() =>
                 onChange({
                   ...recordTrigger,
@@ -1828,7 +1836,7 @@ function ActionEditor({
           key={action.id}
           data-rule-target={`action:${action.id}`}
           tabIndex={-1}
-          className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `action:${action.id}` ? "bg-accent ring-ring ring-1" : "bg-muted/40"}`}
+          className={`grid min-w-0 gap-3 rounded-lg p-2 ${selectedStep === `action:${action.id}` ? "bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] ring-1 ring-[var(--ink-muted)]" : "bg-muted/40"}`}
         >
           <p className="text-sm font-medium">
             {action.kind === "set-field"
@@ -1850,6 +1858,8 @@ function ActionEditor({
           )}
           <Button
             variant="ghost"
+            size="sm"
+            className="text-muted-foreground hover:text-danger-text justify-self-end font-normal"
             onClick={() =>
               onChange({
                 ...recordTrigger,

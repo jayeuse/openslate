@@ -693,14 +693,20 @@ export function VersionsWorkspace({
                                 type="button"
                                 variant="ghost"
                                 aria-label={accessibleLabel}
-                                aria-describedby={detailId}
-                                aria-pressed={selected}
+                                aria-describedby={
+                                  isComparedFirst || isComparedSecond
+                                    ? `${detailId}-role ${detailId}`
+                                    : detailId
+                                }
+                                // The shown version is current, as in the
+                                // trigger list; not a pressed toggle.
+                                aria-current={selected ? "true" : undefined}
                                 disabled={
                                   pending || checkpointLabelEdit !== null
                                 }
                                 // Hover and selected tint from the look's ink, as
                                 // in the trigger list.
-                                className="relative z-10 h-auto min-h-16 w-full justify-start py-3 pr-2 pl-8 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-pressed:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
+                                className="relative z-10 h-auto min-h-16 w-full justify-start py-3 pr-2 pl-8 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_6%,transparent)] aria-[current=true]:bg-[color-mix(in_oklab,var(--ink)_14%,transparent)]"
                                 onClick={() => setSelectedVersionId(version.id)}
                               >
                                 <span
@@ -712,15 +718,23 @@ export function VersionsWorkspace({
                                     <span className="min-w-0 flex-1 font-medium [overflow-wrap:anywhere]">
                                       {version.label}
                                     </span>
-                                    {isComparedFirst ? (
-                                      <span className="border-action-text/30 bg-action-tint text-action-text shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
-                                        A
-                                      </span>
-                                    ) : null}
-                                    {isComparedSecond ? (
-                                      <span className="border-action-text/30 bg-action-tint text-action-text shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold">
-                                        B
-                                      </span>
+                                    {isComparedFirst || isComparedSecond ? (
+                                      <>
+                                        <span
+                                          aria-hidden="true"
+                                          className="border-action-text/30 bg-action-tint text-action-text shrink-0 rounded border px-1 py-0.5 text-xs leading-none font-semibold"
+                                        >
+                                          {isComparedFirst ? "A" : "B"}
+                                        </span>
+                                        <span
+                                          id={`${detailId}-role`}
+                                          className="sr-only"
+                                        >
+                                          {isComparedFirst
+                                            ? "Compared as A."
+                                            : "Compared as B."}
+                                        </span>
+                                      </>
                                     ) : null}
                                   </span>
                                   <span
@@ -767,7 +781,10 @@ export function VersionsWorkspace({
                 </EmptyHeader>
               </Empty>
             )}
-            {displayedPage && !denied ? (
+            {/* Paging shows only when it has somewhere to go. */}
+            {displayedPage &&
+            !denied &&
+            (displayedPage.total > pageSize || displayedPage.offset > 0) ? (
               <TablePagination
                 ariaLabel="History pages"
                 total={displayedPage.total}
@@ -943,7 +960,12 @@ export function VersionsWorkspace({
                                 key={version.id}
                                 value={version.id}
                               >
-                                v{version.sequence} · {version.label}
+                                {/* The panel already names v1; the number
+                                    is kept only to tell same names apart, so
+                                    long names fit at 1440. */}
+                                {duplicateLabels.has(version.label)
+                                  ? `v${version.sequence} · ${version.label}`
+                                  : version.label}
                               </NativeSelectOption>
                             ))}
                         </NativeSelect>
