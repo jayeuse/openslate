@@ -828,13 +828,17 @@ html[data-density="spacious"]
     --spacing: 0.21875rem;
   }
 }
-#main-content :where([class~="min-h-11"]) {
+/* The 44px target floor: page density scales --spacing, so these keep a
+   fixed 44px at every density. An element that sets its own desktop size
+   (xl:min-h-9) is left to that class, or the ID rule would beat it at
+   1280px and up; touch tablets below that keep 44px. */
+#main-content :where([class~="min-h-11"]:not([class*="xl:min-h-"])) {
   min-height: max(44px, 2.75rem);
 }
-#main-content :where([class~="min-w-11"]) {
+#main-content :where([class~="min-w-11"]:not([class*="xl:min-w-"])) {
   min-width: max(44px, 2.75rem);
 }
-#main-content :where([class~="size-11"]) {
+#main-content :where([class~="size-11"]:not([class*="xl:size-"])) {
   width: max(44px, 2.75rem);
   height: max(44px, 2.75rem);
 }
