@@ -1,6 +1,6 @@
 # Sandbox UI and UX pass
 
-> **Status: approved (2026-10-18); implementation in progress.** Everything below that is not marked **Current** is proposed behavior.
+> **Status: complete (2026-10-18).** EXIT-1, 2, 4, 5 and 6 are met; the owner approved the 390 px sweep. EXIT-3 is partial: department controls stayed equal and Triggers has two more controls than the baseline. Follow-up work is in `docs/specs/sandbox-followup-pass.md`.
 
 ## Outcome
 
