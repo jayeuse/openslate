@@ -357,6 +357,20 @@ Each phase is one work unit with its own commit or commits. A phase ends with it
 | Q8  | A changed compare selection clears the old result                                                  | `versions-workspace.tsx:764`, `:776`, `:802`                 |
 | Q9  | A failed title-field change shows its error, and a failed delete shows its error inside the dialog | `designer.tsx:1974`, `:2889`                                 |
 
+### Phase 9 decisions
+
+The exit critique (`.impeccable/critique/2026-10-18T09-52-23Z__…`) found one P1 and heuristic 4 at 2. The fixes below closed both; an independent re-score found no P1, heuristic 4 at 3, and heuristic 8 at 3.
+
+| ID  | Decision                                                                                                                                                     | Location                                                      |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| X1  | Trigger settings that cannot publish are issues on their trigger. They show in the page's attention list (text plus "Open trigger"), not only in the review. | `trigger-studio.tsx` `triggerPublicationBlockers`, `page.tsx` |
+| X2  | The review always loads its change list; each blocker has a button that opens it; the hint under a held Publish is muted.                                    | `review-publish-dialog.tsx`                                   |
+| X3  | Version confirmations read "Restore version" and "Delete version"; the text states the consequence. Delete confirmations elsewhere name the kind.            | `versions-workspace.tsx`, `designer-impacts.ts`               |
+| X4  | The Structure outline marks only the selected row (`aria-current`, 14% ink tint); its ancestors stay plain.                                                  | `sandbox-inspector-outline.tsx`                               |
+| X5  | A disabled menu item says why on a second line, and only its label dims.                                                                                     | `sandbox-header-actions.tsx`                                  |
+
+Left for the user or a follow-up: trigger autosave (D1 keeps explicit save), department frame overlap on the canvas, the outline as a full tree (roles, arrow keys), and a vocabulary pass (One-to-many, Integer, UUID, JSON).
+
 ## Tests
 
 1. Write a failing test first for each behavior change (`tdd-workflow`). Copy-only changes update the assertions that read the copy.
