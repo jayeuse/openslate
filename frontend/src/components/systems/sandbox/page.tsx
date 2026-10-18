@@ -44,7 +44,10 @@ import {
   SANDBOX_WORKBENCH_DEFAULT_WIDTH,
   clearSandboxViewPreferences,
 } from "./helpers/view-preferences";
-import { sandboxWorkInProgress } from "./helpers/work-in-progress";
+import {
+  sandboxWorkInProgress,
+  triggerEditsHoldMove,
+} from "./helpers/work-in-progress";
 import { Designer } from "./components/designer";
 import {
   SandboxCommandError,
@@ -84,8 +87,10 @@ import { VersionsWorkspace } from "./components/versions-workspace";
 import {
   TriggerStudio,
   triggerPublicationBlockers,
-  type TriggerDraftState,
 } from "./components/trigger-studio";
+import { useTriggerDraft } from "./components/use-trigger-draft";
+import { useVerifiedWorkspaceUserId } from "@/components/systems/shared/runtime/workspace-identity";
+import { currentOrganizationId } from "@/lib/organization-context";
 import { TriggerLeaveDialog } from "./components/trigger-leave-dialog";
 import { DisabledReason } from "@/components/ui/disabled-reason";
 import { TestWorkspace } from "./components/test-workspace";
@@ -331,12 +336,23 @@ export default function SandboxPage() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [checkpointOpen, setCheckpointOpen] = useState(false);
-  const [triggerDraft, setTriggerDraft] = useState<TriggerDraftState>({
-    dirty: false,
-    pending: false,
-    changes: 0,
-    save: async () => ({ ok: true }),
-    discard: () => {},
+  // The page owns unsaved trigger edits, so moving between sections (a
+  // link, Back, Forward) keeps them; a reload offers them back.
+  const saveTriggersRef = useRef<
+    (triggers: SandboxDocumentV4["triggers"]) => Promise<void>
+  >(async () => {
+    throw new Error("Sandbox is still loading.");
+  });
+  const triggerDraft = useTriggerDraft({
+    document: session?.document ?? null,
+    persist: useCallback(
+      (triggers: SandboxDocumentV4["triggers"]) =>
+        saveTriggersRef.current(triggers),
+      [],
+    ),
+    userId: useVerifiedWorkspaceUserId(),
+    orgId: currentOrganizationId(),
+    confirmed: conflict === null,
   });
   // A navigation held back by unsaved triggers, resumed after Save or Discard.
   const [leaveRequest, setLeaveRequest] = useState<(() => void) | null>(null);
@@ -581,7 +597,8 @@ export default function SandboxPage() {
           publicationPending,
           testPending,
           conflict: conflict !== null,
-          triggerDraftDirty: triggerDraft.dirty,
+          triggerDraftDirty:
+            triggerDraft.dirty && triggerEditsHoldMove(section, next),
           triggerDraftPending: triggerDraft.pending,
           designerDraftDirty,
         })
@@ -600,12 +617,13 @@ export default function SandboxPage() {
       publicationPending,
       router,
       search,
+      section,
       testPending,
     ],
   );
   useWorkspaceNavigationGuard(
     useCallback(
-      (_href: string, resume: () => void) => {
+      (href: string, resume: () => void) => {
         const otherWork = sandboxWorkInProgress({
           commandBusy,
           publicationPending,
@@ -616,12 +634,22 @@ export default function SandboxPage() {
           designerDraftDirty,
         });
         if (otherWork) return false;
-        if (!triggerDraft.dirty) return true;
+        const target = new URL(href, window.location.origin);
+        const to =
+          target.pathname.replace(/\/$/, "") === "/sandbox"
+            ? sectionFromSearch(
+                target.searchParams.get("section"),
+                target.searchParams.get("rule"),
+              )
+            : null;
+        if (!triggerDraft.dirty || !triggerEditsHoldMove(section, to))
+          return true;
         // Only unsaved triggers hold the page: ask Save, Discard, or Stay.
         setLeaveRequest(() => resume);
         return false;
       },
       [
+        section,
         triggerDraft.dirty,
         triggerDraft.pending,
         conflict,
@@ -720,6 +748,12 @@ export default function SandboxPage() {
     },
     [persist, session],
   );
+  useEffect(() => {
+    saveTriggersRef.current = (triggers) =>
+      session
+        ? saveDocument({ ...session.document, triggers })
+        : Promise.reject(new Error("Sandbox is still loading."));
+  });
 
   const change = useCallback(
     async (update: DesignUpdate): Promise<SandboxCommandResult<Design>> => {
@@ -1057,7 +1091,8 @@ export default function SandboxPage() {
       !testPending &&
       conflict === null &&
       !triggerDraft.pending &&
-      triggerDraft.dirty
+      triggerDraft.dirty &&
+      triggerEditsHoldMove(section, issueSection(issue))
     ) {
       // Only unsaved triggers hold the page: ask Save, Discard, or Stay.
       setLeaveRequest(() => () => openIssue(issue));
@@ -1074,6 +1109,16 @@ export default function SandboxPage() {
       return;
     }
     openIssue(issue);
+  }
+  /** The section an issue opens. */
+  function issueSection(issue: SandboxValidationIssue): string {
+    const destination = sandboxIssueDestination(
+      issue,
+      new Set(design.rules.map((rule) => rule.id)),
+      new URLSearchParams(),
+    );
+    if (destination.kind === "section") return destination.section;
+    return sectionFromSearch(destination.params.get("section"), null);
   }
   /** Names where an issue's button goes: Triggers, Test, or Build. */
   function issueActionLabel(issue: SandboxValidationIssue): string {
@@ -1388,6 +1433,36 @@ export default function SandboxPage() {
         {feedbackError && !conflict ? (
           <Alert variant="destructive">{feedbackError}</Alert>
         ) : null}
+        {triggerDraft.kept ? (
+          // Edits kept from before a reload wait here until the person
+          // chooses; nothing is applied on its own.
+          <Alert variant="warning" role="status">
+            <p className="font-medium">Restore unsaved trigger changes?</p>
+            {triggerDraft.kept.baseChanged ? (
+              <p className="mt-1">
+                The saved triggers changed since. Saving yours replaces them.
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  triggerDraft.restoreKept();
+                  if (section !== "Triggers") navigate("Triggers");
+                }}
+              >
+                Restore
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={triggerDraft.discardKept}
+              >
+                Discard
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
         {issues.length ? (
           <Alert variant="warning" role="status">
             <p>
@@ -1460,15 +1535,11 @@ export default function SandboxPage() {
           <div className={sandboxPanelClass}>
             <TriggerStudio
               design={session.document.design}
-              triggers={session.document.triggers}
+              triggerDraft={triggerDraft}
               runs={triggerRuns}
               activity={triggerActivity}
               initialSelectedId={search.get("rule") ?? undefined}
               onRefreshActivity={refreshTriggerActivity}
-              onChange={(triggers) =>
-                saveDocument({ ...session.document, triggers })
-              }
-              onStateChange={setTriggerDraft}
             />
           </div>
         ) : null}

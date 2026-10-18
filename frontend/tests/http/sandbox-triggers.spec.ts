@@ -101,6 +101,96 @@ test("leaving with unsaved triggers asks Save, Discard, or Stay", async ({
   expect(sandbox.document().triggers[0]!.name).toBe("Stay with me");
 });
 
+test("Back from Triggers keeps unsaved trigger edits", async ({ page }) => {
+  const sandbox = await openTriggers(page);
+  await page.getByLabel("Trigger name").fill("Kept on Back");
+  await page.goBack();
+  await expect(page).not.toHaveURL(/section=triggers/);
+  // The edit is still waiting to be saved, not lost.
+  await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
+    /· 1 unsaved trigger change$/,
+  );
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await expect(page.getByLabel("Trigger name")).toHaveValue("Kept on Back");
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
+test("a reload offers to restore unsaved trigger edits", async ({ page }) => {
+  const sandbox = await openTriggers(page);
+  await page.getByLabel("Trigger name").fill("Survives reload");
+  page.on("dialog", (dialog) => void dialog.accept());
+  await page.reload();
+  const prompt = page
+    .getByRole("status")
+    .filter({ hasText: "Restore unsaved trigger changes?" });
+  await prompt.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(prompt).toHaveCount(0);
+  await expect(page.getByLabel("Trigger name")).toHaveValue("Survives reload");
+  await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
+    /· 1 unsaved trigger change$/,
+  );
+
+  // Discard drops the kept edits for good.
+  await page.reload();
+  await prompt.getByRole("button", { name: "Discard", exact: true }).click();
+  await expect(page.getByLabel("Trigger name")).toHaveValue(
+    "Urgent request alert",
+  );
+  await page.reload();
+  await expect(page.getByLabel("Trigger name")).toHaveValue(
+    "Urgent request alert",
+  );
+  await expect(prompt).toHaveCount(0);
+  expect(sandbox.documentWrites()).toBe(0);
+});
+
+test("unsaved triggers are marked, a step Save will refuse warns first, and Ctrl+S saves", async ({
+  page,
+}) => {
+  const sandbox = await openTriggers(page);
+  const list = page.getByRole("navigation", { name: "Trigger list" });
+  const flow = page.getByRole("region", { name: "Flow preview" });
+  await expect(list.getByText("Unsaved", { exact: true })).toHaveCount(0);
+
+  // A required field with no value: the flow says so before Save.
+  await page
+    .getByLabel("Condition 1 field")
+    .selectOption({ label: "Request number" });
+  await expect(list.getByText("Unsaved", { exact: true })).toHaveCount(1);
+  await expect(
+    flow.getByRole("button", { name: /^Condition 1\b/ }),
+  ).toContainText("Request number is required.");
+
+  await page.getByLabel("Condition 1 field").selectOption({ label: "Title" });
+  await expect(
+    flow.getByRole("button", { name: /^Condition 1\b/ }),
+  ).not.toContainText("is required");
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect.poll(sandbox.documentWrites).toBe(1);
+  await expect(list.getByText("Unsaved", { exact: true })).toHaveCount(0);
+  // With nothing unsaved, the shortcut writes nothing.
+  await page.keyboard.press("ControlOrMeta+s");
+  expect(sandbox.documentWrites()).toBe(1);
+});
+
+test("a failed trigger save keeps the edits when the shared draft reloads", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, undefined, {
+    saveFailure: "Sandbox storage is unavailable.",
+  });
+  await page.getByRole("link", { name: "Triggers", exact: true }).click();
+  await page.getByLabel("Trigger name").fill("Not lost");
+  await page.getByRole("button", { name: "Save triggers" }).click();
+  const reload = page.getByRole("button", { name: "Reload shared draft" });
+  await reload.click();
+  await expect(reload).toHaveCount(0);
+  await expect(page.getByLabel("Trigger name")).toHaveValue("Not lost");
+  await expect(page.locator("[data-sandbox-save-state]")).toHaveText(
+    /· 1 unsaved trigger change$/,
+  );
+});
+
 test("deleting a trigger can be undone from its notice", async ({ page }) => {
   const sandbox = await openTriggers(page);
   const list = page.getByRole("navigation", { name: "Trigger list" });

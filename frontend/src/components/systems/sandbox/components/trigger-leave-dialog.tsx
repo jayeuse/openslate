@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { plural } from "../helpers/designer-impacts";
-import type { TriggerDraftState } from "./trigger-studio";
+import type { TriggerDraft } from "./use-trigger-draft";
 
 /**
  * Leaving the Triggers section with unsaved changes asks what to do with
@@ -26,7 +26,7 @@ export function TriggerLeaveDialog({
   onLeave,
 }: {
   open: boolean;
-  draft: TriggerDraftState;
+  draft: Pick<TriggerDraft, "changes" | "save" | "discard">;
   onStay: () => void;
   onLeave: () => void;
 }) {

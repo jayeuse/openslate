@@ -327,6 +327,12 @@ Correct: The If step of a trigger with no conditions shows "Always".
 
 Wrong: "No condition filter is configured." shown twice, once in the flow and once in the summary.
 
+**The Kept Edits Rule.** Edits that wait for an explicit Save (Sandbox triggers) belong to the page, not to the panel that shows them. Moving between sections, Back, and Forward keep them; leaving the page asks Save, Discard, or Stay; a reload keeps them in session storage and offers them back once with "Restore unsaved trigger changes?" (Restore, Discard). Each unsaved item carries an "Unsaved" warning badge in its list, and a step that Save will refuse shows the reason in warning ink before Save. Ctrl+S (Cmd+S) saves.
+
+Correct: Back from Triggers to Build keeps the edit; the chip reads "· 1 unsaved trigger change"; returning to Triggers shows it.
+
+Wrong: Back unmounts the editor and the edit is gone, with the chip back at "Saved".
+
 **The page pass (pattern kit).** To bring a workspace page to these rules, take its panels one at a time, with the Sandbox as the worked example (`docs/specs/sandbox-ui-ux-pass.md`):
 
 1. Inventory every control and helper line per panel and selection state, and measure helper words and default-visible controls with one script on fixed data before you change anything.

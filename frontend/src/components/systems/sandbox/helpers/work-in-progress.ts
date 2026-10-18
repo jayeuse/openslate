@@ -21,3 +21,13 @@ export function sandboxWorkInProgress(work: SandboxWork): boolean {
     work.designerDraftDirty
   );
 }
+
+/**
+ * The page keeps unsaved trigger edits across its sections, so they hold a
+ * move only when it leaves the Triggers section or leaves the Sandbox
+ * (`to` is null). Moving into Triggers never waits: that is where they save.
+ */
+export function triggerEditsHoldMove(from: string, to: string | null): boolean {
+  if (to === "Triggers") return false;
+  return from === "Triggers" || to === null;
+}

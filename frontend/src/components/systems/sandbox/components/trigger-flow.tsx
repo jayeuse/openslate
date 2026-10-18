@@ -164,6 +164,7 @@ function FlowNode({
   icon,
   selected,
   warn = false,
+  note,
   onClick,
 }: {
   title: string;
@@ -172,6 +173,8 @@ function FlowNode({
   selected: boolean;
   /** A step that blocks publishing reads in warning ink. */
   warn?: boolean;
+  /** What Save will refuse in this step, shown before Save. */
+  note?: string | undefined;
   onClick: () => void;
 }) {
   return (
@@ -202,20 +205,35 @@ function FlowNode({
         >
           {description}
         </span>
+        {note ? (
+          <span className="text-warn-text mt-1 block text-xs">{note}</span>
+        ) : null}
       </span>
     </button>
   );
 }
 
+const NO_STEP_ERRORS: ReadonlyMap<string, string> = new Map();
+
+/** The phone summary's line for what Save will refuse in a step. */
+function StepNote({ note }: { note: string | undefined }) {
+  return note ? (
+    <span className="text-warn-text block text-xs">{note}</span>
+  ) : null;
+}
+
 export function TriggerFlow({
   trigger: recordTrigger,
   design,
+  stepErrors = NO_STEP_ERRORS,
   selectedStep,
   onSelect,
   summaryOnly = false,
 }: {
   trigger: SandboxTrigger;
   design: SandboxDocumentDesign;
+  /** Fixed values Save will refuse, by step (see `triggerStepErrors`). */
+  stepErrors?: ReadonlyMap<string, string>;
   selectedStep: string;
   onSelect: (step: string) => void;
   /** Phones read the summary at the top of the detail, without the graph. */
@@ -243,6 +261,7 @@ export function TriggerFlow({
           <FlowNode
             title={`When · ${triggerEventLabel(recordTrigger)}`}
             description={trigger}
+            note={stepErrors.get("trigger")}
             icon={
               recordTrigger.trigger.kind === "schedule" ? (
                 <CalendarClock />
@@ -276,6 +295,7 @@ export function TriggerFlow({
                   key={condition.id}
                   title={`Condition ${index + 1}${index ? (any ? " · OR" : " · AND") : ""}`}
                   description={conditionText(design, condition)}
+                  note={stepErrors.get(`condition:${condition.id}`)}
                   icon={<Filter />}
                   selected={selectedStep === `condition:${condition.id}`}
                   onClick={() => onSelect(`condition:${condition.id}`)}
@@ -290,6 +310,7 @@ export function TriggerFlow({
                 key={action.id}
                 title={`Then · Action ${index + 1}`}
                 description={actionText(design, action)}
+                note={stepErrors.get(`action:${action.id}`)}
                 icon={<Pencil />}
                 warn={action.kind !== "set-field"}
                 selected={selectedStep === `action:${action.id}`}
@@ -333,6 +354,7 @@ export function TriggerFlow({
                 ? trigger.replace(/^An /, "an ")
                 : trigger}
               .
+              <StepNote note={stepErrors.get("trigger")} />
             </p>
             {conditions.length ? (
               <>
@@ -344,6 +366,9 @@ export function TriggerFlow({
                   {conditions.map((condition) => (
                     <li key={condition.id}>
                       {conditionText(design, condition)}
+                      <StepNote
+                        note={stepErrors.get(`condition:${condition.id}`)}
+                      />
                     </li>
                   ))}
                 </ul>
@@ -365,6 +390,7 @@ export function TriggerFlow({
                       }
                     >
                       {actionText(design, action)}
+                      <StepNote note={stepErrors.get(`action:${action.id}`)} />
                     </li>
                   ))}
                 </ul>

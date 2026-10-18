@@ -60,6 +60,12 @@ Each phase ends with its focused tests, the Sandbox batch (lint, build, isolated
 | G4  | Each trigger with unsaved changes shows an **Unsaved** badge in the list (the Build field-row pattern). An incomplete step shows its missing part in warning ink in the flow ("Add a value") before Save.                                                                                                     | HTTP: badge appears and clears; incomplete step marked                                    |
 | G5  | Ctrl+S (Cmd+S on Mac) saves triggers while the Triggers section is open.                                                                                                                                                                                                                                      | HTTP: shortcut saves; the browser save dialog does not open                               |
 
+**Phase 1 decisions (during the work).**
+
+- G1 uses the fallback: the page owns the trigger draft (`useTriggerDraft`), so Back and Forward keep the edits; there is no Back dialog. Unsaved edits hold a move only when it leaves Triggers or the Sandbox; moving into Triggers never waits.
+- G2 was a real loss path: a failed save leaves the refused draft on the page, which made the edits look saved, and **Reload shared draft** then dropped them. Edits now clear only after a confirmed save.
+- G3 uses session storage (per tab, cleared on sign-out), the same as the Access and Comms drafts, not local storage.
+
 ### Phase 2: desktop sizes (card 1)
 
 | ID  | Change                                                                                                                                                                                                                                                                                                                                                               | Proof                                                                                                                  |

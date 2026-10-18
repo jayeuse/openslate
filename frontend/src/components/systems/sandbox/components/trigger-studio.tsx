@@ -7,6 +7,7 @@ import {
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -55,30 +56,19 @@ import type {
   SandboxValueSource,
 } from "../domain/document";
 import type { SandboxTriggerRun } from "../state/api";
+import type { TriggerDraft } from "./use-trigger-draft";
 import { issue, type SandboxValidationIssue } from "../domain/validation-types";
 import { dateRangeFits, dateValueInRange } from "../domain/date-values";
-import { reportDone, reportUndoable } from "@/lib/feedback";
+import { reportUndoable } from "@/lib/feedback";
 
 export type TriggerStudioProps = {
   design: SandboxDocumentDesign;
-  triggers: SandboxTrigger[];
+  /** The unsaved edits; the page owns them (see `useTriggerDraft`). */
+  triggerDraft: TriggerDraft;
   runs: readonly SandboxTriggerRun[];
   activity: { loading: boolean; error: string };
   initialSelectedId?: string;
   onRefreshActivity: () => Promise<void>;
-  onChange: (triggers: SandboxTrigger[]) => Promise<void> | void;
-  onStateChange?: (state: TriggerDraftState) => void;
-};
-
-/** What the page needs to know about unsaved triggers, and how to resolve
- * them from outside the studio (the leave dialog). */
-export type TriggerDraftState = {
-  dirty: boolean;
-  pending: boolean;
-  /** Triggers added, changed, or deleted since the last save. */
-  changes: number;
-  save: () => Promise<{ ok: true } | { ok: false; error: string }>;
-  discard: () => void;
 };
 
 /** Counts triggers added, changed, or deleted, matched by id. */
@@ -93,18 +83,6 @@ export function unsavedTriggerChanges(
     return !before || JSON.stringify(before) !== JSON.stringify(item);
   }).length;
   return changed + saved.filter((item) => !draftIds.has(item.id)).length;
-}
-
-export async function saveStudioDraft<T>(
-  draft: T,
-  onChange: (next: T) => Promise<void> | void,
-): Promise<{ ok: true } | { ok: false; draft: T }> {
-  try {
-    await onChange(draft);
-    return { ok: true };
-  } catch {
-    return { ok: false, draft };
-  }
 }
 
 export function triggerRunStatus(run: SandboxTriggerRun): string {
@@ -462,58 +440,72 @@ export function validateFieldLiteral(
   return null;
 }
 
-function triggerLiteralError(
+/**
+ * Fixed values that do not fit their field, by flow step ("trigger",
+ * "condition:<id>", "action:<id>"), so the flow can mark a step before
+ * Save refuses it.
+ */
+export function triggerStepErrors(
   recordTrigger: SandboxTrigger,
   design: SandboxDocumentDesign,
-): string | null {
+): Map<string, string> {
+  const errors = new Map<string, string>();
   const check = (
+    step: string,
     value: SandboxValueSource,
     field: SandboxDocumentField | undefined,
-  ) =>
-    value.kind === "literal" && field
-      ? validateFieldLiteral(value.value, field)
-      : null;
+  ) => {
+    const error =
+      value.kind === "literal" && field
+        ? validateFieldLiteral(value.value, field)
+        : null;
+    if (error && !errors.has(step)) errors.set(step, error);
+  };
   const trigger = recordTrigger.trigger;
-  if (trigger.kind === "threshold-crossed") {
-    const error = check(
+  if (trigger.kind === "threshold-crossed")
+    check(
+      "trigger",
       trigger.value,
       fieldsFor(design, trigger.moduleId).find(
         (field) => field.id === trigger.fieldId,
       ),
     );
-    if (error) return error;
-  }
-  for (const condition of recordTrigger.conditionGroup.conditions) {
-    const error = check(
+  for (const condition of recordTrigger.conditionGroup.conditions)
+    check(
+      `condition:${condition.id}`,
       condition.value,
       fieldsFor(design, condition.field.moduleId).find(
         (field) => field.id === condition.field.fieldId,
       ),
     );
-    if (error) return error;
-  }
   for (const action of recordTrigger.actions) {
-    if (action.kind === "set-field") {
-      const error = check(
+    if (action.kind === "set-field")
+      check(
+        `action:${action.id}`,
         action.value,
         fieldsFor(design, action.target.moduleId).find(
           (field) => field.id === action.target.fieldId,
         ),
       );
-      if (error) return error;
-    }
     if (action.kind === "create-record")
-      for (const value of action.values) {
-        const error = check(
+      for (const value of action.values)
+        check(
+          `action:${action.id}`,
           value.value,
           fieldsFor(design, action.moduleId).find(
             (field) => field.id === value.fieldId,
           ),
         );
-        if (error) return error;
-      }
   }
-  return null;
+  return errors;
+}
+
+/** The first fixed value that does not fit its field, as Save reports it. */
+export function triggerLiteralError(
+  recordTrigger: SandboxTrigger,
+  design: SandboxDocumentDesign,
+): string | null {
+  return triggerStepErrors(recordTrigger, design).values().next().value ?? null;
 }
 
 export function defaultTrigger(design: SandboxDocumentDesign): SandboxTrigger {
@@ -766,15 +758,13 @@ function ValueEditor({
 
 export function TriggerStudio({
   design,
-  triggers,
+  triggerDraft,
   runs,
   activity,
   initialSelectedId,
   onRefreshActivity,
-  onChange,
-  onStateChange,
 }: TriggerStudioProps) {
-  const [draft, setDraft] = useState(triggers);
+  const { draft, dirty, pending, error } = triggerDraft;
   const studioRef = useRef<HTMLElement>(null);
   const [wide, setWide] = useState(false);
   // Phones show the list or one trigger's detail, with Back (TRG-5).
@@ -814,14 +804,11 @@ export function TriggerStudio({
     section?.scrollIntoView({ block: "nearest", behavior: "instant" });
   }
   const [selectedId, setSelectedId] = useState(
-    initialSelectedId && triggers.some((item) => item.id === initialSelectedId)
+    initialSelectedId && draft.some((item) => item.id === initialSelectedId)
       ? initialSelectedId
-      : (triggers[0]?.id ?? ""),
+      : (draft[0]?.id ?? ""),
   );
   const requestedSelection = useRef(initialSelectedId);
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
-  useEffect(() => setDraft(triggers), [triggers]);
   useEffect(() => {
     if (selectedId && draft.some((item) => item.id === selectedId)) return;
     setSelectedId(draft[0]?.id ?? "");
@@ -836,85 +823,45 @@ export function TriggerStudio({
       setSelectedId(initialSelectedId);
   }, [draft, initialSelectedId]);
   const selected = draft.find((item) => item.id === selectedId);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(triggers);
-  const changes = dirty ? unsavedTriggerChanges(draft, triggers) : 0;
-  // The page calls these from the leave dialog; refs keep them current
-  // without re-reporting the state on every keystroke.
-  const saveRef = useRef(save);
-  const discardRef = useRef(discard);
-  useEffect(() => {
-    saveRef.current = save;
-    discardRef.current = discard;
-  });
-  const [stableActions] = useState(() => ({
-    save: () => saveRef.current(),
-    // The leave dialog navigates away, so its discard offers no Undo.
-    discard: () => discardRef.current(false),
-  }));
-  useEffect(
-    () => onStateChange?.({ dirty, pending, changes, ...stableActions }),
-    [changes, dirty, onStateChange, pending, stableActions],
-  );
-  useEffect(
-    () => () =>
-      onStateChange?.({
-        dirty: false,
-        pending: false,
-        changes: 0,
-        ...stableActions,
-      }),
-    [onStateChange, stableActions],
-  );
-  function updateDraft(next: SandboxTrigger[]) {
-    setDraft(next);
-    setError("");
-  }
-  function discard(withUndo = true) {
-    const snapshot = { draft, selectedId };
-    setDraft(triggers);
-    setSelectedId(
-      triggers.some((item) => item.id === selectedId)
-        ? selectedId
-        : (triggers[0]?.id ?? ""),
-    );
+  const updateDraft = triggerDraft.update;
+  function discard() {
+    const snapshot = { edits: triggerDraft.discard(), selectedId };
     setSelectedStep("trigger");
-    setError("");
-    if (withUndo)
+    if (snapshot.edits)
       reportUndoable("Changes discarded", () => {
-        setDraft(snapshot.draft);
+        if (snapshot.edits) triggerDraft.restore(snapshot.edits);
         setSelectedId(snapshot.selectedId);
         setSelectedStep("trigger");
-        setError("");
       });
   }
-  async function save(): Promise<{ ok: true } | { ok: false; error: string }> {
-    const snapshot = structuredClone(draft);
-    const validationError = snapshot
-      .map((recordTrigger) => triggerLiteralError(recordTrigger, design))
-      .find((message): message is string => message !== null);
-    if (validationError) {
-      setError(validationError);
-      // Bring the error into view and to the screen reader at once.
-      requestAnimationFrame(() => {
-        const alert =
-          settingsRef.current?.querySelector<HTMLElement>("[role=alert]");
-        alert?.scrollIntoView({ block: "nearest" });
-        alert?.focus({ preventScroll: true });
-      });
-      return { ok: false, error: validationError };
-    }
-    setPending(true);
-    const result = await saveStudioDraft(snapshot, onChange);
-    setPending(false);
-    if (result.ok) {
-      reportDone("Triggers saved");
-      return { ok: true };
-    }
-    const failure =
-      "The trigger change could not be saved. Your draft is still available.";
-    setError(failure);
-    return { ok: false, error: failure };
+  async function save() {
+    await triggerDraft.save();
   }
+  // A failed save brings its reason into view and to the screen reader.
+  useEffect(() => {
+    if (!error) return;
+    requestAnimationFrame(() => {
+      const alert =
+        settingsRef.current?.querySelector<HTMLElement>("[role=alert]");
+      alert?.scrollIntoView({ block: "nearest" });
+      alert?.focus({ preventScroll: true });
+    });
+  }, [error]);
+  // Ctrl+S (Cmd+S on a Mac) saves triggers while this section is open.
+  const saveRef = useRef(save);
+  useEffect(() => {
+    saveRef.current = save;
+  });
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s")
+        return;
+      event.preventDefault();
+      void saveRef.current();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   const listRef = useRef<HTMLElement>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   /** On phones, opening a trigger shows its detail from the top. */
@@ -946,7 +893,7 @@ export function TriggerStudio({
     setPhoneView("list");
     focusCurrentRow();
     reportUndoable("Trigger deleted", () => {
-      setDraft((current) =>
+      updateDraft((current) =>
         current.some((item) => item.id === recordTrigger.id)
           ? current
           : [
@@ -957,7 +904,6 @@ export function TriggerStudio({
       );
       setSelectedId(recordTrigger.id);
       setSelectedStep("trigger");
-      setError("");
       focusCurrentRow();
     });
   }
@@ -1129,9 +1075,14 @@ export function TriggerStudio({
                     <span className="w-full [overflow-wrap:anywhere] break-words">
                       {recordTrigger.name || "Untitled trigger"}
                     </span>
-                    <span className="text-muted-foreground text-xs font-normal">
+                    <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-normal">
                       {triggerEventLabel(recordTrigger)}
                       {!recordTrigger.enabled ? " · Off" : ""}
+                      {/* Which triggers Save will write (the Build field-row
+                          pattern). */}
+                      {triggerDraft.unsaved.has(recordTrigger.id) ? (
+                        <Badge variant="warning">Unsaved</Badge>
+                      ) : null}
                     </span>
                   </Button>
                 ))}
@@ -1206,6 +1157,7 @@ export function TriggerStudio({
                   <TriggerFlow
                     trigger={selected}
                     design={design}
+                    stepErrors={triggerStepErrors(selected, design)}
                     selectedStep={selectedStep}
                     onSelect={selectStep}
                     summaryOnly={phone}
@@ -1274,6 +1226,15 @@ export function TriggerStudio({
               </div>
               {dirty || pending ? (
                 <div className="border-border bg-card sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 border-t p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+                  {triggerDraft.baseChanged ? (
+                    <p
+                      role="status"
+                      className="text-warn-text mr-auto min-w-0 text-sm"
+                    >
+                      The saved triggers changed while you edited. Saving
+                      replaces them with yours.
+                    </p>
+                  ) : null}
                   <Button
                     variant="outline"
                     className="min-h-11"
