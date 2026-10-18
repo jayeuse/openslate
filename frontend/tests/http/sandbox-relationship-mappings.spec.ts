@@ -38,7 +38,13 @@ import {
 // and its memory are covered in sandbox-inspector.spec.ts.
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    for (const panel of ["module", "department", "field"])
+    for (const panel of [
+      "module",
+      "department",
+      "field",
+      "test",
+      "test-results",
+    ])
       window.localStorage.setItem(
         `openslate:advanced:sandbox.${panel}`,
         "open",
@@ -3534,9 +3540,7 @@ test("Sandbox Test field search preserves hidden edits in the submitted temporar
   await expect(setup.getByLabel("Find a field")).toBeVisible();
   await expect(setup.getByLabel("Title", { exact: true })).toHaveCount(0);
   await setup.getByLabel("Request number", { exact: true }).fill("TEST-001");
-  await setup
-    .getByRole("button", { name: "All input fields", exact: true })
-    .click();
+  await setup.getByRole("button", { name: /^All \(/ }).click();
   await expect(setup.getByLabel("Extra field 24", { exact: true })).toHaveCount(
     0,
   );
@@ -3552,19 +3556,13 @@ test("Sandbox Test field search preserves hidden edits in the submitted temporar
   await setup.getByLabel("Find a field").fill("Title");
   await setup.getByLabel("Title", { exact: true }).fill("Keep this hidden");
   await setup.getByLabel("Find a field").fill("");
-  await setup
-    .getByRole("button", { name: "Relevant fields", exact: true })
-    .click();
+  await setup.getByRole("button", { name: /^Relevant \(/ }).click();
   await expect(setup.getByLabel("Title", { exact: true })).toHaveCount(0);
-  await setup
-    .getByRole("button", { name: "Edited fields", exact: true })
-    .click();
+  await setup.getByRole("button", { name: /^Edited \(/ }).click();
   await expect(setup.getByLabel("Title", { exact: true })).toHaveValue(
     "Keep this hidden",
   );
-  await setup
-    .getByRole("button", { name: "Relevant fields", exact: true })
-    .click();
+  await setup.getByRole("button", { name: /^Relevant \(/ }).click();
   await setup.getByRole("button", { name: "Run test", exact: true }).click();
   await expect
     .poll(() => submitted?.["sample-field-Title"])
@@ -3723,9 +3721,7 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
       .getByLabel("Priority", { exact: true }),
   ).toBeFocused();
   await expect(comparison).toBeVisible();
-  await comparison
-    .getByRole("button", { name: "All result fields", exact: true })
-    .click();
+  await comparison.getByRole("button", { name: /^All fields \(/ }).click();
   await expect(comparison.getByRole("row", { name: /Priority/ })).toContainText(
     "No value",
   );
@@ -3742,9 +3738,7 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
   await expect(comparison.getByRole("row", { name: /Priority/ })).toHaveCount(
     0,
   );
-  await comparison
-    .getByRole("button", { name: "All result fields", exact: true })
-    .click();
+  await comparison.getByRole("button", { name: /^All fields \(/ }).click();
   await expect(
     comparison
       .getByRole("row", { name: /Priority/ })
@@ -3756,7 +3750,8 @@ test("Sandbox Test comparisons use saved inputs, preserve typed values, and dist
       .getByRole("cell", { name: "No value", exact: true }),
   ).toHaveCount(2);
   const setup = page.getByRole("region", { name: "Test setup", exact: true });
-  await setup.getByLabel("Find a field").fill("Priority");
+  // Small modules show no search; All lists every input.
+  await setup.getByRole("button", { name: /^All \(/ }).click();
   await setup.getByLabel("Priority", { exact: true }).fill("42");
   await expect(
     comparison
@@ -4522,7 +4517,7 @@ test("a Test result from an older draft says so and can show its module on the c
   await page.goto("/sandbox?section=test");
   const outcome = page.getByRole("region", { name: "Test outcome" });
   await expect(
-    outcome.getByText("This result is from an older draft."),
+    outcome.getByText("Draft changed", { exact: true }),
   ).toBeVisible();
   await expect(
     outcome.getByRole("button", { name: "Run again" }),

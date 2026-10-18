@@ -549,33 +549,24 @@ export function VersionsWorkspace({
                     setOffset(0);
                   }
                 }}
-                className="bg-muted grid w-full grid-cols-2 gap-1 rounded-lg p-1"
+                variant="segmented"
+                className="grid grid-cols-2"
               >
-                <ToggleGroupItem
-                  value="all"
-                  aria-label="All versions"
-                  className="aria-pressed:text-action-text h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
-                >
+                <ToggleGroupItem value="all" aria-label="All versions">
                   All
                 </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="checkpoint"
-                  aria-label="Checkpoints"
-                  className="aria-pressed:text-action-text h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
-                >
+                <ToggleGroupItem value="checkpoint" aria-label="Checkpoints">
                   Checkpoints
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="published"
                   aria-label="Published versions"
-                  className="aria-pressed:text-action-text h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
                 >
                   Published
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="imported"
                   aria-label="Imported versions"
-                  className="aria-pressed:text-action-text h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
                 >
                   Imported
                 </ToggleGroupItem>

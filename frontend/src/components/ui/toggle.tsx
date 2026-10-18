@@ -11,6 +11,9 @@ const toggleVariants = cva(
       variant: {
         default: "bg-transparent",
         outline: "border border-input bg-transparent hover:bg-muted",
+        // Single-select filters (Shared parts, SH-5): toggle-group.tsx adds
+        // the rail and the pressed look.
+        segmented: "",
       },
       size: {
         default:

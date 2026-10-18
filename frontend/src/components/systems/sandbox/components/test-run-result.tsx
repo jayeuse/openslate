@@ -11,6 +11,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -122,7 +123,14 @@ type OutcomeProps = {
   triggers: readonly SandboxTrigger[];
   /** Set up the next test with this trigger's trigger. */
   onTryTrigger: (trigger: SandboxTriggerEvent) => void;
+  /** The setup changed after this result was shown. */
+  inputsChanged?: boolean;
+  /** Runs the test with the current setup. */
+  onRunCurrent?: () => void;
 };
+
+/** The id of the result heading, which takes focus after a run on phones. */
+export const TEST_RESULT_HEADING_ID = "sandbox-test-result-heading";
 export function TestOutcome({
   design,
   run,
@@ -134,6 +142,8 @@ export function TestOutcome({
   onShowOnCanvas,
   triggers,
   onTryTrigger,
+  inputsChanged = false,
+  onRunCurrent,
 }: OutcomeProps) {
   if (!run)
     return (
@@ -149,10 +159,6 @@ export function TestOutcome({
           <p className="text-sm">
             Run a test to see the expected outcome here.
           </p>
-          <p className="text-muted-foreground mt-2 text-sm">
-            Choose an event and enter temporary values. Your live workspace
-            stays unchanged.
-          </p>
         </div>
       </section>
     );
@@ -165,13 +171,19 @@ export function TestOutcome({
     <section aria-label="Test outcome" className="min-w-0">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 data-slot="section-title" className="font-semibold">
+          <h3
+            id={TEST_RESULT_HEADING_ID}
+            tabIndex={-1}
+            data-slot="section-title"
+            className="font-semibold outline-none"
+          >
             Test result
           </h3>
-          <p className="text-muted-foreground mt-1 text-xs">
+          <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
             <time dateTime={run.createdAt}>
               {new Date(run.createdAt).toLocaleString()}
             </time>
+            <Badge variant="outline">Test only · live data unchanged</Badge>
           </p>
         </div>
         {stale !== "module-gone" && (
@@ -186,31 +198,32 @@ export function TestOutcome({
           </Button>
         )}
       </div>
-      {stale && (
+      {stale === "module-gone" ? (
         <Alert className="mt-4">
-          <p className="font-medium">
-            {stale === "module-gone"
-              ? "The module this test used was removed or closed."
-              : "This result is from an older draft."}
-          </p>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {stale === "module-gone"
-              ? "Choose a module in Test setup and run a new test."
-              : "Run the test again to check the current draft."}
-          </p>
-          {stale === "older-draft" && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="mt-3 min-h-9"
-              disabled={pending}
-              onClick={() => onRunAgain(run)}
-            >
-              {pending ? "Running…" : "Run again"}
-            </Button>
-          )}
+          Module removed. Choose another module to test.
         </Alert>
-      )}
+      ) : inputsChanged || stale === "older-draft" ? (
+        // One stale bar (copy cut 15): the result no longer matches what
+        // the user sees, and Run again is the way back.
+        <div
+          role="status"
+          className="bg-warn-tint text-warn-text mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium"
+        >
+          <span>{inputsChanged ? "Inputs changed" : "Draft changed"}</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="max-xl:min-h-11"
+            pending={pending}
+            pendingLabel="Running…"
+            onClick={() =>
+              inputsChanged && onRunCurrent ? onRunCurrent() : onRunAgain(run)
+            }
+          >
+            Run again
+          </Button>
+        </div>
+      ) : null}
       <p className="mt-4 text-lg font-semibold">
         {run.result.issues.length
           ? stale
@@ -340,17 +353,6 @@ export function TestOutcome({
           )}
         </Stage>
       </div>
-      <div className="border-border border-t pt-4">
-        <h4 className="text-sm font-semibold">How to read this result</h4>
-        <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
-          Field comparison shows each value after the test, including changes
-          that later triggers made.
-        </p>
-        <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
-          Editing inputs does not change this result. Run the test again to
-          evaluate new values.
-        </p>
-      </div>
       {run.result.routes.length > 0 && (
         <Collapsible className="group border-border mt-5 border-t pt-3">
           <CollapsibleTrigger
@@ -404,9 +406,6 @@ export function TestComparison({
       <h3 data-slot="section-title" className="font-semibold">
         Field comparison
       </h3>
-      <p className="text-muted-foreground mt-2 text-sm">
-        Compare the inputs used with the test result.
-      </p>
       {!run ? (
         <p className="text-muted-foreground mt-8 text-sm">
           Your before and after values will appear here after a test.
@@ -423,20 +422,13 @@ export function TestComparison({
               if (selected === "changed") setShowAll(false);
               setLimit(12);
             }}
-            className="bg-muted mt-5 flex w-full flex-wrap gap-1 rounded-lg p-1"
+            variant="segmented"
+            className="mt-5"
           >
-            <ToggleGroupItem
-              value="changed"
-              aria-label="Changed fields"
-              className="aria-pressed:text-action-text h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
-            >
+            <ToggleGroupItem value="changed">
               Changed ({changed.length})
             </ToggleGroupItem>
-            <ToggleGroupItem
-              value="all"
-              aria-label="All result fields"
-              className="aria-pressed:text-action-text h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
-            >
+            <ToggleGroupItem value="all">
               All fields ({rows.length})
             </ToggleGroupItem>
           </ToggleGroup>
@@ -522,13 +514,6 @@ export function TestComparison({
             {unchanged} field{unchanged === 1 ? "" : "s"} unchanged
             {missing ? ` · ${missing} with no value after the test` : ""}
           </p>
-          <div className="border-border mt-6 border-t pt-4">
-            <p className="text-sm font-medium">Live workspace unchanged</p>
-            <p className="text-muted-foreground mt-2 text-sm">
-              These are temporary test values. No operational records were
-              created or changed.
-            </p>
-          </div>
           <section
             aria-label="Inputs used for this result"
             className="border-border mt-6 border-t pt-4"
