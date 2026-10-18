@@ -6,6 +6,7 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
+import { AdvancedSection } from "@/components/ui/advanced-section";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +16,15 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Switch } from "@/components/ui/switch";
-import { MoreHorizontal, Plus, Trash2, ChevronDown } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  MoreHorizontal,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -48,6 +57,7 @@ import type {
 } from "../domain/document";
 import type { SandboxTriggerRun } from "../state/api";
 import { dateRangeFits, dateValueInRange } from "../domain/date-values";
+import { reportUndoable } from "@/lib/feedback";
 
 export type TriggerStudioProps = {
   design: SandboxDocumentDesign;
@@ -57,8 +67,33 @@ export type TriggerStudioProps = {
   initialSelectedId?: string;
   onRefreshActivity: () => Promise<void>;
   onChange: (triggers: SandboxTrigger[]) => Promise<void> | void;
-  onStateChange?: (state: { dirty: boolean; pending: boolean }) => void;
+  onStateChange?: (state: TriggerDraftState) => void;
 };
+
+/** What the page needs to know about unsaved triggers, and how to resolve
+ * them from outside the studio (the leave dialog). */
+export type TriggerDraftState = {
+  dirty: boolean;
+  pending: boolean;
+  /** Triggers added, changed, or deleted since the last save. */
+  changes: number;
+  save: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  discard: () => void;
+};
+
+/** Counts triggers added, changed, or deleted, matched by id. */
+export function unsavedTriggerChanges(
+  draft: readonly SandboxTrigger[],
+  saved: readonly SandboxTrigger[],
+): number {
+  const savedById = new Map(saved.map((item) => [item.id, item]));
+  const draftIds = new Set(draft.map((item) => item.id));
+  const changed = draft.filter((item) => {
+    const before = savedById.get(item.id);
+    return !before || JSON.stringify(before) !== JSON.stringify(item);
+  }).length;
+  return changed + saved.filter((item) => !draftIds.has(item.id)).length;
+}
 
 export async function saveStudioDraft<T>(
   draft: T,
@@ -569,7 +604,25 @@ function ValueEditor({
       {value.kind === "literal" ? (
         <Field>
           <FieldLabel htmlFor={literalId}>Value</FieldLabel>
-          {target?.config.kind === "checkbox" ? (
+          {target?.config.kind === "select" ? (
+            <NativeSelect
+              id={literalId}
+              value={typeof value.value === "string" ? value.value : ""}
+              onChange={(event) =>
+                onChange({
+                  kind: "literal",
+                  value: event.target.value || null,
+                })
+              }
+            >
+              <NativeSelectOption value="">Empty</NativeSelectOption>
+              {target.config.options.map((option) => (
+                <NativeSelectOption key={option.id} value={option.id}>
+                  {option.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          ) : target?.config.kind === "checkbox" ? (
             <NativeSelect
               id={literalId}
               value={String(value.value)}
@@ -677,39 +730,34 @@ function ValueEditor({
           </NativeSelect>
         </Field>
       )}
-      <Collapsible className="min-w-0 self-end">
-        <CollapsibleTrigger className="text-muted-foreground focus-visible:outline-ring flex min-h-11 cursor-pointer items-center gap-2 text-xs focus-visible:outline-2">
-          <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
-          Value options ·{" "}
-          {value.kind === "field-reference" ? "Field reference" : "Fixed value"}
-        </CollapsibleTrigger>
-        <CollapsibleContent keepMounted>
-          <Field>
-            <FieldLabel htmlFor={sourceId}>Value source</FieldLabel>
-            <NativeSelect
-              id={sourceId}
-              value={value.kind}
-              onChange={(event) =>
-                onChange(
-                  event.target.value === "field-reference" && references[0]
-                    ? { kind: "field-reference", ...references[0].reference }
-                    : defaultLiteral(target),
-                )
-              }
+      <AdvancedSection
+        storageKey="sandbox.trigger-value"
+        setCount={value.kind === "field-reference" ? 1 : 0}
+        className="col-span-full"
+      >
+        <Field>
+          <FieldLabel htmlFor={sourceId}>Value source</FieldLabel>
+          <NativeSelect
+            id={sourceId}
+            value={value.kind}
+            onChange={(event) =>
+              onChange(
+                event.target.value === "field-reference" && references[0]
+                  ? { kind: "field-reference", ...references[0].reference }
+                  : defaultLiteral(target),
+              )
+            }
+          >
+            <NativeSelectOption value="literal">Fixed value</NativeSelectOption>
+            <NativeSelectOption
+              value="field-reference"
+              disabled={!references.length}
             >
-              <NativeSelectOption value="literal">
-                Literal value
-              </NativeSelectOption>
-              <NativeSelectOption
-                value="field-reference"
-                disabled={!references.length}
-              >
-                Field reference
-              </NativeSelectOption>
-            </NativeSelect>
-          </Field>
-        </CollapsibleContent>
-      </Collapsible>
+              Another field
+            </NativeSelectOption>
+          </NativeSelect>
+        </Field>
+      </AdvancedSection>
     </div>
   );
 }
@@ -727,11 +775,25 @@ export function TriggerStudio({
   const [draft, setDraft] = useState(triggers);
   const studioRef = useRef<HTMLElement>(null);
   const [wide, setWide] = useState(false);
+  // Phones show the list or one trigger's detail, with Back (TRG-5).
+  const [phone, setPhone] = useState(false);
+  const [phoneView, setPhoneView] = useState<"list" | "detail">(
+    initialSelectedId ? "detail" : "list",
+  );
   useEffect(() => {
     const element = studioRef.current;
     if (!element) return;
+    let measured = false;
+    let wasPhone = false;
     const observer = new ResizeObserver(([entry]) => {
-      setWide(entry.contentRect.width >= 1100);
+      const nextPhone = entry.contentRect.width < 640;
+      // A window that narrows mid-edit keeps the trigger in view; only a
+      // page that opens narrow starts on the list.
+      if (measured && nextPhone && !wasPhone) setPhoneView("detail");
+      measured = true;
+      wasPhone = nextPhone;
+      setWide(entry.contentRect.width >= 900);
+      setPhone(nextPhone);
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -773,34 +835,94 @@ export function TriggerStudio({
   }, [draft, initialSelectedId]);
   const selected = draft.find((item) => item.id === selectedId);
   const dirty = JSON.stringify(draft) !== JSON.stringify(triggers);
+  const changes = dirty ? unsavedTriggerChanges(draft, triggers) : 0;
+  // The page calls these from the leave dialog; refs keep them current
+  // without re-reporting the state on every keystroke.
+  const saveRef = useRef(save);
+  const discardRef = useRef(discard);
+  useEffect(() => {
+    saveRef.current = save;
+    discardRef.current = discard;
+  });
+  const [stableActions] = useState(() => ({
+    save: () => saveRef.current(),
+    discard: () => discardRef.current(),
+  }));
   useEffect(
-    () => onStateChange?.({ dirty, pending }),
-    [dirty, onStateChange, pending],
+    () => onStateChange?.({ dirty, pending, changes, ...stableActions }),
+    [changes, dirty, onStateChange, pending, stableActions],
   );
   useEffect(
-    () => () => onStateChange?.({ dirty: false, pending: false }),
-    [onStateChange],
+    () => () =>
+      onStateChange?.({
+        dirty: false,
+        pending: false,
+        changes: 0,
+        ...stableActions,
+      }),
+    [onStateChange, stableActions],
   );
   function updateDraft(next: SandboxTrigger[]) {
     setDraft(next);
     setError("");
   }
-  async function save() {
+  function discard() {
+    setDraft(triggers);
+    setSelectedId(triggers[0]?.id ?? "");
+    setSelectedStep("trigger");
+    setError("");
+  }
+  async function save(): Promise<{ ok: true } | { ok: false; error: string }> {
     const snapshot = structuredClone(draft);
     const validationError = snapshot
       .map((recordTrigger) => triggerLiteralError(recordTrigger, design))
       .find((message): message is string => message !== null);
     if (validationError) {
       setError(validationError);
-      return;
+      return { ok: false, error: validationError };
     }
     setPending(true);
     const result = await saveStudioDraft(snapshot, onChange);
-    if (!result.ok)
-      setError(
-        "The trigger change could not be saved. Your draft is still available.",
-      );
     setPending(false);
+    if (result.ok) return { ok: true };
+    const failure =
+      "The trigger change could not be saved. Your draft is still available.";
+    setError(failure);
+    return { ok: false, error: failure };
+  }
+  const listRef = useRef<HTMLElement>(null);
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  /** On phones, opening a trigger shows its detail from the top. */
+  function openDetail() {
+    setPhoneView("detail");
+    if (!phone) return;
+    requestAnimationFrame(() => {
+      studioRef.current?.scrollIntoView({ block: "start" });
+      detailHeadingRef.current?.focus({ preventScroll: true });
+    });
+  }
+  function deleteTrigger(recordTrigger: SandboxTrigger) {
+    const index = draft.findIndex((item) => item.id === recordTrigger.id);
+    updateDraft(draft.filter((item) => item.id !== recordTrigger.id));
+    setPhoneView("list");
+    // The menu that had focus is gone with the trigger; land on the list.
+    requestAnimationFrame(() =>
+      listRef.current?.querySelector<HTMLElement>("button")?.focus(),
+    );
+    reportUndoable("Trigger deleted", () => {
+      setDraft((current) =>
+        current.some((item) => item.id === recordTrigger.id)
+          ? current
+          : [
+              ...current.slice(0, index),
+              recordTrigger,
+              ...current.slice(index),
+            ],
+      );
+      setSelectedId(recordTrigger.id);
+      setSelectedStep("trigger");
+      setError("");
+    });
   }
   function update(next: SandboxTrigger) {
     const index = draft.findIndex((item) => item.id === next.id);
@@ -812,22 +934,26 @@ export function TriggerStudio({
       aria-labelledby="trigger-studio-title"
       className="@container/studio flex h-full min-w-0 flex-col"
     >
-      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border @min-[1100px]/studio:h-[calc(100dvh-15rem)] xl:@min-[1100px]/studio:h-auto xl:@min-[1100px]/studio:min-h-0 xl:@min-[1100px]/studio:flex-1 xl:@min-[1100px]/studio:shrink">
+      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border @min-[900px]/studio:h-[calc(100dvh-15rem)] xl:@min-[900px]/studio:h-auto xl:@min-[900px]/studio:min-h-0 xl:@min-[900px]/studio:flex-1 xl:@min-[900px]/studio:shrink">
         <ResizablePanelGroup
           orientation="horizontal"
           disabled={!wide}
-          className="block! h-auto! @min-[1100px]/studio:flex! @min-[1100px]/studio:h-full!"
+          className="block! h-auto! @min-[900px]/studio:flex! @min-[900px]/studio:h-full!"
         >
           <ResizablePanel
             id="trigger-list"
             defaultSize="18.2rem"
             minSize={wide ? "18.2rem" : 0}
             groupResizeBehavior="preserve-pixel-size"
-            className="min-w-0 overflow-visible! @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-hidden!"
+            className={cn(
+              "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
+              phone && phoneView === "detail" && "hidden",
+            )}
           >
             <aside
+              ref={listRef}
               aria-label="Trigger list"
-              className="bg-card border-border min-w-0 border-b p-4 @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-y-auto @min-[1100px]/studio:border-b-0"
+              className="bg-card border-border min-w-0 border-b p-4 @min-[900px]/studio:h-full @min-[900px]/studio:overflow-y-auto @min-[900px]/studio:border-b-0"
             >
               <div className="mb-4 flex items-center justify-between gap-2">
                 <h2
@@ -849,6 +975,7 @@ export function TriggerStudio({
                   setSelectedId(next.id);
                   setSelectedStep("trigger");
                   updateDraft([...draft, next]);
+                  openDetail();
                 }}
                 disabled={pending || draft.length >= 500}
               >
@@ -857,7 +984,10 @@ export function TriggerStudio({
               </Button>
               <nav
                 aria-label="Trigger list"
-                className="grid max-h-64 gap-1 overflow-y-auto @min-[1100px]/studio:max-h-none"
+                className={cn(
+                  "grid gap-1 @min-[900px]/studio:max-h-none",
+                  !phone && "max-h-64 overflow-y-auto",
+                )}
               >
                 {draft.map((recordTrigger) => (
                   <Button
@@ -868,18 +998,28 @@ export function TriggerStudio({
                     aria-current={
                       recordTrigger.id === selectedId ? "true" : undefined
                     }
-                    className="h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal"
+                    className={cn(
+                      "relative h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal",
+                      phone && "pr-9",
+                    )}
                     onClick={() => {
                       setSelectedId(recordTrigger.id);
                       setSelectedStep("trigger");
+                      openDetail();
                     }}
                   >
+                    {phone ? (
+                      <ChevronRight
+                        aria-hidden="true"
+                        className="text-muted-foreground absolute top-1/2 right-3 -translate-y-1/2"
+                      />
+                    ) : null}
                     <span className="w-full [overflow-wrap:anywhere] break-words">
                       {recordTrigger.name || "Untitled trigger"}
                     </span>
                     <span className="text-muted-foreground text-xs font-normal">
                       {triggerEventLabel(recordTrigger)}
-                      {!recordTrigger.enabled ? " · Disabled" : ""}
+                      {!recordTrigger.enabled ? " · Off" : ""}
                     </span>
                   </Button>
                 ))}
@@ -892,23 +1032,41 @@ export function TriggerStudio({
           <ResizablePanel
             id="trigger-graph"
             minSize={wide ? "18rem" : 0}
-            className="min-w-0 overflow-visible! @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-hidden!"
+            className={cn(
+              "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
+              phone && phoneView === "list" && "hidden",
+            )}
           >
-            <div className="border-border min-w-0 border-b p-5 @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-y-auto @min-[1100px]/studio:border-b-0">
+            <div className="border-border min-w-0 border-b p-5 @min-[900px]/studio:h-full @min-[900px]/studio:overflow-y-auto @min-[900px]/studio:border-b-0">
+              {phone ? (
+                <Button
+                  variant="ghost"
+                  className="mb-3 -ml-2 min-h-11"
+                  onClick={() => {
+                    setPhoneView("list");
+                    requestAnimationFrame(() =>
+                      listRef.current
+                        ?.querySelector<HTMLElement>("[aria-current=true]")
+                        ?.focus(),
+                    );
+                  }}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                  Triggers
+                </Button>
+              ) : null}
               {selected ? (
                 <>
                   <div className="border-border mb-5 flex items-start justify-between gap-3 border-b pb-5">
                     <div className="min-w-0">
                       <h2
+                        ref={detailHeadingRef}
+                        tabIndex={-1}
                         data-slot="section-title"
-                        className="text-lg font-semibold [overflow-wrap:anywhere] break-words"
+                        className="text-lg font-semibold [overflow-wrap:anywhere] break-words outline-none"
                       >
                         {selected.name || "Untitled trigger"}
                       </h2>
-                      <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
-                        Follow the steps to see when this trigger makes a
-                        change.
-                      </p>
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger
@@ -928,11 +1086,7 @@ export function TriggerStudio({
                         <DropdownMenuItem
                           variant="destructive"
                           disabled={pending}
-                          onClick={() =>
-                            updateDraft(
-                              draft.filter((item) => item.id !== selected.id),
-                            )
-                          }
+                          onClick={() => deleteTrigger(selected)}
                         >
                           <Trash2 aria-hidden="true" />
                           Delete trigger
@@ -945,6 +1099,7 @@ export function TriggerStudio({
                     design={design}
                     selectedStep={selectedStep}
                     onSelect={selectStep}
+                    summaryOnly={phone}
                   />
                 </>
               ) : (
@@ -1040,11 +1195,14 @@ export function TriggerStudio({
             defaultSize="26rem"
             minSize={wide ? "13rem" : 0}
             groupResizeBehavior="preserve-pixel-size"
-            className="min-w-0 overflow-visible! @min-[1100px]/studio:h-full @min-[1100px]/studio:overflow-hidden!"
+            className={cn(
+              "min-w-0 overflow-visible! @min-[900px]/studio:h-full @min-[900px]/studio:overflow-hidden!",
+              phone && phoneView === "list" && "hidden",
+            )}
           >
             <section
               aria-label="Trigger settings"
-              className="bg-card @container/settings flex min-w-0 flex-col @min-[1100px]/studio:h-full @min-[1100px]/studio:min-h-0"
+              className="bg-card @container/settings flex min-w-0 flex-col @min-[900px]/studio:h-full @min-[900px]/studio:min-h-0"
             >
               <div className="border-border border-b px-5 py-4">
                 <h2 data-slot="section-title" className="font-semibold">
@@ -1053,7 +1211,7 @@ export function TriggerStudio({
               </div>
               <div
                 ref={settingsRef}
-                className="min-w-0 flex-1 space-y-4 p-4 @min-[1100px]/studio:overflow-y-auto [&_[data-slot=native-select-wrapper]]:w-full [&_input]:min-w-0 [&_select]:w-full"
+                className="min-w-0 flex-1 space-y-4 p-4 @min-[900px]/studio:overflow-y-auto [&_[data-slot=native-select-wrapper]]:w-full [&_input]:min-w-0 [&_select]:w-full"
                 onFocusCapture={(event) => {
                   const target = (
                     event.target as HTMLElement
@@ -1081,30 +1239,23 @@ export function TriggerStudio({
                   </p>
                 )}
               </div>
-              {draft.length > 0 || dirty ? (
+              {dirty || pending ? (
                 <div className="border-border flex flex-wrap items-center justify-end gap-3 border-t p-4">
-                  <p className="text-muted-foreground mr-auto text-xs">
-                    Saves all trigger drafts. Publishing is a separate step.
-                  </p>
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     className="min-h-11"
-                    onClick={() => {
-                      setDraft(triggers);
-                      setSelectedId(triggers[0]?.id ?? "");
-                      setSelectedStep("trigger");
-                      setError("");
-                    }}
-                    disabled={pending || !dirty}
+                    onClick={discard}
+                    disabled={pending}
                   >
                     Discard changes
                   </Button>
                   <Button
                     className="min-h-11"
                     onClick={() => void save()}
-                    disabled={pending || !dirty}
+                    pending={pending}
+                    pendingLabel="Saving…"
                   >
-                    {pending ? "Saving…" : "Save triggers"}
+                    Save triggers
                   </Button>
                 </div>
               ) : null}
@@ -1189,7 +1340,9 @@ function TriggerEditor({
           />
         </Field>
         <Field className="min-h-11 flex-row items-center justify-between gap-3 @min-[350px]/settings:flex-col @min-[350px]/settings:items-end">
-          <FieldLabel htmlFor={enabledId}>Enabled in draft</FieldLabel>
+          <FieldLabel htmlFor={enabledId}>
+            <span className="sr-only">Trigger </span>On
+          </FieldLabel>
           <Switch
             id={enabledId}
             disabled={pending}
@@ -1208,9 +1361,6 @@ function TriggerEditor({
         <h3 data-slot="section-title" className="col-span-full font-semibold">
           When
         </h3>
-        <p className="text-muted-foreground col-span-full text-sm">
-          Choose what starts this trigger.
-        </p>
         <div className="contents">
           <Field>
             <FieldLabel htmlFor={triggerId}>Event</FieldLabel>
@@ -1528,29 +1678,31 @@ function ConditionEditor({
       className="border-border grid min-w-0 gap-3 rounded-xl border p-4"
     >
       <legend className="px-1 font-semibold">If</legend>
-      <p className="text-muted-foreground text-sm">
-        Only continue when these conditions match.
-      </p>
-      <NativeSelect
-        aria-label="Condition group operator"
-        value={recordTrigger.conditionGroup.operator}
-        onChange={(event) =>
-          onChange({
-            ...recordTrigger,
-            conditionGroup: {
-              ...recordTrigger.conditionGroup,
-              operator: event.target.value as "all" | "any",
-            },
-          })
-        }
-      >
-        <NativeSelectOption value="all">
-          All conditions match
-        </NativeSelectOption>
-        <NativeSelectOption value="any">
-          Any condition matches
-        </NativeSelectOption>
-      </NativeSelect>
+      {recordTrigger.conditionGroup.conditions.length === 0 ? (
+        <p className="text-muted-foreground text-sm">Always</p>
+      ) : null}
+      {recordTrigger.conditionGroup.conditions.length >= 2 ? (
+        <NativeSelect
+          aria-label="Condition group operator"
+          value={recordTrigger.conditionGroup.operator}
+          onChange={(event) =>
+            onChange({
+              ...recordTrigger,
+              conditionGroup: {
+                ...recordTrigger.conditionGroup,
+                operator: event.target.value as "all" | "any",
+              },
+            })
+          }
+        >
+          <NativeSelectOption value="all">
+            All conditions match
+          </NativeSelectOption>
+          <NativeSelectOption value="any">
+            Any condition matches
+          </NativeSelectOption>
+        </NativeSelect>
+      ) : null}
       {recordTrigger.conditionGroup.conditions.map((condition, index) => {
         const target = fieldsFor(design, condition.field.moduleId).find(
           (field) => field.id === condition.field.fieldId,
@@ -1677,9 +1829,6 @@ function ActionEditor({
       className="border-border grid min-w-0 gap-3 rounded-xl border p-4"
     >
       <legend className="px-1 font-semibold">Then</legend>
-      <p className="text-muted-foreground text-sm">
-        Choose what changes when the conditions match.
-      </p>
       {recordTrigger.actions.map((action, index) => (
         <div
           key={action.id}

@@ -84,7 +84,10 @@ import { VersionsWorkspace } from "./components/versions-workspace";
 import {
   TriggerStudio,
   triggerPublicationBlockers,
+  type TriggerDraftState,
 } from "./components/trigger-studio";
+import { TriggerLeaveDialog } from "./components/trigger-leave-dialog";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { TestWorkspace } from "./components/test-workspace";
 import { ReviewPublishDialog } from "./components/review-publish-dialog";
 import { SandboxHeaderActions } from "./components/sandbox-header-actions";
@@ -326,10 +329,15 @@ export default function SandboxPage() {
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
-  const [triggerDraft, setTriggerDraft] = useState({
+  const [triggerDraft, setTriggerDraft] = useState<TriggerDraftState>({
     dirty: false,
     pending: false,
+    changes: 0,
+    save: async () => ({ ok: true }),
+    discard: () => {},
   });
+  // A navigation held back by unsaved triggers, resumed after Save or Discard.
+  const [leaveRequest, setLeaveRequest] = useState<(() => void) | null>(null);
   const [publicationPending, setPublicationPending] = useState(false);
   const [testPending, setTestPending] = useState(false);
   const [sandboxGeneration, setSandboxGeneration] = useState(0);
@@ -585,16 +593,22 @@ export default function SandboxPage() {
   );
   useWorkspaceNavigationGuard(
     useCallback(
-      () =>
-        !sandboxWorkInProgress({
+      (_href: string, resume: () => void) => {
+        const otherWork = sandboxWorkInProgress({
           commandBusy,
           publicationPending,
           testPending,
           conflict: conflict !== null,
-          triggerDraftDirty: triggerDraft.dirty,
+          triggerDraftDirty: false,
           triggerDraftPending: triggerDraft.pending,
           designerDraftDirty,
-        }),
+        });
+        if (otherWork) return false;
+        if (!triggerDraft.dirty) return true;
+        // Only unsaved triggers hold the page: ask Save, Discard, or Stay.
+        setLeaveRequest(() => resume);
+        return false;
+      },
       [
         triggerDraft.dirty,
         triggerDraft.pending,
@@ -1213,6 +1227,12 @@ export default function SandboxPage() {
               Sandbox
             </h1>
             {loading ? null : <Badge variant="outline">{status.label}</Badge>}
+            {triggerDraft.changes > 0 ? (
+              <Badge variant="warning">
+                {triggerDraft.changes} unsaved trigger{" "}
+                {triggerDraft.changes === 1 ? "change" : "changes"}
+              </Badge>
+            ) : null}
           </div>
           <div className="flex shrink-0 gap-2">
             {section === "Build" ? (
@@ -1251,20 +1271,34 @@ export default function SandboxPage() {
                 </Button>
               </>
             ) : null}
-            <Button
-              disabled={
-                loading ||
-                commandBusy ||
-                testPending ||
-                !status.publishable ||
-                triggerDraft.dirty ||
-                triggerDraft.pending ||
-                designerDraftDirty
+            <DisabledReason
+              reason={
+                loading || commandBusy || testPending || triggerDraft.pending
+                  ? null
+                  : triggerDraft.dirty
+                    ? "Save trigger changes first."
+                    : designerDraftDirty
+                      ? "Save or cancel your edits first."
+                      : !status.publishable
+                        ? "Nothing to publish yet."
+                        : null
               }
-              onClick={() => setReviewOpen(true)}
             >
-              Review &amp; Publish
-            </Button>
+              <Button
+                disabled={
+                  loading ||
+                  commandBusy ||
+                  testPending ||
+                  !status.publishable ||
+                  triggerDraft.dirty ||
+                  triggerDraft.pending ||
+                  designerDraftDirty
+                }
+                onClick={() => setReviewOpen(true)}
+              >
+                Review &amp; Publish
+              </Button>
+            </DisabledReason>
             <SandboxHeaderActions
               versionsRefreshKey={versionsRefreshKey}
               versionCapacity={versionCapacity}
@@ -1529,6 +1563,16 @@ export default function SandboxPage() {
             }}
           />
         ) : null}
+        <TriggerLeaveDialog
+          open={leaveRequest !== null}
+          draft={triggerDraft}
+          onStay={() => setLeaveRequest(null)}
+          onLeave={() => {
+            const resume = leaveRequest;
+            setLeaveRequest(null);
+            resume?.();
+          }}
+        />
         <SandboxLifecycleDialog
           request={
             lifecycleRequest?.operation === "purge" && !purgeEnabled

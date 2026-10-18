@@ -2962,10 +2962,6 @@ test("trigger flow preview and summary follow the unsaved rule draft", async ({
     .getByLabel("Condition 1 field")
     .selectOption({ label: "Priority" });
   const conditionValue = settings.getByLabel("Value", { exact: true }).first();
-  await settings
-    .getByText(/Value options/)
-    .first()
-    .click();
   await conditionValue.fill("Needs immediate review");
   await expect(
     flow.getByRole("button", { name: "Edit condition 1" }),
@@ -2973,14 +2969,15 @@ test("trigger flow preview and summary follow the unsaved rule draft", async ({
   await expect(summary).toContainText("Needs immediate review");
   expect(sandbox.document().triggers).toEqual(savedTriggers);
 
-  await page.getByLabel("Condition group operator").selectOption("any");
-  await expect(flow).toContainText(/any condition/i);
-  await expect(summary).toContainText(/any condition/i);
-
+  // All or Any appears only once there are two conditions.
+  await expect(page.getByLabel("Condition group operator")).toHaveCount(0);
   await page.getByRole("button", { name: "Add condition" }).click();
   await expect(
     flow.getByRole("button", { name: "Edit condition 2" }),
   ).toBeVisible();
+  await page.getByLabel("Condition group operator").selectOption("any");
+  await expect(flow).toContainText(/any condition/i);
+  await expect(summary).toContainText(/any condition/i);
   await page.getByRole("button", { name: "Remove condition" }).last().click();
   await expect(
     flow.getByRole("button", { name: "Edit condition 2" }),
@@ -3044,9 +3041,10 @@ test("unsaved Service request follow-up trigger draft fits the original viewport
     .getByLabel("Set field target")
     .first()
     .selectOption({ label: "Status" });
+  // Status is a select field, so its values are picked by label.
   const values = settings.getByLabel("Value", { exact: true });
-  await values.first().fill("Open");
-  await values.last().fill("In progress");
+  await values.first().selectOption({ label: "Open" });
+  await values.last().selectOption({ label: "In progress" });
 
   const views = [
     { width: 1440, height: 1080, theme: "light" },
@@ -4954,7 +4952,7 @@ test("Trigger Studio switch preserves geometry and its 44 pixel hit target with 
   });
   const sandbox = await openAuthenticatedSandbox(page);
   await page.getByRole("link", { name: "Triggers", exact: true }).click();
-  const toggle = page.getByRole("switch", { name: "Enabled in draft" });
+  const toggle = page.getByRole("switch", { name: "Trigger On" });
   await expect(toggle).toBeVisible();
   const track = await toggle.boundingBox();
   const thumb = await toggle

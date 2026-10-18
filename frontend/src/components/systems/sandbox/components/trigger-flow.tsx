@@ -207,27 +207,31 @@ export function TriggerFlow({
   design,
   selectedStep,
   onSelect,
+  summaryOnly = false,
 }: {
   trigger: SandboxTrigger;
   design: SandboxDocumentDesign;
   selectedStep: string;
   onSelect: (step: string) => void;
+  /** Phones read the summary at the top of the detail, without the graph. */
+  summaryOnly?: boolean;
 }) {
   const conditions = recordTrigger.conditionGroup.conditions;
   const any = recordTrigger.conditionGroup.operator === "any";
   const trigger = triggerText(design, recordTrigger);
   return (
     <>
-      <section aria-label="Flow preview" className="min-w-0">
+      <section
+        aria-label="Flow preview"
+        className="min-w-0"
+        hidden={summaryOnly}
+      >
         <h3 data-slot="section-title" className="font-semibold">
           Flow preview
         </h3>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Select a step to edit its settings.
-        </p>
         {!recordTrigger.enabled && (
-          <p className="text-muted-foreground mt-3 text-sm">
-            Disabled in this draft. This trigger will not run when published.
+          <p className="text-muted-foreground mt-1 text-sm">
+            Off · won&apos;t run after publish
           </p>
         )}
         <div className="mx-auto my-7 w-full max-w-md">
@@ -260,7 +264,7 @@ export function TriggerFlow({
                 ? any
                   ? "Any condition matches"
                   : "All conditions match"
-                : "No conditions"}
+                : "Always"}
             </button>
             <div className="grid gap-2">
               {conditions.map((condition, index) => (
@@ -274,11 +278,6 @@ export function TriggerFlow({
                   onClick={() => onSelect(`condition:${condition.id}`)}
                 />
               ))}
-              {!conditions.length && (
-                <p className="text-muted-foreground px-1 text-sm">
-                  No condition filter is configured.
-                </p>
-              )}
             </div>
           </div>
           <Connector />
@@ -308,11 +307,16 @@ export function TriggerFlow({
       </section>
       <section
         aria-label="Trigger summary"
-        className="border-border min-w-0 border-t pt-5"
+        className={cn("border-border min-w-0", !summaryOnly && "border-t pt-5")}
       >
         <h3 data-slot="section-title" className="font-semibold">
           Trigger summary
         </h3>
+        {summaryOnly && !recordTrigger.enabled ? (
+          <p className="text-muted-foreground mt-1 text-sm">
+            Off · won&apos;t run after publish
+          </p>
+        ) : null}
         <div className="mt-3 space-y-2 text-sm leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-wrap">
           <p>
             {recordTrigger.trigger.kind === "schedule"
@@ -333,7 +337,7 @@ export function TriggerFlow({
               </ul>
             </>
           ) : (
-            <p>No condition filter is configured.</p>
+            <p>Always continues.</p>
           )}
           {recordTrigger.actions.length ? (
             <>
@@ -348,10 +352,6 @@ export function TriggerFlow({
             <p>No actions are configured.</p>
           )}
         </div>
-        <p className="text-muted-foreground mt-4 text-xs leading-relaxed">
-          This preview describes your draft, not a completed run. Save your
-          changes, then review and publish to apply them.
-        </p>
       </section>
     </>
   );
