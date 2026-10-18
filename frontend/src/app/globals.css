@@ -458,47 +458,67 @@ textarea {
   stroke-width: 2px;
 }
 
-/* Minimap overview for the Sandbox canvas. X6 would inject these rules at
- * runtime, which the production CSP blocks, so they live here, themed. */
-.sandbox-minimap .x6-widget-minimap {
-  position: relative;
-  overflow: hidden;
-  background: var(--canvas-background);
+/* Minimap overview for the Sandbox canvas (React Flow's MiniMap, outside
+ * the flow root, so its variables are set here). Frames and tables carry it
+ * in their department tones; the viewport is an action-colored outline. */
+.sandbox-minimap {
+  --xy-minimap-node-stroke-color: transparent;
+}
+
+.sandbox-minimap .react-flow__minimap {
   user-select: none;
 }
 
-.sandbox-minimap .x6-widget-minimap .x6-graph {
-  display: inline-block;
-  box-shadow: none;
-  cursor: pointer;
-}
-
-/* Dark card fills sit too close to the dark canvas to read at minimap scale. */
-.dark .sandbox-minimap [data-sandbox-body] {
-  fill: var(--rule-strong);
-}
-
-/* At minimap scale, text and edges are noise; frames and tables carry it. */
-.sandbox-minimap :is(text, .x6-edge) {
-  display: none;
-}
-
-.sandbox-minimap .x6-widget-minimap .x6-graph > svg {
-  pointer-events: none;
+.sandbox-minimap .react-flow__minimap-svg {
   shape-rendering: optimizespeed;
 }
 
-.sandbox-minimap .x6-widget-minimap-viewport {
-  position: absolute;
-  box-sizing: content-box;
-  margin: -2px 0 0 -2px;
-  border: 2px solid var(--action);
-  border-radius: 2px;
-  cursor: move;
+.sandbox-minimap .sandbox-minimap-department.sandbox-minimap-tone-1 {
+  fill: var(--dept-1-sheet);
 }
 
-.sandbox-minimap .x6-widget-minimap-viewport-zoom {
-  display: none;
+.sandbox-minimap .sandbox-minimap-department.sandbox-minimap-tone-2 {
+  fill: var(--dept-2-sheet);
+}
+
+.sandbox-minimap .sandbox-minimap-department.sandbox-minimap-tone-3 {
+  fill: var(--dept-3-sheet);
+}
+
+.sandbox-minimap .sandbox-minimap-department.sandbox-minimap-tone-4 {
+  fill: var(--dept-4-sheet);
+}
+
+.sandbox-minimap .sandbox-minimap-department {
+  stroke: var(--canvas-dept-frame);
+}
+
+.sandbox-minimap .sandbox-minimap-module {
+  fill: var(--canvas-module-fill);
+  stroke: var(--canvas-module-frame);
+}
+
+/* Dark card fills sit too close to the dark canvas to read at minimap scale. */
+.dark .sandbox-minimap .sandbox-minimap-module {
+  fill: var(--rule-strong);
+}
+
+/* Connection points on module sides: hidden until the module is hovered or
+ * selected, or while a line is being drawn (sandbox-canvas-nodes.tsx). */
+.sandbox-flow .react-flow__handle.sandbox-port {
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--muted-foreground);
+  border-radius: 50%;
+  background: var(--card);
+  opacity: 0;
+}
+
+.sandbox-flow .react-flow__node:hover .sandbox-port,
+.sandbox-flow .sandbox-port[data-visible="true"],
+.sandbox-flow[data-connecting="true"] .sandbox-port {
+  opacity: 1;
 }
 
 /* Data that replaces a loading state fades in; cached data appears at once
@@ -516,7 +536,7 @@ textarea {
 }
 
 /* Motion follows input: only the lines a hover traces drift. */
-.sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line="true"] {
+.sandbox-ui [data-sandbox-edge][data-trace="on"] [data-sandbox-line="true"] {
   animation: sandbox-relationship-flow 2.4s linear infinite;
 }
 
@@ -576,22 +596,22 @@ textarea {
 
 /* Hovering a module or relationship traces its connections
    (sandbox-canvas-trace.ts). Only opacity animates. */
-.sandbox-ui .x6-cell[data-trace] {
+.sandbox-ui :is([data-sandbox-node], [data-sandbox-edge])[data-trace] {
   transition: opacity 150ms ease-out;
 }
 
-.sandbox-ui .x6-cell[data-trace="dim"] {
+.sandbox-ui :is([data-sandbox-node], [data-sandbox-edge])[data-trace="dim"] {
   opacity: 0.35;
 }
 
 /* A traced path shows movement, so it takes the flow color. */
-.sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line] {
+.sandbox-ui [data-sandbox-edge][data-trace="on"] [data-sandbox-line] {
   stroke: var(--flow);
   stroke-width: 2px;
 }
 
 .sandbox-ui
-  .x6-node[data-trace="on"]
+  [data-sandbox-node][data-trace="on"]
   [data-sandbox-kind="module"][data-selected="false"][data-feedback=""] {
   stroke: var(--flow);
   stroke-width: 2px;
@@ -615,23 +635,25 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sandbox-ui .x6-edge[data-trace="on"] [data-sandbox-line="true"] {
+  .sandbox-ui [data-sandbox-edge][data-trace="on"] [data-sandbox-line="true"] {
     animation: none;
   }
 
-  .sandbox-ui .x6-cell[data-trace] {
+  .sandbox-ui :is([data-sandbox-node], [data-sandbox-edge])[data-trace] {
     transition: none;
   }
 }
 
 [data-motion="reduced"]
   .sandbox-ui
-  .x6-edge[data-trace="on"]
+  [data-sandbox-edge][data-trace="on"]
   [data-sandbox-line="true"] {
   animation: none;
 }
 
-[data-motion="reduced"] .sandbox-ui .x6-cell[data-trace] {
+[data-motion="reduced"]
+  .sandbox-ui
+  :is([data-sandbox-node], [data-sandbox-edge])[data-trace] {
   transition: none;
 }
 

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { relationshipLineAttrs } from "../../../src/lib/sandbox/x6-adapter";
+import { relationshipLineAttrs } from "../../../src/lib/sandbox/canvas-geometry";
 
 // A relationship inside one department is a dashed line; a handoff to another
 // department is solid. Selection does not change the kind. The http test "a

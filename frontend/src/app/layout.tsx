@@ -4,7 +4,6 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { ThemeProvider } from "@/components/theme-provider";
 import { OrganizationThemeProvider } from "@/components/organization-theme-provider";
-import { X6Stylesheets } from "@/components/sandbox/x6-stylesheets";
 import "./globals.css";
 
 // Fonts are self-hosted from src/app/fonts so a build never downloads them.
@@ -99,7 +98,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}
         <script src="/theme-init.js" />
-        <X6Stylesheets />
       </head>
       <body className="flex min-h-full flex-col">
         <ThemeProvider />

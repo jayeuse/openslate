@@ -1,12 +1,12 @@
 import { useUserPreferences } from "@/components/theme-provider";
 import { SANDBOX_SHORTCUTS } from "@/lib/shortcuts";
+import { useStableHandlers } from "@/lib/use-stable-handlers";
 import {
   memo,
   useCallback,
   useState,
   useDeferredValue,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useSyncExternalStore,
@@ -82,7 +82,7 @@ import {
   type SandboxDropKind,
 } from "@/components/sandbox/sandbox-canvas";
 import { SandboxInspector } from "@/components/sandbox/sandbox-inspector";
-import { SANDBOX_ZOOM } from "@/lib/sandbox/x6-adapter";
+import { SANDBOX_ZOOM } from "@/lib/sandbox/canvas-geometry";
 import type { TestTraceStep } from "../domain/test-run-summary";
 import type { SandboxDesignTarget as SandboxInspectorTarget } from "../domain/model";
 import { arrangedLayout, resetLayout } from "../helpers/designer-layout";
@@ -225,36 +225,6 @@ function updateProjectedFieldOrThrow(
 // Designer gives it deferred inputs and stable handlers, so a canvas drop or a
 // save never waits for it: React updates it in the background instead.
 const StructureOutline = memo(SandboxInspector);
-
-type HandlerSet = Record<string, (...args: never[]) => unknown>;
-
-function createStableHandlers<T extends HandlerSet>(initial: T) {
-  let current = initial;
-  const handlers = Object.fromEntries(
-    Object.keys(initial).map((key) => [
-      key,
-      (...args: never[]) => current[key](...args),
-    ]),
-  ) as T;
-  return {
-    handlers,
-    update: (next: T) => {
-      current = next;
-    },
-  };
-}
-
-/**
- * Returns functions that keep one identity and always call the newest handler,
- * so a memoized child does not re-render for new closures.
- */
-function useStableHandlers<T extends HandlerSet>(handlers: T): T {
-  const [stable] = useState(() => createStableHandlers(handlers));
-  useLayoutEffect(() => {
-    stable.update(handlers);
-  });
-  return stable.handlers;
-}
 
 /**
  * True only after `active` has stayed true for `delay` ms, so a fast save does

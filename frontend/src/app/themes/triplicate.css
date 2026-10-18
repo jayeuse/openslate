@@ -460,7 +460,7 @@
 
 [data-theme="triplicate"]
   .sandbox-ui
-  .x6-cell:not([data-sandbox-pressed="true"])
+  [data-sandbox-node]:not([data-sandbox-pressed="true"])
   [data-sandbox-kind="department"][data-selected="false"][data-feedback=""] {
   /* A dotted perforation, so the frame never reads as a relationship dash. */
   stroke-dasharray: 1 3;
