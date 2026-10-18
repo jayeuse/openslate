@@ -53,6 +53,9 @@ type Props = {
   /** The page owns the template dialog so the empty canvas can open it too. */
   templatesOpen: boolean;
   onTemplatesOpenChange: (open: boolean) => void;
+  /** The page owns the checkpoint dialog so History can open it too. */
+  checkpointOpen: boolean;
+  onCheckpointOpenChange: (open: boolean) => void;
   /** A checkpoint of an empty design would save nothing. */
   canCheckpoint: boolean;
   /** Discard only acts when the draft differs from what was published. */
@@ -89,6 +92,8 @@ export function SandboxHeaderActions({
   pending,
   templatesOpen,
   onTemplatesOpenChange,
+  checkpointOpen,
+  onCheckpointOpenChange: setCheckpointOpen,
   canCheckpoint,
   canDiscard,
   onCreateCheckpoint,
@@ -97,7 +102,6 @@ export function SandboxHeaderActions({
   onDiscard,
 }: Props) {
   const input = useRef<HTMLInputElement | null>(null);
-  const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [label, setLabel] = useState("");

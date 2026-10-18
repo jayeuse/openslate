@@ -20,7 +20,8 @@ import {
   type VersionCapacityActions,
 } from "./version-capacity-banner";
 import { SearchField } from "@/components/ui/search-field";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { AdvancedSection } from "@/components/ui/advanced-section";
+import { DisabledReason } from "@/components/ui/disabled-reason";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 import {
@@ -67,6 +68,10 @@ type Props = {
   notifyError: (message: string) => void;
   notifyDone: (message: string) => void;
   pending: boolean;
+  /** Opens the page's Save checkpoint dialog. */
+  onSaveCheckpoint: () => void;
+  /** A checkpoint of an empty design would save nothing. */
+  canCheckpoint: boolean;
 };
 
 type VersionFilter = "all" | "checkpoint" | "published" | "imported";
@@ -232,6 +237,8 @@ export function VersionsWorkspace({
   notifyError,
   notifyDone,
   pending,
+  onSaveCheckpoint,
+  canCheckpoint,
 }: Props) {
   const [compareA, setCompareA] = useState("");
   const [compareB, setCompareB] = useState("");
@@ -408,6 +415,26 @@ export function VersionsWorkspace({
     setComparison(null);
     setComparing(false);
   }
+  const [comparePending, setComparePending] = useState(false);
+  async function compare(firstId: string, secondId: string) {
+    setComparePending(true);
+    const [first, second] = await Promise.all([
+      getVersion(firstId),
+      getVersion(secondId),
+    ]);
+    setComparePending(false);
+    if (!first.ok) {
+      notifyError(first.error);
+      return;
+    }
+    if (!second.ok) {
+      notifyError(second.error);
+      return;
+    }
+    setComparison({ first: first.value, second: second.value });
+    setComparing(true);
+  }
+  const [compareWith, setCompareWith] = useState("");
   const versionActionReturnFocus = useRef<HTMLElement | null>(null);
   const versionsHeading = useRef<HTMLHeadingElement | null>(null);
   const confirmVersion = confirm
@@ -467,9 +494,7 @@ export function VersionsWorkspace({
         setActionError(result.error);
         return;
       }
-      notifyDone(
-        `Draft restored from ${version.label}. Shared history added a recovery checkpoint.`,
-      );
+      notifyDone("Draft restored · checkpoint saved");
     }
     const deleted = action.kind === "delete";
     setConfirm(null);
@@ -515,6 +540,21 @@ export function VersionsWorkspace({
                   {displayedPage?.total === 1 ? "" : "s"}
                 </p>
               </div>
+              <DisabledReason
+                reason={
+                  canCheckpoint ? null : "Add a department or module first."
+                }
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 max-xl:min-h-11"
+                  disabled={pending || !canCheckpoint}
+                  onClick={onSaveCheckpoint}
+                >
+                  Save checkpoint
+                </Button>
+              </DisabledReason>
             </div>
 
             <div className="grid gap-3">
@@ -533,11 +573,12 @@ export function VersionsWorkspace({
                 placeholder="Search labels and notes"
                 autoComplete="off"
               />
-              <ToggleGroup
+              <NativeSelect
                 aria-label="Filter versions"
-                value={[filter]}
-                onValueChange={(values) => {
-                  const next = values[0];
+                className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-9"
+                value={filter}
+                onChange={(event) => {
+                  const next = event.target.value;
                   if (
                     next === "all" ||
                     next === "checkpoint" ||
@@ -549,28 +590,20 @@ export function VersionsWorkspace({
                     setOffset(0);
                   }
                 }}
-                variant="segmented"
-                className="grid grid-cols-2"
               >
-                <ToggleGroupItem value="all" aria-label="All versions">
-                  All
-                </ToggleGroupItem>
-                <ToggleGroupItem value="checkpoint" aria-label="Checkpoints">
+                <NativeSelectOption value="all">
+                  All versions
+                </NativeSelectOption>
+                <NativeSelectOption value="checkpoint">
                   Checkpoints
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="published"
-                  aria-label="Published versions"
-                >
+                </NativeSelectOption>
+                <NativeSelectOption value="published">
                   Published
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="imported"
-                  aria-label="Imported versions"
-                >
+                </NativeSelectOption>
+                <NativeSelectOption value="imported">
                   Imported
-                </ToggleGroupItem>
-              </ToggleGroup>
+                </NativeSelectOption>
+              </NativeSelect>
             </div>
 
             {history.isFetching && (
@@ -649,7 +682,9 @@ export function VersionsWorkspace({
                                 disabled={
                                   pending || checkpointLabelEdit !== null
                                 }
-                                className={`relative z-10 h-auto min-h-16 w-full justify-start py-3 pr-2 pl-8 text-left whitespace-normal ${selected ? "bg-accent text-accent-foreground" : ""}`}
+                                // Hover and selected tint from the look's ink, as
+                                // in the trigger list.
+                                className="relative z-10 h-auto min-h-16 w-full justify-start py-3 pr-2 pl-8 text-left whitespace-normal hover:bg-[color-mix(in_oklab,var(--ink)_8%,transparent)] aria-pressed:bg-[color-mix(in_oklab,var(--ink)_12%,transparent)]"
                                 onClick={() => setSelectedVersionId(version.id)}
                               >
                                 <span
@@ -657,8 +692,8 @@ export function VersionsWorkspace({
                                   className={`border-background absolute top-4 left-2 z-30 size-2 rounded-full border ${selected ? "bg-primary" : "bg-muted-foreground/50"}`}
                                 />
                                 <span className="min-w-0 flex-1">
-                                  <span className="flex items-center gap-1.5">
-                                    <span className="min-w-0 flex-1 truncate font-medium">
+                                  <span className="flex items-start gap-1.5">
+                                    <span className="min-w-0 flex-1 font-medium [overflow-wrap:anywhere]">
                                       {version.label}
                                     </span>
                                     {isComparedFirst ? (
@@ -746,9 +781,6 @@ export function VersionsWorkspace({
               <h2 data-slot="section-title" className="font-semibold">
                 Compare versions
               </h2>
-              <p className="text-muted-foreground mt-1 text-sm">
-                See how two saved versions differ.
-              </p>
             </div>
 
             {knownVersions.length ? (
@@ -779,22 +811,11 @@ export function VersionsWorkspace({
                 />
                 <Button
                   disabled={pending || !selectedCompareA || !selectedCompareB}
-                  onClick={async () => {
-                    const [first, second] = await Promise.all([
-                      getVersion(selectedCompareA),
-                      getVersion(selectedCompareB),
-                    ]);
-                    if (!first.ok) {
-                      notifyError(first.error);
-                      return;
-                    }
-                    if (!second.ok) {
-                      notifyError(second.error);
-                      return;
-                    }
-                    setComparison({ first: first.value, second: second.value });
-                    setComparing(true);
-                  }}
+                  pending={comparePending}
+                  pendingLabel="Comparing…"
+                  onClick={() =>
+                    void compare(selectedCompareA, selectedCompareB)
+                  }
                 >
                   Compare versions
                 </Button>
@@ -869,104 +890,174 @@ export function VersionsWorkspace({
                   </div>
                 </dl>
 
-                {checkpointLabelEdit?.id === selectedVersion.id ? (
-                  <form
-                    aria-label={`Edit checkpoint label ${selectedVersion.label}`}
-                    className="border-border mt-5 grid gap-3 border-b pb-5"
-                    onSubmit={async (event) => {
-                      event.preventDefault();
-                      if (pending || !checkpointLabelEdit) return;
-                      const label = checkpointLabelEdit.value.trim();
-                      if (!label) {
-                        setCheckpointLabelEdit({
-                          ...checkpointLabelEdit,
-                          error: "Checkpoint label is required",
-                        });
-                        return;
-                      }
-                      if (checkpointLabelEdit.value.length > 80) {
-                        setCheckpointLabelEdit({
-                          ...checkpointLabelEdit,
-                          error:
-                            "Checkpoint label must be 80 characters or fewer",
-                        });
-                        return;
-                      }
-                      const result = await updateVersion(
-                        selectedVersion.id,
-                        label,
-                      );
-                      if (!result.ok) {
-                        setCheckpointLabelEdit({
-                          ...checkpointLabelEdit,
-                          error: result.error,
-                        });
-                        return;
-                      }
-                      setRetainedVersions((items) =>
-                        items.map((item) =>
-                          item.id === result.value.id ? result.value : item,
-                        ),
-                      );
-                      setCheckpointLabelEdit(null);
-                      notifyDone("Checkpoint label updated in shared history.");
-                    }}
-                  >
-                    <LabeledField label="Checkpoint label">
+                {knownVersions.length > 1 ? (
+                  <div className="border-border mt-5 grid gap-2 border-b pb-5">
+                    <LabeledField label="Compare with">
                       {(controlId) => (
-                        <Input
+                        <NativeSelect
                           id={controlId}
-                          autoFocus
-                          required
-                          maxLength={80}
-                          disabled={pending}
-                          value={checkpointLabelEdit.value}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Escape" || pending) return;
-                            event.preventDefault();
-                            setCheckpointLabelEdit(null);
-                          }}
+                          className="w-full [&_select]:min-h-11 xl:[&_select]:min-h-9"
+                          value={validVersionSelection(
+                            knownVersions.filter(
+                              (version) => version.id !== selectedVersion.id,
+                            ),
+                            compareWith,
+                            "first",
+                          )}
                           onChange={(event) =>
-                            setCheckpointLabelEdit({
-                              ...checkpointLabelEdit,
-                              value: event.target.value,
-                              error: "",
-                            })
+                            setCompareWith(event.target.value)
                           }
-                        />
+                        >
+                          {knownVersions
+                            .filter(
+                              (version) => version.id !== selectedVersion.id,
+                            )
+                            .map((version) => (
+                              <NativeSelectOption
+                                key={version.id}
+                                value={version.id}
+                              >
+                                {version.label} · v{version.sequence}
+                              </NativeSelectOption>
+                            ))}
+                        </NativeSelect>
                       )}
                     </LabeledField>
-                    {checkpointLabelEdit.error ? (
-                      <Alert variant="destructive" role="alert">
-                        {checkpointLabelEdit.error}
-                      </Alert>
-                    ) : null}
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" type="submit" disabled={pending}>
-                        Save label
-                      </Button>
-                      <Button
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                        disabled={pending}
-                        onClick={() => setCheckpointLabelEdit(null)}
-                      >
-                        Cancel label edit
-                      </Button>
-                    </div>
-                  </form>
+                    <Button
+                      variant="outline"
+                      disabled={pending}
+                      pending={comparePending}
+                      pendingLabel="Comparing…"
+                      onClick={() => {
+                        const other = validVersionSelection(
+                          knownVersions.filter(
+                            (version) => version.id !== selectedVersion.id,
+                          ),
+                          compareWith,
+                          "first",
+                        );
+                        setCompareA(selectedVersion.id);
+                        setCompareB(other);
+                        void compare(selectedVersion.id, other);
+                      }}
+                    >
+                      Compare
+                    </Button>
+                  </div>
                 ) : null}
 
-                {selectedVersion.kind === "checkpoint" &&
-                checkpointLabelEdit?.id !== selectedVersion.id ? (
-                  <div className="border-border mt-5 border-b pb-5">
-                    <h3 data-slot="section-title" className="font-medium">
-                      Version label
-                    </h3>
+                <Button
+                  className="mt-5 w-full"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={(event) => {
+                    versionActionReturnFocus.current = event.currentTarget;
+                    setActionError("");
+                    setConfirm({ kind: "restore", id: selectedVersion.id });
+                  }}
+                >
+                  Restore version
+                </Button>
+
+                <AdvancedSection storageKey="sandbox.version" className="mt-5">
+                  {checkpointLabelEdit?.id === selectedVersion.id ? (
+                    <form
+                      aria-label={`Edit checkpoint label ${selectedVersion.label}`}
+                      className="grid gap-3"
+                      onSubmit={async (event) => {
+                        event.preventDefault();
+                        if (pending || !checkpointLabelEdit) return;
+                        const label = checkpointLabelEdit.value.trim();
+                        if (!label) {
+                          setCheckpointLabelEdit({
+                            ...checkpointLabelEdit,
+                            error: "Checkpoint label is required",
+                          });
+                          return;
+                        }
+                        if (checkpointLabelEdit.value.length > 80) {
+                          setCheckpointLabelEdit({
+                            ...checkpointLabelEdit,
+                            error:
+                              "Checkpoint label must be 80 characters or fewer",
+                          });
+                          return;
+                        }
+                        const result = await updateVersion(
+                          selectedVersion.id,
+                          label,
+                        );
+                        if (!result.ok) {
+                          setCheckpointLabelEdit({
+                            ...checkpointLabelEdit,
+                            error: result.error,
+                          });
+                          return;
+                        }
+                        setRetainedVersions((items) =>
+                          items.map((item) =>
+                            item.id === result.value.id ? result.value : item,
+                          ),
+                        );
+                        // The new label shows in place (inline feedback).
+                        setCheckpointLabelEdit(null);
+                      }}
+                    >
+                      <LabeledField label="Checkpoint label">
+                        {(controlId) => (
+                          <Input
+                            id={controlId}
+                            autoFocus
+                            required
+                            maxLength={80}
+                            disabled={pending}
+                            value={checkpointLabelEdit.value}
+                            onKeyDown={(event) => {
+                              if (event.key !== "Escape" || pending) return;
+                              event.preventDefault();
+                              setCheckpointLabelEdit(null);
+                            }}
+                            onChange={(event) =>
+                              setCheckpointLabelEdit({
+                                ...checkpointLabelEdit,
+                                value: event.target.value,
+                                error: "",
+                              })
+                            }
+                          />
+                        )}
+                      </LabeledField>
+                      {checkpointLabelEdit.error ? (
+                        <Alert variant="destructive" role="alert">
+                          {checkpointLabelEdit.error}
+                        </Alert>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          type="submit"
+                          pending={pending}
+                          pendingLabel="Saving…"
+                        >
+                          Save label
+                        </Button>
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                          disabled={pending}
+                          onClick={() => setCheckpointLabelEdit(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  ) : null}
+                  {selectedVersion.kind === "checkpoint" &&
+                  checkpointLabelEdit?.id !== selectedVersion.id ? (
                     <Button
-                      className="mt-3"
                       variant="outline"
+                      size="sm"
                       disabled={pending}
                       onClick={() =>
                         setCheckpointLabelEdit({
@@ -978,53 +1069,37 @@ export function VersionsWorkspace({
                     >
                       Edit checkpoint label
                     </Button>
-                  </div>
-                ) : null}
-
-                <div className="mt-5">
-                  <h3 data-slot="section-title" className="font-medium">
-                    Restore this version
-                  </h3>
-                  <p className="text-muted-foreground mt-1 text-sm">
-                    Restore it to the draft. A recovery checkpoint is added to
-                    history.
-                  </p>
-                  <Button
-                    className="mt-3 w-full"
-                    variant="outline"
-                    disabled={pending}
-                    onClick={(event) => {
-                      versionActionReturnFocus.current = event.currentTarget;
-                      setActionError("");
-                      setConfirm({ kind: "restore", id: selectedVersion.id });
-                    }}
-                  >
-                    Restore version
-                  </Button>
-                </div>
-                <div className="border-border mt-5 border-t pt-4">
-                  <Button
-                    variant="ghost"
-                    disabled={
-                      pending ||
-                      selectedVersion.kind === "published" ||
-                      historyTotal.data === undefined ||
-                      historyTotal.data <= 1
-                    }
-                    onClick={(event) => {
-                      versionActionReturnFocus.current = event.currentTarget;
-                      setActionError("");
-                      setConfirm({ kind: "delete", id: selectedVersion.id });
-                    }}
-                  >
-                    Delete version
-                  </Button>
-                  {selectedVersion.kind === "published" ? (
-                    <p className="text-muted-foreground mt-1 text-xs">
-                      Published versions are kept in history.
-                    </p>
                   ) : null}
-                </div>
+                  <DisabledReason
+                    reason={
+                      selectedVersion.kind === "published"
+                        ? "Published versions are kept."
+                        : historyTotal.data !== undefined &&
+                            historyTotal.data <= 1
+                          ? "The only version is kept."
+                          : null
+                    }
+                  >
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-danger-text"
+                      disabled={
+                        pending ||
+                        selectedVersion.kind === "published" ||
+                        historyTotal.data === undefined ||
+                        historyTotal.data <= 1
+                      }
+                      onClick={(event) => {
+                        versionActionReturnFocus.current = event.currentTarget;
+                        setActionError("");
+                        setConfirm({ kind: "delete", id: selectedVersion.id });
+                      }}
+                    >
+                      Delete version
+                    </Button>
+                  </DisabledReason>
+                </AdvancedSection>
               </>
             ) : (
               <Empty className="border-0 py-10">

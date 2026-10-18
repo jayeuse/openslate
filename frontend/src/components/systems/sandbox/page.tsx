@@ -329,6 +329,7 @@ export default function SandboxPage() {
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [triggerDraft, setTriggerDraft] = useState<TriggerDraftState>({
     dirty: false,
     pending: false,
@@ -1314,6 +1315,8 @@ export default function SandboxPage() {
               }
               templatesOpen={templatesOpen}
               onTemplatesOpenChange={setTemplatesOpen}
+              checkpointOpen={checkpointOpen}
+              onCheckpointOpenChange={setCheckpointOpen}
               canCheckpoint={
                 design.departments.length > 0 || design.modules.length > 0
               }
@@ -1509,6 +1512,10 @@ export default function SandboxPage() {
               notifyError={reportError}
               notifyDone={reportDone}
               pending={commandBusy}
+              onSaveCheckpoint={() => setCheckpointOpen(true)}
+              canCheckpoint={
+                design.departments.length > 0 || design.modules.length > 0
+              }
             />
           </div>
         ) : null}

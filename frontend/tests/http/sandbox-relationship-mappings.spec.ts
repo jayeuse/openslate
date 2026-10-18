@@ -44,6 +44,7 @@ test.beforeEach(async ({ page }) => {
       "field",
       "test",
       "test-results",
+      "version",
     ])
       window.localStorage.setItem(
         `openslate:advanced:sandbox.${panel}`,
@@ -2593,17 +2594,19 @@ test("history controls are locked while a version mutation is pending", async ({
 
   try {
     await expect(label).toBeDisabled();
+    // The save button shows its pending label while it locks.
+    await expect(page.getByRole("button", { name: "Saving…" })).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Save label" }),
-    ).toBeDisabled();
-    await expect(
-      page.getByRole("button", { name: "Cancel label edit" }),
+      page
+        .getByRole("form", { name: /^Edit checkpoint label/ })
+        .getByRole("button", { name: "Cancel", exact: true }),
     ).toBeDisabled();
   } finally {
     releaseMutation();
   }
+  // The new label shows in place; no notice.
   await expect(
-    page.getByText("Checkpoint label updated in shared history."),
+    page.getByRole("heading", { name: "Updated checkpoint" }),
   ).toBeVisible();
 });
 
@@ -4155,9 +4158,7 @@ test("History timeline filters preserve the selected action target and published
     inspector.getByRole("button", { name: "Restore version", exact: true }),
   ).toBeFocused();
   await timeline.getByLabel("Find a version").fill("");
-  await timeline
-    .getByRole("button", { name: "Published versions", exact: true })
-    .click();
+  await timeline.getByLabel("Filter versions").selectOption("published");
   await expect(
     timeline.getByRole("button", { name: "View Before import", exact: true }),
   ).toHaveCount(0);
@@ -4173,9 +4174,7 @@ test("History timeline filters preserve the selected action target and published
       exact: true,
     }),
   ).toHaveCount(0);
-  await timeline
-    .getByRole("button", { name: "All versions", exact: true })
-    .click();
+  await timeline.getByLabel("Filter versions").selectOption("all");
   await timeline
     .getByRole("button", { name: "View Release snapshot 1", exact: true })
     .click();
@@ -4188,9 +4187,7 @@ test("History timeline filters preserve the selected action target and published
   await expect(
     timeline.getByRole("button", { name: "View Before import", exact: true }),
   ).toBeDisabled();
-  await inspector
-    .getByRole("button", { name: "Cancel label edit", exact: true })
-    .click();
+  await inspector.getByRole("button", { name: "Cancel", exact: true }).click();
 });
 
 test("changing a compared version clears the old comparison", async ({
@@ -5083,9 +5080,7 @@ test("History pages and server-searches later versions while retaining inspectio
       exact: true,
     }),
   ).toBeVisible();
-  await timeline
-    .getByRole("button", { name: "Imported versions", exact: true })
-    .click();
+  await timeline.getByLabel("Filter versions").selectOption("imported");
   await expect
     .poll(() =>
       requests.some(
@@ -5117,22 +5112,14 @@ test("History pages and server-searches later versions while retaining inspectio
       await page.evaluate(async () => {
         await document.fonts.ready;
       });
-      for (const label of [
-        "All versions",
-        "Checkpoints",
-        "Published versions",
-        "Imported versions",
-      ]) {
-        await expect
-          .poll(() =>
-            timeline
-              .getByRole("button", { name: label, exact: true })
-              .evaluate(
-                (element) => element.scrollWidth <= element.clientWidth,
-              ),
-          )
-          .toBe(true);
-      }
+      // The kind filter is one compact select that fits its column.
+      await expect
+        .poll(() =>
+          timeline
+            .getByLabel("Filter versions")
+            .evaluate((element) => element.scrollWidth <= element.clientWidth),
+        )
+        .toBe(true);
     }
     if (originalViewport) await page.setViewportSize(originalViewport);
     await page.evaluate((y) => window.scrollTo(0, y), originalScrollY);
