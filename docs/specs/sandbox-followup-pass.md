@@ -1,6 +1,6 @@
 # Sandbox follow-up pass
 
-> **Status: approved (2026-10-18), P5–P11 included; implementation in progress.** It continues `docs/specs/sandbox-ui-ux-pass.md` (approved and complete through Phase 9).
+> **Status: complete (2026-10-18).** All six phases are done; the glossary decisions are below. It continues `docs/specs/sandbox-ui-ux-pass.md` (approved and complete through Phase 9).
 
 ## Outcome
 
@@ -119,7 +119,7 @@ Each phase ends with its focused tests, the Sandbox batch (lint, build, isolated
 
 It runs last because it touches strings in every section, including the strings that phases 1 to 5 add.
 
-**Owner decisions (2026-10-18).** Applied: G3 (field type words, display only), G4 (operators, "is" first), G6 (conflict text), G7 (backups), G8 (person's ID), G10 (linked field), G11 ("(empty)"). Kept: G2 (One-to-many and the others stay; the owner prefers them). G5 keeps "live state"; the owner accepted either, and "what your team sees" reads badly inside sentences ("Reload what your team sees"). G1 waits for a better word: "table" already means a real database table on other pages, while a module is a table that the owner creates. G9 follows G1.
+**Owner decisions (2026-10-18).** Applied: G3 (field type words, display only), G4 (operators, "is" first), G6 (conflict text), G7 (backups), G8 (person's ID), G10 (linked field), G11 ("(empty)"). Kept: G2 (One-to-many and the others stay; the owner prefers them). G5 keeps "live state"; the owner accepted either, and "what your team sees" reads badly inside sentences ("Reload what your team sees"). G1 keeps "module": "table" already means a real database table on other pages, and "list" would clash with three names ("Choice list", "Trigger list", "Record list"); the owner judged "module" clear enough in the product. G9 ("Event module") stays with it.
 
 **Proposed glossary.** Display words only; stored values and wire formats stay.
 
