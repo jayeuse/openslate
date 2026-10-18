@@ -1099,8 +1099,6 @@ export function TriggerStudio({
                     className={cn(
                       "relative h-auto min-h-16 w-full min-w-0 flex-col items-start justify-center gap-1 px-3 py-3 text-left whitespace-normal",
                       phone && "pr-9",
-                      recordTrigger.id === selectedId &&
-                        "text-action-text shadow-[inset_2px_0_0_var(--action)]",
                     )}
                     onClick={() => {
                       setSelectedId(recordTrigger.id);
