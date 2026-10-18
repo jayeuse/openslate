@@ -48,6 +48,7 @@ import { Alert } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field as FormField,
+  FieldError,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
@@ -551,6 +552,11 @@ export function Designer({
   >([]);
   const [relationshipError, setRelationshipError] = useState("");
   const [editorError, setEditorError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [titleFieldError, setTitleFieldError] = useState<{
+    moduleId: string;
+    message: string;
+  } | null>(null);
   const handledFocusTarget = useRef<string | null>(null);
   const selectedField = projectedField(design, selected);
   const selectedRelationship = design.relationships.find(
@@ -687,6 +693,7 @@ export function Designer({
           )
         : null;
     deleteOpener.current = stableContextTrigger ?? activeElement;
+    setDeleteError("");
     setDeleteTarget(target);
   }
 
@@ -1099,7 +1106,7 @@ export function Designer({
       };
     });
     if (!result.ok) {
-      notify(result.error);
+      setDeleteError(result.error);
       return;
     }
     setDeleteTarget(null);
@@ -1135,6 +1142,10 @@ export function Designer({
   // first-department fallback for creation commands.
   const inspectedItem =
     selectedModule ?? design.departments.find((item) => item.id === selected);
+  const shownTitleFieldError =
+    titleFieldError && titleFieldError.moduleId === selectedModule?.id
+      ? titleFieldError.message
+      : "";
   const designIsEmpty =
     design.departments.length === 0 && design.modules.length === 0;
   const currentDeleteImpact = deletionImpact(
@@ -1432,9 +1443,11 @@ export function Designer({
     sourceDepartment.id !== targetDepartment.id;
   const editorForm = (
     <form onSubmit={submit} className="flex flex-col gap-4">
-      <h3 className="font-semibold">
-        {editor === "rename" ? "Rename item" : `Create ${editor}`}
-      </h3>
+      {editor === "relationship" ? null : (
+        <h3 className="font-semibold">
+          {editor === "rename" ? "Rename item" : `Create ${editor}`}
+        </h3>
+      )}
       <FieldGroup className="gap-4">
         <FormField>
           <FieldLabel htmlFor="sandbox-editor-name">
@@ -1960,7 +1973,9 @@ export function Designer({
                 </FormField>
               </div>
               <div className="border-border flex flex-col gap-3 border-t pt-4">
-                <FormField>
+                <FormField
+                  data-invalid={Boolean(shownTitleFieldError) || undefined}
+                >
                   <FieldLabel htmlFor="sandbox-record-title-field">
                     Record title field
                   </FieldLabel>
@@ -1969,13 +1984,19 @@ export function Designer({
                     className="w-full [&_select]:min-h-10"
                     value={selectedModule.titleFieldId ?? ""}
                     disabled={pending}
-                    onChange={(event) => {
+                    aria-invalid={shownTitleFieldError ? true : undefined}
+                    aria-describedby={
+                      shownTitleFieldError
+                        ? "sandbox-record-title-field-error"
+                        : undefined
+                    }
+                    onChange={async (event) => {
+                      const moduleId = selectedModule.id;
                       const titleFieldId = event.currentTarget.value || null;
-                      void change((previous) => {
+                      setTitleFieldError(null);
+                      const result = await change((previous) => {
                         if (
-                          !previous.modules.some(
-                            (item) => item.id === selectedModule.id,
-                          )
+                          !previous.modules.some((item) => item.id === moduleId)
                         )
                           throw new SandboxCommandError(
                             "This module was deleted. Keep the title field setting open and try again.",
@@ -1983,12 +2004,14 @@ export function Designer({
                         return {
                           ...previous,
                           modules: previous.modules.map((item) =>
-                            item.id === selectedModule.id
+                            item.id === moduleId
                               ? { ...item, titleFieldId }
                               : item,
                           ),
                         };
-                      }, `sandbox.design.module-title:${selectedModule.id}`);
+                      }, `sandbox.design.module-title:${moduleId}`);
+                      if (!result.ok)
+                        setTitleFieldError({ moduleId, message: result.error });
                     }}
                   >
                     <NativeSelectOption value="">
@@ -2006,6 +2029,14 @@ export function Designer({
                         </NativeSelectOption>
                       ))}
                   </NativeSelect>
+                  {shownTitleFieldError ? (
+                    <FieldError
+                      id="sandbox-record-title-field-error"
+                      className="text-xs"
+                    >
+                      {shownTitleFieldError}
+                    </FieldError>
+                  ) : null}
                   <p className="text-muted-foreground text-xs">
                     Used for Record links in Boards. If blank, links show Record
                     and the first eight characters of its ID.
@@ -2879,7 +2910,9 @@ export function Designer({
       <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
-          if (!open && !pending) setDeleteTarget(null);
+          if (open || pending) return;
+          setDeleteTarget(null);
+          setDeleteError("");
         }}
       >
         <AlertDialogContent
@@ -2890,20 +2923,26 @@ export function Designer({
           <AlertDialogDescription className="my-4">
             {currentDeleteImpact?.detail}
           </AlertDialogDescription>
+          {deleteError ? (
+            <Alert role="alert" variant="destructive" className="mb-4">
+              {deleteError}
+            </Alert>
+          ) : null}
           <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={pending}
+              render={<Button variant="outline" />}
+            >
+              Cancel
+            </AlertDialogCancel>
             <Button
               variant="destructive"
-              disabled={pending}
+              pending={pending}
+              pendingLabel="Deleting…"
               onClick={removeSelected}
             >
               Confirm delete
             </Button>
-            <AlertDialogCancel
-              disabled={pending}
-              render={<Button variant="ghost" />}
-            >
-              Cancel
-            </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

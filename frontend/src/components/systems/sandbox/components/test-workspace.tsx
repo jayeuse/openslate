@@ -9,6 +9,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { TestComparison, TestOutcome } from "./test-run-result";
+import { weekdayOptions } from "./trigger-flow";
 import {
   defaultTestTrigger,
   summarizeTestRun,
@@ -566,9 +567,12 @@ export function TestWorkspace({
                             value={weekday}
                             onChange={(event) => setWeekday(event.target.value)}
                           >
-                            {[1, 2, 3, 4, 5, 6, 7].map((day) => (
-                              <NativeSelectOption key={day} value={String(day)}>
-                                Day {day}
+                            {weekdayOptions.map((day) => (
+                              <NativeSelectOption
+                                key={day.value}
+                                value={day.value}
+                              >
+                                {day.label}
                               </NativeSelectOption>
                             ))}
                           </NativeSelect>
@@ -671,7 +675,7 @@ export function TestWorkspace({
                               ? "Edited fields"
                               : "Relevant fields"
                         }
-                        className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
+                        className="aria-pressed:text-action-text h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
                       >
                         {item === "relevant"
                           ? "Relevant"

@@ -1,11 +1,11 @@
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
-import type { ComponentPropsWithRef } from "react";
+import type { ComponentPropsWithRef, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-[var(--radius)] text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
+  "inline-flex items-center justify-center gap-2 rounded-[var(--radius)] text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [&_svg]:size-4",
   {
     variants: {
       variant: {
@@ -38,6 +38,11 @@ const buttonVariants = cva(
 export interface ButtonProps
   extends ComponentPropsWithRef<"button">, VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  /** The action is running: the button locks and says so (`aria-busy`). */
+  pending?: boolean;
+  /** Shown while pending, for example "Saving…". The button keeps the
+   * width of its longer label, so the layout never jumps. */
+  pendingLabel?: ReactNode;
 }
 
 export function Button({
@@ -45,9 +50,38 @@ export function Button({
   variant,
   size,
   asChild = false,
+  pending = false,
+  pendingLabel,
+  disabled,
+  children,
   ...props
 }: ButtonProps) {
   const Component = asChild ? Slot : "button";
+  // Both labels share one grid cell; the hidden one keeps its width and is
+  // left out of the accessible name (visibility: hidden).
+  const content =
+    pendingLabel === undefined || asChild ? (
+      children
+    ) : (
+      <span className="grid">
+        <span
+          className={cn(
+            "col-start-1 row-start-1 inline-flex items-center justify-center gap-2",
+            pending && "invisible",
+          )}
+        >
+          {children}
+        </span>
+        <span
+          className={cn(
+            "col-start-1 row-start-1 inline-flex items-center justify-center gap-2",
+            !pending && "invisible",
+          )}
+        >
+          {pendingLabel}
+        </span>
+      </span>
+    );
 
   return (
     <Component
@@ -55,7 +89,11 @@ export function Button({
       data-variant={variant ?? "default"}
       data-size={size ?? "default"}
       className={cn(buttonVariants({ variant, size, className }))}
+      disabled={disabled || pending}
+      aria-busy={pending || undefined}
       {...props}
-    />
+    >
+      {content}
+    </Component>
   );
 }

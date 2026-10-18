@@ -428,14 +428,14 @@ export function TestComparison({
             <ToggleGroupItem
               value="changed"
               aria-label="Changed fields"
-              className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
+              className="aria-pressed:text-action-text h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
             >
               Changed ({changed.length})
             </ToggleGroupItem>
             <ToggleGroupItem
               value="all"
               aria-label="All result fields"
-              className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal"
+              className="aria-pressed:text-action-text h-auto min-h-11 min-w-0 flex-1 px-2 text-xs whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
             >
               All fields ({rows.length})
             </ToggleGroupItem>

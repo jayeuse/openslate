@@ -403,6 +403,11 @@ export function VersionsWorkspace({
     setComparison(null);
     setComparing(false);
   }, [comparisonUnavailable]);
+  /** A changed compare selection hides the result of the earlier pair. */
+  function clearComparison() {
+    setComparison(null);
+    setComparing(false);
+  }
   const versionActionReturnFocus = useRef<HTMLElement | null>(null);
   const versionsHeading = useRef<HTMLHeadingElement | null>(null);
   const confirmVersion = confirm
@@ -549,28 +554,28 @@ export function VersionsWorkspace({
                 <ToggleGroupItem
                   value="all"
                   aria-label="All versions"
-                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
+                  className="aria-pressed:text-action-text h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
                 >
                   All
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="checkpoint"
                   aria-label="Checkpoints"
-                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
+                  className="aria-pressed:text-action-text h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
                 >
                   Checkpoints
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="published"
                   aria-label="Published versions"
-                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
+                  className="aria-pressed:text-action-text h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
                 >
                   Published
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="imported"
                   aria-label="Imported versions"
-                  className="aria-pressed:bg-secondary aria-pressed:text-secondary-foreground h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal"
+                  className="aria-pressed:text-action-text h-auto min-h-9 min-w-0 px-1 py-2 text-xs leading-tight whitespace-normal aria-pressed:bg-[var(--surface-raised)] aria-pressed:font-semibold aria-pressed:shadow-[var(--lift),inset_0_0_0_1px_var(--rule)]"
                 >
                   Imported
                 </ToggleGroupItem>
@@ -761,7 +766,10 @@ export function VersionsWorkspace({
                   label="Compare first version"
                   value={selectedCompareA}
                   versions={knownVersions}
-                  onChange={setCompareA}
+                  onChange={(value) => {
+                    setCompareA(value);
+                    clearComparison();
+                  }}
                 />
                 <span
                   aria-hidden="true"
@@ -773,7 +781,10 @@ export function VersionsWorkspace({
                   label="Compare second version"
                   value={selectedCompareB}
                   versions={knownVersions}
-                  onChange={setCompareB}
+                  onChange={(value) => {
+                    setCompareB(value);
+                    clearComparison();
+                  }}
                 />
                 <Button
                   disabled={pending || !selectedCompareA || !selectedCompareB}
@@ -799,7 +810,11 @@ export function VersionsWorkspace({
               </div>
             ) : null}
 
-            {comparing && comparison && !comparisonUnavailable ? (
+            {comparing &&
+            comparison &&
+            !comparisonUnavailable &&
+            comparison.first.id === selectedCompareA &&
+            comparison.second.id === selectedCompareB ? (
               <VersionComparison
                 first={comparison.first}
                 second={comparison.second}
@@ -915,6 +930,11 @@ export function VersionsWorkspace({
                           maxLength={80}
                           disabled={pending}
                           value={checkpointLabelEdit.value}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Escape" || pending) return;
+                            event.preventDefault();
+                            setCheckpointLabelEdit(null);
+                          }}
                           onChange={(event) =>
                             setCheckpointLabelEdit({
                               ...checkpointLabelEdit,
@@ -1061,11 +1081,14 @@ export function VersionsWorkspace({
                 disabled={pending}
                 onClick={closeVersionConfirm}
               >
-                Cancel {confirm.kind === "delete" ? "deletion" : "restore"}
+                Cancel
               </Button>
               <Button
                 variant={confirm.kind === "delete" ? "destructive" : "default"}
-                disabled={pending}
+                pending={pending}
+                pendingLabel={
+                  confirm.kind === "delete" ? "Deleting…" : "Restoring…"
+                }
                 onClick={() => void apply()}
               >
                 {confirm.kind === "delete"

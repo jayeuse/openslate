@@ -17,6 +17,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -315,14 +316,24 @@ export function SandboxHeaderActions({
               onChange={(event) => setNote(event.target.value)}
             />
           </Field>
-          <Button
-            className="min-h-11"
-            disabled={pending || busy}
-            onClick={() => void checkpoint()}
-          >
-            <Save />
-            Save checkpoint
-          </Button>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={busy}
+              onClick={() => setCheckpointOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="min-h-11"
+              disabled={pending || busy}
+              onClick={() => void checkpoint()}
+            >
+              <Save />
+              Save checkpoint
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog
@@ -417,21 +428,9 @@ export function SandboxHeaderActions({
             onChange={(event) => void stageImport(event)}
           />
           {staged ? (
-            <div className="grid gap-2">
-              <p className="text-sm">
-                This file will replace the current draft.
-              </p>
-              <Button
-                className="min-h-11"
-                disabled={pending || busy || exportBusy}
-                onClick={() => void importDocument()}
-              >
-                <FileDown />
-                Import draft
-              </Button>
-            </div>
+            <p className="text-sm">This file will replace the current draft.</p>
           ) : null}
-          <div className="flex justify-end">
+          <DialogFooter>
             <Button
               variant="outline"
               className="min-h-11"
@@ -443,7 +442,17 @@ export function SandboxHeaderActions({
             >
               Cancel
             </Button>
-          </div>
+            {staged ? (
+              <Button
+                className="min-h-11"
+                disabled={pending || busy || exportBusy}
+                onClick={() => void importDocument()}
+              >
+                <FileDown />
+                Import draft
+              </Button>
+            ) : null}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog

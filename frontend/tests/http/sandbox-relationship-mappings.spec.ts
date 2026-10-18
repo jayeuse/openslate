@@ -826,6 +826,30 @@ test("bound draft deletion explains retained live data while unbound copy remain
   await expect(deletion).toContainText("Undo");
 });
 
+test("a failed delete shows its error inside the delete dialog", async ({
+  page,
+}) => {
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    saveFailure: "Sandbox storage is unavailable.",
+  });
+  // Customers is not the module Build opens on, so the failed local
+  // proposal keeps the same designer and its open dialog.
+  await page.getByRole("tab", { name: "Structure", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Select module Customers", exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Delete module", exact: true })
+    .click();
+  const deletion = page.getByRole("alertdialog");
+  await deletion
+    .getByRole("button", { name: "Confirm delete", exact: true })
+    .click();
+  await expect(deletion.getByRole("alert")).toHaveText(
+    "This Sandbox change could not be saved. Try again.",
+  );
+});
+
 test("bound field lifecycle resolves its parent and preserves dirty settings", async ({
   page,
 }) => {
@@ -2561,6 +2585,41 @@ test("history controls are locked while a version mutation is pending", async ({
   ).toBeVisible();
 });
 
+test("Escape cancels the checkpoint label edit without saving", async ({
+  page,
+}) => {
+  let labelUpdates = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "PATCH" &&
+      request.url().includes("/api/sandbox/versions/")
+    )
+      labelUpdates += 1;
+  });
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    versions: [historyVersionFixture(1, "Release snapshot 1")],
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  const { inspector } = historyRegions(page);
+  await inspector
+    .getByRole("button", { name: "Edit checkpoint label", exact: true })
+    .click();
+  const label = inspector.getByRole("textbox", { name: "Checkpoint label" });
+  await label.fill("Unsaved label");
+  await label.press("Escape");
+  await expect(label).toHaveCount(0);
+  await expect(
+    inspector.getByRole("button", {
+      name: "Edit checkpoint label",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole("heading", { name: "Release snapshot 1" }),
+  ).toBeVisible();
+  expect(labelUpdates).toBe(0);
+});
+
 test("legacy relationship mappings can be removed before publishing", async ({
   page,
 }) => {
@@ -2577,6 +2636,10 @@ test("legacy relationship mappings can be removed before publishing", async ({
     .click();
 
   const dialog = page.getByRole("dialog");
+  await expect(dialog).toHaveAccessibleName("Relationship settings");
+  await expect(
+    dialog.getByRole("heading", { name: "Create relationship" }),
+  ).toHaveCount(0);
   await expect(dialog.getByText("Legacy field mappings")).toBeVisible();
   await dialog.getByRole("button", { name: "Remove mapping" }).click();
   await dialog.getByRole("button", { name: "Save relationship" }).click();
@@ -3333,6 +3396,24 @@ test("the Designer saves a module record title field in the current v4 draft", a
   await expect(closeField).toBeEnabled();
 });
 
+test("a failed record title field change shows its error under the select", async ({
+  page,
+}) => {
+  const titleField = configuredSandboxDesign.modules[0]?.fields.find(
+    (field) => field.name === "Title",
+  );
+  if (!titleField) throw new Error("A module with a title field is required");
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, {
+    saveFailure: "Sandbox storage is unavailable.",
+  });
+  const titleSelector = page.getByLabel("Record title field", { exact: true });
+  await titleSelector.selectOption(titleField.id);
+  await expect(titleSelector).toHaveAttribute("aria-invalid", "true");
+  await expect(titleSelector).toHaveAccessibleDescription(
+    "This Sandbox change could not be saved. Try again.",
+  );
+});
+
 test("Sandbox Test treats User values as simulated UUIDs without live eligibility lookup", async ({
   page,
 }) => {
@@ -3718,6 +3799,15 @@ test("refused capacity is unavailable rather than guessed or usable", async ({
   expect(sandbox.pruneRequests()).toEqual([]);
 });
 
+test("Save checkpoint can be cancelled without saving", async ({ page }) => {
+  const sandbox = await openAuthenticatedSandbox(page);
+  const checkpoint = await openCheckpointDialog(page);
+  await checkpoint.getByLabel("Name", { exact: true }).fill("Not kept");
+  await checkpoint.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(checkpoint).toBeHidden();
+  expect(sandbox.checkpointRequests()).toEqual([]);
+});
+
 test("prune cancel and pending readback preserve checkpoint input and use refreshed revision", async ({
   page,
 }) => {
@@ -4043,9 +4133,7 @@ test("History timeline filters preserve the selected action target and published
   await expect(page.getByRole("alertdialog")).toContainText(
     "Restore Release snapshot 1?",
   );
-  await page
-    .getByRole("button", { name: "Cancel restore", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(
     inspector.getByRole("button", { name: "Restore version", exact: true }),
   ).toBeFocused();
@@ -4086,6 +4174,42 @@ test("History timeline filters preserve the selected action target and published
   await inspector
     .getByRole("button", { name: "Cancel label edit", exact: true })
     .click();
+});
+
+test("changing a compared version clears the old comparison", async ({
+  page,
+}) => {
+  const versions = [
+    historyVersionFixture(1, "Published structure", "published"),
+    historyVersionFixture(2, "Release snapshot 1"),
+    historyVersionFixture(3, "Before import"),
+  ];
+  const before = sandboxDocumentFromDesign(configuredSandboxDesign);
+  const after = structuredClone(before);
+  after.design.modules[0].name = "Updated requests";
+  await openAuthenticatedSandbox(page, configuredSandboxDesign, { versions });
+  await page.route("**/api/sandbox/versions/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const id = new URL(route.request().url()).pathname.split("/").at(-1);
+    const version = versions.find((item) => item.id === id)!;
+    await route.fulfill({
+      json: { ...version, document: id === versions[1].id ? after : before },
+    });
+  });
+  await page.getByRole("link", { name: "History", exact: true }).click();
+  await page.getByLabel("Compare first version").selectOption(versions[0].id);
+  await page.getByLabel("Compare second version").selectOption(versions[1].id);
+  await page
+    .getByRole("button", { name: "Compare versions", exact: true })
+    .click();
+  const { comparison } = historyRegions(page);
+  await expect(comparison).toContainText("Updated requests");
+
+  await page.getByLabel("Compare second version").selectOption(versions[2].id);
+  await expect(comparison).not.toContainText("Updated requests");
+  await expect(comparison).toContainText(
+    "Ready to compare Published structure (v1) with Before import (v3).",
+  );
 });
 
 test("History comparison stays tied to compared versions while inspecting another timeline entry", async ({

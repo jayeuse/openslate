@@ -22,7 +22,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { TriggerFlow, triggerEventLabel } from "./trigger-flow";
+import {
+  TriggerFlow,
+  triggerEventLabel,
+  triggerOperatorOptions,
+  weekdayOptions,
+} from "./trigger-flow";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -87,8 +92,6 @@ function runDetail(run: SandboxTriggerRun): string {
     return `Stopped after ${run.attempts} attempt${run.attempts === 1 ? "" : "s"}`;
   return "The run finished without exposing record data.";
 }
-
-const operators = [">", ">=", "<", "<=", "=", "!="] as const;
 
 function newId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -1338,9 +1341,12 @@ function TriggerEditor({
                     })
                   }
                 >
-                  {[1, 2, 3, 4, 5, 6, 7].map((weekday) => (
-                    <NativeSelectOption key={weekday} value={String(weekday)}>
-                      Day {weekday}
+                  {weekdayOptions.map((weekday) => (
+                    <NativeSelectOption
+                      key={weekday.value}
+                      value={weekday.value}
+                    >
+                      {weekday.label}
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
@@ -1455,9 +1461,9 @@ function TriggerFieldEditor({
                 })
               }
             >
-              {operators.map((operator) => (
-                <NativeSelectOption key={operator} value={operator}>
-                  {operator}
+              {triggerOperatorOptions.map((operator) => (
+                <NativeSelectOption key={operator.value} value={operator.value}>
+                  {operator.label}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
@@ -1597,9 +1603,12 @@ function ConditionEditor({
                   })
                 }
               >
-                {operators.map((operator) => (
-                  <NativeSelectOption key={operator} value={operator}>
-                    {operator}
+                {triggerOperatorOptions.map((operator) => (
+                  <NativeSelectOption
+                    key={operator.value}
+                    value={operator.value}
+                  >
+                    {operator.label}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>

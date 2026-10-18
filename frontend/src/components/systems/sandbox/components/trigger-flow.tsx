@@ -15,6 +15,7 @@ import type {
   SandboxTriggerAction,
   SandboxTriggerCondition,
   SandboxDocumentDesign,
+  SandboxDocumentField,
   SandboxFieldReference,
   SandboxValueSource,
 } from "../domain/document";
@@ -36,22 +37,51 @@ const weekdays = [
   "Saturday",
   "Sunday",
 ];
+const symbol = {
+  "=": "=",
+  "!=": "≠",
+  ">": ">",
+  ">=": "≥",
+  "<": "<",
+  "<=": "≤",
+} as const;
+const triggerOperators = [">", ">=", "<", "<=", "=", "!="] as const;
 
+/** The operator choices for conditions and thresholds, in display order. */
+export const triggerOperatorOptions = triggerOperators.map((operator) => ({
+  value: operator,
+  label: `${comparison[operator]} (${symbol[operator]})`,
+}));
+
+/** The weekday choices for a weekly schedule; stored values are 1 to 7. */
+export const weekdayOptions = weekdays.map((name, index) => ({
+  value: String(index + 1),
+  label: name,
+}));
+
+function findField(
+  design: SandboxDocumentDesign,
+  reference: SandboxFieldReference,
+): SandboxDocumentField | undefined {
+  return design.modules
+    .find((module) => module.id === reference.moduleId)
+    ?.fields.find((field) => field.id === reference.fieldId);
+}
 function fieldName(
   design: SandboxDocumentDesign,
   reference: SandboxFieldReference,
 ): string {
-  const field = design.modules
-    .find((module) => module.id === reference.moduleId)
-    ?.fields.find((field) => field.id === reference.fieldId);
+  const field = findField(design, reference);
   return field
     ? `${field.name}${field.closed ? " (closed)" : ""}`
     : reference.fieldId
       ? "Unavailable field"
       : "Choose a field";
 }
+/** Names a value for the field it belongs to; a select choice shows its label. */
 function valueName(
   design: SandboxDocumentDesign,
+  field: SandboxFieldReference,
   value: SandboxValueSource,
 ): string {
   if (value.kind === "field-reference")
@@ -60,6 +90,12 @@ function valueName(
   if (value.value === false) return "Unchecked";
   if (value.value === null) return "empty";
   if (value.value === "") return '"" (empty text)';
+  const config = findField(design, field)?.config;
+  if (config?.kind === "select")
+    return (
+      config.options.find((option) => option.id === value.value)?.label ??
+      String(value.value)
+    );
   return String(value.value);
 }
 export function triggerEventLabel(recordTrigger: SandboxTrigger): string {
@@ -92,26 +128,24 @@ function triggerText(
   }
   if (trigger.kind === "record-created")
     return `An item is added in ${moduleName}`;
-  const name = fieldName(design, {
-    moduleId: trigger.moduleId,
-    fieldId: trigger.fieldId,
-  });
+  const field = { moduleId: trigger.moduleId, fieldId: trigger.fieldId };
+  const name = fieldName(design, field);
   if (trigger.kind === "field-changed")
     return `${name} changes in ${moduleName}`;
-  return `${name} crosses the threshold: ${comparison[trigger.operator]} ${valueName(design, trigger.value)} in ${moduleName}`;
+  return `${name} crosses the threshold: ${comparison[trigger.operator]} ${valueName(design, field, trigger.value)} in ${moduleName}`;
 }
 function conditionText(
   design: SandboxDocumentDesign,
   condition: SandboxTriggerCondition,
 ): string {
-  return `${fieldName(design, condition.field)} ${comparison[condition.operator]} ${valueName(design, condition.value)}`;
+  return `${fieldName(design, condition.field)} ${comparison[condition.operator]} ${valueName(design, condition.field, condition.value)}`;
 }
 function actionText(
   design: SandboxDocumentDesign,
   action: SandboxTriggerAction,
 ): string {
   return action.kind === "set-field"
-    ? `Set ${fieldName(design, action.target)} to ${valueName(design, action.value)}`
+    ? `Set ${fieldName(design, action.target)} to ${valueName(design, action.target, action.value)}`
     : `Unsupported action: ${action.kind}`;
 }
 function Connector() {
