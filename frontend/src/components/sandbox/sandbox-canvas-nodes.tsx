@@ -39,7 +39,13 @@ import {
   type SandboxCanvasTraceStore,
   type TraceMark,
 } from "./sandbox-canvas-trace";
-import { useLineLabelStop, type LineLabelStops } from "./sandbox-canvas-labels";
+import {
+  LINE_PATH,
+  pathPoints,
+  pointAlong,
+  useLineLabelStop,
+  type LineLabelStops,
+} from "./sandbox-canvas-labels";
 
 /**
  * Node and line views for the Sandbox canvas. Each draws the same SVG the
@@ -651,8 +657,6 @@ function RelationshipEdgeView({
   const actions = useCanvasActions();
   const trace = useTraceMark(actions.trace, id);
   const stop = useLineLabelStop(actions.labels, id);
-  const lineRef = useRef<SVGPathElement | null>(null);
-  const [labelAt, setLabelAt] = useState<{ x: number; y: number } | null>(null);
   const selected = data?.selected ?? false;
   const handoff = data?.handoff ?? false;
   const line = relationshipLineAttrs(selected, handoff);
@@ -663,22 +667,11 @@ function RelationshipEdgeView({
     targetX,
     targetY,
     targetPosition,
-    borderRadius: 8,
-    offset: 24,
+    ...LINE_PATH,
   });
-  // The label sits at its placed share of the line's length
-  // (sandbox-canvas-labels.ts).
+  // The label sits at its placed share of the line (sandbox-canvas-labels.ts).
   const label = data?.label ?? "";
-  useLayoutEffect(() => {
-    const line = lineRef.current;
-    if (line === null || label === "") return;
-    const point = line.getPointAtLength(line.getTotalLength() * stop);
-    setLabelAt((current) =>
-      current?.x === point.x && current.y === point.y
-        ? current
-        : { x: point.x, y: point.y },
-    );
-  }, [path, stop, label]);
+  const at = label === "" ? null : pointAlong(pathPoints(path), stop);
   const arrow =
     trace === "on"
       ? "trace"
@@ -693,7 +686,6 @@ function RelationshipEdgeView({
         {/* A wide transparent stroke so a 1.6px line is easy to click. */}
         <path d={path} fill="none" stroke="transparent" strokeWidth={16} />
         <path
-          ref={lineRef}
           d={path}
           fill="none"
           data-sandbox-line={line["data-sandbox-line"]}
@@ -708,8 +700,8 @@ function RelationshipEdgeView({
       {label !== "" ? (
         <LineLabel
           id={id}
-          x={labelAt?.x ?? labelX}
-          y={labelAt?.y ?? labelY}
+          x={at?.x ?? labelX}
+          y={at?.y ?? labelY}
           text={label}
           handoff={handoff}
           trace={trace}

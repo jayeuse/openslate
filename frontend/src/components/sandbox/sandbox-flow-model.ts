@@ -70,7 +70,7 @@ function nodeSize(node: SandboxFlowNode): { width: number; height: number } {
 }
 
 /** The connection points' size; they sit centered on the module's sides. */
-const PORT_SIZE = 12;
+export const PORT_SIZE = 12;
 
 /**
  * Size and handle bounds stated up front, so React Flow draws lines on the

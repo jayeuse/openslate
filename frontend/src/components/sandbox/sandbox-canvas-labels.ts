@@ -1,21 +1,98 @@
 import { useSyncExternalStore } from "react";
+import { getSmoothStepPath, Position } from "@xyflow/react";
 
 import type { CanvasBox } from "@/lib/sandbox/canvas-geometry";
+import {
+  absoluteBoxes,
+  PORT_SIZE,
+  type RelationshipFlowEdge,
+  type SandboxFlowNode,
+} from "./sandbox-flow-model";
 
 /** Where along its line a label may sit, in order of preference. */
 export const LABEL_STOPS = [0.5, 0.35, 0.65, 0.2, 0.8] as const;
 /** Canvas units between samples when checking a line against a label. */
 const SAMPLE_STEP = 6;
+/** The shape every relationship line takes (React Flow smoothstep). */
+export const LINE_PATH = { borderRadius: 8, offset: 24 } as const;
 
-type Point = { x: number; y: number };
+export type Point = { x: number; y: number };
 
-/** A labelled line, as drawn: its path and its label's size (canvas units). */
-export interface PlacedLine {
+/**
+ * The corner points of a smoothstep path. Its bends are short curves around
+ * each corner, so the corners themselves trace the line to within a few
+ * canvas units, with no DOM reads.
+ */
+export function pathPoints(d: string): Point[] {
+  const numbers = (d.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) ?? []).map(Number);
+  const points: Point[] = [];
+  for (let index = 0; index + 1 < numbers.length; index += 2) {
+    const point = { x: numbers[index]!, y: numbers[index + 1]! };
+    const last = points.at(-1);
+    if (last === undefined || last.x !== point.x || last.y !== point.y)
+      points.push(point);
+  }
+  return points;
+}
+
+function segmentLengths(points: readonly Point[]): number[] {
+  return points
+    .slice(1)
+    .map((point, index) =>
+      Math.hypot(point.x - points[index]!.x, point.y - points[index]!.y),
+    );
+}
+
+/** The point at a share (0–1) of the line's length. */
+export function pointAlong(points: readonly Point[], share: number): Point {
+  const first = points[0];
+  if (first === undefined) return { x: 0, y: 0 };
+  const lengths = segmentLengths(points);
+  let remaining = lengths.reduce((sum, length) => sum + length, 0) * share;
+  for (const [index, length] of lengths.entries()) {
+    const start = points[index]!;
+    const end = points[index + 1]!;
+    if (remaining <= length && length > 0) {
+      const t = remaining / length;
+      return {
+        x: start.x + (end.x - start.x) * t,
+        y: start.y + (end.y - start.y) * t,
+      };
+    }
+    remaining -= length;
+  }
+  return points.at(-1) ?? first;
+}
+
+function samplesOf(points: readonly Point[]): Point[] {
+  const samples: Point[] = [];
+  for (const [index, length] of segmentLengths(points).entries()) {
+    const start = points[index]!;
+    const end = points[index + 1]!;
+    const count = Math.max(1, Math.ceil(length / SAMPLE_STEP));
+    for (let step = 0; step < count; step += 1) {
+      const t = step / count;
+      samples.push({
+        x: start.x + (end.x - start.x) * t,
+        y: start.y + (end.y - start.y) * t,
+      });
+    }
+  }
+  const last = points.at(-1);
+  if (last !== undefined) samples.push(last);
+  return samples;
+}
+
+/** A line and its label's size, in canvas units. */
+export interface LabelledLine {
   id: string;
-  /** Point at a share (0–1) of the line's length. */
-  pointAt: (share: number) => Point;
-  samples: readonly Point[];
+  points: readonly Point[];
   label: { width: number; height: number } | null;
+}
+
+/** The label pill's size from its 12px text and 7px/3px padding. */
+export function labelSize(text: string): { width: number; height: number } {
+  return { width: text.length * 6.6 + 14, height: 21 };
 }
 
 function crossed(box: CanvasBox, samples: readonly Point[]): boolean {
@@ -45,16 +122,19 @@ function overlaps(a: CanvasBox, b: CanvasBox): boolean {
  * labels; failing that, the middle.
  */
 export function placeLineLabels(
-  lines: readonly PlacedLine[],
+  lines: readonly LabelledLine[],
   tables: readonly CanvasBox[],
 ): Map<string, number> {
+  const samples = new Map(
+    lines.map((line) => [line.id, samplesOf(line.points)]),
+  );
   const stops = new Map<string, number>();
   const placed: CanvasBox[] = [];
   for (const line of lines) {
     if (line.label === null) continue;
     const { width, height } = line.label;
     const boxAt = (share: number): CanvasBox => {
-      const point = line.pointAt(share);
+      const point = pointAlong(line.points, share);
       return {
         x: point.x - width / 2,
         y: point.y - height / 2,
@@ -62,7 +142,6 @@ export function placeLineLabels(
         height,
       };
     };
-    const others = lines.filter((item) => item.id !== line.id);
     const clearOfLabels = (box: CanvasBox) =>
       !placed.some((other) => overlaps(box, other));
     const stop =
@@ -70,7 +149,10 @@ export function placeLineLabels(
         const box = boxAt(share);
         return (
           clearOfLabels(box) &&
-          !others.some((other) => crossed(box, other.samples)) &&
+          !lines.some(
+            (other) =>
+              other.id !== line.id && crossed(box, samples.get(other.id) ?? []),
+          ) &&
           !tables.some((table) => overlaps(box, table))
         );
       }) ??
@@ -82,28 +164,42 @@ export function placeLineLabels(
   return stops;
 }
 
-/** Reads a drawn line's geometry from its SVG path. */
-export function lineFromPath(
-  id: string,
-  path: SVGPathElement,
-  label: { width: number; height: number } | null,
-): PlacedLine {
-  const length = path.getTotalLength();
-  const count = Math.max(2, Math.ceil(length / SAMPLE_STEP));
-  const samples: Point[] = [];
-  for (let index = 0; index <= count; index += 1) {
-    const point = path.getPointAtLength((length * index) / count);
-    samples.push({ x: point.x, y: point.y });
-  }
-  return {
-    id,
-    pointAt: (share) => {
-      const point = path.getPointAtLength(length * share);
-      return { x: point.x, y: point.y };
-    },
-    samples,
-    label,
-  };
+/**
+ * Each line's label stop for the canvas as it stands: lines are rebuilt from
+ * node geometry exactly as React Flow draws them, between the module ports.
+ */
+export function lineLabelStops(
+  nodes: readonly SandboxFlowNode[],
+  edges: readonly RelationshipFlowEdge[],
+): Map<string, number> {
+  const boxes = absoluteBoxes(nodes);
+  const tables = nodes.flatMap((node) => {
+    const box = node.type === "module" ? boxes.get(node.id) : undefined;
+    return box ? [box] : [];
+  });
+  const lines = edges.flatMap((edge): LabelledLine[] => {
+    const source = boxes.get(edge.source);
+    const target = boxes.get(edge.target);
+    if (source === undefined || target === undefined) return [];
+    const [d] = getSmoothStepPath({
+      sourceX: source.x + source.width + PORT_SIZE / 2,
+      sourceY: source.y + source.height / 2,
+      sourcePosition: Position.Right,
+      targetX: target.x - PORT_SIZE / 2,
+      targetY: target.y + target.height / 2,
+      targetPosition: Position.Left,
+      ...LINE_PATH,
+    });
+    const text = edge.data?.label ?? "";
+    return [
+      {
+        id: edge.id,
+        points: pathPoints(d),
+        label: text === "" ? null : labelSize(text),
+      },
+    ];
+  });
+  return placeLineLabels(lines, tables);
 }
 
 /** Each line's label stop; a line re-renders only when its own stop moves. */
