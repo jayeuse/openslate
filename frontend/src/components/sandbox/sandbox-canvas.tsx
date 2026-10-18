@@ -613,9 +613,8 @@ function SandboxFlowCanvas({
       height: current.frame.height,
       zoom: flow.getViewport().zoom,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    // The gesture follows the pointer anywhere on the page, as X6's did.
     event.currentTarget.focus();
-    const target = event.currentTarget;
     const move = (moveEvent: globalThis.PointerEvent) => {
       const gesture = resizeGestureRef.current;
       if (gesture === null || gesture.pointerId !== moveEvent.pointerId) return;
@@ -630,9 +629,9 @@ function SandboxFlowCanvas({
     const end = (endEvent: globalThis.PointerEvent) => {
       const gesture = resizeGestureRef.current;
       if (gesture === null || gesture.pointerId !== endEvent.pointerId) return;
-      target.removeEventListener("pointermove", move);
-      target.removeEventListener("pointerup", end);
-      target.removeEventListener("pointercancel", end);
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", end, true);
+      window.removeEventListener("pointercancel", end, true);
       resizeGestureRef.current = null;
       if (endEvent.type === "pointercancel") {
         commitNodes(
@@ -645,9 +644,9 @@ function SandboxFlowCanvas({
       }
       void emitLayout(nodesRef.current);
     };
-    target.addEventListener("pointermove", move);
-    target.addEventListener("pointerup", end);
-    target.addEventListener("pointercancel", end);
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", end, true);
+    window.addEventListener("pointercancel", end, true);
   }
 
   function resizeByKey(

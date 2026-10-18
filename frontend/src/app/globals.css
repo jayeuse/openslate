@@ -459,8 +459,8 @@ textarea {
 }
 
 /* Minimap overview for the Sandbox canvas (React Flow's MiniMap, outside
- * the flow root, so its variables are set here). Frames and tables carry it
- * in their department tones; the viewport is an action-colored outline. */
+ * the flow root, so its variables are set here). Frames carry their
+ * department tones; the viewport is an action-colored outline. */
 .sandbox-minimap {
   --xy-minimap-node-stroke-color: transparent;
 }
@@ -489,17 +489,9 @@ textarea {
   fill: var(--dept-4-sheet);
 }
 
-.sandbox-minimap .sandbox-minimap-department {
-  stroke: var(--canvas-dept-frame);
-}
-
+/* Card fills sit too close to the frames to read at minimap scale, in light
+   and dark alike, so tables take the strong rule color. */
 .sandbox-minimap .sandbox-minimap-module {
-  fill: var(--canvas-module-fill);
-  stroke: var(--canvas-module-frame);
-}
-
-/* Dark card fills sit too close to the dark canvas to read at minimap scale. */
-.dark .sandbox-minimap .sandbox-minimap-module {
   fill: var(--rule-strong);
 }
 
