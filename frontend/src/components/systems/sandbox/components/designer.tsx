@@ -2451,7 +2451,7 @@ export function Designer({
   );
   return (
     <Tabs
-      className="min-h-0 flex-1 gap-3"
+      className="gap-3 xl:min-h-0 xl:flex-1"
       value={pane}
       onValueChange={(value) => setPane(value as DesignerPane)}
     >
@@ -2470,7 +2470,7 @@ export function Designer({
         <ResizablePanelGroup
           orientation="horizontal"
           elementRef={panelGroupElementRef}
-          className="sandbox-ui border-card-edge bg-card shadow-card min-h-0 flex-1 overflow-hidden rounded-2xl border"
+          className="sandbox-ui border-card-edge bg-card shadow-card overflow-hidden rounded-2xl border max-xl:h-auto xl:min-h-0 xl:flex-1"
           onLayoutChanged={(layout, meta) => {
             if (
               !meta.isUserInteraction ||
@@ -2801,7 +2801,7 @@ export function Designer({
                   ref={canvasFrameRef}
                   data-empty={designIsEmpty || undefined}
                   data-skin="canvas-frame"
-                  className="relative min-h-0 flex-1 overflow-hidden data-empty:[&_.sandbox-minimap]:hidden"
+                  className="relative h-[420px] overflow-hidden xl:h-auto xl:min-h-0 xl:flex-1 data-empty:[&_.sandbox-minimap]:hidden"
                   aria-label="Module design canvas"
                 >
                   {designIsEmpty ? (
@@ -2923,11 +2923,11 @@ export function Designer({
               className="h-full w-full min-w-0"
             >
               {!wide ? (
-                // The pane scrolls, not the page; `relative` keeps its
-                // screen-reader text inside it.
-                <div className="relative h-full overflow-y-auto">
-                  {pane === "Structure" ? structurePane : inspectorPane}
-                </div>
+                pane === "Structure" ? (
+                  structurePane
+                ) : (
+                  inspectorPane
+                )
               ) : viewPreferences.workbenchCollapsed ? (
                 <div className="flex h-full min-h-0 items-start justify-center pt-2">
                   <Button

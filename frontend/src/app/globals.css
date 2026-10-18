@@ -306,12 +306,34 @@
   * {
     border-color: var(--border);
     box-sizing: border-box;
-    /* Quiet Scrollbar Rule (DESIGN.md): thin, no track, a thumb tinted from
-       the look's muted ink. Never hidden: it is the only cue that a panel
-       has more below the fold. Set per element so look previews follow. */
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in oklab, var(--ink-muted) 60%, transparent)
-      transparent;
+  }
+
+  /* Quiet Scrollbar Rule (DESIGN.md): 6px, no track, a thumb tinted from
+     the look's muted ink that darkens under the pointer. Never hidden: it is
+     the only cue that a panel has more below the fold. Chromium ignores
+     these pseudo-elements once `scrollbar-width` or `scrollbar-color` is
+     set, so the standard properties are for Firefox only. */
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--ink-muted) 60%, transparent);
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-muted);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in oklab, var(--ink-muted) 60%, transparent)
+        transparent;
+    }
   }
 
   h1,
@@ -748,22 +770,15 @@ textarea {
   stroke-width: 1.65;
 }
 
-.app-sidebar-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: var(--sidebar-muted) transparent;
-}
-
-.app-sidebar-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-
-.app-sidebar-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
+/* The sidebar keeps the 6px bar (Quiet Scrollbar Rule) in its own ink. */
 .app-sidebar-scroll::-webkit-scrollbar-thumb {
-  border-radius: 999px;
   background: var(--sidebar-muted);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .app-sidebar-scroll {
+    scrollbar-color: var(--sidebar-muted) transparent;
+  }
 }
 
 @media (max-width: 639px) {

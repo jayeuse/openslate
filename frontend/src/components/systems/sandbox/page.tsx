@@ -202,13 +202,14 @@ function emptyDocument(): SandboxDocumentV4 {
   };
 }
 
-// The page fills the viewport and never scrolls; its panels do. LoadingRegion
-// wraps its content in one unstyled element, so the column carries through `*:`.
+// On desktop the page fills the viewport and never scrolls; its panels do.
+// Phones and tablets scroll the page. LoadingRegion wraps its content in one
+// unstyled element, so the column carries through `*:`.
 const sandboxRegionClass =
-  "flex min-h-0 flex-1 flex-col *:flex *:min-h-0 *:flex-1 *:flex-col *:gap-5";
-// One scroll panel for a section whose own layout does not fill the height
-// (phones, narrow windows). `relative` keeps screen-reader text inside it.
-const sandboxPanelClass = "relative min-h-0 flex-1 overflow-y-auto";
+  "flex flex-col *:flex *:flex-col *:gap-5 xl:min-h-0 xl:flex-1 xl:*:min-h-0 xl:*:flex-1";
+// On desktop, one scroll panel for a section whose own layout does not fill
+// the height. `relative` keeps screen-reader text inside it.
+const sandboxPanelClass = "relative xl:min-h-0 xl:flex-1 xl:overflow-y-auto";
 
 /**
  * The Build canvas and its properties panel (phones and tablets: the pane
@@ -219,9 +220,9 @@ function SandboxSkeleton({ build }: { build: boolean }) {
   return (
     <>
       {build ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
+        <div className="flex flex-col gap-3 xl:min-h-0 xl:flex-1">
           <Skeleton className="h-13 w-full xl:hidden" />
-          <div className="sandbox-ui border-card-edge bg-card shadow-card flex min-h-0 flex-1 overflow-hidden rounded-xl border">
+          <div className="sandbox-ui border-card-edge bg-card shadow-card flex overflow-hidden rounded-xl border xl:min-h-0 xl:flex-1">
             <div className="border-border flex min-w-0 flex-1 flex-col xl:border-r">
               <div className="flex items-center gap-2 border-b px-4 py-1">
                 <Skeleton className="hidden h-4 w-24 sm:block" />
@@ -233,7 +234,7 @@ function SandboxSkeleton({ build }: { build: boolean }) {
                   <Skeleton className="h-11 w-16" />
                 </div>
               </div>
-              <div className="flex min-h-0 flex-1 flex-wrap content-start gap-6 overflow-hidden p-6">
+              <div className="flex h-[420px] flex-wrap content-start gap-6 overflow-hidden p-6 xl:h-auto xl:min-h-0 xl:flex-1">
                 <Skeleton className="h-36 w-56 rounded-xl" />
                 <Skeleton className="h-36 w-56 rounded-xl" />
                 <Skeleton className="h-36 w-56 rounded-xl" />
@@ -253,7 +254,7 @@ function SandboxSkeleton({ build }: { build: boolean }) {
           </div>
         </div>
       ) : (
-        <div className="border-card-edge bg-card shadow-card flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-xl border p-4">
+        <div className="border-card-edge bg-card shadow-card flex flex-col gap-4 overflow-hidden rounded-xl border p-4 xl:min-h-0 xl:flex-1">
           <Skeleton className="h-6 w-48" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
@@ -1130,7 +1131,7 @@ export default function SandboxPage() {
     <section
       data-sandbox-page
       aria-busy={commandBusy || publicationPending || testPending || undefined}
-      className="flex min-h-0 flex-1 flex-col gap-5"
+      className="flex flex-col gap-5 xl:min-h-0 xl:flex-1"
     >
       {conflict ? (
         <Alert

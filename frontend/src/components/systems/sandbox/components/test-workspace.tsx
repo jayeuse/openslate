@@ -419,7 +419,7 @@ export function TestWorkspace({
           {error}
         </Alert>
       ) : null}
-      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border @min-[1100px]/test:min-h-0 @min-[1100px]/test:flex-1 @min-[1100px]/test:shrink">
+      <div className="border-border min-w-0 shrink-0 overflow-hidden rounded-xl border @min-[1100px]/test:h-[calc(100dvh-15rem)] xl:@min-[1100px]/test:h-auto xl:@min-[1100px]/test:min-h-0 xl:@min-[1100px]/test:flex-1 xl:@min-[1100px]/test:shrink">
         <ResizablePanelGroup
           orientation="horizontal"
           disabled={!wide}

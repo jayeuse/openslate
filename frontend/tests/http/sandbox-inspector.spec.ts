@@ -110,11 +110,12 @@ test("collapsing a field row keeps its unsaved edit and says so", async ({
   await expect(field.getByText("Unsaved", { exact: true })).toBeHidden();
 });
 
-// Pages fill the viewport and never scroll; their panels do (DESIGN.md).
-// Screen-reader text inside a panel once stretched the page past it.
+// On desktop, pages fill the viewport and never scroll; their panels do
+// (DESIGN.md). Screen-reader text inside a panel once stretched the page past
+// it. Phones and tablets scroll the page, so they are not checked here.
 for (const viewport of [
   { width: 1440, height: 900 },
-  { width: 390, height: 844 },
+  { width: 1280, height: 720 },
 ]) {
   test(`the Build page does not scroll at ${viewport.width}px with everything open`, async ({
     page,
@@ -129,8 +130,6 @@ for (const viewport of [
     });
     await openAuthenticatedSandbox(page);
     await page.goto("/sandbox?module=sample-requests");
-    if (viewport.width < 1280)
-      await page.getByRole("tab", { name: "Properties", exact: true }).click();
     const field = page.getByRole("group", {
       name: "Status field settings",
       exact: true,

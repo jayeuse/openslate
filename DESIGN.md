@@ -460,9 +460,9 @@ The main region pads 16px on phones and 20px by 28px from 640px up. Manage uses 
 
 The rhythm is a 4px base: 8px and 12px gaps inside groups, 16px between groups, 20px card padding, 28px between the page header and content. Tables open at 10 rows per page (options 5, 10, 25, 50).
 
-**The Still Page Rule.** A workspace page fills the viewport and never scrolls; its panels do. The shell header, the page header, and the footer line stay in place, and each panel (canvas, Structure, Properties, a section body on phones) scrolls on its own. Scroll panels are `relative`, so screen-reader text inside them cannot stretch the page. The Sandbox follows it now; the other workspaces follow it when their pass comes.
+**The Still Page Rule.** On desktop (1280px and wider) a workspace page fills the viewport and never scrolls; its panels do. The shell header, the page header, and the footer line stay in place, and each panel (canvas, Structure, Properties, a section body) scrolls on its own. Scroll panels are `relative`, so screen-reader text inside them cannot stretch the page. Phones and tablets scroll the page. The Sandbox follows it now; the other workspaces follow it when their pass comes.
 
-**The Quiet Scrollbar Rule.** Every scroll area uses a thin scrollbar with no track and a thumb tinted from `--ink-muted`, in every look. It is never hidden: it is the only cue that a panel has more below the fold. The sidebar tints its thumb with `--sidebar-muted`.
+**The Quiet Scrollbar Rule.** Every scroll area uses a 6px scrollbar with no track and a thumb tinted from `--ink-muted` that darkens under the pointer, in every look (Firefox draws its standard thin bar). It is never hidden: it is the only cue that a panel has more below the fold. The sidebar tints its thumb with `--sidebar-muted`.
 
 Targets stay reachable: sidebar items are at least 44px tall. Below 640px, shell buttons and inputs are at least 44px. In the Sandbox and its dialogs, controls are at least 44px below 1280px, and inline toggles inside a list row keep 24px so rows keep one rhythm. Breadcrumb links keep a 24px target.
 
