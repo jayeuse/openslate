@@ -22,6 +22,16 @@ export interface CommsClient {
   // Bootstrap composes Inbox/quick-switcher; Activity composes notifications.
   // Person/department/group/module/record pickers use existing authorized APIs.
   bootstrap(options?: C.RequestOptions): Promise<C.Bootstrap>;
+  /** Phase A read projection; S21/S26 use the existing notifications API. */
+  listActivity(
+    request?: C.TimeListRequest,
+    options?: C.RequestOptions,
+  ): Promise<C.Page<C.CommsNotification>>;
+  /** Phase A metadata only; eligibility is rechecked again by direct/group writes. */
+  listDirectCandidates(
+    request?: C.MemberListRequest,
+    options?: C.RequestOptions,
+  ): Promise<C.Page<Pick<C.Member, "user_id" | "display_name">>>;
   listConversations(
     request?: C.ConversationListRequest,
     options?: C.RequestOptions,

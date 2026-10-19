@@ -1,6 +1,14 @@
 /** Existing commands owned by the Sandbox Build screen, not global shortcuts. */
 export const SANDBOX_SHORTCUT_SCOPE = "Sandbox · Build";
 
+export const COMMS_SHORTCUTS = {
+  switchConversation: {
+    key: "k",
+    label: "Switch conversation",
+    modifier: "Ctrl / Command",
+  },
+} as const;
+
 const undo = {
   key: "z",
   label: "Undo",

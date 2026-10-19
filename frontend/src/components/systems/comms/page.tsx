@@ -23,6 +23,7 @@ import { ConversationHeader } from "./components/conversation-header";
 import { ConversationView } from "./components/conversation-view";
 import { RightPane } from "./components/right-pane";
 import { CommsDialogs, useCommsDialogs } from "./components/comms-dialogs";
+import { CommsDestinations } from "./components/comms-destinations";
 
 function CommsScreen({
   resource,
@@ -63,7 +64,7 @@ function CommsScreen({
   const layout = useCommsPanelLayout({
     preferences,
     hasThread: !!currentThread || !!openRecord,
-    membersVisible: navigation.membersVisible,
+    membersVisible: !navigation.view && navigation.membersVisible,
   });
   const [clockNow, setClockNow] = useState(() => Date.now());
   useEffect(() => {
@@ -138,33 +139,38 @@ function CommsScreen({
           dialogs={dialogs}
           select={actions.select}
           openThread={actions.openThread}
-          patchPreferences={patchPreferences}
-          channelUnread={actions.channelUnread}
-          latestChannelActivity={actions.latestChannelActivity}
         />
       }
       conversation={
-        <ConversationView
-          conversation={conversation}
-          navigation={navigation}
-          dialogs={dialogs}
-          header={
-            <ConversationHeader
-              conversation={conversation}
-              navigation={navigation}
-              dialogs={dialogs}
-              wide={layout.wide}
-              jumpToMessage={actions.jumpToMessage}
-            />
-          }
-          startThread={operations.startThread}
-          startDirect={operations.startDirect}
-          jumpToMessage={actions.jumpToMessage}
-          beginReply={actions.beginReply}
-          scrollToLatest={actions.scrollToLatest}
-          hydrated={resource.hydrated}
-          desktop={layout.desktop}
-        />
+        navigation.view ? (
+          <CommsDestinations
+            navigation={navigation}
+            select={actions.select}
+            openThread={actions.openThread}
+          />
+        ) : (
+          <ConversationView
+            conversation={conversation}
+            navigation={navigation}
+            dialogs={dialogs}
+            header={
+              <ConversationHeader
+                conversation={conversation}
+                navigation={navigation}
+                dialogs={dialogs}
+                wide={layout.wide}
+                jumpToMessage={actions.jumpToMessage}
+              />
+            }
+            startThread={operations.startThread}
+            startDirect={operations.startDirect}
+            jumpToMessage={actions.jumpToMessage}
+            beginReply={actions.beginReply}
+            scrollToLatest={actions.scrollToLatest}
+            hydrated={resource.hydrated}
+            desktop={layout.desktop}
+          />
+        )
       }
       right={
         <RightPane
@@ -183,7 +189,6 @@ function CommsScreen({
           navigation={navigation}
           select={actions.select}
           openThread={actions.openThread}
-          startDirect={operations.startDirect}
           fallbackOpener={layout.container}
         />
       }

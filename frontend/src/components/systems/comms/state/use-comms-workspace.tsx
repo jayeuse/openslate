@@ -3,7 +3,12 @@ import { createContext, useContext, useState, type ReactNode } from "react";
 
 import { useSampleResource } from "../../shared/runtime/sample-async";
 import { createCommsConfiguration } from "../domain/configuration-model";
-import type { CapabilityCheck, Member, Settings } from "../contract/types";
+import type {
+  Bootstrap,
+  CapabilityCheck,
+  Member,
+  Settings,
+} from "../contract/types";
 import type { Presence } from "../domain/view-model";
 import { useCommsClient } from "./client-context";
 import { loadWorkspace } from "./workspace-view";
@@ -11,6 +16,7 @@ import { isCommsReadRefusal } from "./runtime";
 type CommsWorkspace = Awaited<ReturnType<typeof loadWorkspace>>;
 
 const empty = {
+  bootstrap: undefined as Bootstrap | undefined,
   presence: {} as Presence,
   removedCount: 0,
   configuration: createCommsConfiguration(),

@@ -32,6 +32,7 @@ import type { CommsGroup } from "../domain/groups";
 type ClientState = {
   groups: CommsGroup[];
   catalog: {
+    departments: { id: string; name: string }[];
     modules: { id: string; name: string }[];
     fields: { id: string; label: string }[];
   };
@@ -73,6 +74,7 @@ function OwnedClient({
   const lifetime = useRef(0);
   const [groups, setGroups] = useState<CommsGroup[]>([]);
   const [catalog, setCatalog] = useState<ClientState["catalog"]>({
+    departments: [],
     modules: [],
     fields: [],
   });
@@ -180,6 +182,7 @@ function OwnedClient({
             })),
           );
           setCatalog({
+            departments: Object.values(initial.departments),
             modules: Object.values(initial.modules),
             fields: Object.values(initial.records).flatMap((record) =>
               record.fields.map((field) => ({

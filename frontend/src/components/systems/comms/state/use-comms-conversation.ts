@@ -20,7 +20,7 @@ export function useCommsConversation(selected: string) {
     channel,
   ).values;
   const check = workspace.checks[selected];
-  const canView = !!(channel || direct);
+  const canView = !!(channel || direct) && !direct?.blocked;
   const canParticipate =
     !!client &&
     canView &&

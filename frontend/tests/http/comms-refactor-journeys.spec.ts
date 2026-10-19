@@ -491,7 +491,11 @@ test("blocking a person asks first; unblocking does not", async ({ page }) => {
     .click();
   await page
     .getByRole("dialog", { name: "Start direct message", exact: true })
-    .getByRole("button", { name: "Message Noah Tan", exact: true })
+    .getByRole("combobox", { name: "Person", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Noah Tan", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Start conversation", exact: true })
     .click();
   await page.getByRole("button", { name: "Block user", exact: true }).click();
   const confirm = page.getByRole("alertdialog", { name: /^Block / });
@@ -698,14 +702,14 @@ test("two quick deletes each get their own Undo", async ({ page }) => {
   await expect(article("Second quick delete")).toHaveCount(1);
 });
 
-test("categories carry their access group, and a channel says who can use it", async ({
+test("categories carry department identity, and a channel says who can use it", async ({
   page,
 }) => {
   await page.goto("/comms");
   await createWorkshop(page);
   await expect(
     page.getByRole("button", { name: /^Service delivery/ }),
-  ).toContainText("Dispatch team");
+  ).toContainText("Operations");
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await expect(
     page.getByRole("button", { name: /^Visible to Dispatch team \./ }),
@@ -856,8 +860,8 @@ test("OpenComms opens at the latest message, with few and meaningful unread mark
   await expect(
     page
       .getByRole("button", { name: /^operations(,|$)/ })
-      .getByLabel("Unread", { exact: true }),
-  ).toHaveCount(0);
+      .getByLabel("2 unread", { exact: true }),
+  ).toBeVisible();
   await populateHistory(page);
   await page.reload();
   const list = page.getByLabel("Messages", { exact: true });
@@ -872,15 +876,15 @@ test("OpenComms opens at the latest message, with few and meaningful unread mark
   const conversations = page.getByRole("complementary", {
     name: "Conversations",
   });
-  // The open channel counts as read; only a few examples start unread.
+  // Counts stay authoritative until this conversation is explicitly marked read.
   await expect
-    .poll(() => conversations.getByLabel("Unread", { exact: true }).count())
+    .poll(() => conversations.getByLabel(/\d+ unread/, { exact: true }).count())
     .toBeLessThanOrEqual(8);
   await expect(
     page
       .getByRole("button", { name: /^operations(,|$)/ })
-      .getByLabel("Unread", { exact: true }),
-  ).toHaveCount(0);
+      .getByLabel("2 unread", { exact: true }),
+  ).toBeVisible();
 });
 
 test("each message's actions are named for it and fit its author", async ({
@@ -951,7 +955,10 @@ test("category defaults preserve existing members and the saved Permissions summ
   ).toContainText("Members 4");
   // A category's group is chosen in its settings.
   await page
-    .getByRole("button", { name: "Category settings: Service delivery" })
+    .getByRole("button", { name: "Category actions: Service delivery" })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Category settings", exact: true })
     .click();
   const category = page.getByRole("dialog", { name: "Category settings" });
   await category.getByLabel("Access group").selectOption("");
@@ -959,7 +966,10 @@ test("category defaults preserve existing members and the saved Permissions summ
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Category settings: Service delivery" })
+    .getByRole("button", { name: "Category actions: Service delivery" })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Category settings", exact: true })
     .click();
   await expect(category.getByLabel("Access group")).toHaveValue("");
   await category.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -1005,7 +1015,7 @@ test("a channel row names its state, and leaving a channel marks it read", async
     .getByRole("menuitem", { name: "Mark unread", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "workshop, unread", exact: true }),
+    page.getByRole("button", { name: "workshop, marked unread", exact: true }),
   ).toBeVisible();
   // Switching right after load saves once, without a conflict.
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();

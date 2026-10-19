@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { createActivityRead } from "../memory/activity";
+import { createDirectCandidateRead } from "../memory/direct-candidates";
 import type { CommsClient } from "../contract/client";
 import * as S from "../contract/schemas";
 import type * as C from "../contract/types";
@@ -41,6 +43,8 @@ export function createMemoryCommsClient(
   const dependencies = operational.sendDependenciesFor(handle);
   if (binding.authority !== dependencies.authority) return invalidMemoryState();
   const client: CommsClient = {
+    ...createActivityRead(binding),
+    ...createDirectCandidateRead(binding),
     ...createConversationOperations(binding),
     ...createConfigurationOperations(binding),
     ...createMessageFamily(binding, dependencies),

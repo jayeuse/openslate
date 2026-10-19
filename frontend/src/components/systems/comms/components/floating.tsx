@@ -609,7 +609,7 @@ export function RowEditMenu({
             aria-label={actionsLabel}
             aria-haspopup="menu"
             aria-expanded={open}
-            className="absolute top-1/2 right-1 size-8 -translate-y-1/2 opacity-100 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
+            className="absolute top-1/2 right-1 size-11 -translate-y-1/2 sm:size-8"
             onClick={(event) => {
               event.stopPropagation();
               openAt(event.currentTarget);
@@ -635,7 +635,7 @@ export function RowEditMenu({
         <ContextMenuGroup>
           {onEdit && (
             <ContextMenuItem
-              className="min-h-9"
+              className="min-h-11 sm:min-h-9"
               onClick={() => {
                 const opener = row.current?.querySelector("button");
                 if (!opener) return;
@@ -651,7 +651,7 @@ export function RowEditMenu({
             <ContextMenuItem
               key={action.label}
               disabled={action.disabled}
-              className="min-h-9"
+              className="min-h-11 sm:min-h-9"
               onClick={() => {
                 const opener = row.current?.querySelector("button");
                 if (opener) {

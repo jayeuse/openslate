@@ -23,6 +23,11 @@ export function useCommsNavigationState(
   const router = useRouter();
   const [navigating, startNavigation] = useTransition();
   const query = useSearchParams();
+  const view = ["threads", "activity", "inbox", "browse"].includes(
+    query.get("view") ?? "",
+  )
+    ? query.get("view")
+    : null;
   const messageId = query.get("message") ?? "";
   const linkedMessage = messages.find((message) => message.id === messageId);
   const linkedThread = threads.find(
@@ -46,7 +51,7 @@ export function useCommsNavigationState(
   const membersVisible = panel === null || memberOpen;
   const recordId = panel?.startsWith("record:") ? panel.slice(7) : "";
   const mobileConversation =
-    query.has("conversation") || !!messageId || !!threadId;
+    query.has("conversation") || !!messageId || !!threadId || !!view;
   function update(patch: Record<string, string | null>, push = false) {
     const next = new URLSearchParams(query.toString());
     for (const [key, value] of Object.entries(patch)) {
@@ -63,6 +68,7 @@ export function useCommsNavigationState(
     update(
       {
         conversation: id,
+        view: null,
         thread: null,
         message: null,
         panel: null,
@@ -116,6 +122,12 @@ export function useCommsNavigationState(
 
   return {
     selected,
+    view,
+    showView: (view: string) =>
+      update(
+        { view, thread: null, message: null, panel: "none", tool: null },
+        true,
+      ),
     navigating,
     query,
     update,
@@ -136,6 +148,7 @@ export function useCommsNavigationState(
       if (!open)
         update({
           conversation: null,
+          view: null,
           thread: null,
           message: null,
           panel: null,

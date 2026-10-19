@@ -8,10 +8,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Alert } from "@/components/ui/alert";
-import { Input } from "@/components/ui/input";
 import { Action } from "../../shared/components/ui";
-import { Avatar } from "./ui";
+import { DirectDialog } from "./direct-dialog";
 import {
   ConfirmActionDialog,
   type ConfirmActionRequest,
@@ -125,7 +123,6 @@ export function CommsDialogs({
   navigation,
   select,
   openThread,
-  startDirect,
   fallbackOpener,
 }: {
   state: CommsDialogsState;
@@ -135,12 +132,10 @@ export function CommsDialogs({
     thread: ReturnType<typeof useCommsWorkspaceView>["threads"][number],
     id: string,
   ) => void;
-  startDirect: (id: string) => Promise<void>;
   fallbackOpener: React.RefObject<HTMLDivElement | null>;
 }) {
   const { channels, categories, people, roles, threads, messages } =
     useCommsWorkspaceView();
-  const [memberSearch, setMemberSearch] = useState("");
   const [threadFilter, setThreadFilter] = useState<"active" | "inactive">(
     "active",
   );
@@ -270,49 +265,9 @@ export function CommsDialogs({
           />
         </DialogContent>
       </Dialog>
-      <Dialog open={state.dmOpen} onOpenChange={state.setDmOpen}>
-        <DialogContent>
-          <DialogTitle>Start direct message</DialogTitle>
-          <DialogDescription>
-            Choose someone from your workspace.
-          </DialogDescription>
-          <div className="mt-4 flex flex-col gap-2">
-            {state.directError && (
-              <Alert role="alert" variant="destructive">
-                {state.directError}
-              </Alert>
-            )}
-            <Input
-              aria-label="Find a teammate"
-              placeholder="Search people"
-              value={memberSearch}
-              onChange={(event) => setMemberSearch(event.target.value)}
-            />
-            {people
-              .filter(
-                (person) =>
-                  person.active &&
-                  person.name
-                    .toLowerCase()
-                    .includes(memberSearch.toLowerCase()),
-              )
-              .map((person) => (
-                <Action
-                  key={person.id}
-                  variant="ghost"
-                  className="justify-start"
-                  onClick={() => startDirect(person.id)}
-                >
-                  <Avatar name={person.name} />
-                  Message {person.name}
-                </Action>
-              ))}
-            <Action variant="outline" onClick={() => state.setDmOpen(false)}>
-              Cancel
-            </Action>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {state.dmOpen && (
+        <DirectDialog onClose={() => state.setDmOpen(false)} select={select} />
+      )}
     </>
   );
 }
