@@ -370,28 +370,35 @@ def require_conversation_access(
 
 
 def can_start_direct(db: Session, user: User, target_id: UUID) -> bool:
+    return can_start_directs(db, user, [target_id])
+
+
+def can_start_directs(db: Session, user: User, target_ids: Collection[UUID]) -> bool:
     # This leaf may consume D36; readability never invokes direct-start admission.
     from app.systems.access.users.person_visibility import visible_person_ids
     from app.systems.comms.settings.resolution import resolve_settings
 
     membership = fresh_membership(db, user)
-    if membership is None or membership.role == "guest" or target_id == user.id:
+    ids = set(target_ids)
+    if membership is None or membership.role == "guest" or not ids or user.id in ids:
         return False
-    target = db.scalar(
-        select(User.id)
-        .join(Membership, bound_membership_join())
-        .where(
-            User.id == target_id,
-            active_account_clause(),
-            Membership.role != "guest",
+    targets = set(
+        db.scalars(
+            select(User.id)
+            .join(Membership, bound_membership_join())
+            .where(
+                User.id.in_(ids),
+                active_account_clause(),
+                Membership.role != "guest",
+            )
         )
     )
-    if target is None:
+    if targets != ids:
         return False
-    if target_id not in visible_person_ids(db, user, [target_id]) or _blocked(
+    if ids != visible_person_ids(db, user, ids) or _blocked(
         db,
         user.id,
-        [target_id],
+        ids,
     ):
         return False
     rule = resolve_settings(db, {"kind": "workspace"})["dm_rule"]
@@ -403,4 +410,4 @@ def can_start_direct(db: Session, user: User, target_id: UUID) -> bool:
         CommsConversation.kind == "channel",
         visible_conversation_clause(db, user),
     )
-    return db.scalar(conversation_reader_statement(channels, [target_id]).limit(1)) is not None
+    return set(db.scalars(conversation_reader_statement(channels, ids))) == ids

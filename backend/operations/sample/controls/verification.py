@@ -171,6 +171,12 @@ def _run_final_verifiers(
         verifiers += (
             ("Comms", lambda: verify_comms_controls(client, dataset, manifest, admin_id)),
         )
+    if "structure_roundtrip" in operations:
+        from operations.sample.controls.comms_structure import verify_structure_controls
+
+        verifiers += (
+            ("Structure", lambda: verify_structure_controls(client, dataset, manifest, admin_id)),
+        )
     if "self_profile" in operations:
         from operations.sample.controls.profile_verification import verify_profile_controls
 

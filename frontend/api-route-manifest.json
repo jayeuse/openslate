@@ -744,6 +744,126 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "archiveConversation",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/archive"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "blockDirect",
+    "method": "POST",
+    "path": "/api/comms/direct-blocks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "createCategory",
+    "method": "POST",
+    "path": "/api/comms/categories"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "createChannel",
+    "method": "POST",
+    "path": "/api/comms/conversations"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "createGroup",
+    "method": "POST",
+    "path": "/api/comms/groups"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "duplicateChannel",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/duplicates"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "findOrCreateDirect",
+    "method": "POST",
+    "path": "/api/comms/directs"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "getCategory",
+    "method": "GET",
+    "path": "/api/comms/categories/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "getConversation",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "listCategories",
+    "method": "GET",
+    "path": "/api/comms/categories"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "listConversations",
+    "method": "GET",
+    "path": "/api/comms/conversations"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "listDirectBlocks",
+    "method": "GET",
+    "path": "/api/comms/direct-blocks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "listMembers",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/members"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "removeMember",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/members/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "restoreConversation",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/restore"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "setChannelAccess",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/access"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "setMemberRole",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/members/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "unblockDirect",
+    "method": "DELETE",
+    "path": "/api/comms/direct-blocks/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "updateCategory",
+    "method": "PUT",
+    "path": "/api/comms/categories/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
+    "function": "updateChannel",
+    "method": "PATCH",
+    "path": "/api/comms/conversations/{param}"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
     "function": "downloadManageAuditCsv",
     "method": "GET",

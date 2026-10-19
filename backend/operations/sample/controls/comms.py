@@ -109,6 +109,10 @@ def execute_comms_control(
     *,
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
+    if action.values.get("operation") != "message_roundtrip":
+        from operations.sample.controls.comms_structure import execute_structure_control
+
+        return execute_structure_control(action, dataset, context, on_substep=on_substep)
     if action not in plan_comms_controls(dataset):
         raise SamplePhaseActionError("Unsupported Comms message operation", step=action.key)
     client = _client(context, action.actor_key, step=action.key)

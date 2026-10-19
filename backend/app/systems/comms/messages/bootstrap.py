@@ -29,6 +29,43 @@ def _mute(row: CommsMemberPreferences) -> dict[str, Any]:
     )
 
 
+def project_conversation(
+    row: CommsConversation,
+    actor: UUID,
+    level: str,
+    people: dict[UUID, str],
+    grants: list[dict[str, Any]],
+) -> dict[str, Any]:
+    common: dict[str, Any] = {
+        "id": row.id,
+        "org_id": row.org_id,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "archived_at": row.archived_at,
+        "level": level,
+        "member_count": len(people),
+        "member_role": people.get(actor),
+        "kind": row.kind,
+    }
+    if row.kind != "channel":
+        common["participant_ids"] = sorted(people)
+        if row.kind == "group":
+            common["name"] = row.name
+    else:
+        common.update(
+            name=row.name,
+            topic=row.topic,
+            category_id=row.category_id,
+            position=row.position,
+            scope=row.scope,
+        )
+        if row.scope == "department":
+            common["department_id"] = row.department_id
+        elif row.scope == "groups":
+            common["access"] = grants
+    return common
+
+
 def bootstrap(db: Session, user: User) -> BootstrapResponse:
     org = bound_organization_column()
     c, m, read = CommsConversation, CommsMessage, CommsReadState
@@ -173,34 +210,9 @@ def bootstrap(db: Session, user: User) -> BootstrapResponse:
     summaries = []
     for conversation, level, high_water, watermark in rows:
         identity = conversation.id
-        people = members[identity]
-        common: dict[str, Any] = {
-            "id": identity,
-            "org_id": conversation.org_id,
-            "created_at": conversation.created_at,
-            "updated_at": conversation.updated_at,
-            "archived_at": conversation.archived_at,
-            "level": LEVELS[level],
-            "member_count": len(people),
-            "member_role": people.get(user.id),
-            "kind": conversation.kind,
-        }
-        if conversation.kind != "channel":
-            common["participant_ids"] = sorted(people)
-            if conversation.kind == "group":
-                common["name"] = conversation.name
-        else:
-            common.update(
-                name=conversation.name,
-                topic=conversation.topic,
-                category_id=conversation.category_id,
-                position=conversation.position,
-                scope=conversation.scope,
-            )
-            if conversation.scope == "department":
-                common["department_id"] = conversation.department_id
-            elif conversation.scope == "groups":
-                common["access"] = grants[identity]
+        common = project_conversation(
+            conversation, user.id, LEVELS[level], members[identity], grants[identity]
+        )
         pref = personal.get(identity)
         count, first, mentions = unread.get(identity, (0, None, 0))
         summaries.append(

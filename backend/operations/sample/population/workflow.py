@@ -303,13 +303,18 @@ def run_population(
             private_values["sandbox_prune_fixture"] = prune_fixture
         if partner_organization_id is not None:
 
-            def partner_admin() -> SampleClient:
+            def partner_client(actor_key: str = "admin") -> SampleClient:
                 client = SampleClient(api_url, origin, journal, partner_organization_id)
-                clients[f"partner-admin-{len(clients)}"] = client
-                _login(client, admin_email, admin_password, expected_id=expected_admin_id)
+                clients[f"partner-{actor_key}-{len(clients)}"] = client
+                if actor_key == "admin":
+                    _login(client, admin_email, admin_password, expected_id=expected_admin_id)
+                else:
+                    credential = people_result.actors[actor_key]
+                    _login(client, credential.email, credential.password,
+                           expected_id=credential.user_id)
                 return client
 
-            private_values["partner_admin"] = partner_admin
+            private_values["partner_admin"] = private_values["partner_actor"] = partner_client
         if mfa_observer is not None:
             private_values["mfa_observer"] = mfa_observer
         if host_control is not None:

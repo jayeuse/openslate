@@ -38,7 +38,11 @@ from app.systems.comms.messages.models import (
     CommsMessage,
     CommsReadState,
 )
-from app.systems.comms.settings.models import CommsMemberPreferences, CommsSettings
+from app.systems.comms.settings.models import (
+    CommsCapabilityGrant,
+    CommsMemberPreferences,
+    CommsSettings,
+)
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext, set_audit_actor
 from app.systems.manage.audit.models import AuditLog
 from app.systems.manage.workspace.models import WorkspaceProfile
@@ -382,3 +386,39 @@ def structure_routes(message_routes) -> Iterator[MessageRoutes]:
                 db.commit()
         # message_routes then closes clients; CommsWorld removes owned domain rows,
         # added memberships, audit, groups/orgs and the original four accounts.
+
+
+@pytest.fixture
+def duplicate_source(structure_routes):
+    case, org = structure_routes, structure_routes.world.first
+    case.seed_roots()
+    with case.world.session(org) as db:
+        source = db.get(CommsConversation, org.conversation)
+        source.scope, source.name, source.topic = "groups", "Copy source", "Source topic"
+        destination = CommsCategory(org_id=org.id, name="Copy destination", position=1)
+        db.add(destination)
+        db.flush()
+        destination_id = destination.id
+        db.add(GroupMember(org_id=org.id, group_id=org.group, user_id=org.peer))
+        db.add(CommsConversationGroup(
+            org_id=org.id, conversation_id=org.conversation,
+            subject="group", group_id=org.group, level="read",
+        ))
+        db.add(CommsSettings(
+            org_id=org.id, scope="channel", conversation_id=org.conversation,
+            values={"edit_window_minutes": 17},
+        ))
+        db.add(CommsSettings(
+            org_id=org.id, scope="category", category_id=destination_id,
+            values={"formatting": False},
+        ))
+        db.add(CommsCapabilityGrant(
+            org_id=org.id, scope="channel", conversation_id=org.conversation,
+            subject="group", group_id=org.group, capability="manageChannel", granted=True,
+        ))
+        db.add(CommsCapabilityGrant(
+            org_id=org.id, scope="category", category_id=destination_id,
+            subject="group", group_id=org.group, capability="createChannel", granted=True,
+        ))
+        db.commit()
+    return case, destination_id

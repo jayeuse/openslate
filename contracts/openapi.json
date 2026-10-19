@@ -131,6 +131,30 @@
         "title": "AccessLevel",
         "type": "string"
       },
+      "AccessRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EveryoneAccess"
+                },
+                {
+                  "$ref": "#/components/schemas/GroupAccess"
+                }
+              ]
+            },
+            "title": "Access",
+            "type": "array"
+          }
+        },
+        "required": [
+          "access"
+        ],
+        "title": "AccessRequest",
+        "type": "object"
+      },
       "AccountResponse": {
         "properties": {
           "avatar_file_id": {
@@ -2196,6 +2220,21 @@
         "title": "BackupStatusResponse",
         "type": "object"
       },
+      "BlockRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked_user_id": {
+            "format": "uuid",
+            "title": "Blocked User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blocked_user_id"
+        ],
+        "title": "BlockRequest",
+        "type": "object"
+      },
       "BoardAccessPreview": {
         "description": "``level`` is None when the user cannot read the Board.",
         "properties": {
@@ -3176,6 +3215,56 @@
         "title": "CategoryPreferences",
         "type": "object"
       },
+      "CategoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "default_access": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EveryoneAccess"
+                },
+                {
+                  "$ref": "#/components/schemas/GroupAccess"
+                }
+              ]
+            },
+            "title": "Default Access",
+            "type": "array"
+          },
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "position",
+          "department_id",
+          "default_access"
+        ],
+        "title": "CategoryRequest",
+        "type": "object"
+      },
       "CategorySummary": {
         "additionalProperties": false,
         "properties": {
@@ -3261,6 +3350,61 @@
           "channel"
         ],
         "title": "ChannelMessageAction",
+        "type": "object"
+      },
+      "ChannelPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "title": "ChannelPatch",
         "type": "object"
       },
       "ChartCreate": {
@@ -4580,6 +4724,58 @@
         "title": "DepartmentChannel",
         "type": "object"
       },
+      "DepartmentChannelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "department_id": {
+            "format": "uuid",
+            "title": "Department Id",
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "department",
+            "title": "Scope",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "topic",
+          "category_id",
+          "position",
+          "scope",
+          "department_id"
+        ],
+        "title": "DepartmentChannelRequest",
+        "type": "object"
+      },
       "DepartmentDocument": {
         "additionalProperties": false,
         "properties": {
@@ -4847,6 +5043,27 @@
         "title": "DesignField",
         "type": "object"
       },
+      "DirectBlockResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked_user_id": {
+            "format": "uuid",
+            "title": "Blocked User Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blocked_user_id",
+          "created_at"
+        ],
+        "title": "DirectBlockResponse",
+        "type": "object"
+      },
       "DirectConversation": {
         "additionalProperties": false,
         "properties": {
@@ -4937,6 +5154,21 @@
           "participant_ids"
         ],
         "title": "DirectConversation",
+        "type": "object"
+      },
+      "DirectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "recipient_id": {
+            "format": "uuid",
+            "title": "Recipient Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recipient_id"
+        ],
+        "title": "DirectRequest",
         "type": "object"
       },
       "DirectoryRowResponse": {
@@ -5224,6 +5456,34 @@
           "issues"
         ],
         "title": "DocumentResponse",
+        "type": "object"
+      },
+      "DuplicateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "category_id"
+        ],
+        "title": "DuplicateRequest",
         "type": "object"
       },
       "EditRequest": {
@@ -6903,6 +7163,67 @@
         "title": "GrantedChannel",
         "type": "object"
       },
+      "GrantedChannelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EveryoneAccess"
+                },
+                {
+                  "$ref": "#/components/schemas/GroupAccess"
+                }
+              ]
+            },
+            "title": "Access",
+            "type": "array"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "groups",
+            "title": "Scope",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "topic",
+          "category_id",
+          "position",
+          "scope",
+          "access"
+        ],
+        "title": "GrantedChannelRequest",
+        "type": "object"
+      },
       "GroupAccess": {
         "additionalProperties": false,
         "properties": {
@@ -7197,6 +7518,31 @@
           "member_ids"
         ],
         "title": "GroupMembersReplace",
+        "type": "object"
+      },
+      "GroupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 3,
+            "title": "Participant Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "participant_ids"
+        ],
+        "title": "GroupRequest",
         "type": "object"
       },
       "GroupResponse": {
@@ -9101,6 +9447,26 @@
         "title": "MemberCandidateSortField",
         "type": "string"
       },
+      "MemberDepartment": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "MemberDepartment",
+        "type": "object"
+      },
       "MemberPreferences": {
         "additionalProperties": false,
         "properties": {
@@ -9143,6 +9509,74 @@
         },
         "title": "MemberPreferences",
         "type": "object"
+      },
+      "MemberResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "departments": {
+            "items": {
+              "$ref": "#/components/schemas/MemberDepartment"
+            },
+            "title": "Departments",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "joined_at": {
+            "format": "date-time",
+            "title": "Joined At",
+            "type": "string"
+          },
+          "member_role": {
+            "enum": [
+              "member",
+              "manager"
+            ],
+            "title": "Member Role",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name",
+          "member_role",
+          "joined_at",
+          "departments"
+        ],
+        "title": "MemberResponse",
+        "type": "object"
+      },
+      "MemberRoleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "enum": [
+              "member",
+              "manager"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "MemberRoleRequest",
+        "type": "object"
+      },
+      "MemberSort": {
+        "enum": [
+          "display_name"
+        ],
+        "title": "MemberSort",
+        "type": "string"
       },
       "MfaStatus": {
         "properties": {
@@ -9752,6 +10186,52 @@
           "scope"
         ],
         "title": "OrganizationChannel",
+        "type": "object"
+      },
+      "OrganizationChannelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "organization",
+            "title": "Scope",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "topic",
+          "category_id",
+          "position",
+          "scope"
+        ],
+        "title": "OrganizationChannelRequest",
         "type": "object"
       },
       "OrganizationMembershipResponse": {
@@ -11824,6 +12304,61 @@
           "scope"
         ],
         "title": "PrivateChannel",
+        "type": "object"
+      },
+      "PrivateChannelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "member_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Member Ids",
+            "type": "array"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "position": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "members",
+            "title": "Scope",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "topic",
+          "category_id",
+          "position",
+          "scope",
+          "member_ids"
+        ],
+        "title": "PrivateChannelRequest",
         "type": "object"
       },
       "PublicationBlocker": {
@@ -14104,6 +14639,15 @@
         "title": "ReportUpdate",
         "type": "object"
       },
+      "ResourceSort": {
+        "enum": [
+          "position",
+          "name",
+          "updated_at"
+        ],
+        "title": "ResourceSort",
+        "type": "string"
+      },
       "RunnerResponse": {
         "properties": {
           "last_seen_at": {
@@ -16072,6 +16616,26 @@
         "title": "StandardListResponse[BackupRunResponse]",
         "type": "object"
       },
+      "StandardListResponse_Category_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Category"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[Category]",
+        "type": "object"
+      },
       "StandardListResponse_ChartResponse_": {
         "properties": {
           "items": {
@@ -16112,6 +16676,26 @@
         "title": "StandardListResponse[DashboardResponse]",
         "type": "object"
       },
+      "StandardListResponse_DirectBlockResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DirectBlockResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[DirectBlockResponse]",
+        "type": "object"
+      },
       "StandardListResponse_JobResponse_": {
         "properties": {
           "items": {
@@ -16130,6 +16714,26 @@
           "pagination"
         ],
         "title": "StandardListResponse[JobResponse]",
+        "type": "object"
+      },
+      "StandardListResponse_MemberResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemberResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[MemberResponse]",
         "type": "object"
       },
       "StandardListResponse_RecordResponse_": {
@@ -16210,6 +16814,45 @@
           "pagination"
         ],
         "title": "StandardListResponse[SharedReportRunResponse]",
+        "type": "object"
+      },
+      "StandardListResponse_Union_OrganizationChannel__DepartmentChannel__GrantedChannel__PrivateChannel__DirectConversation__GroupConversation__": {
+        "properties": {
+          "items": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/OrganizationChannel"
+                },
+                {
+                  "$ref": "#/components/schemas/DepartmentChannel"
+                },
+                {
+                  "$ref": "#/components/schemas/GrantedChannel"
+                },
+                {
+                  "$ref": "#/components/schemas/PrivateChannel"
+                },
+                {
+                  "$ref": "#/components/schemas/DirectConversation"
+                },
+                {
+                  "$ref": "#/components/schemas/GroupConversation"
+                }
+              ]
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[Union[OrganizationChannel, DepartmentChannel, GrantedChannel, PrivateChannel, DirectConversation, GroupConversation]]",
         "type": "object"
       },
       "StandardListResponse_ViewDataSourceResponse_": {
@@ -16497,6 +17140,14 @@
         ],
         "title": "ThumbnailSize",
         "type": "integer"
+      },
+      "TimeSort": {
+        "enum": [
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TimeSort",
+        "type": "string"
       },
       "TokenResponse": {
         "properties": {
@@ -30654,6 +31305,1727 @@
         ]
       }
     },
+    "/api/comms/categories": {
+      "get": {
+        "operationId": "list_categories_api_comms_categories_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceSort",
+              "default": "position"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_Category_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Categories",
+        "tags": [
+          "comms"
+        ]
+      },
+      "post": {
+        "operationId": "create_category_api_comms_categories_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Category"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Category",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/categories/{category_id}": {
+      "get": {
+        "operationId": "get_category_api_comms_categories__category_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Category"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Category",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "update_category_api_comms_categories__category_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Category"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Category",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations": {
+      "get": {
+        "operationId": "list_conversations_api_comms_conversations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResourceSort",
+              "default": "position"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_Union_OrganizationChannel__DepartmentChannel__GrantedChannel__PrivateChannel__DirectConversation__GroupConversation__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Conversations",
+        "tags": [
+          "comms"
+        ]
+      },
+      "post": {
+        "operationId": "create_channel_api_comms_conversations_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "department": "#/components/schemas/DepartmentChannelRequest",
+                    "groups": "#/components/schemas/GrantedChannelRequest",
+                    "members": "#/components/schemas/PrivateChannelRequest",
+                    "organization": "#/components/schemas/OrganizationChannelRequest"
+                  },
+                  "propertyName": "scope"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/OrganizationChannelRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DepartmentChannelRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GrantedChannelRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PrivateChannelRequest"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Create Channel Api Comms Conversations Post"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Channel",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}": {
+      "get": {
+        "operationId": "get_conversation_api_comms_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Get Conversation Api Comms Conversations  Conversation Id  Get"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Conversation",
+        "tags": [
+          "comms"
+        ]
+      },
+      "patch": {
+        "operationId": "update_channel_api_comms_conversations__conversation_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Update Channel Api Comms Conversations  Conversation Id  Patch"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Channel",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/access": {
+      "put": {
+        "operationId": "set_access_api_comms_conversations__conversation_id__access_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Set Access Api Comms Conversations  Conversation Id  Access Put"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Access",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/archive": {
+      "post": {
+        "operationId": "archive_api_comms_conversations__conversation_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Archive Api Comms Conversations  Conversation Id  Archive Post"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/duplicates": {
+      "post": {
+        "operationId": "duplicate_api_comms_conversations__conversation_id__duplicates_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Duplicate Api Comms Conversations  Conversation Id  Duplicates Post"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Duplicate",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/members": {
+      "get": {
+        "operationId": "list_members_api_comms_conversations__conversation_id__members_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MemberSort",
+              "default": "display_name"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_MemberResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Members",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/members/{user_id}": {
+      "delete": {
+        "operationId": "remove_member_api_comms_conversations__conversation_id__members__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Member",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "set_member_role_api_comms_conversations__conversation_id__members__user_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberRoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Member Role",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
     "/api/comms/conversations/{conversation_id}/messages": {
       "get": {
         "operationId": "get_history_api_comms_conversations__conversation_id__messages_get",
@@ -31501,6 +33873,640 @@
           }
         ],
         "summary": "Mark Read",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/restore": {
+      "post": {
+        "operationId": "restore_api_comms_conversations__conversation_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Restore Api Comms Conversations  Conversation Id  Restore Post"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/direct-blocks": {
+      "get": {
+        "operationId": "list_blocks_api_comms_direct_blocks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TimeSort",
+              "default": "created_at"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_DirectBlockResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Blocks",
+        "tags": [
+          "comms"
+        ]
+      },
+      "post": {
+        "operationId": "block_api_comms_direct_blocks_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlockRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Block",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/direct-blocks/{user_id}": {
+      "delete": {
+        "operationId": "unblock_api_comms_direct_blocks__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unblock",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/directs": {
+      "post": {
+        "operationId": "direct_api_comms_directs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Direct Api Comms Directs Post"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Direct",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/groups": {
+      "post": {
+        "operationId": "group_api_comms_groups_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DepartmentChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GrantedChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PrivateChannel"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectConversation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/GroupConversation"
+                    }
+                  ],
+                  "title": "Response Group Api Comms Groups Post"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque shared configuration token",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Structure conflict; no changes saved"
+          },
+          "412": {
+            "description": "Shared configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required for shared configuration"
+          },
+          "503": {
+            "description": "Structure operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Group",
         "tags": [
           "comms"
         ]
