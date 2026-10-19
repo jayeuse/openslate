@@ -14,6 +14,7 @@ export const toolViews: readonly ToolView[] = [
   "moderation",
   "outbox",
   "retention",
+  "export",
   "thread",
   "message-history",
   "report",

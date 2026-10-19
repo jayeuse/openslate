@@ -1,4 +1,11 @@
 import type { Dispatch, SetStateAction } from "react";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { datetimeOffsets, formatWorkspaceDateTime } from "@/lib/date-time";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { ToolAdvanced } from "./tool-advanced";
 import {
   Card,
   CardHeader,
@@ -118,12 +125,14 @@ export function OutboxFields({
   schedules,
   selectedSchedule,
   creatingSchedule,
-  setCreatingSchedule,
-  setScheduleId,
+  onSelectSchedule,
   text,
   setText,
   sendAt,
   setSendAt,
+  timeUnchanged,
+  utcOffset,
+  setUtcOffset,
   dirty,
   setDirty,
   preview,
@@ -134,12 +143,14 @@ export function OutboxFields({
   schedules: Schedule[];
   selectedSchedule?: Schedule;
   creatingSchedule: boolean;
-  setCreatingSchedule: Dispatch<SetStateAction<boolean>>;
-  setScheduleId: Dispatch<SetStateAction<string>>;
+  onSelectSchedule: (schedule: Schedule) => void;
   text: string;
   setText: Dispatch<SetStateAction<string>>;
   sendAt: string;
   setSendAt: Dispatch<SetStateAction<string>>;
+  timeUnchanged: boolean;
+  utcOffset: string;
+  setUtcOffset: Dispatch<SetStateAction<string>>;
   dirty: boolean;
   setDirty: Dispatch<SetStateAction<boolean>>;
   preview: boolean;
@@ -147,6 +158,11 @@ export function OutboxFields({
   onSendNow: () => void;
   onCancelSchedule: (id: string) => void;
 }) {
+  const region = useWorkspaceDisplayRegion();
+  const timestamp = (value: string) =>
+    region ? formatWorkspaceDateTime(value, region) : value;
+  const offsets =
+    timeUnchanged || !region ? [] : datetimeOffsets(sendAt, region.timezone);
   return (
     <>
       <p className="text-muted-foreground text-sm">
@@ -164,8 +180,7 @@ export function OutboxFields({
           <CardHeader>
             <CardTitle>Scheduled message</CardTitle>
             <CardDescription>
-              {new Date(schedule.request.send_at).toLocaleString()} ·{" "}
-              {schedule.status}
+              {timestamp(schedule.request.send_at)} · {schedule.status}
               {schedule.failure_code
                 ? ` · ${schedule.failure_code.replaceAll("_", " ")}`
                 : ""}
@@ -175,20 +190,9 @@ export function OutboxFields({
             <Button
               variant="outline"
               className="h-auto justify-start text-left whitespace-normal"
-              aria-label={`${schedule.request.body} · ${new Date(schedule.request.send_at).toLocaleString()}`}
-              onClick={() => {
-                setScheduleId(schedule.id);
-                setCreatingSchedule(false);
-                setText(schedule.request.body);
-                const time = Date.parse(schedule.request.send_at);
-                setSendAt(
-                  new Date(time - new Date(time).getTimezoneOffset() * 60000)
-                    .toISOString()
-                    .slice(0, 16),
-                );
-                setPreview(false);
-                setDirty(false);
-              }}
+              aria-label={`${schedule.request.body} · ${timestamp(schedule.request.send_at)}`}
+              disabled={dirty || !region}
+              onClick={() => onSelectSchedule(schedule)}
             >
               {schedule.request.body}
             </Button>
@@ -228,10 +232,40 @@ export function OutboxFields({
               }
               onChange={(event) => {
                 setSendAt(event.target.value);
+                setUtcOffset("");
                 setDirty(true);
+                setPreview(false);
               }}
             />
           </Field>
+          {offsets.length > 1 && (
+            <Field>
+              <FieldLabel htmlFor="tools-scheduled-offset">
+                Scheduled UTC offset
+              </FieldLabel>
+              <NativeSelect
+                id="tools-scheduled-offset"
+                className="w-full [&_select]:min-h-11"
+                required
+                value={utcOffset}
+                disabled={
+                  !!selectedSchedule && selectedSchedule.status !== "pending"
+                }
+                onChange={(event) => {
+                  setUtcOffset(event.target.value);
+                  setDirty(true);
+                  setPreview(false);
+                }}
+              >
+                <NativeSelectOption value="">Choose offset</NativeSelectOption>
+                {offsets.map((offset) => (
+                  <NativeSelectOption key={offset} value={offset}>
+                    {offset}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
+          )}
           <Button
             variant="outline"
             disabled={dirty || !selectedSchedule}
@@ -245,7 +279,7 @@ export function OutboxFields({
               <CardHeader>
                 <CardTitle>Scheduled message preview</CardTitle>
                 <CardDescription>
-                  {new Date(selectedSchedule.request.send_at).toLocaleString()}
+                  {timestamp(selectedSchedule.request.send_at)}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
@@ -271,6 +305,12 @@ export function OutboxFields({
           )}
         </>
       )}
+      <ToolAdvanced tool="outbox">
+        <p className="text-muted-foreground text-sm">
+          Time zone: {region?.timezone ?? "Loading regional settings…"}.
+          Scheduled times use your regional settings.
+        </p>
+      </ToolAdvanced>
     </>
   );
 }

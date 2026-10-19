@@ -23,8 +23,8 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-// Plan §6: S10 grows at most 5% from the previous committed slice, S09 (f4c904e4).
-const baselineColdGzipBytes = 586_810;
+// Plan §6: S11 grows at most 5% from the previous committed slice, S10 (a11b73ef).
+const baselineColdGzipBytes = 586_825;
 const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
 // S26 has a separate strict target: below the original S04 baseline, not +5%.
 const s04BaselineColdGzipBytes = 546_979;
@@ -193,8 +193,8 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
   const growthPercent = (growthBytes / baselineColdGzipBytes) * 100;
 
   const report = {
-    budget_slice: "S10",
-    previous_committed_slice: "S09@f4c904e4",
+    budget_slice: "S11",
+    previous_committed_slice: "S10@a11b73ef",
     s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
     s26_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
     baseline_cold_gzip_bytes: baselineColdGzipBytes,

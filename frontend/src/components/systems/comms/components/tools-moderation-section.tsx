@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ToolAdvanced } from "./tool-advanced";
 import {
   Card,
   CardHeader,
@@ -54,89 +56,108 @@ export function ModerationFields({
   setRestrictedId: (id: string) => void;
   restrictionHours: number;
   setRestrictionHours: (hours: number) => void;
-  updateModeration: (action: "restrict" | "clear" | "lock") => void;
+  updateModeration: (
+    action: "restrict" | "clear" | "lock" | "slow",
+    seconds?: number,
+  ) => void;
   resolveReport: (id: string) => void;
   removeReportedMessage: (report: Report) => void;
   restoreMessage: (message: Tombstone) => void;
   pending: boolean;
 }) {
+  const [slow, setSlow] = useState<number | null>(null);
+  const controls = (
+    <FieldSet
+      disabled={pending}
+      className="flex flex-col gap-3 rounded-md border p-4"
+    >
+      <FieldLegend className="px-1">Channel moderation</FieldLegend>
+      <Field>
+        <FieldLabel htmlFor="tools-moderation-channel">
+          Moderation channel
+        </FieldLabel>
+        <NativeSelect
+          id="tools-moderation-channel"
+          className="w-full [&_select]:min-h-11"
+          value={moderationChannel}
+          onChange={(event) => setModerationChannel(event.target.value)}
+        >
+          {channels.map((channel) => (
+            <NativeSelectOption key={channel.id} value={channel.id}>
+              #{channel.name}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </Field>
+      <Field>
+        <FieldLabel htmlFor="tools-restricted-person">
+          Restrict person
+        </FieldLabel>
+        <NativeSelect
+          id="tools-restricted-person"
+          className="w-full [&_select]:min-h-11"
+          value={restrictedId}
+          onChange={(event) => setRestrictedId(event.target.value)}
+        >
+          <NativeSelectOption value="">Select a person</NativeSelectOption>
+          {people.map((person) => (
+            <NativeSelectOption key={person.id} value={person.id}>
+              {person.name}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </Field>
+      <Field>
+        <FieldLabel htmlFor="tools-restriction-hours">
+          Restriction hours
+        </FieldLabel>
+        <Input
+          id="tools-restriction-hours"
+          type="number"
+          min={1}
+          max={8760}
+          value={restrictionHours}
+          onChange={(event) => setRestrictionHours(Number(event.target.value))}
+        />
+      </Field>
+      <Field>
+        <FieldLabel htmlFor="tools-slow-mode">Slow mode (seconds)</FieldLabel>
+        <Input
+          id="tools-slow-mode"
+          type="number"
+          min={0}
+          value={slow ?? settings?.slow_mode_seconds ?? 0}
+          onChange={(event) => setSlow(Number(event.target.value))}
+        />
+      </Field>
+      <Button
+        variant="outline"
+        disabled={!settings}
+        onClick={() =>
+          updateModeration("slow", slow ?? settings?.slow_mode_seconds ?? 0)
+        }
+      >
+        Save slow mode
+      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={() => updateModeration("restrict")}>
+          Restrict posting
+        </Button>
+        <Button variant="outline" onClick={() => updateModeration("clear")}>
+          Clear restrictions
+        </Button>
+        <Button
+          variant="outline"
+          disabled={!settings}
+          onClick={() => updateModeration("lock")}
+        >
+          {settings?.locked ? "Unlock channel" : "Lock channel"}
+        </Button>
+      </div>
+    </FieldSet>
+  );
   return (
     <>
-      <FieldSet
-        disabled={pending}
-        className="flex flex-col gap-3 rounded-md border p-4"
-      >
-        <FieldLegend className="px-1">Channel moderation</FieldLegend>
-        <Field>
-          <FieldLabel htmlFor="tools-moderation-channel">
-            Moderation channel
-          </FieldLabel>
-          <NativeSelect
-            id="tools-moderation-channel"
-            className="w-full [&_select]:min-h-11"
-            value={moderationChannel}
-            onChange={(event) => setModerationChannel(event.target.value)}
-          >
-            {channels.map((channel) => (
-              <NativeSelectOption key={channel.id} value={channel.id}>
-                #{channel.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="tools-restricted-person">
-            Restrict person
-          </FieldLabel>
-          <NativeSelect
-            id="tools-restricted-person"
-            className="w-full [&_select]:min-h-11"
-            value={restrictedId}
-            onChange={(event) => setRestrictedId(event.target.value)}
-          >
-            <NativeSelectOption value="">Select a person</NativeSelectOption>
-            {people.map((person) => (
-              <NativeSelectOption key={person.id} value={person.id}>
-                {person.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="tools-restriction-hours">
-            Restriction hours
-          </FieldLabel>
-          <Input
-            id="tools-restriction-hours"
-            type="number"
-            min={1}
-            max={8760}
-            value={restrictionHours}
-            onChange={(event) =>
-              setRestrictionHours(Number(event.target.value))
-            }
-          />
-        </Field>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => updateModeration("restrict")}
-          >
-            Restrict posting
-          </Button>
-          <Button variant="outline" onClick={() => updateModeration("clear")}>
-            Clear restrictions
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!settings}
-            onClick={() => updateModeration("lock")}
-          >
-            {settings?.locked ? "Unlock channel" : "Lock channel"}
-          </Button>
-        </div>
-      </FieldSet>
-      <Separator />
       <h3 data-slot="section-title" className="font-medium">
         Message reports
       </h3>
@@ -213,6 +234,16 @@ export function ModerationFields({
           </CardContent>
         </Card>
       ))}
+      <ToolAdvanced
+        tool="moderation"
+        count={
+          Number(!!settings?.locked) +
+          Number((settings?.slow_mode_seconds ?? 0) > 0) +
+          Number(!!settings?.restricted_person_ids.length)
+        }
+      >
+        {controls}
+      </ToolAdvanced>
     </>
   );
 }

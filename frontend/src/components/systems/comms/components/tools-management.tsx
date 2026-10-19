@@ -1,6 +1,5 @@
 "use client";
 import { useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
 import {
   Card,
   CardHeader,
@@ -8,11 +7,7 @@ import {
   CardDescription,
   CardContent,
 } from "@/components/ui/card";
-import {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsibleContent,
-} from "@/components/ui/collapsible";
+import { ToolAdvanced } from "./tool-advanced";
 import { Alert } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
@@ -49,12 +44,10 @@ import { complete } from "../state/workspace-view";
 import { wireSettingKey, wireSettings } from "../state/settings-wire";
 
 export function ManagementTools({
-  view,
   channelId,
   opener,
   onClose,
 }: {
-  view: "management" | "templates";
   channelId?: string;
   opener: HTMLElement | null;
   onClose: () => void;
@@ -80,10 +73,6 @@ export function ManagementTools({
   const [status, setStatus] = useState("");
   const [filter, setFilter] = useState("");
   const [fieldSearch, setFieldSearch] = useState("");
-  const [invitePerson, setInvitePerson] = useState("");
-  const [membershipType, setMembershipType] = useState<"invite" | "request">(
-    "invite",
-  );
   const [preview, setPreview] = useState<{
     templateId: string;
     request: C.TemplateApplyRequest;
@@ -95,22 +84,7 @@ export function ManagementTools({
       const templates = await complete((offset) =>
         client.listTemplates({ limit: 100, offset }, { signal }),
       );
-      const admissions: C.Admission[] = [];
-      if (view === "management")
-        for (const channel of channels.filter(
-          (channel) =>
-            targets.includes(channel.id) && channel.scope === "members",
-        ))
-          admissions.push(
-            ...(await complete((offset) =>
-              client.listAdmissions(
-                channel.id,
-                { limit: 100, offset },
-                { signal },
-              ),
-            )),
-          );
-      return { templates, admissions };
+      return { templates };
     },
   );
   function parse() {
@@ -239,108 +213,199 @@ export function ManagementTools({
       );
     }
   }
-  async function createInvites() {
-    setError("");
-    setStatus("");
-    let completed = 0;
-    try {
-      await run("admissions-create", async (client, signal) => {
-        if (
-          !targets.length ||
-          targets.some(
-            (id) =>
-              channels.find((channel) => channel.id === id)?.scope !==
-              "members",
-          )
-        )
-          throw new Error("Choose private channels");
-        for (const id of targets) {
-          if (membershipType === "invite")
-            await client.invitePerson(
-              id,
-              { user_id: invitePerson },
-              { signal },
-            );
-          else
-            await client.submitJoinRequest({ conversation_id: id }, { signal });
-          completed += 1;
-        }
-      });
-      setStatus(
-        membershipType === "invite"
-          ? "Invitations created."
-          : "Join requests submitted for your account.",
-      );
-      resource.reload();
-    } catch (failure) {
-      setError(
-        completed
-          ? "Some requests were submitted. Reload the current requests before submitting more."
-          : messageFromCommsError(
-              failure,
-              "Requests could not be submitted. Select private channels and a person for invitations.",
+  function resetDefaults() {
+    const reset = Object.fromEntries(
+      [...new Set([...Object.keys(settingsView(parsed)), ...keys])].map(
+        (key) => [key, DEFAULT_COMMS_SETTINGS[key as CommsSettingKey]],
+      ),
+    );
+    changeJson(JSON.stringify(wireSettings(reset), null, 2));
+    setStatus(
+      "Default values staged. Save the template before previewing changes.",
+    );
+  }
+  const editor = (
+    <ToolAdvanced tool="templates" count={Number(edited)}>
+      <Button
+        variant="outline"
+        disabled={edited || isPending()}
+        onClick={() => {
+          setActive("");
+          version.current = null;
+          acceptedTemplate.current = null;
+          setName("New template");
+          setDescription("");
+          changeJson("{}");
+          setKeys([]);
+        }}
+      >
+        New template
+      </Button>
+      <Field>
+        <FieldLabel htmlFor="tools-template-name">Template name</FieldLabel>
+        <Input
+          id="tools-template-name"
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            setEdited(true);
+            setPreview(undefined);
+          }}
+        />
+      </Field>
+      <Field>
+        <FieldLabel htmlFor="tools-template-description">
+          Description
+        </FieldLabel>
+        <Input
+          id="tools-template-description"
+          value={description}
+          onChange={(event) => {
+            setDescription(event.target.value);
+            setEdited(true);
+            setPreview(undefined);
+          }}
+        />
+      </Field>
+      <Field>
+        <FieldLabel htmlFor="tools-settings-json">Settings JSON</FieldLabel>
+        <Textarea
+          id="tools-settings-json"
+          className="min-h-40 font-mono text-xs"
+          value={json}
+          onChange={(event) => changeJson(event.target.value)}
+          spellCheck={false}
+        />
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          onClick={() => {
+            try {
+              setKeys(
+                Object.keys(
+                  settingsView(parse().settings),
+                ) as CommsSettingKey[],
+              );
+              setStatus(
+                "Settings imported into your draft. Save before applying.",
+              );
+              setError("");
+            } catch {
+              setError(
+                "Settings JSON is invalid or contains unsupported fields.",
+              );
+            }
+          }}
+        >
+          Validate import
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => {
+            try {
+              const url = URL.createObjectURL(
+                new Blob([JSON.stringify(parse().settings, null, 2)], {
+                  type: "application/json",
+                }),
+              );
+              try {
+                const anchor = document.createElement("a");
+                anchor.href = url;
+                anchor.download = "opencomms-settings.json";
+                anchor.click();
+              } finally {
+                URL.revokeObjectURL(url);
+              }
+            } catch {
+              setError(
+                "Settings JSON is invalid or contains unsupported fields.",
+              );
+            }
+          }}
+        >
+          Export settings
+        </Button>
+      </div>
+      <Field>
+        <FieldLabel htmlFor="tools-find-settings">Find settings</FieldLabel>
+        <Input
+          id="tools-find-settings"
+          value={fieldSearch}
+          onChange={(event) => setFieldSearch(event.target.value)}
+        />
+      </Field>
+      <FieldSet className="grid max-h-56 grid-cols-1 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
+        <FieldLegend>Fields to apply</FieldLegend>
+        {fields.map((key) => (
+          <Field key={key} className="flex-row items-center gap-2">
+            <Checkbox
+              id={`tools-field-${key}`}
+              checked={keys.includes(key)}
+              disabled={config.lockedSettings.includes(key)}
+              onCheckedChange={(checked) => {
+                setKeys(
+                  checked
+                    ? [...keys, key]
+                    : keys.filter((item) => item !== key),
+                );
+                if (checked && !Object.hasOwn(parsed, wireSettingKey(key)))
+                  changeJson(
+                    JSON.stringify(
+                      { ...parsed, ...wireSettings({ [key]: values[key] }) },
+                      null,
+                      2,
+                    ),
+                  );
+                setPreview(undefined);
+              }}
+            />
+            <FieldLabel htmlFor={`tools-field-${key}`}>
+              {SETTINGS_LABELS[key]}
+              {config.lockedSettings.includes(key)
+                ? " · Locked by workspace"
+                : ""}
+            </FieldLabel>
+          </Field>
+        ))}
+      </FieldSet>
+      <SettingsFields
+        keys={keys}
+        values={values}
+        overrides={settingsView(parsed)}
+        locked={config.lockedSettings}
+        workspace={false}
+        people={people}
+        onChange={(key, value) =>
+          changeJson(
+            JSON.stringify(
+              { ...parsed, ...wireSettings({ [key]: value }) },
+              null,
+              2,
             ),
-      );
-    }
-  }
-  async function decide(invite: C.Admission, decision: "accept" | "decline") {
-    setError("");
-    try {
-      await run(`admission:${invite.id}`, async (client, signal) => {
-        const current = await client.getAdmission(
-          invite.conversation_id,
-          invite.id,
-          { signal },
-        );
-        await client.decideAdmission(
-          invite.conversation_id,
-          invite.id,
-          { decision },
-          { signal, if_match: current.etag },
-        );
-      });
-      resource.reload();
-    } catch (failure) {
-      setError(
-        messageFromCommsError(failure, "The request could not be updated."),
-      );
-    }
-  }
+          )
+        }
+      />
+      <Button
+        variant="outline"
+        disabled={!canManage || isPending()}
+        onClick={resetDefaults}
+      >
+        Reset to default
+      </Button>
+    </ToolAdvanced>
+  );
   return (
     <ConfigurationFrame
-      title={
-        view === "templates" ? "Channel templates" : "Bulk channel changes"
-      }
+      className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
+      title="Channel templates"
       description="Copy chosen settings from a saved template to several channels. Messages and members stay as they are."
       opener={opener}
       onClose={onClose}
       dirty={edited}
-      onSave={saveTemplate}
+      onSave={edited ? saveTemplate : undefined}
       saveLabel="Save template"
       disabled={!canManage || isPending()}
-      footer={
-        <Button
-          type="button"
-          variant="outline"
-          className="mr-auto min-h-11"
-          disabled={!canManage || isPending()}
-          onClick={() => {
-            const reset = Object.fromEntries(
-              [...new Set([...Object.keys(settingsView(parsed)), ...keys])].map(
-                (key) => [key, DEFAULT_COMMS_SETTINGS[key as CommsSettingKey]],
-              ),
-            );
-            setJson(JSON.stringify(wireSettings(reset), null, 2));
-            setEdited(true);
-            setPreview(undefined);
-            setStatus(
-              "Default values staged. Save the template before previewing changes.",
-            );
-          }}
-        >
-          Reset to default
-        </Button>
-      }
     >
       <FieldGroup className="p-5 sm:p-6">
         {edited && (
@@ -397,289 +462,6 @@ export function ManagementTools({
             ))}
           </NativeSelect>
         </Field>
-        <Button
-          variant="outline"
-          disabled={edited || isPending()}
-          onClick={() => {
-            setActive("");
-            version.current = null;
-            acceptedTemplate.current = null;
-            setName("New template");
-            setDescription("");
-            changeJson("{}");
-            setKeys([]);
-          }}
-        >
-          New template
-        </Button>
-        <Field>
-          <FieldLabel htmlFor="tools-template-name">Template name</FieldLabel>
-          <Input
-            id="tools-template-name"
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value);
-              setEdited(true);
-              setPreview(undefined);
-            }}
-          />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="tools-template-description">
-            Description
-          </FieldLabel>
-          <Input
-            id="tools-template-description"
-            value={description}
-            onChange={(event) => {
-              setDescription(event.target.value);
-              setEdited(true);
-              setPreview(undefined);
-            }}
-          />
-        </Field>
-        <Collapsible>
-          <Card className="w-full">
-            <CardHeader>
-              <CollapsibleTrigger
-                render={
-                  <Button variant="ghost" className="justify-between px-0" />
-                }
-              >
-                Import or export settings{" "}
-                <ChevronDown data-icon="inline-end" aria-hidden="true" />
-              </CollapsibleTrigger>
-            </CardHeader>
-            <CollapsibleContent>
-              <CardContent className="flex flex-col gap-3">
-                <Field>
-                  <FieldLabel htmlFor="tools-settings-json">
-                    Settings JSON
-                  </FieldLabel>
-                  <Textarea
-                    id="tools-settings-json"
-                    className="min-h-40 font-mono text-xs"
-                    value={json}
-                    onChange={(event) => changeJson(event.target.value)}
-                    spellCheck={false}
-                  />
-                </Field>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      try {
-                        setKeys(
-                          Object.keys(
-                            settingsView(parse().settings),
-                          ) as CommsSettingKey[],
-                        );
-                        setStatus(
-                          "Settings imported into your draft. Save before applying.",
-                        );
-                        setError("");
-                      } catch {
-                        setError(
-                          "Settings JSON is invalid or contains unsupported fields.",
-                        );
-                      }
-                    }}
-                  >
-                    Validate import
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      try {
-                        const blob = new Blob(
-                          [JSON.stringify(parse().settings, null, 2)],
-                          { type: "application/json" },
-                        );
-                        const url = URL.createObjectURL(blob);
-                        const anchor = document.createElement("a");
-                        anchor.href = url;
-                        anchor.download = "opencomms-settings.json";
-                        anchor.click();
-                        URL.revokeObjectURL(url);
-                      } catch {
-                        setError(
-                          "Settings JSON is invalid or contains unsupported fields.",
-                        );
-                      }
-                    }}
-                  >
-                    Export settings
-                  </Button>
-                </div>
-              </CardContent>
-            </CollapsibleContent>
-          </Card>
-        </Collapsible>
-        <Field>
-          <FieldLabel htmlFor="tools-find-settings">Find settings</FieldLabel>
-          <Input
-            id="tools-find-settings"
-            value={fieldSearch}
-            onChange={(event) => setFieldSearch(event.target.value)}
-          />
-        </Field>
-        <FieldSet className="grid max-h-56 grid-cols-1 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
-          <FieldLegend>Fields to apply</FieldLegend>
-          {fields.map((key) => (
-            <Field key={key} className="flex-row items-center gap-2">
-              <Checkbox
-                id={`tools-field-${key}`}
-                checked={keys.includes(key)}
-                disabled={config.lockedSettings.includes(key)}
-                onCheckedChange={(checked) => {
-                  setKeys(
-                    checked
-                      ? [...keys, key]
-                      : keys.filter((item) => item !== key),
-                  );
-                  if (checked && !Object.hasOwn(parsed, wireSettingKey(key))) {
-                    setJson(
-                      JSON.stringify(
-                        { ...parsed, ...wireSettings({ [key]: values[key] }) },
-                        null,
-                        2,
-                      ),
-                    );
-                    setEdited(true);
-                  }
-                  setPreview(undefined);
-                }}
-              />
-              <FieldLabel htmlFor={`tools-field-${key}`}>
-                {SETTINGS_LABELS[key]}
-                {config.lockedSettings.includes(key)
-                  ? " · Locked by workspace"
-                  : ""}
-              </FieldLabel>
-            </Field>
-          ))}
-        </FieldSet>
-        <SettingsFields
-          keys={keys}
-          values={values}
-          overrides={settingsView(parsed)}
-          locked={config.lockedSettings}
-          workspace={false}
-          people={people}
-          onChange={(key, value) =>
-            changeJson(
-              JSON.stringify(
-                { ...parsed, ...wireSettings({ [key]: value }) },
-                null,
-                2,
-              ),
-            )
-          }
-        />
-        {view === "management" && (
-          <Card className="w-full">
-            <CardHeader>
-              <CardTitle>Invitations and join requests</CardTitle>
-              <CardDescription>
-                Select private target channels below. Join requests are
-                submitted only for your own account.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <Field>
-                <FieldLabel htmlFor="tools-membership-action">
-                  Membership action
-                </FieldLabel>
-                <NativeSelect
-                  id="tools-membership-action"
-                  className="w-full [&_select]:min-h-11"
-                  value={membershipType}
-                  onChange={(event) =>
-                    setMembershipType(
-                      event.target.value === "invite" ? "invite" : "request",
-                    )
-                  }
-                >
-                  <NativeSelectOption value="invite">
-                    Invitation
-                  </NativeSelectOption>
-                  <NativeSelectOption value="request">
-                    Join request
-                  </NativeSelectOption>
-                </NativeSelect>
-              </Field>
-              {membershipType === "invite" && (
-                <Field>
-                  <FieldLabel htmlFor="tools-invite-person">
-                    Invite person
-                  </FieldLabel>
-                  <NativeSelect
-                    id="tools-invite-person"
-                    className="w-full [&_select]:min-h-11"
-                    value={invitePerson}
-                    onChange={(event) => setInvitePerson(event.target.value)}
-                  >
-                    <NativeSelectOption value="">
-                      Select a person
-                    </NativeSelectOption>
-                    {people.map((person) => (
-                      <NativeSelectOption key={person.id} value={person.id}>
-                        {person.name}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                </Field>
-              )}
-              <Button
-                variant="outline"
-                disabled={isPending()}
-                onClick={() => void createInvites()}
-              >
-                {membershipType === "invite"
-                  ? "Add invitations"
-                  : "Request to join"}
-              </Button>
-              {resource.data?.admissions.map((invite) => (
-                <div
-                  key={invite.id}
-                  className="flex flex-wrap items-center gap-2 text-sm"
-                >
-                  <span>
-                    {people.find((person) => person.id === invite.user_id)
-                      ?.name ?? "Unavailable person"}{" "}
-                    · #
-                    {
-                      channels.find(
-                        (channel) => channel.id === invite.conversation_id,
-                      )?.name
-                    }{" "}
-                    · {invite.kind} · {invite.status}
-                  </span>
-                  {invite.status === "pending" && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isPending()}
-                        onClick={() => void decide(invite, "accept")}
-                      >
-                        Accept
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isPending()}
-                        onClick={() => void decide(invite, "decline")}
-                      >
-                        Decline
-                      </Button>
-                    </>
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
         <Field>
           <FieldLabel htmlFor="tools-find-channels">Find channels</FieldLabel>
           <Input
@@ -708,7 +490,10 @@ export function ManagementTools({
                     setPreview(undefined);
                   }}
                 />
-                <FieldLabel htmlFor={`tools-target-${channel.id}`}>
+                <FieldLabel
+                  htmlFor={`tools-target-${channel.id}`}
+                  className="min-h-11 flex-1"
+                >
                   #{channel.name}
                   {channel.archived ? " · Archived" : ""}
                 </FieldLabel>
@@ -745,7 +530,7 @@ export function ManagementTools({
                   {preview.request.keys.map((key) => (
                     <p key={key} className="text-xs break-words">
                       {key.replaceAll("_", " ")}:{" "}
-                      {JSON.stringify(item.before[key])} →{" "}
+                      {JSON.stringify(item.before[key]) ?? "Inherited"} →{" "}
                       {JSON.stringify(item.after[key])}
                       {item.skipped_locked_keys.includes(key)
                         ? " · Locked by workspace"
@@ -764,6 +549,7 @@ export function ManagementTools({
             </CardContent>
           </Card>
         )}
+        {editor}
       </FieldGroup>
     </ConfigurationFrame>
   );

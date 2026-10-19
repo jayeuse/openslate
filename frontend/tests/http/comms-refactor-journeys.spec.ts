@@ -579,9 +579,10 @@ test("the OpenComms menu keeps everyday items up front and admin tools behind on
     "Moderation",
     "Scheduled messages",
     "Message retention",
+    "Export messages",
     "Workspace settings",
     "Channel templates",
-    "Bulk channel changes",
+    "Join requests",
     "Settings history",
   ]);
   await tools.getByRole("menuitem", { name: "Moderation" }).click();

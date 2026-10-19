@@ -28,6 +28,12 @@ import {
 } from "./tools-conversation-sections";
 import { ModerationFields } from "./tools-moderation-section";
 import { ManagementTools } from "./tools-management";
+import { ExportTools } from "./tools-export";
+import { AdmissionTools } from "./tools-admissions";
+import { ToolAdvanced } from "./tool-advanced";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { datetimeInputToUtc, formatDateTimeLocal } from "@/lib/date-time";
+import { TextField } from "./message-shared";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import { complete } from "../state/workspace-view";
 import {
@@ -43,6 +49,7 @@ export type CommsToolsView =
   | "moderation"
   | "outbox"
   | "retention"
+  | "export"
   | "thread"
   | "message-history"
   | "report";
@@ -55,7 +62,8 @@ export interface CommsToolsDialogProps {
   onClose: () => void;
 }
 const titles: Record<CommsToolsView, string> = {
-  management: "Bulk channel changes",
+  management: "Join requests",
+  export: "Export messages",
   templates: "Channel templates",
   history: "Settings history",
   moderation: "Moderation",
@@ -66,8 +74,12 @@ const titles: Record<CommsToolsView, string> = {
   report: "Report message",
 };
 export function CommsToolsDialog(props: CommsToolsDialogProps) {
-  return props.view === "management" || props.view === "templates" ? (
-    <ManagementTools {...props} view={props.view} />
+  return props.view === "export" ? (
+    <ExportTools {...props} />
+  ) : props.view === "management" ? (
+    <AdmissionTools {...props} />
+  ) : props.view === "templates" ? (
+    <ManagementTools {...props} />
   ) : (
     <LifecycleTools {...props} />
   );
@@ -92,6 +104,7 @@ function LifecycleTools({
   onClose,
 }: CommsToolsDialogProps) {
   const workspace = useCommsWorkspaceView();
+  const region = useWorkspaceDisplayRegion();
   const { run, isPending } = useCommsCommands();
   const { channels, people, messages, threads } = workspace;
   const thread = threads.find((item) => item.id === threadId);
@@ -212,6 +225,8 @@ function LifecycleTools({
   const [status, setStatus] = useState("");
   const [sampleConfirmed, setSampleConfirmed] = useState(false);
   const [days, setDays] = useState(0);
+  const [fileDays, setFileDays] = useState(0);
+  const [inheritFiles, setInheritFiles] = useState(false);
   const [inheritRetention, setInheritRetention] = useState(false);
   const [retentionPreview, setRetentionPreview] = useState<{
     value: C.RetentionPreview;
@@ -222,6 +237,7 @@ function LifecycleTools({
     entry: C.ConfigurationHistory;
     preview: C.Versioned<C.ConfigurationRestorePreview>;
   }>();
+  const [historyId, setHistoryId] = useState("");
   const [scheduleId, setScheduleId] = useState("");
   const createdSchedule = useRef<string | null>(null);
   const scheduleKey = useRef<string | null>(null);
@@ -235,12 +251,24 @@ function LifecycleTools({
     view === "outbox" ? (message?.text ?? "") : "",
   );
   const [sendAt, setSendAt] = useState("");
+  const [originalTime, setOriginalTime] = useState<{
+    instant: string;
+    timezone: string;
+  }>();
+  const [utcOffset, setUtcOffset] = useState("");
+  const timezone = region?.timezone ?? "UTC";
+  const timeUnchanged =
+    !!originalTime &&
+    originalTime.timezone === timezone &&
+    formatDateTimeLocal(originalTime.instant, timezone) === sendAt;
   const [preview, setPreview] = useState(false);
   const [restrictedId, setRestrictedId] = useState("");
   const [restrictionHours, setRestrictionHours] = useState(24);
   useEffect(() => {
     if (dirty || !resource.data?.retention) return;
     setDays(resource.data.retention.data.effective.message_days);
+    setFileDays(resource.data.retention.data.effective.file_days);
+    setInheritFiles(resource.data.retention.data.policy.file_days === null);
     setInheritRetention(
       resource.data.retention.data.policy.message_days === null,
     );
@@ -268,6 +296,24 @@ function LifecycleTools({
     }
   }
   async function save() {
+    let editedSendAt: string | undefined;
+    if (view === "outbox" && !timeUnchanged) {
+      try {
+        editedSendAt = datetimeInputToUtc(
+          sendAt,
+          timezone,
+          utcOffset || undefined,
+        );
+      } catch (failure) {
+        setStatus("");
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "Choose a valid scheduled time.",
+        );
+        return false;
+      }
+    }
     let confirmedWrite = false;
     const ok = await action(`save:${view}`, async (client, signal) => {
       const options = { signal };
@@ -323,6 +369,12 @@ function LifecycleTools({
       } else if (view === "outbox") {
         const id = scheduleId || createdSchedule.current;
         const current = id ? await client.getSchedule(id, options) : undefined;
+        // Body-only edits keep the stored instant (including its offset choice
+        // and sub-minute precision), also retaining a concurrent time change.
+        const requestedTime = timeUnchanged
+          ? current?.data.request.send_at
+          : editedSendAt;
+        if (!requestedTime) throw new Error("Choose a valid scheduled time.");
         scheduleKey.current ??= crypto.randomUUID();
         const request: C.ScheduleRequest = {
           ...(current?.data.request ?? {
@@ -338,7 +390,7 @@ function LifecycleTools({
             also_send_to_channel: false,
           }),
           body: text,
-          send_at: new Date(sendAt).toISOString(),
+          send_at: requestedTime,
         };
         const accepted = current
           ? await client.updateSchedule(current.data.id, request, {
@@ -347,6 +399,9 @@ function LifecycleTools({
             })
           : await client.createSchedule(request, options);
         createdSchedule.current = accepted.data.id;
+        setOriginalTime({ instant: accepted.data.request.send_at, timezone });
+        setSendAt(formatDateTimeLocal(accepted.data.request.send_at, timezone));
+        setUtcOffset("");
         confirmedWrite = true;
       }
     });
@@ -371,6 +426,7 @@ function LifecycleTools({
   const protectedView = view === "history" || view === "retention";
   return (
     <ConfigurationFrame
+      className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       title={titles[view]}
       description={
         view === "moderation"
@@ -384,7 +440,7 @@ function LifecycleTools({
       opener={opener}
       onClose={onClose}
       dirty={dirty}
-      disabled={isPending()}
+      disabled={isPending() || (view === "outbox" && !region)}
       onSave={
         view === "report" ||
         view === "thread" ||
@@ -449,103 +505,120 @@ function LifecycleTools({
             <ConfigurationHistoryFields
               history={resource.data.history}
               names={names}
-              disabled={!sampleConfirmed || isPending()}
-              onPreview={(entry) => {
-                void action(
-                  `history-preview:${entry.id}`,
-                  async (client, signal) => {
-                    const current = await client.getSettings(entry.scope, {
-                      signal,
-                    });
-                    const preview = await client.previewConfigurationRestore(
-                      entry.scope,
-                      entry.id,
-                      {
-                        signal,
-                        if_match: current.etag,
-                        password: sampleMarker,
-                      },
-                    );
-                    setRestore({ entry, preview });
-                  },
-                );
-              }}
             />
-            {restore && (
-              <Card aria-label="Restoration preview" className="w-full">
-                <CardHeader>
-                  <CardTitle>
-                    Restore {restore.entry.scope.kind} settings
-                  </CardTitle>
-                  <CardDescription>
-                    Replaces this scope’s overrides with the previewed values.
-                    Other scopes remain unchanged.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-3">
-                  <ConfigurationChanges
-                    before={restore.preview.data.before}
-                    after={restore.preview.data.after}
-                    names={names}
-                  />
-                  <Button
-                    disabled={!sampleConfirmed || isPending()}
-                    onClick={() => {
-                      void action(
-                        `restore:${restore.entry.id}`,
-                        async (client, signal) => {
-                          await client.restoreConfiguration(
-                            restore.entry.scope,
-                            {
-                              history_id: restore.entry.id,
-                              preview_digest:
-                                restore.preview.data.preview_digest,
-                            },
-                            {
-                              signal,
-                              if_match: restore.preview.etag,
-                              password: sampleMarker,
-                            },
-                          );
-                          setRestore(undefined);
+            <ToolAdvanced tool="history">
+              <Choice
+                label="Change to restore"
+                value={historyId}
+                disabled={isPending()}
+                onChange={(event) => {
+                  setHistoryId(event.target.value);
+                  setRestore(undefined);
+                }}
+              >
+                <NativeSelectOption value="">
+                  Select a saved change
+                </NativeSelectOption>
+                {resource.data.history.map((entry) => (
+                  <NativeSelectOption key={entry.id} value={entry.id}>
+                    {entry.scope.kind} ·{" "}
+                    {new Date(entry.created_at).toLocaleString()}
+                  </NativeSelectOption>
+                ))}
+              </Choice>
+              <Button
+                variant="outline"
+                disabled={!sampleConfirmed || isPending() || !historyId}
+                onClick={() => {
+                  const entry = resource.data?.history.find(
+                    (row) => row.id === historyId,
+                  );
+                  if (!entry) return;
+                  void action(
+                    `history-preview:${entry.id}`,
+                    async (client, signal) => {
+                      const current = await client.getSettings(entry.scope, {
+                        signal,
+                      });
+                      const preview = await client.previewConfigurationRestore(
+                        entry.scope,
+                        entry.id,
+                        {
+                          signal,
+                          if_match: current.etag,
+                          password: sampleMarker,
                         },
-                        "Configuration restored.",
                       );
-                    }}
-                  >
-                    Confirm restoration
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setRestore(undefined)}
-                  >
-                    Cancel restoration
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
+                      setRestore({ entry, preview });
+                    },
+                  );
+                }}
+              >
+                Preview restoration
+              </Button>
+              {restore && (
+                <Card aria-label="Restoration preview" className="w-full">
+                  <CardHeader>
+                    <CardTitle>
+                      Restore {restore.entry.scope.kind} settings
+                    </CardTitle>
+                    <CardDescription>
+                      Replaces this scope’s overrides with the previewed values.
+                      Other scopes remain unchanged.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-3">
+                    <ConfigurationChanges
+                      before={restore.preview.data.before}
+                      after={restore.preview.data.after}
+                      names={names}
+                    />
+                    <Button
+                      disabled={!sampleConfirmed || isPending()}
+                      onClick={() => {
+                        void action(
+                          `restore:${restore.entry.id}`,
+                          async (client, signal) => {
+                            await client.restoreConfiguration(
+                              restore.entry.scope,
+                              {
+                                history_id: restore.entry.id,
+                                preview_digest:
+                                  restore.preview.data.preview_digest,
+                              },
+                              {
+                                signal,
+                                if_match: restore.preview.etag,
+                                password: sampleMarker,
+                              },
+                            );
+                            setRestore(undefined);
+                          },
+                          "Configuration restored.",
+                        );
+                      }}
+                    >
+                      Confirm restoration
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setRestore(undefined)}
+                    >
+                      Cancel restoration
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+            </ToolAdvanced>
           </>
         )}
         {view === "retention" && (
           <>
-            <Choice
-              label="Retention scope"
-              value={retentionTarget}
-              onChange={(event) => {
-                setRetentionTarget(event.target.value);
-                setRetentionPreview(undefined);
-                setDirty(false);
-              }}
-            >
-              <NativeSelectOption value="workspace">
-                This organization
-              </NativeSelectOption>
-              {channels.map((channel) => (
-                <NativeSelectOption key={channel.id} value={channel.id}>
-                  #{channel.name}
-                </NativeSelectOption>
-              ))}
-            </Choice>
+            <p className="text-sm font-semibold">
+              {retentionTarget === "workspace"
+                ? "This organization's retention"
+                : `Channel override: #${channels.find((row) => row.id === retentionTarget)?.name}`}
+            </p>
             <RetentionPreviewFields
               days={days}
               setDays={(value) => {
@@ -558,15 +631,6 @@ function LifecycleTools({
                 !sampleConfirmed || isPending() || !resource.data?.retention
               }
               inherited={retentionTarget !== "workspace" && inheritRetention}
-              onInherit={
-                retentionTarget === "workspace"
-                  ? undefined
-                  : () => {
-                      setInheritRetention(!inheritRetention);
-                      setDirty(true);
-                      setRetentionPreview(undefined);
-                    }
-              }
               onPreview={() => {
                 void action("retention-preview", async (client, signal) => {
                   const current = await client.getRetention(retentionScope, {
@@ -577,12 +641,12 @@ function LifecycleTools({
                       ? {
                           scope: retentionScope,
                           message_days: days,
-                          file_days: current.data.effective.file_days,
+                          file_days: fileDays,
                         }
                       : {
                           scope: retentionScope,
                           message_days: inheritRetention ? null : days,
-                          file_days: current.data.policy.file_days,
+                          file_days: inheritFiles ? null : fileDays,
                         };
                   const value = await client.previewRetention(policy, {
                     signal,
@@ -615,6 +679,65 @@ function LifecycleTools({
                 );
               }}
             />
+            <ToolAdvanced tool="retention" count={Number(dirty)}>
+              <Choice
+                label="Retention scope"
+                value={retentionTarget}
+                disabled={dirty || isPending()}
+                onChange={(event) => {
+                  setRetentionTarget(event.target.value);
+                  setRetentionPreview(undefined);
+                }}
+              >
+                <NativeSelectOption value="workspace">
+                  This organization
+                </NativeSelectOption>
+                {channels.map((channel) => (
+                  <NativeSelectOption key={channel.id} value={channel.id}>
+                    #{channel.name}
+                  </NativeSelectOption>
+                ))}
+              </Choice>
+              {retentionTarget !== "workspace" && (
+                <>
+                  <Toggle
+                    label="Inherit organization message retention"
+                    disabled={isPending()}
+                    checked={inheritRetention}
+                    onCheckedChange={(value) => {
+                      setInheritRetention(value);
+                      setDirty(true);
+                      setRetentionPreview(undefined);
+                    }}
+                  />
+                  <Toggle
+                    label="Inherit organization file retention"
+                    disabled={isPending()}
+                    checked={inheritFiles}
+                    onCheckedChange={(value) => {
+                      setInheritFiles(value);
+                      setDirty(true);
+                      setRetentionPreview(undefined);
+                    }}
+                  />
+                </>
+              )}
+              <TextField
+                label="File retention days (0 keeps everything)"
+                type="number"
+                min={0}
+                value={fileDays}
+                disabled={
+                  isPending() ||
+                  (retentionTarget !== "workspace" && inheritFiles)
+                }
+                onChange={(event) => {
+                  setFileDays(Number(event.target.value));
+                  setDirty(true);
+                  setRetentionPreview(undefined);
+                }}
+              />
+            </ToolAdvanced>
           </>
         )}
         {view === "outbox" && resource.data && (
@@ -622,12 +745,25 @@ function LifecycleTools({
             schedules={resource.data.schedules}
             selectedSchedule={selectedSchedule}
             creatingSchedule={creatingSchedule}
-            setCreatingSchedule={setCreatingSchedule}
-            setScheduleId={setScheduleId}
+            onSelectSchedule={(schedule) => {
+              setScheduleId(schedule.id);
+              setCreatingSchedule(false);
+              setText(schedule.request.body);
+              setOriginalTime({ instant: schedule.request.send_at, timezone });
+              setSendAt(
+                formatDateTimeLocal(schedule.request.send_at, timezone),
+              );
+              setUtcOffset("");
+              setPreview(false);
+              setDirty(false);
+            }}
             text={text}
             setText={setText}
             sendAt={sendAt}
             setSendAt={setSendAt}
+            timeUnchanged={timeUnchanged}
+            utcOffset={utcOffset}
+            setUtcOffset={setUtcOffset}
             dirty={dirty}
             setDirty={setDirty}
             preview={preview}
@@ -668,6 +804,7 @@ function LifecycleTools({
         )}
         {view === "moderation" && resource.data && (
           <ModerationFields
+            key={moderationChannel}
             channels={channels}
             people={people}
             messages={[
@@ -684,7 +821,7 @@ function LifecycleTools({
             restrictionHours={restrictionHours}
             setRestrictionHours={setRestrictionHours}
             pending={isPending()}
-            updateModeration={(operation) => {
+            updateModeration={(operation, seconds) => {
               void action(
                 `moderation:${moderationChannel}`,
                 async (client, signal) => {
@@ -693,7 +830,13 @@ function LifecycleTools({
                     id: moderationChannel,
                   } as const;
                   const current = await client.getSettings(scope, { signal });
-                  if (operation === "lock")
+                  if (operation === "slow")
+                    await client.updateSettings(
+                      scope,
+                      { slow_mode_seconds: seconds ?? 0 },
+                      { signal, if_match: current.etag },
+                    );
+                  else if (operation === "lock")
                     await client.updateSettings(
                       scope,
                       { locked: !current.data.effective.locked },

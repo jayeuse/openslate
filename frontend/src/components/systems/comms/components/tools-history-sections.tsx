@@ -12,7 +12,6 @@ import {
   CollapsibleContent,
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { Alert } from "@/components/ui/alert";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -72,13 +71,9 @@ export function MessageHistoryFields({
 export function ConfigurationHistoryFields({
   history,
   names,
-  onPreview,
-  disabled,
 }: {
   history: ConfigurationHistory[];
   names: Record<string, string>;
-  onPreview: (entry: ConfigurationHistory) => void;
-  disabled: boolean;
 }) {
   return (
     <>
@@ -116,14 +111,6 @@ export function ConfigurationHistoryFields({
                 />
               </CollapsibleContent>
             </Collapsible>
-            <Separator />
-            <Button
-              variant="outline"
-              disabled={disabled}
-              onClick={() => onPreview(entry)}
-            >
-              Preview restoration
-            </Button>
           </CardContent>
         </Card>
       ))}
@@ -138,7 +125,6 @@ export function RetentionPreviewFields({
   onApply,
   disabled,
   inherited,
-  onInherit,
 }: {
   days: number;
   setDays: (days: number) => void;
@@ -147,7 +133,6 @@ export function RetentionPreviewFields({
   onApply: () => void;
   disabled: boolean;
   inherited?: boolean;
-  onInherit?: () => void;
 }) {
   return (
     <>
@@ -168,11 +153,6 @@ export function RetentionPreviewFields({
           onChange={(event) => setDays(Number(event.target.value))}
         />
       </Field>
-      {onInherit && (
-        <Button variant="outline" onClick={onInherit}>
-          {inherited ? "Set a channel override" : "Use workspace retention"}
-        </Button>
-      )}
       <Button variant="outline" disabled={disabled} onClick={onPreview}>
         Preview impact
       </Button>

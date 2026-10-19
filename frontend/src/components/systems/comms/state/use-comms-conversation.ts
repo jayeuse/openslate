@@ -47,10 +47,7 @@ export function useCommsConversation(selected: string) {
     menuAccess: {
       canManageChannel: check?.capabilities.manageChannel.allowed ?? false,
       canCreate: check?.capabilities.createChannel.allowed ?? false,
-      canAdminister:
-        check?.capabilities.manageWorkspace.allowed ||
-        check?.capabilities.moderate.allowed ||
-        false,
+      canAdminister: check?.capabilities.manageWorkspace.allowed ?? false,
       recoverableCount: workspace.removedCount,
     },
     identity: {

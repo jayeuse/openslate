@@ -37,7 +37,8 @@ export type WorkspaceSetting =
   | "history"
   | "moderation"
   | "outbox"
-  | "retention";
+  | "retention"
+  | "export";
 export type CommsMenuAccess = {
   canManageChannel: boolean;
   canCreate: boolean;
@@ -102,6 +103,7 @@ export function CommsMenu({
         { id: "moderation", label: "Moderation" },
         { id: "outbox", label: "Scheduled messages" },
         { id: "retention", label: "Message retention" },
+        { id: "export", label: "Export messages" },
       ],
     },
     {
@@ -109,7 +111,7 @@ export function CommsMenu({
       tools: [
         { id: "workspace", label: "Workspace settings" },
         { id: "templates", label: "Channel templates" },
-        { id: "management", label: "Bulk channel changes" },
+        { id: "management", label: "Join requests" },
         { id: "history", label: "Settings history" },
       ],
     },
