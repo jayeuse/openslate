@@ -6,9 +6,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.database.organization_scope import scope_session
+from app.core.database.session import AuditSession
 from app.systems.access.policy.models import Group, GroupAccess, GroupMember
 from app.systems.access.users.models import Membership, User
 from app.systems.boards.models import Board, BoardGroup
+from app.systems.comms.conversations.models import CommsConversation, CommsMember
+from app.systems.manage.audit.context import set_audit_actor
 from app.systems.sandbox.departments.models import Department
 from app.systems.sandbox.modules.models import Module
 from tests.files.user_avatar_support import (
@@ -165,6 +169,61 @@ def test_guest_card_omits_private_keys_including_own_card_but_self_read_stays_pr
     assert {"phone", "bio", "avatar_file_id"} <= world.client.get(
         "/api/auth/me", headers=world.headers()
     ).json().keys()
+
+
+def test_comms_only_sharing_reveals_card_until_target_leaves(person_world):
+    world = person_world
+    # person_world hides its owned company Board; do not add any other sharing path.
+    hidden = card(world)
+    assert hidden.status_code == 404
+    assert hidden.json() == {"detail": {"code": "person_not_found", "message": "Person not found"}}
+    with AuditSession(world.owner) as db:
+        scope_session(db, world.person_org_id)
+        set_audit_actor(db, world.actor_id)
+        conversation = CommsConversation(
+            org_id=world.person_org_id, kind="channel", scope="members",
+            name="Owned private card channel", created_by=world.actor_id,
+        )
+        db.add(conversation)
+        db.flush()
+        world.person_owned.append((CommsConversation, conversation.id))
+        actor_member = CommsMember(
+            org_id=world.person_org_id, conversation_id=conversation.id,
+            user_id=world.actor_id, role="member", joined_at=world.clock,
+        )
+        target_member = CommsMember(
+            org_id=world.person_org_id, conversation_id=conversation.id,
+            user_id=world.target_id, role="member", joined_at=world.clock,
+        )
+        db.add_all([actor_member, target_member])
+        db.flush()
+        world.person_owned.extend([
+            (CommsMember, actor_member.id), (CommsMember, target_member.id),
+        ])
+        target_member_id = target_member.id
+        db.commit()
+    visible = card(world)
+    assert visible.status_code == 200, visible.text
+    assert visible.json() == {
+        "display_name": "Visible person",
+        "job_title": "Editor",
+        "avatar_url": None,
+        "email": f"target-{world.target_id}@example.test",
+        "phone": "Private phone",
+        "bio": "Private bio",
+    }
+    assert visible.headers["cache-control"] == "private, no-store"
+    with AuditSession(world.owner) as db:
+        scope_session(db, world.person_org_id)
+        set_audit_actor(db, world.target_id)
+        target_member = db.get(CommsMember, target_member_id)
+        assert target_member is not None
+        target_member.is_deleted = True
+        target_member.deleted_at = world.clock
+        db.commit()
+    hidden = card(world)
+    assert hidden.status_code == 404
+    assert hidden.json() == {"detail": {"code": "person_not_found", "message": "Person not found"}}
 
 
 def test_removed_live_group_membership_hides_card_and_avatar_without_company_sharing(person_world):
