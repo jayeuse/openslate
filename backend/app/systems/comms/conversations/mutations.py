@@ -37,6 +37,7 @@ from app.systems.comms.conversations.service import (
 )
 from app.systems.comms.messages.models import CommsConversationCounter
 from app.systems.comms.messages.schemas import EveryoneAccess, GroupAccess
+from app.systems.comms.realtime.models import CommsRealtimeGrant
 from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettings
 from app.systems.comms.settings.resolution import locked_keys, resolve_settings
 
@@ -171,6 +172,14 @@ def remove_member(db: Session, row: CommsConversation, identity: UUID) -> None:
     if row.kind == "group" and (count or 0) <= 3:
         raise error("comms_conflict", "Group requires at least three participants", 409)
     target.is_deleted, target.deleted_at = True, utc_now()
+    for grant in db.scalars(
+        select(CommsRealtimeGrant).where(
+            CommsRealtimeGrant.org_id == bound_organization_column(),
+            CommsRealtimeGrant.conversation_id == row.id,
+            CommsRealtimeGrant.user_id == identity,
+        )
+    ):
+        db.delete(grant)
     row.updated_at = utc_now()
 
 

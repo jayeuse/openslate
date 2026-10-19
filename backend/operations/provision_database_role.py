@@ -148,7 +148,10 @@ def _validate_runtime_membership(cursor: object, *, options_supported: bool) -> 
 
 
 def _validate_managed_role_memberships(
-    cursor: object, *, options_supported: bool, bootstrap_role: str | None,
+    cursor: object,
+    *,
+    options_supported: bool,
+    bootstrap_role: str | None,
 ) -> None:
     columns = (
         "member_role.rolname, granted_role.rolname, membership.admin_option, "
@@ -184,10 +187,14 @@ def _validate_managed_role_memberships(
     # PostgreSQL grants a non-superuser CREATEROLE creator administrative
     # membership with neither inheritance nor SET ROLE. Admit only that exact
     # administrative relationship for the explicitly selected bootstrap login.
-    creator_grants = {
-        (bootstrap_role, role, True, False, False)
-        for role in (OWNER_ROLE, PRIVILEGE_ROLE, RUNTIME_ROLE)
-    } if options_supported else set()
+    creator_grants = (
+        {
+            (bootstrap_role, role, True, False, False)
+            for role in (OWNER_ROLE, PRIVILEGE_ROLE, RUNTIME_ROLE)
+        }
+        if options_supported
+        else set()
+    )
     remaining = [row for row in memberships if tuple(row) not in creator_grants]
     if remaining != expected:
         raise RuntimeError("Managed PostgreSQL roles have unsafe membership")
@@ -218,11 +225,15 @@ def _provision_session_liveness_policy(cursor: object) -> None:
 REALTIME_JOIN_FUNCTION = "public.can_join_realtime_topic(text)"
 REALTIME_SEND_FUNCTION = "realtime.send(jsonb,text,text,boolean)"
 REALTIME_JOIN_EXPRESSION = "public.can_join_realtime_topic(realtime.topic())"
+REALTIME_WRITE_EXPRESSION = (
+    "(public.can_join_realtime_topic(realtime.topic()) AND "
+    "(realtime.topic() ~~ 'org:%:probe'::text))"
+)
 REALTIME_UNGRANTED = "anon, service_role, postgres"
 # Policy name -> (pg_policy.polcmd, USING expression, WITH CHECK expression).
 REALTIME_POLICIES = {
     "openslate_realtime_member_read": ("r", REALTIME_JOIN_EXPRESSION, None),
-    "openslate_realtime_member_write": ("a", None, REALTIME_JOIN_EXPRESSION),
+    "openslate_realtime_member_write": ("a", None, REALTIME_WRITE_EXPRESSION),
 }
 
 
@@ -285,16 +296,26 @@ def _provision_realtime_channel_policies(cursor: object) -> None:
     # Policies are permissive and combine with OR: any other one would widen access.
     if set(existing) - set(REALTIME_POLICIES):
         raise RuntimeError("realtime.messages has policies that OpenSlate does not manage")
+    legacy_write = ("a", True, True, None, REALTIME_JOIN_EXPRESSION)
+    for name, (command, using, check) in REALTIME_POLICIES.items():
+        expected = (command, True, True, using, check)
+        if (
+            name in existing
+            and existing[name] != expected
+            and not (name == "openslate_realtime_member_write" and existing[name] == legacy_write)
+        ):
+            raise RuntimeError("Existing OpenSlate Realtime channel policy is unsafe")
     for name, (command, using, check) in REALTIME_POLICIES.items():
         if name not in existing:
             clause = f"USING ({using})" if using else f"WITH CHECK ({check})"
             verb = "SELECT" if command == "r" else "INSERT"
             cursor.execute(  # type: ignore[attr-defined]
-                f"CREATE POLICY {name} ON realtime.messages FOR {verb} "
-                f"TO authenticated {clause}"
+                f"CREATE POLICY {name} ON realtime.messages FOR {verb} TO authenticated {clause}"
             )
-        elif existing[name] != (command, True, True, using, check):
-            raise RuntimeError("Existing OpenSlate Realtime channel policy is unsafe")
+        elif name == "openslate_realtime_member_write" and existing[name] == legacy_write:
+            cursor.execute(  # type: ignore[attr-defined]
+                f"ALTER POLICY {name} ON realtime.messages WITH CHECK ({check})"
+            )
     cursor.execute("RESET search_path")  # type: ignore[attr-defined]
 
 
@@ -356,14 +377,17 @@ def provision(
             cursor.execute(grant)
             _validate_runtime_membership(cursor, options_supported=options_supported)
             _validate_managed_role_memberships(
-                cursor, options_supported=options_supported, bootstrap_role=bootstrap.username,
+                cursor,
+                options_supported=options_supported,
+                bootstrap_role=bootstrap.username,
             )
 
             # Supabase owns the database and provider schemas. Grant only the
             # application owner's schema creation and runtime connection rights.
             cursor.execute(
                 sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(
-                    sql.Identifier(database), sql.Identifier(OWNER_ROLE),
+                    sql.Identifier(database),
+                    sql.Identifier(OWNER_ROLE),
                     sql.Identifier(RUNTIME_ROLE),
                 )
             )
@@ -373,14 +397,10 @@ def provision(
                 )
             )
             cursor.execute(
-                sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
-                    sql.Identifier(PRIVILEGE_ROLE)
-                )
+                sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(sql.Identifier(PRIVILEGE_ROLE))
             )
             cursor.execute(
-                sql.SQL("GRANT USAGE ON SCHEMA auth TO {}").format(
-                    sql.Identifier(PRIVILEGE_ROLE)
-                )
+                sql.SQL("GRANT USAGE ON SCHEMA auth TO {}").format(sql.Identifier(PRIVILEGE_ROLE))
             )
             cursor.execute(
                 sql.SQL("GRANT SELECT (id, user_id) ON auth.sessions TO {}").format(
@@ -432,8 +452,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             (settings.database_url, RUNTIME_ROLE),
         ]
         if any(
-            expected_user is None
-            or not test_manifest_authorizes_process(url, expected_user)
+            expected_user is None or not test_manifest_authorizes_process(url, expected_user)
             for url, expected_user in urls
         ):
             raise SystemExit(

@@ -13760,6 +13760,13 @@
             "title": "Access Token",
             "type": "string"
           },
+          "conversation_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Conversation Topics",
+            "type": "array"
+          },
           "expires_at": {
             "format": "date-time",
             "title": "Expires At",
@@ -13773,7 +13780,8 @@
         "required": [
           "access_token",
           "expires_at",
-          "topic_prefix"
+          "topic_prefix",
+          "conversation_topics"
         ],
         "title": "RealtimeTokenRead",
         "type": "object"
@@ -44605,6 +44613,19 @@
               }
             },
             "description": "Validation Error"
+          },
+          "429": {
+            "description": "Six issuances per rolling minute per organization and actor",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Token admission or reconciliation unavailable"
           }
         },
         "security": [

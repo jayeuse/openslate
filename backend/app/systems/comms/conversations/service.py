@@ -30,6 +30,7 @@ from app.systems.comms.conversations.models import (
     CommsMember,
 )
 from app.systems.comms.messages.schemas import EveryoneAccess, GroupAccess
+from app.systems.comms.realtime.grants import lock_projection
 from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettings
 from app.systems.comms.settings.resolution import Scope
 from app.systems.sandbox.departments.models import Department
@@ -84,6 +85,7 @@ def category(db: Session, identity: UUID, *, lock: bool = False) -> CommsCategor
 
 def manage_conversation(db: Session, user: User, identity: UUID) -> CommsConversation:
     # Lock first, then refresh authorization and the token after any wait.
+    lock_projection(db)
     row = db.scalar(
         select(CommsConversation)
         .where(

@@ -16,18 +16,23 @@ COMMS_TABLES = frozenset(
 )
 
 # S04 proves schema ownership and paired keys; test_organization_row_security proves RLS.
-ORGANIZATION_TABLES = frozenset(
-    "audit_logs board_attachments board_event_reminders board_events board_groups "
-    "board_post_revision_attachments board_post_revision_record_links board_post_revisions "
-    "board_posts board_record_links board_widgets boards charts dashboard_widgets dashboards "
-    "departments fields files group_access group_members groups in_app_notifications "
-    "lifecycle_confirmation_challenges lifecycle_rate_limit_buckets lifecycle_rate_limit_failures "
-    "memberships modules record_trigger_actions record_trigger_conditions record_trigger_events "
-    "record_trigger_runs record_triggers records relationship_edges report_run_eligible_users "
-    "report_run_rows report_runs report_schedules reports sandbox_bindings sandbox_documents "
-    "sandbox_publications sandbox_test_runs sandbox_versions saved_views scheduled_work "
-    "security_events".split()
-) | COMMS_TABLES
+ORGANIZATION_TABLES = (
+    frozenset(
+        "audit_logs board_attachments board_event_reminders board_events board_groups "
+        "board_post_revision_attachments board_post_revision_record_links board_post_revisions "
+        "board_posts board_record_links board_widgets boards charts dashboard_widgets dashboards "
+        "departments fields files group_access group_members groups in_app_notifications "
+        "lifecycle_confirmation_challenges lifecycle_rate_limit_buckets "
+        "lifecycle_rate_limit_failures memberships modules record_trigger_actions "
+        "record_trigger_conditions record_trigger_events "
+        "record_trigger_runs record_triggers records relationship_edges report_run_eligible_users "
+        "report_run_rows report_runs report_schedules reports sandbox_bindings sandbox_documents "
+        "sandbox_publications sandbox_test_runs sandbox_versions saved_views scheduled_work "
+        "security_events".split()
+    )
+    | COMMS_TABLES
+    | {"comms_realtime_grants", "comms_realtime_admissions"}
+)
 MIXED_TABLES = frozenset({"audit_logs", "files", "security_events", "in_app_notifications"})
 
 
@@ -65,8 +70,13 @@ def test_root_schema_has_scoped_keys_without_organization_seeds(integration_owne
 
     user_columns = {column["name"] for column in inspector.get_columns("users", "public")}
     assert not user_columns & {
-        "role", "sponsor_user_id", "expires_at", "invitation_sent_at",
-        "invitation_accepted_at", "provider_invitation_operation_id", "mfa_required_since",
+        "role",
+        "sponsor_user_id",
+        "expires_at",
+        "invitation_sent_at",
+        "invitation_accepted_at",
+        "provider_invitation_operation_id",
+        "mfa_required_since",
     }
     assert {"email", "username", "supabase_user_id", "status", "tokens_valid_after"} <= user_columns
     assert connection.scalar(text("SELECT count(*) FROM public.organizations")) == 0

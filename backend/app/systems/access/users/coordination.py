@@ -10,9 +10,16 @@ from sqlalchemy.orm import Session
 
 from app.core.base_model import utc_now
 from app.systems.access.identity.eligibility import is_identity_eligible
+from app.systems.access.policy.models import Group, GroupMember
 from app.systems.access.users.eligibility import established_user_clause, is_established_user
-from app.systems.access.users.membership import bound_organization, organization_membership
+from app.systems.access.users.membership import (
+    bound_organization,
+    is_platform_operator,
+    organization_membership,
+)
 from app.systems.access.users.models import Membership, User, UserRole, UserStatus
+from app.systems.access.users.schemas import UserUpdate
+from app.systems.manage.workspace.models import WorkspaceProfile
 
 
 class InvitationError(RuntimeError):
@@ -29,6 +36,107 @@ class InvitationNotFound(InvitationError):
 
 class ProfileValidationError(InvitationError):
     """An identity profile cannot be assigned safely."""
+
+
+def protect_owners(db: Session, user: User) -> None:
+    """Keep organization and installation owners able to sign in and act."""
+    owner_id = db.scalar(
+        select(WorkspaceProfile.owner_user_id).where(WorkspaceProfile.id == bound_organization(db))
+    )
+    if user.id == owner_id:
+        raise conflict("The organization owner cannot be removed, disabled, or demoted")
+    if is_platform_operator(db, user.id):
+        raise conflict("An installation owner cannot be removed, disabled, or demoted here")
+
+
+def require_user_patch(payload: UserUpdate) -> None:
+    if not payload.model_fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least one non-null field is required",
+        )
+    nullable = {"display_name", "job_title", "expires_at"}
+    if any(
+        getattr(payload, field) is None
+        for field in payload.model_fields_set
+        if field not in nullable
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least one non-null field is required",
+        )
+
+
+def apply_profile_update(
+    db: Session, user: User, membership: Membership, payload: UserUpdate, *, destination_role: str
+) -> None:
+    fields = payload.model_fields_set
+    if membership.role != UserRole.GUEST.value and "sponsor_user_id" in fields:
+        raise ProfileValidationError("Only guests can have a sponsor")
+    sponsor_user_id = (
+        payload.sponsor_user_id if "sponsor_user_id" in fields else membership.sponsor_user_id
+    )
+    expires_at = payload.expires_at if "expires_at" in fields else membership.expires_at
+    if fields & {"role", "sponsor_user_id", "expires_at"}:
+        validate_identity_profile(
+            db, role=destination_role, sponsor_user_id=sponsor_user_id, expires_at=expires_at
+        )
+    if "display_name" in fields:
+        user.display_name = payload.display_name
+    if "job_title" in fields:
+        user.job_title = payload.job_title
+    if "sponsor_user_id" in fields:
+        membership.sponsor_user_id = sponsor_user_id
+    if "expires_at" in fields:
+        membership.expires_at = expires_at
+
+
+def _lock_groups(db: Session, group_ids: set[UUID]) -> dict[UUID, Group]:
+    if not group_ids:
+        return {}
+    rows = db.scalars(
+        select(Group)
+        .where(Group.id.in_(group_ids))
+        .order_by(Group.id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    ).all()
+    return {row.id: row for row in rows}
+
+
+def lock_membership_groups(db: Session, user_id: UUID) -> dict[UUID, Group]:
+    """After the Comms org guard, lock group rows before member and user rows."""
+    try:
+        ids = set(
+            db.scalars(select(GroupMember.group_id).where(GroupMember.user_id == user_id)).all()
+        )
+        return _lock_groups(db, ids)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise unavailable("Unable to lock group memberships") from error
+
+
+def leave_groups(db: Session, user: User, groups: dict[UUID, Group], actor_id: UUID) -> None:
+    """An administrator has no group memberships; retain the existing group/member lock order."""
+    try:
+        memberships = list(
+            db.scalars(
+                select(GroupMember)
+                .where(GroupMember.user_id == user.id)
+                .order_by(GroupMember.group_id)
+                .with_for_update()
+            )
+        )
+        groups = {**groups, **_lock_groups(db, {row.group_id for row in memberships} - set(groups))}
+        for item in memberships:
+            db.delete(item)
+            group = groups[item.group_id]
+            group.revision += 1
+            group.performed_by = actor_id
+        db.flush()
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise unavailable("Unable to remove group memberships") from error
 
 
 def conflict(message: str) -> HTTPException:
@@ -73,10 +181,18 @@ def shares_another_organization(db: Session, user: User) -> bool:
     administrator then acts on the membership only; account changes belong to the
     person or the installation owner (platform operator).
     """
-    return db.scalar(select(Membership.id).where(
-        Membership.user_id == user.id, Membership.org_id != bound_organization(db),
-        Membership.is_deleted.is_(False),
-    ).limit(1)) is not None
+    return (
+        db.scalar(
+            select(Membership.id)
+            .where(
+                Membership.user_id == user.id,
+                Membership.org_id != bound_organization(db),
+                Membership.is_deleted.is_(False),
+            )
+            .limit(1)
+        )
+        is not None
+    )
 
 
 def refuse_account_details(db: Session) -> None:
@@ -233,8 +349,7 @@ def validate_identity_profile(
         raise ProfileValidationError("Guests require a future expiration")
     sponsor = db.scalar(select(User).where(User.id == sponsor_user_id).with_for_update(of=User))
     if not isinstance(sponsor, User) or (
-        sponsor.is_deleted
-        or sponsor.status != UserStatus.ACTIVE.value
+        sponsor.is_deleted or sponsor.status != UserStatus.ACTIVE.value
     ):
         raise ProfileValidationError("Guest sponsor is not an active member or administrator")
     membership = organization_membership(db, sponsor.id)

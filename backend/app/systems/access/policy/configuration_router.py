@@ -122,6 +122,9 @@ CONDITIONAL_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 def _exact_admin(db: Session, admin: User) -> None:
+    from app.systems.comms.realtime.grants import lock_projection
+
+    lock_projection(db)
     require_fresh_exact_admin(db, admin.id)
 
 
@@ -347,9 +350,13 @@ def list_member_candidates(
             is None
         ):
             raise forbidden()
-        statement = select(User).join(Membership, Membership.user_id == User.id).where(
-            Membership.role != UserRole.ADMIN.value,
-            Membership.org_id == bound_organization(db),
+        statement = (
+            select(User)
+            .join(Membership, Membership.user_id == User.id)
+            .where(
+                Membership.role != UserRole.ADMIN.value,
+                Membership.org_id == bound_organization(db),
+            )
         )
         if params.ids is not None:
             statement = statement.where(User.id.in_(params.ids))
@@ -360,7 +367,8 @@ def list_member_candidates(
             MEMBER_CANDIDATE_LIST_SPEC,
         )
         memberships = {
-            member.user_id: member for member in db.scalars(
+            member.user_id: member
+            for member in db.scalars(
                 select(Membership).where(
                     Membership.org_id == bound_organization(db),
                     Membership.user_id.in_([item.id for item in result.items]),
@@ -370,12 +378,21 @@ def list_member_candidates(
     except SQLAlchemyError as error:
         raise _database_unavailable(db) from error
     return MemberCandidateListResponse.model_validate(
-        {"items": [
-            {**{key: getattr(item, key)
-                for key in ("id", "display_name", "username", "email", "status")},
-             "role": memberships[item.id].role, "expires_at": memberships[item.id].expires_at}
-            for item in result.items
-        ], "pagination": result.pagination}, from_attributes=True
+        {
+            "items": [
+                {
+                    **{
+                        key: getattr(item, key)
+                        for key in ("id", "display_name", "username", "email", "status")
+                    },
+                    "role": memberships[item.id].role,
+                    "expires_at": memberships[item.id].expires_at,
+                }
+                for item in result.items
+            ],
+            "pagination": result.pagination,
+        },
+        from_attributes=True,
     )
 
 

@@ -189,6 +189,60 @@ class SupabaseEnvironmentTests(unittest.TestCase):
             values["GATEWAY_PORT"],
         )
 
+    def test_caddy_realtime_projection_contains_only_public_gateway_inputs(self) -> None:
+        values = {**fixture(), "GATEWAY_PORT": "3548", "SUPABASE_API_PORT": "58123"}
+        self.assertEqual(
+            environment.compose_environment(values, services={"caddy"}),
+            {
+                "OPENSLATE_INSTANCE_ID": values["OPENSLATE_INSTANCE_ID"],
+                "GATEWAY_BIND_HOST": "127.0.0.1",
+                "GATEWAY_PORT": "3548",
+                "SUPABASE_API_PORT": "58123",
+                "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_canary",
+            },
+        )
+
+    def test_realtime_publisher_port_is_optional_and_provider_only(self) -> None:
+        values = fixture()
+        values.pop("SUPABASE_REALTIME_PUBLISH_PORT", None)
+        environment.validate(values)
+        self.assertNotIn(
+            "SUPABASE_REALTIME_PUBLISH_PORT",
+            environment.compose_environment(values, services={"db"}),
+        )
+        values["SUPABASE_REALTIME_PUBLISH_PORT"] = "58101"
+        try:
+            environment.validate(values)
+        except environment.ConfigurationError as error:
+            self.fail(f"Valid optional publisher port was rejected: {error}")
+        self.assertEqual(
+            environment.compose_environment(values, services={"db"})[
+                "SUPABASE_REALTIME_PUBLISH_PORT"
+            ],
+            "58101",
+        )
+        self.assertNotIn(
+            "SUPABASE_REALTIME_PUBLISH_PORT",
+            environment.compose_environment(values, services={"caddy"}),
+        )
+
+    def test_realtime_publisher_port_rejects_invalid_values_before_compose(self) -> None:
+        for value in ("", "0", "65536", "0.0.0.0:58001"):
+            values = {**fixture(), "SUPABASE_REALTIME_PUBLISH_PORT": value}
+            with self.subTest(value=value):
+                with self.assertRaises(environment.ConfigurationError):
+                    environment.validate(values)
+                with self.assertRaises(environment.ConfigurationError):
+                    environment.compose_environment(values, services={"db"})
+
+    def test_caddy_realtime_inputs_are_required_and_validated(self) -> None:
+        for name, value in (("SUPABASE_PUBLISHABLE_KEY", ""), ("SUPABASE_API_PORT", "0")):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(environment.ConfigurationError, name),
+            ):
+                environment.compose_environment({**fixture(), name: value}, services={"caddy"})
+
     def test_compose_paths_use_provider_files_and_keep_caddy_independent(self) -> None:
         self.assertEqual(
             environment.compose_files(["up", "-d", "db"]),

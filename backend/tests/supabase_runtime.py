@@ -114,6 +114,7 @@ class DisposablePostgres:
         }
         self.port: int | None = None
         self.api_port: int | None = None
+        self.publisher_port: int | None = None
         self.mail_port: int | None = None
         # Auth fetches email templates from a host listener: the runner API's fixed port
         # when one serves them, otherwise a port derived from this stack's network block.
@@ -186,6 +187,7 @@ class DisposablePostgres:
             "JWT_EXPIRY": "45",
             "SUPABASE_DB_PORT": str(self.port),
             "SUPABASE_API_PORT": str(self.api_port),
+            "SUPABASE_REALTIME_PUBLISH_PORT": str(self.publisher_port),
             "SUPABASE_MAIL_PORT": str(self.mail_port),
             "API_EXTERNAL_URL": f"{api_url}/auth/v1",
             "SUPABASE_PUBLIC_URL": api_url,
@@ -294,7 +296,8 @@ class DisposablePostgres:
         raise RuntimeError("No free disposable Supabase network block")
 
     def start(self) -> None:
-        self.port, self.api_port, self.mail_port = (
+        self.port, self.api_port, self.mail_port, self.publisher_port = (
+            _available_port(),
             _available_port(),
             _available_port(),
             _available_port(),
@@ -305,7 +308,18 @@ class DisposablePostgres:
             self.template_port = self.fixed_template_port or (
                 TEMPLATE_PORT_BASE + self.network_block
             )
-            if len({self.port, self.api_port, self.mail_port, self.template_port}) != 4:
+            if (
+                len(
+                    {
+                        self.port,
+                        self.api_port,
+                        self.mail_port,
+                        self.template_port,
+                        self.publisher_port,
+                    }
+                )
+                != 5
+            ):
                 raise RuntimeError("Disposable Supabase host ports collided")
             self._write_inputs()
             self._compose(["config", "--quiet"], timeout=30)
@@ -324,6 +338,7 @@ class DisposablePostgres:
         for service, internal, expected in (
             ("db", DB_PORT, self.port),
             ("api-gw", 8000, self.api_port),
+            ("api-gw", 8001, self.publisher_port),
             ("mailpit", 8025, self.mail_port),
         ):
             mapping = self._compose(["port", service, str(internal)], capture=True, timeout=15)
@@ -357,6 +372,7 @@ class DisposablePostgres:
         api_url = f"http://127.0.0.1:{self.api_port}"
         return {
             "SUPABASE_URL": api_url,
+            "REALTIME_PUBLISH_URL": f"http://127.0.0.1:{self.publisher_port}/realtime/v1/api/broadcast",
             "SUPABASE_AUTH_ISSUER": f"{api_url}/auth/v1",
             "SUPABASE_STORAGE_URL": f"{api_url}/storage/v1",
             "SUPABASE_PUBLISHABLE_KEY": self.keys["SUPABASE_PUBLISHABLE_KEY"],
@@ -407,6 +423,7 @@ class DisposablePostgres:
             "db_port": self.port,
             "api_port": self.api_port,
             "mail_port": self.mail_port,
+            "publisher_port": self.publisher_port,
             "cluster_name": self.project,
         }
         try:
@@ -439,6 +456,7 @@ class DisposablePostgres:
                         "auth_issuer": f"{api_url}/auth/v1",
                         "storage_url": f"{api_url}/storage/v1",
                         "mail_url": self.mail_url,
+                        "publish_url": self.provider_environment()["REALTIME_PUBLISH_URL"],
                     },
                     "ownership": ownership,
                 }

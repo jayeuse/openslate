@@ -30,6 +30,7 @@ from app.systems.comms.conversations.schemas import (
     MemberRoleRequest,
 )
 from app.systems.comms.messages.schemas import Category, Conversation
+from app.systems.comms.realtime.grants import revoke_stale
 
 DB = Annotated[AuditSession, Depends(get_db)]
 Actor = Annotated[User, Depends(get_account_user)]
@@ -148,6 +149,7 @@ def update_channel(
         service.match(db, row, if_match)
         mutations.update_channel(db, row, payload)
         mutations.retain_read(db, actor, row)
+        revoke_stale(db)
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
     return result
@@ -166,6 +168,7 @@ def _archive(
         service.match(db, row, if_match)
         row.archived_at, row.updated_at = utc_now() if enabled else None, utc_now()
         mutations.retain_read(db, actor, row)
+        revoke_stale(db)
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
     return result
@@ -248,6 +251,7 @@ def set_access(
         service.replace_access(db, row, payload.access)
         row.updated_at = utc_now()
         mutations.retain_read(db, actor, row)
+        revoke_stale(db)
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
     return result
@@ -267,6 +271,7 @@ def set_member_role(
         row = service.manage_conversation(db, actor, conversation_id)
         service.match(db, row, if_match)
         member = mutations.set_member_role(db, row, user_id, payload.role)
+        revoke_stale(db)
         result = reads.member_rows(db, [member])[0]
         service.private(response)
     return result
@@ -285,6 +290,7 @@ def remove_member(
         row = service.manage_conversation(db, actor, conversation_id)
         service.match(db, row, if_match)
         mutations.remove_member(db, row, user_id)
+        revoke_stale(db)
         service.private(response)
 
 

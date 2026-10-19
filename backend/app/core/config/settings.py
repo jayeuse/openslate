@@ -79,6 +79,7 @@ class Settings(EnvironmentSettings):
     log_dir: Path = Field(validation_alias="LOG_DIR")
     database_url: str = Field(validation_alias="DATABASE_URL")
     supabase_url: str = Field(validation_alias="SUPABASE_URL")
+    realtime_publish_url: str = Field(validation_alias="REALTIME_PUBLISH_URL")
     supabase_publishable_key: SecretStr = Field(validation_alias="SUPABASE_PUBLISHABLE_KEY")
     supabase_secret_key: SecretStr = Field(validation_alias="SUPABASE_SECRET_KEY")
     supabase_auth_issuer: str = Field(validation_alias="SUPABASE_AUTH_ISSUER")
@@ -210,7 +211,7 @@ class Settings(EnvironmentSettings):
             raise ValueError("must be an ES256 private JWK with a key id")
         return value
 
-    @field_validator("supabase_url", "supabase_auth_issuer")
+    @field_validator("supabase_url", "supabase_auth_issuer", "realtime_publish_url")
     @classmethod
     def validate_supabase_endpoint(cls, value: str, info: object) -> str:
         try:
@@ -219,6 +220,7 @@ class Settings(EnvironmentSettings):
         except ValueError:
             raise ValueError("must be a valid Supabase HTTP(S) endpoint") from None
         is_gateway = getattr(info, "field_name", "") == "supabase_url"
+        is_publisher = getattr(info, "field_name", "") == "realtime_publish_url"
         if (
             parsed.scheme not in {"http", "https"}
             or not parsed.hostname
@@ -229,6 +231,7 @@ class Settings(EnvironmentSettings):
             or any(character.isspace() for character in value)
             or not valid_port
             or (is_gateway and parsed.path not in {"", "/"})
+            or (is_publisher and parsed.path != "/realtime/v1/api/broadcast")
         ):
             raise ValueError("must be a valid Supabase HTTP(S) endpoint")
         return value.rstrip("/")

@@ -111,6 +111,7 @@ ROOT_ENVIRONMENT_KEYS = frozenset(
         "OPENSLATE_BACKUP_EXPORT_ROOT",
         "SUPABASE_DB_PORT",
         "SUPABASE_API_PORT",
+        "SUPABASE_REALTIME_PUBLISH_PORT",
         "SUPABASE_MAIL_PORT",
         "GATEWAY_PUBLIC_HOST",
         "GATEWAY_BIND_HOST",
@@ -256,11 +257,17 @@ def compose_environment(values: dict[str, str], *, services: set[str]) -> dict[s
                 for name in ("SUPABASE_DB_PORT", "SUPABASE_API_PORT", "SUPABASE_MAIL_PORT")
             }
         )
+        if "SUPABASE_REALTIME_PUBLISH_PORT" in values:
+            result["SUPABASE_REALTIME_PUBLISH_PORT"] = str(
+                port(values, "SUPABASE_REALTIME_PUBLISH_PORT")
+            )
     if "caddy" in services:
         result.update(
             {
                 "GATEWAY_BIND_HOST": required(values, "GATEWAY_BIND_HOST"),
                 "GATEWAY_PORT": str(port(values, "GATEWAY_PORT")),
+                "SUPABASE_API_PORT": str(port(values, "SUPABASE_API_PORT")),
+                "SUPABASE_PUBLISHABLE_KEY": required(values, "SUPABASE_PUBLISHABLE_KEY"),
             }
         )
     return result
@@ -674,6 +681,8 @@ def validate(values: dict[str, str], *, operations: bool = True) -> None:
         required(values, name)
     for name in PORT_KEYS:
         port(values, name)
+    if "SUPABASE_REALTIME_PUBLISH_PORT" in values:
+        port(values, "SUPABASE_REALTIME_PUBLISH_PORT")
     for name in (
         "POSTGRES_DATABASE",
         "BACKEND_BIND_HOST",

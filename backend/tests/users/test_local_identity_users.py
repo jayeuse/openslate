@@ -23,7 +23,7 @@ def _single_organization_accounts(monkeypatch):
     """These mock-database cases cover one organization; shared accounts have their own tests."""
     monkeypatch.setattr(account_operations, "shares_another_organization", lambda db, user: False)
     # Owner protection (PR #52 review) is owned by test_user_admin_http_integration.py.
-    monkeypatch.setattr(account_operations, "_protect_owners", lambda db, user: None)
+    monkeypatch.setattr(account_operations, "protect_owners", lambda db, user: None)
 
 pytestmark = pytest.mark.usefixtures("local_identity_security_events")
 

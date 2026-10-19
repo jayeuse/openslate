@@ -65,7 +65,12 @@ PROVIDER_VOLUMES = (
     "supabase-studio-snippets",
 )
 PROVIDER_NETWORKS = (
-    "provider", "operator", "studio-ingress", "mail-egress", "gateway-host", "db-host"
+    "provider",
+    "operator",
+    "studio-ingress",
+    "mail-egress",
+    "gateway-host",
+    "db-host",
 )
 PROVIDER_BIND_MOUNTS = {
     "db": (
@@ -118,6 +123,7 @@ def _provider_endpoints(ownership: dict[str, Any]) -> dict[str, str]:
         "auth_issuer": f"{api_url}/auth/v1",
         "storage_url": f"{api_url}/storage/v1",
         "mail_url": f"http://127.0.0.1:{ownership['mail_port']}",
+        "publish_url": f"http://127.0.0.1:{ownership['publisher_port']}/realtime/v1/api/broadcast",
     }
 
 
@@ -162,6 +168,7 @@ def load_disposable_target(
                 "db_port",
                 "api_port",
                 "mail_port",
+                "publisher_port",
                 "cluster_name",
             }
             or ownership["project"] != project
@@ -174,9 +181,12 @@ def load_disposable_target(
             or not _valid_id_map(ownership["network_ids"], set(PROVIDER_NETWORKS))
             or not all(
                 isinstance(ownership[key], int) and 1 <= ownership[key] <= 65535
-                for key in ("db_port", "api_port", "mail_port")
+                for key in ("db_port", "api_port", "mail_port", "publisher_port")
             )
-            or len({ownership["db_port"], ownership["api_port"], ownership["mail_port"]}) != 3
+            or len(
+                {ownership[key] for key in ("db_port", "api_port", "mail_port", "publisher_port")}
+            )
+            != 4
             or manifest.get("provider") != _provider_endpoints(ownership)
         ):
             raise ValueError
@@ -238,6 +248,12 @@ def load_disposable_target(
             process.get("SUPABASE_URL") != accepted_api
             or process.get("SUPABASE_AUTH_ISSUER") != endpoints["auth_issuer"]
             or process.get("SUPABASE_STORAGE_URL") != accepted_storage
+            or process.get("REALTIME_PUBLISH_URL")
+            != (
+                endpoints["publish_url"]
+                if host_target
+                else "http://api-gw:8001/realtime/v1/api/broadcast"
+            )
         ):
             raise ValueError
     except (KeyError, OSError, TypeError, ValueError, AttributeError, SQLAlchemyError):
@@ -290,7 +306,11 @@ def assert_live_disposable_ownership(
         service_ids = ownership["service_ids"]
         project_ids = inspect(
             [
-                "ps", "-a", "-q", "--no-trunc", "--filter",
+                "ps",
+                "-a",
+                "-q",
+                "--no-trunc",
+                "--filter",
                 f"label=com.docker.compose.project={project}",
             ]
         )
@@ -388,9 +408,7 @@ def assert_live_disposable_ownership(
         if len(actual_mounts) != len(expected_volumes) or set(actual_mounts) != expected_volumes:
             raise ValueError
         expected_binds = {
-            (service, destination): _accepted_bind_sources(
-                ownership["compose_directory"], relative
-            )
+            (service, destination): _accepted_bind_sources(ownership["compose_directory"], relative)
             for service, mounts in PROVIDER_BIND_MOUNTS.items()
             for relative, destination in mounts
         }
@@ -423,7 +441,8 @@ def assert_live_disposable_ownership(
         expected_ports = {
             "db": {"5432/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(ownership["db_port"])}]},
             "api-gw": {
-                "8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(ownership["api_port"])}]
+                "8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(ownership["api_port"])}],
+                "8001/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(ownership["publisher_port"])}],
             },
             "mailpit": {
                 "8025/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(ownership["mail_port"])}]

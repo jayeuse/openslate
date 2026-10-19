@@ -152,7 +152,9 @@ def seed(owner_url, run_id, database_environment, roles=("admin", "member")):
             for role in roles:
                 email = f"p5-{run_id}-{role}@example.com"
                 password = f"P5-{secrets.token_urlsafe(24)}!9"
-                user, _membership = create_member(db, organization,
+                user, _membership = create_member(
+                    db,
+                    organization,
                     email=email,
                     username=f"p5-{role}",
                     status=UserStatus.ACTIVE.value,
@@ -182,6 +184,16 @@ def main(arguments=()):
     arguments = tuple(arguments)
     batch = parse_batch(arguments, BACKEND)
     reset_only = arguments == ("--reset-acceptance-only",)
+    realtime_only = arguments == ("--realtime-foundation-only",)
+    if realtime_only:
+        batch = {
+            "targets": [
+                "tests/realtime/test_realtime_channel_acceptance.py",
+                "tests/realtime/test_comms_foundation_live.py",
+            ],
+            "layer": "integration",
+            "interactive": False,
+        }
     if reset_only:
         batch = {
             "targets": ["tests/reset_application_data/provider_reset_acceptance.py"],
@@ -207,7 +219,7 @@ def main(arguments=()):
         output = coverage_output(BACKEND)
         if output.exists():
             shutil.rmtree(output)
-    for port in () if backend_only else (8008, GATEWAY_PORT):
+    for port in (GATEWAY_PORT,) if realtime_only else () if backend_only else (8008, GATEWAY_PORT):
         with socket.socket() as listener:
             try:
                 listener.bind(("127.0.0.1", port))
@@ -282,6 +294,17 @@ def main(arguments=()):
         timed("migrations")
         run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, migration_env)
         run([sys.executable, "-m", "alembic", "check"], BACKEND, migration_env)
+        if realtime_only:
+            timed("Realtime forward migration roundtrip")
+            run(
+                [sys.executable, "-m", "alembic", "downgrade", "8464b72e2cd5"],
+                BACKEND,
+                migration_env,
+            )
+            run([sys.executable, "-m", "alembic", "upgrade", "head"], BACKEND, migration_env)
+            run([sys.executable, "-m", "alembic", "check"], BACKEND, migration_env)
+            timed("Realtime managed-policy upgrade")
+            run([sys.executable, "-m", "tests.realtime.provisioning_probe"], BACKEND, migration_env)
         api_env = api_environment(
             base_env,
             database_env,
@@ -297,6 +320,21 @@ def main(arguments=()):
             BACKEND,
             api_env,
         )
+        gateway_host = (
+            "127.0.0.1"
+            if shutil.which("caddy") or sys.platform.startswith("linux")
+            else "host.docker.internal"
+        )
+        gateway_env = {
+            **base_env,
+            "SUPABASE_PUBLISHABLE_KEY": provider_env["SUPABASE_PUBLISHABLE_KEY"],
+            "OPENSLATE_REALTIME_UPSTREAM": (f"{gateway_host}:{postgres.api_port}"),
+        }
+        if realtime_only:
+            timed("same-origin Realtime gateway")
+            caddy = DisposableCaddy(private, run_id, gateway_env, log)
+            caddy.start()
+            api_env["OPENSLATE_TEST_REALTIME_GATEWAY"] = WEB
         if not acceptance_only and not browser_only:
             timed("backend batch" if batch else "backend regression and coverage gate")
             execute = run_backend_batches if batch else run_backend_coverage
@@ -359,7 +397,7 @@ def main(arguments=()):
             timed("bounded admission and recovery")
             admission = measure_admission()
             timed("Caddy gateway startup")
-            caddy = DisposableCaddy(private, run_id, base_env, log)
+            caddy = DisposableCaddy(private, run_id, gateway_env, log)
             caddy.start()
             wait_for(WEB + "/login", caddy, verify=False)
             timed("browser acceptance")

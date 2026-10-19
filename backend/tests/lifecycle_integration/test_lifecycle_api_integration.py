@@ -556,6 +556,7 @@ def test_registered_close_holds_administrator_authority_through_commit(
     preview = client.client.post(f"{path}/preview")
     assert preview.status_code == 200
     lock_available_at_commit: list[bool] = []
+    closing_sessions: set[Session] = set()
 
     def administrator_lock_available() -> bool:
         with client.engine.begin() as connection:
@@ -563,14 +564,20 @@ def test_registered_close_holds_administrator_authority_through_commit(
                 "SELECT pg_try_advisory_xact_lock(:key, hashtext(:org))"
             ), {"key": ADMINISTRATOR_CHANGE_LOCK, "org": str(client.org_id)})
 
-    def before_commit(db: Session) -> None:
+    def observe_close(db: Session, *_args: object) -> None:
         context = db.info.get(AUDIT_CONTEXT_KEY)
         if context is not None and context.request_path == path and any(
             isinstance(row, Module) and str(row.id) == module_id and row.is_deleted
             for row in db.dirty
         ):
+            closing_sessions.add(db)
+
+    def before_commit(db: Session) -> None:
+        observe_close(db)
+        if db in closing_sessions:
             lock_available_at_commit.append(administrator_lock_available())
 
+    event.listen(AuditSession, "before_flush", observe_close)
     event.listen(AuditSession, "before_commit", before_commit)
     try:
         response = client.client.post(path, json={
@@ -579,6 +586,7 @@ def test_registered_close_holds_administrator_authority_through_commit(
         })
     finally:
         event.remove(AuditSession, "before_commit", before_commit)
+        event.remove(AuditSession, "before_flush", observe_close)
 
     assert response.status_code == 200
     assert lock_available_at_commit == [False]

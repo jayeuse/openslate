@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -88,8 +89,12 @@ def organizations() -> Iterator[Organizations]:
                 provider_ids.append(UUID(created.json()["id"]))
                 organization = db.get(WorkspaceProfile, org_id)
                 user, _membership = create_member(
-                    db, organization, "member", email=email,
-                    username=f"realtime-{uuid4().hex}", status=UserStatus.ACTIVE.value,
+                    db,
+                    organization,
+                    "member",
+                    email=email,
+                    username=f"realtime-{uuid4().hex}",
+                    status=UserStatus.ACTIVE.value,
                     supabase_user_id=provider_ids[-1],
                 )
                 user_ids.append(user.id)
@@ -135,6 +140,18 @@ def _channel_token(client: TestClient, bearer: dict[str, str], org_id: UUID) -> 
 
 
 def _socket(settings: Settings) -> ClientConnection:
+    gateway = os.environ.get("OPENSLATE_TEST_REALTIME_GATEWAY")
+    if gateway:
+        assert gateway == settings.public_origin == "https://localhost:3448"
+        # Run-owned Caddy's ephemeral internal CA, matching other local gateway proofs.
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
+        return connect(
+            "wss://localhost:3448/realtime/v1/websocket?vsn=1.0.0",
+            origin=gateway,
+            ssl=context,
+            open_timeout=10,
+        )
     url = "ws" + settings.supabase_url.rstrip("/").removeprefix("http")
     return connect(
         url + "/realtime/v1/websocket?vsn=1.0.0",
@@ -156,14 +173,24 @@ def _read_until(ws: ClientConnection, wanted: Any) -> dict[str, Any] | None:
 
 
 def _join(ws: ClientConnection, topic: str, token: str) -> dict[str, Any]:
-    ws.send(json.dumps({
-        "topic": f"realtime:{topic}", "event": "phx_join", "ref": "1", "join_ref": "1",
-        "payload": {
-            "config": {"broadcast": {"self": True, "ack": True}, "presence": {"key": ""},
-                       "private": True},
-            "access_token": token,
-        },
-    }))
+    ws.send(
+        json.dumps(
+            {
+                "topic": f"realtime:{topic}",
+                "event": "phx_join",
+                "ref": "1",
+                "join_ref": "1",
+                "payload": {
+                    "config": {
+                        "broadcast": {"self": True, "ack": True},
+                        "presence": {"key": ""},
+                        "private": True,
+                    },
+                    "access_token": token,
+                },
+            }
+        )
+    )
     reply = _read_until(ws, lambda m: m.get("event") == "phx_reply" and m.get("ref") == "1")
     if reply is None:
         raise AssertionError("Realtime did not answer the join")
@@ -201,14 +228,27 @@ def test_member_uses_a_private_channel_and_everyone_else_is_refused(
     with _socket(settings) as ws:
         assert _join(ws, topic, token)["status"] == "ok"
         marker = uuid4().hex
-        ws.send(json.dumps({
-            "topic": f"realtime:{topic}", "event": "broadcast", "ref": "2", "join_ref": "1",
-            "payload": {"type": "broadcast", "event": "probe", "payload": {"marker": marker}},
-        }))
+        ws.send(
+            json.dumps(
+                {
+                    "topic": f"realtime:{topic}",
+                    "event": "broadcast",
+                    "ref": "2",
+                    "join_ref": "1",
+                    "payload": {
+                        "type": "broadcast",
+                        "event": "probe",
+                        "payload": {"marker": marker},
+                    },
+                }
+            )
+        )
         heard = _read_until(
             ws,
-            lambda m: m.get("event") == "broadcast"
-            and m.get("payload", {}).get("payload", {}).get("marker") == marker,
+            lambda m: (
+                m.get("event") == "broadcast"
+                and m.get("payload", {}).get("payload", {}).get("marker") == marker
+            ),
         )
         assert heard is not None, "the member did not receive its own private broadcast"
 
@@ -216,7 +256,9 @@ def test_member_uses_a_private_channel_and_everyone_else_is_refused(
     _assert_refused(settings, topic, outsider_issued.json()["access_token"], unauthorized)
     _assert_refused(settings, f"org:{organizations.org_b}:probe", token, unauthorized)
     expired = mint_realtime_token(
-        settings, user_id=organizations.member.user_id, org_id=organizations.org_a,
+        settings,
+        user_id=organizations.member.user_id,
+        org_id=organizations.org_a,
         now=datetime.now(UTC) - timedelta(minutes=10),
     )
     _assert_refused(settings, topic, expired.token, "Token has expired")
@@ -237,14 +279,16 @@ def test_channel_token_opens_neither_storage_nor_auth(organizations: Organizatio
         base_url=settings.supabase_url.rstrip("/"), timeout=10, trust_env=False
     ) as gateway:
         stored = gateway.post(
-            f"/storage/v1/object/openslate-ready/{key}", headers=service,
+            f"/storage/v1/object/openslate-ready/{key}",
+            headers=service,
             content=b"private bytes",
         )
         assert stored.status_code == 200, "the service key could not store the probe object"
         try:
             buckets = gateway.get("/storage/v1/bucket", headers=headers)
             listed = gateway.post(
-                "/storage/v1/object/list/openslate-ready", headers=headers,
+                "/storage/v1/object/list/openslate-ready",
+                headers=headers,
                 json={"prefix": "", "limit": 100},
             )
             fetched = gateway.get(f"/storage/v1/object/openslate-ready/{key}", headers=headers)
@@ -254,7 +298,9 @@ def test_channel_token_opens_neither_storage_nor_auth(organizations: Organizatio
             user = gateway.get("/auth/v1/user", headers=headers)
         finally:
             gateway.request(
-                "DELETE", "/storage/v1/object/openslate-ready", headers=service,
+                "DELETE",
+                "/storage/v1/object/openslate-ready",
+                headers=service,
                 json={"prefixes": [key]},
             )
 

@@ -17,6 +17,7 @@ from app.systems.boards.models import Board, BoardGroup, BoardWidget
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.comms.realtime.grants import lock_projection, revoke_stale
 from app.systems.manage.audit.context import get_audit_context, set_audit_actor
 from app.systems.manage.audit.models import SecurityEventOutcome
 from app.systems.manage.audit.schemas import SecurityEventIngestRequest
@@ -322,6 +323,8 @@ def _apply_field_positions(db: Session, plan: LifecyclePlan) -> None:
 
 def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
     try:
+        if plan.target_type in (LifecycleTargetType.DEPARTMENT, LifecycleTargetType.MODULE):
+            lock_projection(db)
         document_row(db, lock=True)
         _lock_plan_scope(db, plan)
     except OperationalError as error:
@@ -364,6 +367,8 @@ def _execute(db: Session, plan: LifecyclePlan) -> LifecycleImpactResponse:
                     # A closed Department archives its Board; a reopen restores it,
                     # or recreates it so that an open Department always has one.
                     sync_department_board(db, instance, create=not instance.is_deleted)
+        if plan.target_type in (LifecycleTargetType.DEPARTMENT, LifecycleTargetType.MODULE):
+            revoke_stale(db)
         db.commit()
     except IntegrityError as error:
         db.rollback()

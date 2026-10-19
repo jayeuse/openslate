@@ -83,8 +83,13 @@ def write_worker_database_manifest(
         or runtime_database_url not in manifest["urls"]
         or manifest.get("container_runtime") != expected_container_runtime
         or not isinstance(manifest.get("provider"), dict)
-        or set(manifest["provider"]) != {
-            "api_url", "auth_issuer", "storage_url", "mail_url",
+        or set(manifest["provider"])
+        != {
+            "api_url",
+            "auth_issuer",
+            "storage_url",
+            "mail_url",
+            "publish_url",
         }
         or source.resolve() == destination.resolve()
     ):
