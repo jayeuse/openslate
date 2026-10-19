@@ -167,12 +167,12 @@ export interface CommsClient {
     conversationId: string,
     messageId: string,
     request: C.EditMessageRequest,
-    options: C.ConditionalOptions,
+    options?: C.RequestOptions,
   ): Promise<C.Versioned<C.LiveMessage>>;
   deleteMessage(
     conversationId: string,
     messageId: string,
-    options: C.ConditionalOptions,
+    options?: C.RequestOptions,
   ): Promise<C.Versioned<C.Tombstone>>;
   listMessageRevisions(
     conversationId: string,

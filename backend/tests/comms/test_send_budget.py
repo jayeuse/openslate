@@ -3,17 +3,15 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 from threading import Event
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import event, func, select, text
+from sqlalchemy import event, select, text
 from uuid6 import uuid7
 
-from app.core import base_model
 from app.core.database.session import AuditSession
-from app.systems.access.identity.models import IdentityRateLimitBucket
 from app.systems.access.users.membership import organization_membership
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.access import require_conversation_access
@@ -23,38 +21,6 @@ from tests.comms.test_message_transactions import _send, _stored_state
 from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def budget_clock(comms_world, monkeypatch, record_property):
-    clock = [NOW]
-
-    class FrozenDateTime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock[0].astimezone(tz) if tz else clock[0].replace(tzinfo=None)
-
-    # Both the existing ORM timestamp default and limiter use this real clock boundary.
-    monkeypatch.setattr(base_model, "datetime", FrozenDateTime)
-    with comms_world.runtime.connect() as connection:
-        isolation = connection.scalar(text("SHOW transaction_isolation"))
-        default = connection.scalar(text("SHOW default_transaction_isolation"))
-        role = connection.scalar(text("SELECT current_user"))
-        version = connection.scalar(text("SHOW server_version"))
-    record_property("send_budget_isolation", isolation)
-    record_property("send_budget_default_isolation", default)
-    record_property("send_budget_runtime_role", role)
-    record_property("send_budget_postgres_version", version)
-    assert isolation == default == "read committed"
-    assert role == "openslate_runtime"
-    buckets = _bucket_count(comms_world)
-    yield clock
-    assert _bucket_count(comms_world) == buckets, "send attempts must not persist bucket rows"
-
-
-def _bucket_count(world):
-    with world.owner.connect() as connection:
-        return connection.scalar(select(func.count()).select_from(IdentityRateLimitBucket))
 
 
 def _command(api):

@@ -60,7 +60,7 @@ export type MessageRemovalCommand = (input: {
   conversation_id: string;
   message_id: string;
   action: "delete" | "restore";
-  options: C.ConditionalOptions;
+  options?: C.RequestOptions | C.ConditionalOptions;
 }) => MemoryCommand<void, C.Message>;
 
 export function assertSendDependencies(dependencies: MemorySendDependencies) {
@@ -471,7 +471,13 @@ export const messageRemovalCommand: MessageRemovalCommand = (input) => {
   const key = messageKey(messageId);
   return {
     signal: options?.signal,
-    conditions: [{ key, if_match: options?.if_match }],
+    conditions: [
+      {
+        key,
+        if_match:
+          options && "if_match" in options ? options.if_match : undefined,
+      },
+    ],
     authorize(current, execution) {
       messageRow(current, execution.context, conversationId, messageId);
       assertMessageChange(

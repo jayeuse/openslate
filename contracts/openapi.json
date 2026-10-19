@@ -933,6 +933,36 @@
         "title": "AssignableUserSort",
         "type": "string"
       },
+      "Attachment": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "media_type",
+          "size"
+        ],
+        "title": "Attachment",
+        "type": "object"
+      },
       "AttachmentLink": {
         "additionalProperties": false,
         "properties": {
@@ -1574,6 +1604,57 @@
           "default_organization_blocked"
         ],
         "title": "AuthenticatedSessionResponse",
+        "type": "object"
+      },
+      "AvailableRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/RecordField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "module_id": {
+            "format": "uuid",
+            "title": "Module Id",
+            "type": "string"
+          },
+          "module_name": {
+            "title": "Module Name",
+            "type": "string"
+          },
+          "record_id": {
+            "format": "uuid",
+            "title": "Record Id",
+            "type": "string"
+          },
+          "state": {
+            "const": "available",
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "record_id",
+          "module_id",
+          "module_name",
+          "title",
+          "fields"
+        ],
+        "title": "AvailableRecord",
         "type": "object"
       },
       "BackupCreate": {
@@ -2964,6 +3045,154 @@
         "title": "BoardWidgetWrite",
         "type": "object"
       },
+      "BootstrapResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/CategorySummary"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "conversations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationSummary"
+            },
+            "title": "Conversations",
+            "type": "array"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "user_id",
+          "categories",
+          "conversations"
+        ],
+        "title": "BootstrapResponse",
+        "type": "object"
+      },
+      "Category": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "default_access": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EveryoneAccess"
+                },
+                {
+                  "$ref": "#/components/schemas/GroupAccess"
+                }
+              ]
+            },
+            "title": "Default Access",
+            "type": "array"
+          },
+          "department_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "created_at",
+          "updated_at",
+          "name",
+          "position",
+          "department_id",
+          "default_access"
+        ],
+        "title": "Category",
+        "type": "object"
+      },
+      "CategoryPreferences": {
+        "additionalProperties": false,
+        "properties": {
+          "collapsed": {
+            "default": false,
+            "title": "Collapsed",
+            "type": "boolean"
+          },
+          "mute": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MuteOff"
+              },
+              {
+                "$ref": "#/components/schemas/MuteUntil"
+              }
+            ],
+            "title": "Mute"
+          }
+        },
+        "title": "CategoryPreferences",
+        "type": "object"
+      },
+      "CategorySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/Category"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/CategoryPreferences"
+          }
+        },
+        "required": [
+          "category",
+          "preferences"
+        ],
+        "title": "CategorySummary",
+        "type": "object"
+      },
       "ChangedFieldEvent": {
         "additionalProperties": false,
         "properties": {
@@ -3417,6 +3646,81 @@
           "url"
         ],
         "title": "ContentLink",
+        "type": "object"
+      },
+      "ConversationSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrganizationChannel"
+              },
+              {
+                "$ref": "#/components/schemas/DepartmentChannel"
+              },
+              {
+                "$ref": "#/components/schemas/GrantedChannel"
+              },
+              {
+                "$ref": "#/components/schemas/PrivateChannel"
+              },
+              {
+                "$ref": "#/components/schemas/DirectConversation"
+              },
+              {
+                "$ref": "#/components/schemas/GroupConversation"
+              }
+            ],
+            "title": "Conversation"
+          },
+          "first_unread_seq": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Unread Seq"
+          },
+          "high_water_seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "High Water Seq",
+            "type": "integer"
+          },
+          "last_read_seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Last Read Seq",
+            "type": "integer"
+          },
+          "mention_count": {
+            "title": "Mention Count",
+            "type": "integer"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/MemberPreferences"
+          },
+          "unread_count": {
+            "title": "Unread Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "conversation",
+          "preferences",
+          "last_read_seq",
+          "high_water_seq",
+          "unread_count",
+          "mention_count",
+          "first_unread_seq"
+        ],
+        "title": "ConversationSummary",
         "type": "object"
       },
       "CreateRecordAction": {
@@ -4153,6 +4457,129 @@
         "title": "DeletedFilter",
         "type": "string"
       },
+      "DepartmentChannel": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "format": "uuid",
+            "title": "Department Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "channel",
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read",
+              "post",
+              "manage"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "member_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "member",
+                  "manager"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Role"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "department",
+            "title": "Scope",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "created_at",
+          "updated_at",
+          "archived_at",
+          "level",
+          "member_count",
+          "member_role",
+          "kind",
+          "name",
+          "topic",
+          "category_id",
+          "position",
+          "scope",
+          "department_id"
+        ],
+        "title": "DepartmentChannel",
+        "type": "object"
+      },
       "DepartmentDocument": {
         "additionalProperties": false,
         "properties": {
@@ -4418,6 +4845,98 @@
           "config"
         ],
         "title": "DesignField",
+        "type": "object"
+      },
+      "DirectConversation": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "direct",
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read",
+              "post",
+              "manage"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "member_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "member",
+                  "manager"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Role"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Participant Ids",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "created_at",
+          "updated_at",
+          "archived_at",
+          "level",
+          "member_count",
+          "member_role",
+          "kind",
+          "participant_ids"
+        ],
+        "title": "DirectConversation",
         "type": "object"
       },
       "DirectoryRowResponse": {
@@ -4705,6 +5224,40 @@
           "issues"
         ],
         "title": "DocumentResponse",
+        "type": "object"
+      },
+      "EditRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "maxLength": 4000,
+            "title": "Body",
+            "type": "string"
+          },
+          "mention_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Mention User Ids",
+            "type": "array"
+          },
+          "mentions_channel": {
+            "title": "Mentions Channel",
+            "type": "boolean"
+          },
+          "mentions_here": {
+            "title": "Mentions Here",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "body",
+          "mention_user_ids",
+          "mentions_channel",
+          "mentions_here"
+        ],
+        "title": "EditRequest",
         "type": "object"
       },
       "EmailChangeCompleteRequest": {
@@ -5454,6 +6007,30 @@
         "title": "EventSort",
         "type": "string"
       },
+      "EveryoneAccess": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "enum": [
+              "read",
+              "post"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "subject": {
+            "const": "everyone",
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "level"
+        ],
+        "title": "EveryoneAccess",
+        "type": "object"
+      },
       "ExportDownloadAdmissionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -6194,6 +6771,168 @@
         "title": "FileState",
         "type": "string"
       },
+      "GrantedChannel": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EveryoneAccess"
+                },
+                {
+                  "$ref": "#/components/schemas/GroupAccess"
+                }
+              ]
+            },
+            "title": "Access",
+            "type": "array"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "channel",
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read",
+              "post",
+              "manage"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "member_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "member",
+                  "manager"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Role"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "groups",
+            "title": "Scope",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "created_at",
+          "updated_at",
+          "archived_at",
+          "level",
+          "member_count",
+          "member_role",
+          "kind",
+          "name",
+          "topic",
+          "category_id",
+          "position",
+          "scope",
+          "access"
+        ],
+        "title": "GrantedChannel",
+        "type": "object"
+      },
+      "GroupAccess": {
+        "additionalProperties": false,
+        "properties": {
+          "group_id": {
+            "format": "uuid",
+            "title": "Group Id",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read",
+              "post"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "subject": {
+            "const": "group",
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "group_id",
+          "level"
+        ],
+        "title": "GroupAccess",
+        "type": "object"
+      },
       "GroupAccessEntry": {
         "additionalProperties": false,
         "description": "One level on a whole department (``module_id`` null) or on one of its modules.",
@@ -6290,6 +7029,103 @@
           "module_name"
         ],
         "title": "GroupAccessResponse",
+        "type": "object"
+      },
+      "GroupConversation": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "group",
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read",
+              "post",
+              "manage"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "member_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "member",
+                  "manager"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Role"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "participant_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Participant Ids",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "created_at",
+          "updated_at",
+          "archived_at",
+          "level",
+          "member_count",
+          "member_role",
+          "kind",
+          "name",
+          "participant_ids"
+        ],
+        "title": "GroupConversation",
         "type": "object"
       },
       "GroupCreate": {
@@ -6802,6 +7638,129 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HistoryPagination": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "first_seq": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seq"
+          },
+          "has_newer": {
+            "title": "Has Newer",
+            "type": "boolean"
+          },
+          "has_older": {
+            "title": "Has Older",
+            "type": "boolean"
+          },
+          "high_water_seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "High Water Seq",
+            "type": "integer"
+          },
+          "last_seq": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seq"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limit",
+          "count",
+          "first_seq",
+          "last_seq",
+          "high_water_seq",
+          "has_older",
+          "has_newer"
+        ],
+        "title": "HistoryPagination",
+        "type": "object"
+      },
+      "HistoryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "deleted": "#/components/schemas/Tombstone",
+                  "live": "#/components/schemas/LiveMessage"
+                },
+                "propertyName": "state"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/LiveMessage"
+                },
+                {
+                  "$ref": "#/components/schemas/Tombstone"
+                }
+              ]
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/HistoryPagination"
+          },
+          "thread_root_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Root Id"
+          }
+        },
+        "required": [
+          "org_id",
+          "conversation_id",
+          "items",
+          "pagination"
+        ],
+        "title": "HistoryResponse",
         "type": "object"
       },
       "ImportRequest": {
@@ -7765,6 +8724,35 @@
         "title": "LifecycleTargetType",
         "type": "string"
       },
+      "LinkPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "site_name": {
+            "title": "Site Name",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "title",
+          "description",
+          "site_name"
+        ],
+        "title": "LinkPreview",
+        "type": "object"
+      },
       "LiteralValue": {
         "additionalProperties": false,
         "properties": {
@@ -7799,6 +8787,208 @@
           "value"
         ],
         "title": "LiteralValue",
+        "type": "object"
+      },
+      "LiveMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "also_send_to_channel": {
+            "title": "Also Send To Channel",
+            "type": "boolean"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/Attachment"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "author_id": {
+            "format": "uuid",
+            "title": "Author Id",
+            "type": "string"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "client_key": {
+            "format": "uuid",
+            "title": "Client Key",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "edited_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edited At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "link_previews": {
+            "items": {
+              "$ref": "#/components/schemas/LinkPreview"
+            },
+            "title": "Link Previews",
+            "type": "array"
+          },
+          "mention_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Mention User Ids",
+            "type": "array"
+          },
+          "mentions_channel": {
+            "title": "Mentions Channel",
+            "type": "boolean"
+          },
+          "mentions_here": {
+            "title": "Mentions Here",
+            "type": "boolean"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "pinned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned At"
+          },
+          "pinned_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned By"
+          },
+          "reactions": {
+            "items": {
+              "$ref": "#/components/schemas/Reaction"
+            },
+            "title": "Reactions",
+            "type": "array"
+          },
+          "record_references": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/UnavailableRecord"
+                },
+                {
+                  "$ref": "#/components/schemas/AvailableRecord"
+                }
+              ]
+            },
+            "title": "Record References",
+            "type": "array"
+          },
+          "reply_to_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply To Id"
+          },
+          "seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "state": {
+            "const": "live",
+            "title": "State",
+            "type": "string"
+          },
+          "thread": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThreadResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "conversation_id",
+          "seq",
+          "author_id",
+          "client_key",
+          "created_at",
+          "parent_id",
+          "reply_to_id",
+          "also_send_to_channel",
+          "thread",
+          "state",
+          "body",
+          "edited_at",
+          "pinned_at",
+          "pinned_by",
+          "attachments",
+          "record_references",
+          "mention_user_ids",
+          "mentions_channel",
+          "mentions_here",
+          "reactions",
+          "link_previews"
+        ],
+        "title": "LiveMessage",
         "type": "object"
       },
       "LoginRequest": {
@@ -7910,6 +9100,49 @@
         ],
         "title": "MemberCandidateSortField",
         "type": "string"
+      },
+      "MemberPreferences": {
+        "additionalProperties": false,
+        "properties": {
+          "hidden": {
+            "default": false,
+            "title": "Hidden",
+            "type": "boolean"
+          },
+          "manual_unread": {
+            "default": false,
+            "title": "Manual Unread",
+            "type": "boolean"
+          },
+          "mute": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MuteOff"
+              },
+              {
+                "$ref": "#/components/schemas/MuteUntil"
+              }
+            ],
+            "title": "Mute"
+          },
+          "notify": {
+            "default": "all",
+            "enum": [
+              "all",
+              "mentions",
+              "mute"
+            ],
+            "title": "Notify",
+            "type": "string"
+          },
+          "starred": {
+            "default": false,
+            "title": "Starred",
+            "type": "boolean"
+          }
+        },
+        "title": "MemberPreferences",
+        "type": "object"
       },
       "MfaStatus": {
         "properties": {
@@ -8145,6 +9378,43 @@
         "title": "ModuleSortField",
         "type": "string"
       },
+      "MuteOff": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "default": "off",
+            "enum": [
+              "off",
+              "indefinite"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "title": "MuteOff",
+        "type": "object"
+      },
+      "MuteUntil": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "until",
+            "title": "Kind",
+            "type": "string"
+          },
+          "until": {
+            "format": "date-time",
+            "title": "Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "until"
+        ],
+        "title": "MuteUntil",
+        "type": "object"
+      },
       "NotificationAction": {
         "additionalProperties": false,
         "properties": {
@@ -8365,6 +9635,123 @@
           "event"
         ],
         "title": "OccurrenceResponse",
+        "type": "object"
+      },
+      "OrganizationChannel": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "channel",
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read",
+              "post",
+              "manage"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "member_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "member",
+                  "manager"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Role"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "organization",
+            "title": "Scope",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "created_at",
+          "updated_at",
+          "archived_at",
+          "level",
+          "member_count",
+          "member_role",
+          "kind",
+          "name",
+          "topic",
+          "category_id",
+          "position",
+          "scope"
+        ],
+        "title": "OrganizationChannel",
         "type": "object"
       },
       "OrganizationMembershipResponse": {
@@ -10322,6 +11709,123 @@
         "title": "PreviewUserSort",
         "type": "string"
       },
+      "PrivateChannel": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "channel",
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "read",
+              "post",
+              "manage"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "member_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "member",
+                  "manager"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Role"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "members",
+            "title": "Scope",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "created_at",
+          "updated_at",
+          "archived_at",
+          "level",
+          "member_count",
+          "member_role",
+          "kind",
+          "name",
+          "topic",
+          "category_id",
+          "position",
+          "scope"
+        ],
+        "title": "PrivateChannel",
+        "type": "object"
+      },
       "PublicationBlocker": {
         "additionalProperties": false,
         "properties": {
@@ -10835,6 +12339,29 @@
         "title": "QuerySort",
         "type": "object"
       },
+      "Reaction": {
+        "additionalProperties": false,
+        "properties": {
+          "emoji": {
+            "title": "Emoji",
+            "type": "string"
+          },
+          "user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "User Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "emoji",
+          "user_ids"
+        ],
+        "title": "Reaction",
+        "type": "object"
+      },
       "ReadAllResponse": {
         "properties": {
           "updated_count": {
@@ -10847,6 +12374,44 @@
           "updated_count"
         ],
         "title": "ReadAllResponse",
+        "type": "object"
+      },
+      "ReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "last_read_seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Last Read Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "last_read_seq"
+        ],
+        "title": "ReadRequest",
+        "type": "object"
+      },
+      "ReadResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "last_read_seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Last Read Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "last_read_seq"
+        ],
+        "title": "ReadResponse",
         "type": "object"
       },
       "RealtimeTokenRead": {
@@ -11262,6 +12827,31 @@
           "moduleId"
         ],
         "title": "RecordCreatedTrigger",
+        "type": "object"
+      },
+      "RecordField": {
+        "additionalProperties": false,
+        "properties": {
+          "display_value": {
+            "title": "Display Value",
+            "type": "string"
+          },
+          "field_id": {
+            "format": "uuid",
+            "title": "Field Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field_id",
+          "label",
+          "display_value"
+        ],
+        "title": "RecordField",
         "type": "object"
       },
       "RecordGroup": {
@@ -14263,6 +15853,75 @@
         "title": "SelfProfileUpdate",
         "type": "object"
       },
+      "SendRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 0,
+            "title": "Attachment Ids",
+            "type": "array"
+          },
+          "body": {
+            "maxLength": 4000,
+            "title": "Body",
+            "type": "string"
+          },
+          "client_key": {
+            "format": "uuid",
+            "title": "Client Key",
+            "type": "string"
+          },
+          "mention_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Mention User Ids",
+            "type": "array"
+          },
+          "mentions_channel": {
+            "default": false,
+            "title": "Mentions Channel",
+            "type": "boolean"
+          },
+          "mentions_here": {
+            "default": false,
+            "title": "Mentions Here",
+            "type": "boolean"
+          },
+          "record_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 0,
+            "title": "Record Ids",
+            "type": "array"
+          },
+          "reply_to_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply To Id"
+          }
+        },
+        "required": [
+          "body",
+          "client_key"
+        ],
+        "title": "SendRequest",
+        "type": "object"
+      },
       "SetFieldAction": {
         "additionalProperties": false,
         "properties": {
@@ -14652,6 +16311,84 @@
         "title": "TextFieldConfig",
         "type": "object"
       },
+      "ThreadResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "followed": {
+            "title": "Followed",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_reply_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reply At"
+          },
+          "locked": {
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "reply_count": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Reply Count",
+            "type": "integer"
+          },
+          "resolved": {
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "root_message_id": {
+            "format": "uuid",
+            "title": "Root Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "conversation_id",
+          "root_message_id",
+          "name",
+          "resolved",
+          "locked",
+          "archived",
+          "followed",
+          "reply_count",
+          "last_reply_at"
+        ],
+        "title": "ThreadResponse",
+        "type": "object"
+      },
       "ThresholdCrossedTrigger": {
         "additionalProperties": false,
         "properties": {
@@ -14783,6 +16520,112 @@
           "refresh_token"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "Tombstone": {
+        "additionalProperties": false,
+        "properties": {
+          "also_send_to_channel": {
+            "title": "Also Send To Channel",
+            "type": "boolean"
+          },
+          "author_id": {
+            "format": "uuid",
+            "title": "Author Id",
+            "type": "string"
+          },
+          "client_key": {
+            "format": "uuid",
+            "title": "Client Key",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "reply_to_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply To Id"
+          },
+          "seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "state": {
+            "const": "deleted",
+            "title": "State",
+            "type": "string"
+          },
+          "thread": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThreadResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "conversation_id",
+          "seq",
+          "author_id",
+          "client_key",
+          "created_at",
+          "parent_id",
+          "reply_to_id",
+          "also_send_to_channel",
+          "thread",
+          "state",
+          "deleted_at"
+        ],
+        "title": "Tombstone",
         "type": "object"
       },
       "TotpResponse": {
@@ -15091,6 +16934,27 @@
           "authenticated"
         ],
         "title": "UnauthenticatedSessionResponse",
+        "type": "object"
+      },
+      "UnavailableRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "state": {
+            "const": "unavailable",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ],
+        "title": "UnavailableRecord",
         "type": "object"
       },
       "UnreadCountResponse": {
@@ -28712,6 +30576,933 @@
         "summary": "Read Chart Usage",
         "tags": [
           "charts"
+        ]
+      }
+    },
+    "/api/comms/bootstrap": {
+      "get": {
+        "operationId": "get_bootstrap_api_comms_bootstrap_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Send or slow-mode limit",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Message operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Bootstrap",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/messages": {
+      "get": {
+        "operationId": "get_history_api_comms_conversations__conversation_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "around_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Around Seq"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Send or slow-mode limit",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Message operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get History",
+        "tags": [
+          "comms"
+        ]
+      },
+      "post": {
+        "operationId": "create_message_api_comms_conversations__conversation_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "deleted": "#/components/schemas/Tombstone",
+                      "live": "#/components/schemas/LiveMessage"
+                    },
+                    "propertyName": "state"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveMessage"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Tombstone"
+                    }
+                  ],
+                  "title": "Response 200 Create Message Api Comms Conversations  Conversation Id  Messages Post"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "description": "Opaque response validator",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "deleted": "#/components/schemas/Tombstone",
+                      "live": "#/components/schemas/LiveMessage"
+                    },
+                    "propertyName": "state"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveMessage"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Tombstone"
+                    }
+                  ],
+                  "title": "Response Create Message Api Comms Conversations  Conversation Id  Messages Post"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque response validator",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "409": {
+            "description": "Client key identifies a different original send"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Send or slow-mode limit",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Message operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Message",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/messages/by-sequence/{seq}": {
+      "get": {
+        "operationId": "get_by_sequence_api_comms_conversations__conversation_id__messages_by_sequence__seq__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "seq",
+            "required": true,
+            "schema": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "title": "Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "deleted": "#/components/schemas/Tombstone",
+                      "live": "#/components/schemas/LiveMessage"
+                    },
+                    "propertyName": "state"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveMessage"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Tombstone"
+                    }
+                  ],
+                  "title": "Response Get By Sequence Api Comms Conversations  Conversation Id  Messages By Sequence  Seq  Get"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque response validator",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Send or slow-mode limit",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Message operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get By Sequence",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/messages/{message_id}": {
+      "delete": {
+        "operationId": "delete_message_api_comms_conversations__conversation_id__messages__message_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tombstone"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque response validator",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Send or slow-mode limit",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Message operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Message",
+        "tags": [
+          "comms"
+        ]
+      },
+      "get": {
+        "operationId": "get_one_api_comms_conversations__conversation_id__messages__message_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "deleted": "#/components/schemas/Tombstone",
+                      "live": "#/components/schemas/LiveMessage"
+                    },
+                    "propertyName": "state"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveMessage"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Tombstone"
+                    }
+                  ],
+                  "title": "Response Get One Api Comms Conversations  Conversation Id  Messages  Message Id  Get"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque response validator",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Send or slow-mode limit",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Message operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get One",
+        "tags": [
+          "comms"
+        ]
+      },
+      "patch": {
+        "operationId": "edit_message_api_comms_conversations__conversation_id__messages__message_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveMessage"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque response validator",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Send or slow-mode limit",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Message operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Edit Message",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/read": {
+      "put": {
+        "operationId": "mark_read_api_comms_conversations__conversation_id__read_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Send or slow-mode limit",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Message operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark Read",
+        "tags": [
+          "comms"
         ]
       }
     },

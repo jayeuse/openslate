@@ -61,6 +61,7 @@ from app.systems.boards.post_router import router as board_posts_router
 from app.systems.boards.record_link_router import router as board_record_links_router
 from app.systems.boards.router import router as boards_router
 from app.systems.boards.widget_router import router as board_widgets_router
+from app.systems.comms.messages.router import router as comms_messages_router
 from app.systems.manage.audit.router import internal_security_events_router, security_events_router
 from app.systems.manage.audit.router import router as audit_router
 from app.systems.manage.backups.downloads import release_export_response, wrap_export_response
@@ -386,6 +387,7 @@ def create_app() -> FastAPI:
     app.include_router(board_attachments_router, prefix="/api")
     app.include_router(board_files_router, prefix="/api")
     app.include_router(boards_router, prefix="/api")
+    app.include_router(comms_messages_router, prefix="/api")
     app.include_router(charts_router, prefix="/api")
     app.include_router(dashboards_router, prefix="/api")
     app.include_router(reports_router, prefix="/api")

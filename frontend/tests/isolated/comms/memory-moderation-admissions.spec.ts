@@ -119,10 +119,7 @@ test("report submission reaches only moderators; resolve/remove/restore use the 
     client_key: id(101),
     body: "Own dispatch",
   });
-  const ownVersion = await reporter.getMessage(f.channelId, own.message.id);
-  const ownDeleted = await reporter.deleteMessage(f.channelId, own.message.id, {
-    if_match: ownVersion.etag,
-  });
+  const ownDeleted = await reporter.deleteMessage(f.channelId, own.message.id);
   await refuses(
     f,
     () =>

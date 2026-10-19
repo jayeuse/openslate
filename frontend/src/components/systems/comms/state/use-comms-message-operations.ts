@@ -95,7 +95,7 @@ export function createCommsMessageOperations({
               mentions_here:
                 current.data.state === "live" && current.data.mentions_here,
             },
-            { signal, if_match: current.etag },
+            { signal },
           );
         if (patch.pinned !== undefined)
           await client.setPin(roomId, id, { pinned: patch.pinned }, { signal });
@@ -127,10 +127,8 @@ export function createCommsMessageOperations({
         const roomId =
           allMessages.find((message) => message.id === id)?.conversation ??
           selected;
-        const current = await client.getMessage(roomId, id, { signal });
         await client.deleteMessage(roomId, id, {
           signal,
-          if_match: current.etag,
         });
       },
       "The message could not be deleted.",

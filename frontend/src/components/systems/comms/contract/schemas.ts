@@ -792,7 +792,9 @@ export const conversationAccessSourceSchema = z.discriminatedUnion("kind", [
     reason: z.enum(["no_access", "inactive_membership"]),
   }),
 ]);
-const capabilityCheckBase = z.strictObject({
+// Response validation is shape-only: FastAPI owns D27 evaluation, including D43.
+// Bind the response to the requested context below; do not re-evaluate decisions.
+export const capabilityCheckSchema = z.strictObject({
   org_id: uuid,
   user_id: uuid,
   conversation_id: uuid,
@@ -803,127 +805,6 @@ const capabilityCheckBase = z.strictObject({
   access_source: conversationAccessSourceSchema,
   capabilities: z.record(capabilitySchema, capabilityDecisionSchema),
 });
-function consistentConversationAccess(
-  check: z.output<typeof capabilityCheckBase>,
-) {
-  const { membership_role, conversation_level, manager_source, access_source } =
-    check;
-  if (membership_role === "admin")
-    return conversation_level === "manage" && access_source.kind === "admin";
-  if (manager_source !== null)
-    return (
-      membership_role === "member" &&
-      conversation_level === "manage" &&
-      access_source.kind === "manager" &&
-      access_source.reason === manager_source
-    );
-  switch (access_source.kind) {
-    case "organization":
-    case "department":
-    case "group":
-    case "membership":
-      return (
-        conversation_level === "read" ||
-        (conversation_level === "post" && membership_role === "member")
-      );
-    case "none":
-      return conversation_level === "none";
-    case "guest_cap":
-      return membership_role === "guest" && conversation_level === "read";
-    default:
-      return false;
-  }
-}
-function consistentCapabilityCheck(
-  check: z.output<typeof capabilityCheckBase>,
-) {
-  // Agreement among supplied fields only; live source lookup belongs to S04/S16.
-  if (!consistentConversationAccess(check)) return false;
-  const poster =
-    check.conversation_level === "post" ||
-    check.conversation_level === "manage";
-  const inScope = (scope: z.output<typeof settingsScopeSchema>) =>
-    scope.kind === "workspace" ||
-    (scope.kind === "category"
-      ? scope.id === check.category_id
-      : scope.id === check.conversation_id);
-  return capabilitySchema.options.every((capability) => {
-    const { allowed, source } = check.capabilities[capability];
-    if (check.membership_role === "guest")
-      return (
-        !allowed &&
-        source.kind === "guest_cap" &&
-        check.conversation_level !== "post" &&
-        check.conversation_level !== "manage"
-      );
-    if (check.membership_role === "admin")
-      return allowed && source.kind === "admin";
-    const conversationCapability =
-      conversationCapabilitySchema.safeParse(capability).success;
-    if (
-      conversationCapability &&
-      check.conversation_level === "none" &&
-      allowed
-    )
-      return false;
-    if (check.manager_source !== null && conversationCapability)
-      return (
-        allowed &&
-        source.kind === "manager" &&
-        source.reason === check.manager_source
-      );
-    switch (source.kind) {
-      case "default":
-        return (
-          source.basis === capabilityDefaults[capability] &&
-          allowed === (source.basis === "poster" && poster)
-        );
-      case "group_grant":
-        return (
-          allowed &&
-          inScope(source.scope) &&
-          capabilityGroupScopes[capability].includes(source.scope.kind)
-        );
-      case "everyone":
-        return (
-          everyoneCapabilitySchema.safeParse(capability).success &&
-          inScope(source.scope) &&
-          allowed ===
-            (source.enabled &&
-              (check.conversation_level === "post" ||
-                check.conversation_level === "manage"))
-        );
-      case "workspace_lock":
-        return (
-          lockableCapabilitySchema.safeParse(capability).success &&
-          allowed === source.enabled &&
-          (!source.enabled ||
-            (capabilityDefaults[capability] === "poster" && poster) ||
-            capabilityGroupScopes[capability].includes("workspace"))
-        );
-      case "department_manager":
-        return (
-          allowed &&
-          capability === "createChannel" &&
-          source.category_id === check.category_id
-        );
-      case "access":
-        return (
-          !allowed &&
-          check.conversation_level === "none" &&
-          (source.reason === "no_read_access" ||
-            (check.access_source.kind === "none" &&
-              check.access_source.reason === "inactive_membership"))
-        );
-      default:
-        return false;
-    }
-  });
-}
-export const capabilityCheckSchema = capabilityCheckBase.refine(
-  consistentCapabilityCheck,
-  "Capability decisions must agree with their deciding sources and immutable role caps",
-);
 export function capabilityCheckSchemaFor(
   context: z.output<typeof commsContextSchema>,
   conversationId: string,
@@ -945,42 +826,13 @@ export const channelCreationScopeSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("workspace") }),
   z.strictObject({ kind: z.literal("category"), id: uuid }),
 ]);
-export const channelCreationCheckSchema = z
-  .strictObject({
-    org_id: uuid,
-    user_id: uuid,
-    scope: channelCreationScopeSchema,
-    membership_role: z.enum(["admin", "member", "guest"]),
-    decision: capabilityDecisionSchema,
-  })
-  .refine((check) => {
-    const { allowed, source } = check.decision;
-    if (check.membership_role === "guest")
-      return !allowed && source.kind === "guest_cap";
-    if (check.membership_role === "admin")
-      return allowed && source.kind === "admin";
-    switch (source.kind) {
-      case "default":
-        return !allowed && source.basis === "org_admin_or_department_manager";
-      case "group_grant":
-        return (
-          allowed &&
-          (source.scope.kind === "workspace" ||
-            (source.scope.kind === "category" &&
-              sameSettingsScope(source.scope, check.scope)))
-        );
-      case "department_manager":
-        return (
-          allowed &&
-          check.scope.kind === "category" &&
-          source.category_id === check.scope.id
-        );
-      case "workspace_lock":
-        return allowed === source.enabled;
-      default:
-        return false;
-    }
-  }, "Channel creation requires an organization or target-category source, never a conversation-manager role");
+export const channelCreationCheckSchema = z.strictObject({
+  org_id: uuid,
+  user_id: uuid,
+  scope: channelCreationScopeSchema,
+  membership_role: z.enum(["admin", "member", "guest"]),
+  decision: capabilityDecisionSchema,
+});
 export function channelCreationCheckSchemaFor(
   context: z.output<typeof commsContextSchema>,
   scope: z.output<typeof channelCreationScopeSchema>,

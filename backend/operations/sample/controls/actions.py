@@ -55,6 +55,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
     from operations.sample.controls.account import plan_account_controls
     from operations.sample.controls.backups import plan_backup_controls
     from operations.sample.controls.boards import plan_board_controls
+    from operations.sample.controls.comms import plan_comms_controls
     from operations.sample.controls.email_change import plan_email_change_controls
     from operations.sample.controls.files import plan_file_controls
     from operations.sample.controls.host_delivery import plan_host_controls
@@ -111,6 +112,7 @@ def plan_controls(dataset: SampleDataset) -> tuple[PhaseAction, ...]:
         *plan_file_controls(dataset),
         *plan_host_controls(dataset),
         *plan_backup_controls(dataset),
+        *plan_comms_controls(dataset),
         *plan_manage_controls(dataset),
         *plan_notification_controls(dataset),
         *plan_read_controls(dataset),
@@ -317,6 +319,7 @@ def execute_control_action(
     from operations.sample.controls.account import execute_account_control
     from operations.sample.controls.backups import execute_backup_control
     from operations.sample.controls.boards import execute_board_control
+    from operations.sample.controls.comms import execute_comms_control
     from operations.sample.controls.email_change import execute_email_change_control
     from operations.sample.controls.files import FILE_OPERATIONS, execute_file_control
     from operations.sample.controls.jobs import execute_job_control
@@ -351,6 +354,7 @@ def execute_control_action(
         return execute_notification_control(action, dataset, context, on_substep=on_substep)
 
     handlers = {
+        "comms_controls": execute_comms_control,
         "access_controls": execute_access_control,
         "account_controls": execute_account_control,
         "manage_controls": execute_manage_control,

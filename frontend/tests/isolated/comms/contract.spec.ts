@@ -937,7 +937,7 @@ test("D27 local grants never encode people, denies, duplicate grants or lower-sc
   ).toBe(false);
 });
 
-test("D27 Check one person binds all thirteen deciding sources without claiming a policy evaluator", () => {
+test("C6 capability responses retain complete shapes and bind the inspected context", () => {
   const schema = capabilityCheckSchemaFor(context, conversation, otherUser);
   expect(schema.safeParse(readerCheck).success).toBe(true);
   const withReply = (decision: object) => ({
@@ -966,11 +966,24 @@ test("D27 Check one person binds all thirteen deciding sources without claiming 
     { ...readerCheck, user_id: user },
     { ...readerCheck, conversation_id: messageId },
     { ...readerCheck, capabilities: {} },
+    {
+      ...readerCheck,
+      capabilities: { ...readerCheck.capabilities, unknown: {} },
+    },
+    { ...readerCheck, membership_role: "owner" },
+    { ...readerCheck, conversation_level: "write" },
+    { ...readerCheck, manager_source: "owner" },
+    { ...readerCheck, category_id: "not-a-uuid" },
+    { ...readerCheck, extra: true },
     withReply({
-      allowed: false,
+      allowed: "true",
+      source: { kind: "admin" },
+    }),
+    withReply({
+      allowed: true,
       source: {
         kind: "group_grant",
-        group_id: groupId,
+        group_id: "not-a-uuid",
         group_name: "Shift",
         scope: { kind: "workspace" },
       },
@@ -979,13 +992,21 @@ test("D27 Check one person binds all thirteen deciding sources without claiming 
       allowed: true,
       source: {
         kind: "everyone",
-        scope: { kind: "channel", id: messageId },
-        enabled: true,
+        scope: { kind: "channel" },
+        enabled: false,
       },
     }),
     withReply({
       allowed: true,
-      source: { kind: "workspace_lock", enabled: false },
+      source: { kind: "workspace_lock" },
+    }),
+    withReply({
+      allowed: true,
+      source: { kind: "default", basis: "owner" },
+    }),
+    withReply({
+      allowed: true,
+      source: { kind: "admin", user_id: otherUser },
     }),
     withReply({
       allowed: true,
@@ -993,221 +1014,79 @@ test("D27 Check one person binds all thirteen deciding sources without claiming 
     }),
   ])
     expect(schema.safeParse(invalid).success).toBe(false);
-});
-
-test("D27 default and workspace-lock decisions need a possible declared basis", () => {
-  const schema = capabilityCheckSchemaFor(context, conversation, otherUser);
-  expect(schema.safeParse(posterCheck).success).toBe(true);
-  for (const [check, capability, allowed] of [
-    [posterCheck, "attachFiles", false],
-    [readerCheck, "reply", true],
-    [readerCheck, "pin", true],
-    [readerCheck, "manageChannel", false],
-  ] as const) {
+  for (const omitted of Object.keys(expectedCapabilityDefaults)) {
     expect(
       schema.safeParse({
-        ...check,
-        capabilities: {
-          ...check.capabilities,
-          [capability]: {
-            allowed,
-            source: { kind: "workspace_lock", enabled: allowed },
-          },
-        },
+        ...readerCheck,
+        capabilities: Object.fromEntries(
+          Object.entries(readerCheck.capabilities).filter(
+            ([key]) => key !== omitted,
+          ),
+        ),
       }).success,
-    ).toBe(true);
-  }
-  for (const [label, check, capability, decision] of [
-    [
-      "poster default cannot deny",
-      posterCheck,
-      "react",
-      { allowed: false, source: { kind: "default", basis: "poster" } },
-    ],
-    [
-      "reader default cannot allow",
-      readerCheck,
-      "react",
-      { allowed: true, source: { kind: "default", basis: "poster" } },
-    ],
-    [
-      "workspace cannot grant manageChannel",
-      readerCheck,
-      "manageChannel",
-      { allowed: true, source: { kind: "workspace_lock", enabled: true } },
-    ],
-    [
-      "workspace cannot grant reader attachments",
-      readerCheck,
-      "attachFiles",
-      { allowed: true, source: { kind: "workspace_lock", enabled: true } },
-    ],
-  ] as const) {
-    expect
-      .soft(
-        schema.safeParse({
-          ...check,
-          capabilities: { ...check.capabilities, [capability]: decision },
-        }).success,
-        label,
-      )
-      .toBe(false);
+      `missing ${omitted}`,
+    ).toBe(false);
   }
 });
 
-test("D27 explanations cannot revoke manager or admin rights or confer guest writes", () => {
+test("C6 capability responses preserve server decisions without evaluating roles or grants", () => {
   const schema = capabilityCheckSchemaFor(context, conversation, otherUser);
-  const all = (allowed: boolean, source: object) =>
-    Object.fromEntries(
-      Object.keys(expectedCapabilityDefaults).map((key) => [
-        key,
-        { allowed, source },
-      ]),
-    );
-  const admin = {
+  // These are shape examples, not authorization expectations. D27 is server-owned.
+  for (const decision of [
+    { allowed: true, source: { kind: "default", basis: "poster" } },
+    { allowed: true, source: { kind: "workspace_lock", enabled: false } },
+    {
+      allowed: false,
+      source: {
+        kind: "group_grant",
+        group_id: groupId,
+        group_name: "Shift",
+        scope: { kind: "category", id: messageId },
+      },
+    },
+    {
+      allowed: true,
+      source: {
+        kind: "everyone",
+        scope: { kind: "channel", id: messageId },
+        enabled: false,
+      },
+    },
+  ]) {
+    const check = {
+      ...readerCheck,
+      capabilities: { ...readerCheck.capabilities, reply: decision },
+    };
+    expect(schema.parse(check)).toEqual(check);
+  }
+  for (const metadata of [
+    { membership_role: "guest" },
+    { membership_role: "admin" },
+    { manager_source: "creator" },
+  ]) {
+    const check = { ...posterCheck, ...metadata };
+    expect(schema.parse(check)).toEqual(check);
+  }
+});
+
+test("C6 accepts the D43 nonreading admin representation unchanged", () => {
+  const schema = capabilityCheckSchemaFor(context, conversation, otherUser);
+  const check = {
     ...readerCheck,
     membership_role: "admin",
-    conversation_level: "manage",
-    access_source: { kind: "admin" },
-    capabilities: all(true, { kind: "admin" }),
-  };
-  expect(schema.safeParse(admin).success).toBe(true);
-  for (const access_source of [
-    { kind: "none", reason: "no_access" },
-    { kind: "group", group_id: groupId, group_name: "Shift" },
-  ])
-    expect
-      .soft(
-        schema.safeParse({ ...admin, access_source }).success,
-        "admin must decide manage access",
-      )
-      .toBe(false);
-  expect(
-    schema.safeParse({
-      ...admin,
-      capabilities: {
-        ...admin.capabilities,
-        pin: {
+    conversation_level: "none",
+    access_source: { kind: "none", reason: "no_access" },
+    capabilities: Object.fromEntries(
+      Object.keys(expectedCapabilityDefaults).map((key) => [
+        key,
+        {
           allowed: false,
-          source: { kind: "workspace_lock", enabled: false },
+          source: { kind: "access", reason: "no_read_access" },
         },
-      },
-    }).success,
-  ).toBe(false);
-  const managerCapabilities = {
-    ...readerCheck.capabilities,
-    ...Object.fromEntries(
-      Object.keys(expectedCapabilityDefaults)
-        .filter((key) => key !== "createChannel" && key !== "manageWorkspace")
-        .map((key) => [
-          key,
-          { allowed: true, source: { kind: "manager", reason: "creator" } },
-        ]),
+      ]),
     ),
   };
-  const manager = {
-    ...readerCheck,
-    conversation_level: "manage",
-    manager_source: "creator",
-    access_source: { kind: "manager", reason: "creator" },
-    capabilities: managerCapabilities,
-  };
-  expect(schema.safeParse(manager).success).toBe(true);
-  for (const reason of ["membership_manager", "department_manager"]) {
-    expect(
-      schema.safeParse({
-        ...manager,
-        manager_source: reason,
-        access_source: { kind: "manager", reason },
-        capabilities: {
-          ...readerCheck.capabilities,
-          ...Object.fromEntries(
-            Object.keys(expectedCapabilityDefaults)
-              .filter(
-                (key) => key !== "createChannel" && key !== "manageWorkspace",
-              )
-              .map((key) => [
-                key,
-                { allowed: true, source: { kind: "manager", reason } },
-              ]),
-          ),
-        },
-      }).success,
-    ).toBe(true);
-  }
-  for (const access_source of [
-    { kind: "group", group_id: groupId, group_name: "Shift" },
-    { kind: "manager", reason: "membership_manager" },
-    { kind: "membership" },
-  ])
-    expect
-      .soft(
-        schema.safeParse({ ...manager, access_source }).success,
-        "manager source must agree with its deciding reason",
-      )
-      .toBe(false);
-  expect(
-    schema.safeParse({
-      ...manager,
-      capabilities: {
-        ...managerCapabilities,
-        react: {
-          allowed: false,
-          source: {
-            kind: "everyone",
-            scope: { kind: "workspace" },
-            enabled: false,
-          },
-        },
-      },
-    }).success,
-  ).toBe(false);
-  expect(
-    schema.safeParse({
-      ...manager,
-      capabilities: {
-        ...managerCapabilities,
-        manageWorkspace: {
-          allowed: true,
-          source: { kind: "manager", reason: "creator" },
-        },
-      },
-    }).success,
-  ).toBe(false);
-  const guest = {
-    ...readerCheck,
-    membership_role: "guest",
-    capabilities: all(false, { kind: "guest_cap" }),
-  };
-  expect(schema.safeParse(guest).success).toBe(true);
-  expect(
-    schema.safeParse({ ...guest, access_source: { kind: "guest_cap" } })
-      .success,
-  ).toBe(true);
-  expect(
-    schema.safeParse({
-      ...guest,
-      conversation_level: "none",
-      access_source: { kind: "none", reason: "no_access" },
-    }).success,
-  ).toBe(true);
-  expect(
-    schema.safeParse({
-      ...guest,
-      capabilities: {
-        ...guest.capabilities,
-        reply: {
-          allowed: true,
-          source: {
-            kind: "group_grant",
-            group_id: groupId,
-            group_name: "Shift",
-            scope: { kind: "workspace" },
-          },
-        },
-      },
-    }).success,
-  ).toBe(false);
+  expect(schema.parse(check)).toEqual(check);
 });
 
 test("D27 managed admission does not accept self-authored authority or resolved-state contradictions", () => {
@@ -1365,7 +1244,7 @@ test("D27 capability-only template apply cannot target workspace authority or se
   }
 });
 
-test("D27 access explanations identify the granting group without crossing the target scope", () => {
+test("C6 access explanations validate source shape rather than infer access", () => {
   const schema = capabilityCheckSchemaFor(context, conversation, otherUser);
   const explained = {
     ...readerCheck,
@@ -1377,6 +1256,11 @@ test("D27 access explanations identify the granting group without crossing the t
     { kind: "department", department_id: thirdUser },
     explained.access_source,
     { kind: "membership" },
+    { kind: "none", reason: "no_access" },
+    { kind: "none", reason: "inactive_membership" },
+    { kind: "admin" },
+    { kind: "manager", reason: "creator" },
+    { kind: "guest_cap" },
   ]) {
     expect(schema.safeParse({ ...readerCheck, access_source }).success).toBe(
       true,
@@ -1385,29 +1269,6 @@ test("D27 access explanations identify the granting group without crossing the t
       true,
     );
   }
-  for (const invalid of [
-    { ...readerCheck, access_source: { kind: "none", reason: "no_access" } },
-    { ...readerCheck, access_source: { kind: "admin" } },
-    { ...readerCheck, access_source: { kind: "manager", reason: "creator" } },
-    { ...readerCheck, access_source: { kind: "guest_cap" } },
-    { ...posterCheck, access_source: { kind: "none", reason: "no_access" } },
-    {
-      ...readerCheck,
-      conversation_level: "none",
-      access_source: explained.access_source,
-    },
-    {
-      ...readerCheck,
-      conversation_level: "manage",
-      access_source: explained.access_source,
-    },
-  ])
-    expect
-      .soft(
-        schema.safeParse(invalid).success,
-        "source must explain the declared level and role",
-      )
-      .toBe(false);
   expect(
     schema.safeParse({
       ...explained,
@@ -1416,7 +1277,7 @@ test("D27 access explanations identify the granting group without crossing the t
   ).toBe(false);
 });
 
-test("D27 creation checks work before a conversation exists and respect category-scoped grants", () => {
+test("C6 creation checks bind actor and target scope without evaluating server decisions", () => {
   const scope = { kind: "category", id: categoryId } as const;
   const schema = channelCreationCheckSchemaFor(context, scope);
   const granted = {
@@ -1448,10 +1309,7 @@ test("D27 creation checks work before a conversation exists and respect category
       },
     }).success,
   ).toBe(true);
-  for (const invalid of [
-    { ...granted, org_id: otherOrg },
-    { ...granted, user_id: otherUser },
-    { ...granted, scope: { kind: "workspace" } },
+  for (const check of [
     { ...granted, membership_role: "guest" },
     {
       ...granted,
@@ -1489,80 +1347,19 @@ test("D27 creation checks work before a conversation exists and respect category
       },
     },
   ])
+    expect(schema.parse(check)).toEqual(check);
+  for (const invalid of [
+    { ...granted, org_id: otherOrg },
+    { ...granted, user_id: otherUser },
+    { ...granted, scope: { kind: "workspace" } },
+    { ...granted, scope: { kind: "category", id: messageId } },
+    { ...granted, scope: { kind: "channel", id: conversation } },
+    { ...granted, scope: { kind: "category" } },
+    { ...granted, membership_role: "owner" },
+    { ...granted, conversation_id: conversation },
+    { ...granted, decision: { source: { kind: "admin" } } },
+    { ...granted, decision: { allowed: "true", source: { kind: "admin" } } },
+    { ...granted, decision: { allowed: true, source: { kind: "owner" } } },
+  ])
     expect(schema.safeParse(invalid).success).toBe(false);
-});
-
-test("D27 explanation metadata cannot turn capabilities into read access or misstate manager level", () => {
-  const schema = capabilityCheckSchemaFor(context, conversation, otherUser);
-  const inaccessible = {
-    ...readerCheck,
-    conversation_level: "none",
-    access_source: { kind: "none", reason: "no_access" },
-  };
-  expect(schema.safeParse(inaccessible).success).toBe(true);
-  expect(
-    schema.safeParse({
-      ...inaccessible,
-      capabilities: {
-        ...inaccessible.capabilities,
-        reply: {
-          allowed: false,
-          source: { kind: "access", reason: "no_read_access" },
-        },
-      },
-    }).success,
-  ).toBe(true);
-  for (const [check, reason] of [
-    [posterCheck, "no_read_access"],
-    [inaccessible, "inactive_membership"],
-  ] as const) {
-    expect
-      .soft(
-        schema.safeParse({
-          ...check,
-          capabilities: {
-            ...check.capabilities,
-            reply: { allowed: false, source: { kind: "access", reason } },
-          },
-        }).success,
-        "access-denial reason must match access metadata",
-      )
-      .toBe(false);
-  }
-  expect(
-    schema.safeParse({
-      ...inaccessible,
-      capabilities: {
-        ...inaccessible.capabilities,
-        reply: {
-          allowed: true,
-          source: {
-            kind: "group_grant",
-            group_id: groupId,
-            group_name: "Shift",
-            scope: { kind: "workspace" },
-          },
-        },
-      },
-    }).success,
-  ).toBe(false);
-  expect(
-    schema.safeParse({
-      ...readerCheck,
-      manager_source: "creator",
-      capabilities: {
-        ...readerCheck.capabilities,
-        ...Object.fromEntries(
-          Object.keys(expectedCapabilityDefaults)
-            .filter(
-              (key) => key !== "createChannel" && key !== "manageWorkspace",
-            )
-            .map((key) => [
-              key,
-              { allowed: true, source: { kind: "manager", reason: "creator" } },
-            ]),
-        ),
-      },
-    }).success,
-  ).toBe(false);
 });

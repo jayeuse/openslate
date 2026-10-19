@@ -32,11 +32,18 @@ def test_small_control_planning_uses_supplied_data_even_with_an_unknown_pack_key
         "access_controls",
         "sandbox_controls",
         "account_controls",
+        "comms_controls",
         "audit_controls",
         "read_controls",
         "manage_controls",
     } <= {action.kind for action in actions}, "Every control family must be planned offline"
     assert len({action.key for action in actions}) == len(actions)
+    account_positions = [i for i, row in enumerate(actions) if row.kind == "account_controls"]
+    comms_positions = [i for i, row in enumerate(actions) if row.kind == "comms_controls"]
+    assert account_positions and comms_positions
+    assert max(account_positions) < min(comms_positions), (
+        "Partner Comms must follow the account's real partner-membership admission"
+    )
     lifecycle = [
         action
         for action in actions

@@ -75,12 +75,9 @@ test("replay fingerprints the original canonical sets, not the edited body", asy
             n.kind === "comms-mention" && n.message_id === first.message.id,
         ),
     ).toHaveLength(1);
-    const version = await f.as().getMessage(f.channelId, first.message.id);
     await f
       .as()
-      .editMessage(f.channelId, first.message.id, edit("Edited handover"), {
-        if_match: version.etag,
-      });
+      .editMessage(f.channelId, first.message.id, edit("Edited handover"));
     const notificationsBeforeReplay =
       f.store.exportSnapshot().state.users[f.peerId].notifications;
     const replay = await f.as().sendMessage(f.channelId, {
@@ -423,9 +420,7 @@ test("root deletion redacts every read and replay while manager restore preserve
     const recordLinkId = root.message.record_references[0].id;
     await f
       .as()
-      .editMessage(f.channelId, root.message.id, edit("Private latest"), {
-        if_match: (await f.as().getMessage(f.channelId, root.message.id)).etag,
-      });
+      .editMessage(f.channelId, root.message.id, edit("Private latest"));
     const reply = await f.as(f.peerId).sendReply(f.channelId, root.message.id, {
       client_key: id(151),
       body: "Retained reply",
@@ -440,9 +435,7 @@ test("root deletion redacts every read and replay while manager restore preserve
       .setPin(f.channelId, root.message.id, { pinned: true });
     const thread = await f.as().getThread(f.channelId, root.message.id);
     const beforeDelete = await f.as().getMessage(f.channelId, root.message.id);
-    const deleted = await f.as().deleteMessage(f.channelId, root.message.id, {
-      if_match: beforeDelete.etag,
-    });
+    const deleted = await f.as().deleteMessage(f.channelId, root.message.id);
     const replay = await f.as().sendMessage(f.channelId, input);
     expect(replay).toEqual({ status: 200, message: deleted.data });
     expect(deleted.data).toMatchObject({
@@ -556,13 +549,10 @@ test("edit revisions are immutable and current author/window checks also cover r
       client_key: id(161),
       body: "Revision zero",
     });
-    const first = await f.as().getMessage(f.channelId, reply.message.id);
     f.advance(1_000);
     const changed = await f
       .as()
-      .editMessage(f.channelId, reply.message.id, edit("Revision one"), {
-        if_match: first.etag,
-      });
+      .editMessage(f.channelId, reply.message.id, edit("Revision one"));
     expect(changed.data.edited_at).not.toBeNull();
     const history = await f
       .as()
@@ -570,16 +560,13 @@ test("edit revisions are immutable and current author/window checks also cover r
     expect(history.items.map((r) => r.body)).toEqual(["Revision zero"]);
     await f
       .as()
-      .editMessage(f.channelId, reply.message.id, edit("Revision two"), {
-        if_match: changed.etag,
-      });
+      .editMessage(f.channelId, reply.message.id, edit("Revision two"));
     expect(
       (
         await f.as().listMessageRevisions(f.channelId, reply.message.id)
       ).items.map((r) => r.body),
     ).toEqual(["Revision zero", "Revision one"]);
     expect(history.items.map((r) => r.body)).toEqual(["Revision zero"]);
-    const fresh = await f.as().getMessage(f.channelId, reply.message.id);
     const before = f.store.exportSnapshot();
     const eventCount = events.length;
     await httpFailure(
@@ -589,7 +576,6 @@ test("edit revisions are immutable and current author/window checks also cover r
           f.channelId,
           reply.message.id,
           edit("Manager cannot impersonate"),
-          { if_match: fresh.etag },
         ),
       403,
       "comms_post_denied",
@@ -601,16 +587,12 @@ test("edit revisions are immutable and current author/window checks also cover r
     );
     f.advance(60_001);
     await httpFailure(
-      f.as().editMessage(f.channelId, reply.message.id, edit("Too late"), {
-        if_match: fresh.etag,
-      }),
+      f.as().editMessage(f.channelId, reply.message.id, edit("Too late")),
       403,
       "comms_post_denied",
     );
     await httpFailure(
-      f
-        .as()
-        .deleteMessage(f.channelId, reply.message.id, { if_match: fresh.etag }),
+      f.as().deleteMessage(f.channelId, reply.message.id),
       403,
       "comms_post_denied",
     );
@@ -624,11 +606,8 @@ test("edit revisions are immutable and current author/window checks also cover r
       ).items,
     ).toHaveLength(2);
     expect(
-      (
-        await f.as(f.managerId).deleteMessage(f.channelId, reply.message.id, {
-          if_match: fresh.etag,
-        })
-      ).data.state,
+      (await f.as(f.managerId).deleteMessage(f.channelId, reply.message.id))
+        .data.state,
     ).toBe("deleted");
   } finally {
     f.close();

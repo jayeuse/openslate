@@ -386,7 +386,6 @@ export function createMessageFamily(
       const key = messageKey(messageId);
       const result = await handle.command({
         signal: options?.signal,
-        conditions: [{ key, if_match: options?.if_match }],
         authorize(current, execution) {
           const row = messageRow(
             current,
@@ -449,6 +448,9 @@ export function createMessageFamily(
       });
       const result = await handle.command({
         ...recipe,
+        // Ordinary deletion is unconditional; the shared moderation/restore
+        // recipe retains its precondition for its other callers.
+        conditions: [],
         authorize(current, execution, prepared) {
           recipe.authorize(current, execution, prepared);
           if (

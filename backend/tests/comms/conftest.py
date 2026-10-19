@@ -8,14 +8,16 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Engine, bindparam, inspect, select, text
+from sqlalchemy import Engine, bindparam, func, inspect, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 from uuid6 import uuid7
 
+from app.core import base_model
 from app.core.database.base import Base
 from app.core.database.organization_scope import scope_session
 from app.core.database.session import AuditSession
+from app.systems.access.identity.models import IdentityRateLimitBucket
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from tests.conftest import alembic_heads, create_member, create_organization, guarded_create_engine
 from tests.migrations.test_organization_root import COMMS_TABLES
@@ -31,6 +33,37 @@ COMMS_DELETE_ORDER = (
     "comms_conversations", "comms_categories", "comms_personal_preferences",
     "comms_direct_blocks",
 )
+
+
+@pytest.fixture
+def budget_clock(comms_world, monkeypatch, record_property):
+    clock = [NOW]
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0].astimezone(tz) if tz else clock[0].replace(tzinfo=None)
+
+    monkeypatch.setattr(base_model, "datetime", FrozenDateTime)
+    with comms_world.runtime.connect() as connection:
+        isolation = connection.scalar(text("SHOW transaction_isolation"))
+        default = connection.scalar(text("SHOW default_transaction_isolation"))
+        role = connection.scalar(text("SELECT current_user"))
+        version = connection.scalar(text("SHOW server_version"))
+    record_property("send_budget_isolation", isolation)
+    record_property("send_budget_default_isolation", default)
+    record_property("send_budget_runtime_role", role)
+    record_property("send_budget_postgres_version", version)
+    assert isolation == default == "read committed"
+    assert role == "openslate_runtime"
+    buckets = _bucket_count(comms_world)
+    yield clock
+    assert _bucket_count(comms_world) == buckets, "send attempts must not persist bucket rows"
+
+
+def _bucket_count(world):
+    with world.owner.connect() as connection:
+        return connection.scalar(select(func.count()).select_from(IdentityRateLimitBucket))
 
 
 @dataclass(frozen=True)

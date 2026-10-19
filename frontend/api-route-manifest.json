@@ -696,6 +696,54 @@
     "path": "/api/workspace"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "bootstrap",
+    "method": "GET",
+    "path": "/api/comms/bootstrap"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "deleteMessage",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "editMessage",
+    "method": "PATCH",
+    "path": "/api/comms/conversations/{param}/messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "getHistory",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "getMessage",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/messages/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "getMessageBySequence",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/messages/by-sequence/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "markRead",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/read"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
+    "function": "sendMessage",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages"
+  },
+  {
     "adapter": "frontend/src/components/systems/manage/adapters/audit-api.ts",
     "function": "downloadManageAuditCsv",
     "method": "GET",

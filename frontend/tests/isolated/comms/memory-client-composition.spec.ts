@@ -245,25 +245,21 @@ test("J4 dropped event transport leaves edits deletes and authoritative reads li
     f.channelId,
     send("Before the transport drop", 4),
   );
-  const loaded = await f.client.getMessage(f.channelId, sent.message.id);
   const delivered = structuredClone(f.events);
   f.runtime.controls.setConnectionDropped(true);
   expect(f.connections.at(-1)).toEqual({ state: "offline" });
   const joinedOffline = observe(f.client);
   try {
     expect(joinedOffline.connections).toEqual([{ state: "offline" }]);
-    const edited = await f.client.editMessage(
+    await f.client.editMessage(
       f.channelId,
       sent.message.id,
       edit("Edited while disconnected"),
-      { if_match: loaded.etag },
     );
     expect(
       (await f.client.getMessage(f.channelId, sent.message.id)).data,
     ).toMatchObject({ body: "Edited while disconnected", seq: 3 });
-    const deleted = await f.client.deleteMessage(f.channelId, sent.message.id, {
-      if_match: edited.etag,
-    });
+    const deleted = await f.client.deleteMessage(f.channelId, sent.message.id);
     expect(await f.client.getMessage(f.channelId, sent.message.id)).toEqual(
       deleted,
     );

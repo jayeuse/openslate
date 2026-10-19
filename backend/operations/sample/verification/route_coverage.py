@@ -20,6 +20,14 @@ Route = tuple[str, str]
 # must acquire an executor and verification before it can be added here.
 SEEDER_ROUTES: frozenset[Route] = frozenset(
     {
+        ("GET", "/api/comms/bootstrap"),
+        ("GET", "/api/comms/conversations/{conversation_id}/messages"),
+        ("POST", "/api/comms/conversations/{conversation_id}/messages"),
+        ("GET", "/api/comms/conversations/{conversation_id}/messages/{message_id}"),
+        ("GET", "/api/comms/conversations/{conversation_id}/messages/by-sequence/{seq}"),
+        ("PATCH", "/api/comms/conversations/{conversation_id}/messages/{message_id}"),
+        ("DELETE", "/api/comms/conversations/{conversation_id}/messages/{message_id}"),
+        ("PUT", "/api/comms/conversations/{conversation_id}/read"),
         ("PATCH", "/api/auth/me/profile"),
         ("GET", "/api/users/{user_id}/card"),
         ("GET", "/api/users/{user_id}/avatar"),
