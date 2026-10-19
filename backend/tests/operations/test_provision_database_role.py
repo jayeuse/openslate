@@ -25,6 +25,7 @@ def _database() -> tuple[MagicMock, MagicMock]:
         (False, True, False),
         None,  # No application-owned Auth liveness policy on first provisioning.
         *REALTIME_FIRST_RUN,
+        (True,),  # The exact realtime.send overload exists.
         (True, True, True),
     ]
     cursor.fetchall.side_effect = [
@@ -81,6 +82,7 @@ def test_provision_rotates_existing_managed_login_role_passwords_after_validatio
         (False, True, False),
         None,  # No application-owned Auth liveness policy on first provisioning.
         *REALTIME_FIRST_RUN,
+        (True,),  # The exact realtime.send overload exists.
         (True, True, True),
     ]
     monkeypatch.setattr(provisioner, "connect", MagicMock(return_value=connection))

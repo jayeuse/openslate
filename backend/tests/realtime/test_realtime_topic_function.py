@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Connection, text
+from sqlalchemy.exc import DBAPIError
 
 from app.core.base_model import utc_now
 from tests.conftest import create_member, create_organization
@@ -49,7 +50,7 @@ def test_function_is_owner_bound_and_executable_only_by_realtime_role(integratio
 
 def test_realtime_messages_carry_only_the_membership_policies(integration_owner_db):
     rows = integration_owner_db.connection().execute(text(
-        # Catalog lookup by name: openslate_owner has no USAGE on the realtime schema.
+        # Catalog lookup by name does not depend on realtime schema USAGE.
         "SELECT polname, polcmd, polpermissive, polroles = ARRAY['authenticated'::regrole::oid] "
         "FROM pg_policy JOIN pg_class ON pg_class.oid = pg_policy.polrelid "
         "JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace "
@@ -59,6 +60,48 @@ def test_realtime_messages_carry_only_the_membership_policies(integration_owner_
         ("openslate_realtime_member_read", "r", True, True),
         ("openslate_realtime_member_write", "a", True, True),
     ]
+
+
+def _send_oid(connection: Connection) -> int:
+    # Catalog lookup avoids requiring realtime USAGE just to inspect the exact overload.
+    return connection.execute(text(
+        "SELECT p.oid FROM pg_catalog.pg_proc p "
+        "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname = 'realtime' AND p.proname = 'send' "
+        "AND pg_catalog.oidvectortypes(p.proargtypes) = 'jsonb, text, text, boolean'"
+    )).scalar_one()
+
+
+def test_send_owner_has_no_sql_publish_privileges(integration_owner_db):
+    connection = integration_owner_db.connection()
+    privileges = connection.execute(text(
+        "SELECT has_schema_privilege('openslate_owner', 'realtime', 'USAGE'), "
+        "has_function_privilege('openslate_owner', CAST(:routine AS oid), 'EXECUTE')"
+    ), {"routine": _send_oid(connection)}).one()
+    assert tuple(privileges) == (False, False)
+
+
+@pytest.mark.parametrize("role", ["openslate_app", "openslate_runtime", "authenticated"])
+def test_send_direct_execute_is_denied(integration_owner_db, role: str):
+    connection = integration_owner_db.connection()
+    assert connection.scalar(text(
+        "SELECT has_function_privilege(:role, CAST(:routine AS oid), 'EXECUTE')"
+    ), {"role": role, "routine": _send_oid(connection)}) is False
+
+
+def test_send_runtime_invocation_raises_insufficient_privilege(integration_db):
+    connection = integration_db.connection()
+    assert connection.scalar(text("SELECT current_user")) == "openslate_runtime"
+    # The provider can swallow insert/RLS errors as warnings. Only a real 42501
+    # exception counts as denial; the effective-EXECUTE tests protect the ACL itself.
+    with connection.begin_nested() as savepoint:
+        with pytest.raises(DBAPIError) as failure:
+            connection.execute(text(
+                "SELECT realtime.send('{}'::jsonb, 'probe', :topic, true)"
+            ), {"topic": f"org:{uuid4()}:probe"})
+        # Recover the expected failed statement before releasing the savepoint.
+        savepoint.rollback()
+    assert getattr(failure.value.orig, "sqlstate", None) == "42501"
 
 
 def test_join_requires_purpose_topic_prefix_and_a_live_membership(integration_owner_db):

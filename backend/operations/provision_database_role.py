@@ -216,6 +216,7 @@ def _provision_session_liveness_policy(cursor: object) -> None:
 
 
 REALTIME_JOIN_FUNCTION = "public.can_join_realtime_topic(text)"
+REALTIME_SEND_FUNCTION = "realtime.send(jsonb,text,text,boolean)"
 REALTIME_JOIN_EXPRESSION = "public.can_join_realtime_topic(realtime.topic())"
 REALTIME_UNGRANTED = "anon, service_role, postgres"
 # Policy name -> (pg_policy.polcmd, USING expression, WITH CHECK expression).
@@ -388,6 +389,16 @@ def provision(
             )
             _provision_session_liveness_policy(cursor)
             _provision_realtime_channel_policies(cursor)
+            cursor.execute(
+                "SELECT pg_catalog.to_regprocedure(%s) IS NOT NULL", (REALTIME_SEND_FUNCTION,)
+            )
+            if cursor.fetchone() != (True,):
+                raise RuntimeError("Realtime has not initialized the required send function")
+            cursor.execute(f"REVOKE USAGE ON SCHEMA realtime FROM {OWNER_ROLE}")
+            cursor.execute(
+                f"REVOKE EXECUTE ON FUNCTION {REALTIME_SEND_FUNCTION} "
+                f"FROM PUBLIC, {OWNER_ROLE}, {PRIVILEGE_ROLE}, {RUNTIME_ROLE}, authenticated"
+            )
             cursor.execute(
                 """
                 SELECT has_schema_privilege('openslate_owner', 'public', 'CREATE'),
