@@ -1,11 +1,16 @@
 """ID18: drained caller writes are still not owned by the coordinating send."""
 
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select, text
 from uuid6 import uuid7
 
 from app.systems.manage.audit.models import AuditLog
-from tests.comms.test_message_transactions import _stored_state
+from tests.comms.test_message_transactions import _send, _stored_state
+from tests.race_support import WAIT, backend_pid, wait_until_blocked_by
 
 pytestmark = pytest.mark.integration
 
@@ -180,3 +185,157 @@ def test_ordinary_read_autobegin_and_connection_transaction_still_accepts_send(
         result = send_message(db, org_id=org.id, author_id=org.author,
                               conversation_id=org.conversation, command=command)
         _assert_committed_send(comms_world, result, command, before)
+
+
+def test_authorization_after_counter_wait_observes_committed_membership_revocation(
+    comms_world,
+    send_api,
+):
+    from app.systems.access.users.membership import organization_membership
+    from app.systems.access.users.models import User
+    from app.systems.comms.access import require_conversation_access
+    from app.systems.comms.messages.models import CommsConversationCounter
+
+    Command, send_message, _, _ = send_api
+    org = comms_world.first
+    command = Command(client_key=uuid7(), body="Recheck after waiting")
+    sender_pid, calls = [], []
+
+    def send():
+        with comms_world.session(org, actor=org.peer) as db:
+            actor = db.get(User, org.peer)
+            assert actor is not None
+            require_conversation_access(db, actor, org.conversation, "post")
+            assert db.connection().scalar(text("SHOW transaction_isolation")) == "read committed"
+            sender_pid.append(backend_pid(db))
+
+            def authorize(replayed):
+                calls.append(replayed)
+                require_conversation_access(
+                    db,
+                    actor,
+                    org.conversation,
+                    "read" if replayed else "post",
+                )
+
+            return send_message(
+                db,
+                org_id=org.id,
+                author_id=org.peer,
+                conversation_id=org.conversation,
+                command=command,
+                authorize=authorize,
+            )
+
+    with comms_world.session(org) as holder:
+        assert (
+            holder.scalar(
+                select(CommsConversationCounter.id)
+                .where(
+                    CommsConversationCounter.org_id == org.id,
+                    CommsConversationCounter.conversation_id == org.conversation,
+                )
+                .with_for_update()
+            )
+            is not None
+        )
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            pending = workers.submit(send)
+            try:
+                assert (
+                    wait_until_blocked_by(comms_world.owner, backend_pid(holder)) == sender_pid[0]
+                )
+                with comms_world.session(org) as revoker:
+                    membership = organization_membership(revoker, org.peer, fresh=True)
+                    assert membership is not None
+                    membership.is_deleted = True
+                    revoker.commit()
+                after_revocation = _committed_state(comms_world)
+            finally:
+                holder.rollback()
+            with pytest.raises(HTTPException) as refused:
+                pending.result(timeout=WAIT)
+            assert refused.value.status_code == 404
+    assert calls == [False]
+    assert _committed_state(comms_world) == after_revocation
+
+
+def test_replay_authorization_uses_current_read_rights_not_new_send_permissions(
+    comms_world,
+    send_api,
+):
+    from app.systems.access.users.membership import organization_membership
+    from app.systems.access.users.models import User
+    from app.systems.comms.access import require_conversation_access
+
+    Command, send_message, _, _ = send_api
+    org = comms_world.first
+    command = Command(client_key=uuid7(), body="Readable after posting is revoked")
+    original = _send(comms_world, send_api, command, actor=org.peer)
+    calls = []
+    with comms_world.session(org, actor=org.peer) as db:
+        actor = db.get(User, org.peer)
+        assert actor is not None
+        require_conversation_access(db, actor, org.conversation, "post")
+
+        def authorize(replayed):
+            calls.append(replayed)
+            require_conversation_access(
+                db,
+                actor,
+                org.conversation,
+                "read" if replayed else "post",
+            )
+
+        with comms_world.session(org) as writer:
+            membership = organization_membership(writer, org.peer, fresh=True)
+            assert membership is not None
+            membership.role = "guest"
+            membership.sponsor_user_id = org.author
+            membership.expires_at = datetime(2100, 1, 1, tzinfo=UTC)
+            writer.commit()
+        before = _committed_state(comms_world)
+        replay = send_message(
+            db,
+            org_id=org.id,
+            author_id=org.peer,
+            conversation_id=org.conversation,
+            command=command,
+            authorize=authorize,
+        )
+        assert (replay.message.id, replay.message.seq, replay.replayed) == (
+            original[0],
+            original[1],
+            True,
+        )
+        assert calls == [True]
+        with pytest.raises(HTTPException) as refused:
+            send_message(
+                db,
+                org_id=org.id,
+                author_id=org.peer,
+                conversation_id=org.conversation,
+                command=Command(client_key=uuid7(), body="Guest cannot post"),
+                authorize=authorize,
+            )
+        assert refused.value.status_code == 403
+        assert _committed_state(comms_world) == before
+        with comms_world.session(org) as writer:
+            membership = organization_membership(writer, org.peer, fresh=True)
+            assert membership is not None
+            membership.is_deleted = True
+            writer.commit()
+        after_revocation = _committed_state(comms_world)
+        with pytest.raises(HTTPException) as refused:
+            send_message(
+                db,
+                org_id=org.id,
+                author_id=org.peer,
+                conversation_id=org.conversation,
+                command=command,
+                authorize=authorize,
+            )
+        assert refused.value.status_code == 404
+        assert not db.in_transaction()
+    assert calls == [True, False, True]
+    assert _committed_state(comms_world) == after_revocation

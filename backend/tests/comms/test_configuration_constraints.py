@@ -1,12 +1,47 @@
 """Stored access, preference and settings invariants on real PostgreSQL."""
 
-import pytest
-from sqlalchemy import text
+import re
 
+import pytest
+from sqlalchemy import inspect, text
+
+from app.systems.comms.capabilities import CAPABILITIES, GROUP_SCOPES
+from app.systems.comms.settings.resolution import SettingsValues
 from tests.comms.conftest import NOW
 from tests.comms.constraint_support import _insert, _reject
 
 pytestmark = pytest.mark.integration
+
+
+def test_settings_and_group_capability_keys_match_database_constraints(integration_owner_db):
+    connection = integration_owner_db.connection()
+    schema = inspect(connection)
+    locks = schema.get_check_constraints("comms_setting_locks")
+    grants = schema.get_check_constraints("comms_capability_grants")
+    lock = next(c["sqltext"] for c in locks if c["name"] == "ck_comms_setting_locks_key")
+    grant = next(
+        c["sqltext"] for c in grants if c["name"] == "ck_comms_capability_grants_subject_capability"
+    )
+    lock_query = text(f"SELECT {lock} FROM (SELECT :namespace AS namespace, :key AS key) candidate")
+    grant_query = text(
+        f"SELECT {grant} FROM (SELECT 'group' AS subject, true AS granted, "
+        "'present' AS group_id, :scope AS scope, :capability AS capability) candidate"
+    )
+    keys = (
+        set(re.findall(r"'([^']+)'", lock)) | set(SettingsValues.model_fields) | set(CAPABILITIES)
+    )
+    for namespace, expected in (
+        ("setting", set(SettingsValues.model_fields) - {"dm_rule"}),
+        ("capability", set(CAPABILITIES) - {"manageWorkspace"}),
+    ):
+        for key in keys:
+            allowed = connection.scalar(lock_query, {"namespace": namespace, "key": key})
+            assert allowed is (key in expected)
+    capabilities = set(re.findall(r"'([^']+)'", grant)) | set(CAPABILITIES)
+    for capability in capabilities:
+        for scope in ("workspace", "category", "channel"):
+            allowed = connection.scalar(grant_query, {"scope": scope, "capability": capability})
+            assert allowed is (scope in GROUP_SCOPES.get(capability, ()))
 
 
 @pytest.mark.parametrize("owner", ["category_id", "conversation_id"])

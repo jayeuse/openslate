@@ -1,7 +1,8 @@
-"""Internal send transaction; callers supply an already-authorized org/actor/target."""
+"""Internal send transaction with post-counter authorization and committed-send budget."""
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from app.systems.comms.conversations.models import CommsConversation
 from app.systems.comms.messages.interaction_models import CommsMention, CommsThread
 from app.systems.comms.messages.link_models import CommsMessageAttachment, CommsMessageRecordLink
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
+from app.systems.comms.rate_limit import admit_message_send
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.listeners import PENDING_CHANGES_KEY, REALTIME_INVALIDATION_KEY
 from app.systems.platform.files.models import File
@@ -27,6 +29,12 @@ MAX_SEQUENCE = 9007199254740991
 
 class InvalidSend(ValueError):
     """The command or supplied transaction cannot be used for a send."""
+
+
+class SendRateLimited(InvalidSend):
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("Message send limit reached")
+        self.retry_after = retry_after
 
 
 class SendConflict(ValueError):
@@ -223,14 +231,19 @@ def _stage_children(
 
 
 def send_message(
-    db: AuditSession, *, org_id: UUID, author_id: UUID, conversation_id: UUID,
+    db: AuditSession,
+    *,
+    org_id: UUID,
+    author_id: UUID,
+    conversation_id: UUID,
     command: SendMessageCommand,
+    authorize: Callable[[bool], None] | None = None,
 ) -> SendMessageResult:
     """Own one commit/full rollback, never caller work or a nested transaction.
 
-    The bound actor/organization and target authorization come from the caller;
-    this service validates structural consistency, not S16 permissions. A replay
-    returns the current row even if it or its former dependencies are tombstones.
+    Production callers supply fresh policy reads via authorize; None is reserved
+    for existing preauthorized structural callers. False authorizes a new send;
+    True authorizes current replay reads, after any full rollback.
     """
     fingerprint = None
     try:
@@ -238,23 +251,27 @@ def send_message(
         command = _canonical_command(command)
         fingerprint = _fingerprint(command, conversation_id)
         existing = _find_original(db, org_id, author_id, command.client_key)
-        if existing is not None:
-            return _replay(existing, fingerprint)
+        retry_after = admit_message_send(db, org_id, author_id) if existing is None else None
         counter = db.scalar(select(CommsConversationCounter).where(
             CommsConversationCounter.org_id == org_id,
             CommsConversationCounter.conversation_id == conversation_id,
         ).with_for_update().execution_options(populate_existing=True))
         existing = _find_original(db, org_id, author_id, command.client_key)
         if existing is not None:
-            # Another writer may have won while this send waited for its counter.
-            # Release that lock, then reload the current row in a fresh transaction.
+            # Recheck after both author/counter waits, before refusing a full budget.
             db.rollback()
+            if authorize is not None:
+                authorize(True)
             existing = _find_original(db, org_id, author_id, command.client_key)
             if existing is None:
                 raise InvalidSend("Replay no longer available")
             return _replay(existing, fingerprint)
         if counter is None or counter.is_deleted:
             raise InvalidSend("Conversation unavailable")
+        if authorize is not None:
+            authorize(False)
+        if retry_after is not None:
+            raise SendRateLimited(retry_after)
         root, thread = _lock_context(db, org_id, conversation_id, command)
         _validate_payload(command)
         if counter.last_seq >= MAX_SEQUENCE:
@@ -283,6 +300,8 @@ def send_message(
         # Different conversations lock different counters. Resolve only the exact
         # lifetime-key collision after FULL rollback; never retry the insert.
         try:
+            if authorize is not None:
+                authorize(True)
             winner = _find_original(db, org_id, author_id, command.client_key)
             if winner is None:
                 raise error

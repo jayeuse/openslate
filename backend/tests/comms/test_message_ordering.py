@@ -6,9 +6,13 @@ from time import monotonic
 
 import pytest
 from sqlalchemy import event, select, text
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.database.organization_scope import apply_connection_scope
+from app.systems.manage.workspace.models import WorkspaceProfile
+from tests.conftest import create_member
+from tests.organization_scope_support import organization_bindings
 
 pytestmark = pytest.mark.integration
 
@@ -35,6 +39,15 @@ def test_two_hundred_real_sends_never_commit_behind_an_advancing_reader(
     from app.systems.comms.messages.service import SendMessageCommand, send_message
 
     org = comms_world.first
+    actors = [org.author, org.peer]
+    with organization_bindings(), Session(comms_world.owner) as db:
+        organization = db.get(WorkspaceProfile, org.id)
+        assert organization is not None
+        for _ in range(8):
+            actor, _ = create_member(db, organization)
+            actors.append(actor.id)
+            comms_world.additional_users.append(actor.id)
+        db.commit()
     barrier = threading.Barrier(201, timeout=30)
     writer_slots = threading.BoundedSemaphore(9)
     observed_intermediate = threading.Event()
@@ -42,17 +55,18 @@ def test_two_hundred_real_sends_never_commit_behind_an_advancing_reader(
     completed = 0
     keys = [uuid7() for _ in range(200)]
 
-    def send(key):
+    def send(index, key):
         nonlocal completed
+        actor = actors[index % len(actors)]  # Twenty real sends per eligible author.
         barrier.wait()
         try:
-            with writer_slots, comms_world.session(org) as db:
+            with writer_slots, comms_world.session(org, actor=actor) as db:
                 def hold_second_commit(session):
                     session.flush()
                     seq = session.scalar(
                         select(CommsMessage.seq).where(
                             CommsMessage.org_id == org.id,
-                            CommsMessage.author_id == org.author,
+                            CommsMessage.author_id == actor,
                             CommsMessage.client_key == key,
                         )
                     )
@@ -63,7 +77,7 @@ def test_two_hundred_real_sends_never_commit_behind_an_advancing_reader(
 
                 event.listen(db, "before_commit", hold_second_commit)
                 result = send_message(
-                    db, org_id=org.id, author_id=org.author,
+                    db, org_id=org.id, author_id=actor,
                     conversation_id=org.conversation,
                     command=SendMessageCommand(client_key=key, body=f"send {key}"),
                 )
@@ -78,7 +92,7 @@ def test_two_hundred_real_sends_never_commit_behind_an_advancing_reader(
     generation = -1
     # Reserve the reader before writers queue: total checked-out connections <=10.
     with comms_world.runtime.connect() as reader, ThreadPoolExecutor(max_workers=200) as workers:
-        futures = [workers.submit(send, key) for key in keys]
+        futures = [workers.submit(send, index, key) for index, key in enumerate(keys)]
         try:
             barrier.wait()
             deadline = monotonic() + 30
@@ -126,5 +140,6 @@ def test_two_hundred_real_sends_never_commit_behind_an_advancing_reader(
             "AND conversation_id=:conversation"
         ), {"org": org.id, "conversation": org.conversation}) == 200
     record_property("submitted_sends", 200)
+    record_property("eligible_send_authors", len(actors))
     record_property("reader_committed_highwaters", highwaters)
     record_property("writer_connection_ceiling", 9)

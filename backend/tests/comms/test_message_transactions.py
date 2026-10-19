@@ -127,36 +127,28 @@ def test_replay_is_write_free_after_edit_and_tombstone_and_conflicts_do_not_allo
 
 @pytest.mark.parametrize("different_conversations", [False, True])
 def test_competing_same_author_key_resolves_one_winner_without_consuming_loser_sequence(
-    comms_world, send_api, different_conversations,
+    comms_world,
+    send_api,
+    different_conversations,
 ):
     Command, send_message, Conflict, _ = send_api
     org = comms_world.first
     command = Command(client_key=uuid7(), body="Concurrent send", mention_user_ids=(org.peer,))
     barrier = threading.Barrier(2, timeout=30)
-    collision = threading.Barrier(2, timeout=30)
 
     def send(conversation):
         with comms_world.session(org) as db:
-            staged = False
-
-            def both_stage_message(session, flush_context, instances):
-                nonlocal staged
-                if not staged and any(
-                    instance.__tablename__ == "comms_messages" for instance in session.new
-                ):
-                    staged = True
-                    collision.wait()
-
-            if different_conversations:
-                # Distinct counters must both stage their inserts before either
-                # flushes: exercise the unique-key collision, not just late replay.
-                event.listen(db, "before_flush", both_stage_message)
-            # Both real sessions exist before either may attempt send.
+            # Both sessions race admission; the author lock now serializes their inserts.
             db.connection()
             barrier.wait()
             try:
-                result = send_message(db, org_id=org.id, author_id=org.author,
-                                      conversation_id=conversation, command=command)
+                result = send_message(
+                    db,
+                    org_id=org.id,
+                    author_id=org.author,
+                    conversation_id=conversation,
+                    command=command,
+                )
                 return result.message.id, result.replayed
             except Conflict:
                 assert not db.in_transaction()

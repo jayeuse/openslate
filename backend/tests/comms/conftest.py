@@ -54,6 +54,7 @@ class CommsWorld:
     runtime: Engine
     first: CommsOrganization = field(default_factory=CommsOrganization)
     second: CommsOrganization = field(default_factory=CommsOrganization)
+    additional_users: list[UUID] = field(default_factory=list)
 
     @contextmanager
     def session(
@@ -182,11 +183,20 @@ class CommsWorld:
                                    .bindparams(bindparam("orgs", expanding=True)), owned)
             connection.execute(text("DELETE FROM public.organizations WHERE id IN :orgs")
                                .bindparams(bindparam("orgs", expanding=True)), owned)
-            connection.execute(text("DELETE FROM public.users WHERE id IN :users")
-                               .bindparams(bindparam("users", expanding=True)), {"users": [
-                                   self.first.author, self.first.peer,
-                                   self.second.author, self.second.peer,
-                               ]})
+            connection.execute(
+                text("DELETE FROM public.users WHERE id IN :users").bindparams(
+                    bindparam("users", expanding=True)
+                ),
+                {
+                    "users": [
+                        self.first.author,
+                        self.first.peer,
+                        self.second.author,
+                        self.second.peer,
+                        *self.additional_users,
+                    ]
+                },
+            )
 
 
 @pytest.fixture
