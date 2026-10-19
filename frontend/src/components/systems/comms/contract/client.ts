@@ -122,9 +122,11 @@ export interface CommsClient {
   getPersonalPreferences(
     options?: C.RequestOptions,
   ): Promise<C.Versioned<C.PersonalPreferences>>;
+  // Preference writes are last-write-wins. Legacy conditional options remain
+  // source-compatible, but their if_match value is never evaluated or sent.
   setPersonalPreferences(
     request: C.PersonalPreferencesRequest,
-    options: C.ConditionalOptions,
+    options?: C.RequestOptions | C.ConditionalOptions,
   ): Promise<C.Versioned<C.PersonalPreferences>>;
   getMemberPreferences(
     conversationId: string,
@@ -133,12 +135,12 @@ export interface CommsClient {
   updateMemberPreferences(
     conversationId: string,
     request: C.MemberPreferencesPatch,
-    options: C.ConditionalOptions,
+    options?: C.RequestOptions | C.ConditionalOptions,
   ): Promise<C.Versioned<C.MemberPreferences>>;
   setCategoryPreferences(
     categoryId: string,
     request: C.CategoryPreferences,
-    options: C.ConditionalOptions,
+    options?: C.RequestOptions | C.ConditionalOptions,
   ): Promise<C.Versioned<C.CategoryPreferences>>;
   getCategoryPreferences(
     categoryId: string,

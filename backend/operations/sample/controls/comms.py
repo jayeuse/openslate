@@ -109,6 +109,10 @@ def execute_comms_control(
     *,
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
+    if action.values.get("operation") in ("preferences_settings", "partner_preferences_settings"):
+        from operations.sample.controls.comms_settings import execute_settings_control
+
+        return execute_settings_control(action, dataset, context, on_substep=on_substep)
     if action.values.get("operation") != "message_roundtrip":
         from operations.sample.controls.comms_structure import execute_structure_control
 

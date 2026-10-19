@@ -744,6 +744,180 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "getCategoryPreferences",
+    "method": "GET",
+    "path": "/api/comms/categories/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "getMemberPreferences",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "getPersonalPreferences",
+    "method": "GET",
+    "path": "/api/comms/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "setCategoryPreferences",
+    "method": "PUT",
+    "path": "/api/comms/categories/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "setPersonalPreferences",
+    "method": "PUT",
+    "path": "/api/comms/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
+    "function": "updateMemberPreferences",
+    "method": "PATCH",
+    "path": "/api/comms/conversations/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "checkPerson",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/capabilities/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilities",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilityConfiguration",
+    "method": "GET",
+    "path": "/api/comms/settings/category/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilityConfiguration",
+    "method": "GET",
+    "path": "/api/comms/settings/channel/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilityConfiguration",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getCapabilityLocks",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace/capability-locks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getChannelCreationCheck",
+    "method": "GET",
+    "path": "/api/comms/capabilities/channel-creation"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getDirectPolicy",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getSettings",
+    "method": "GET",
+    "path": "/api/comms/settings/category/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getSettings",
+    "method": "GET",
+    "path": "/api/comms/settings/channel/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "getSettings",
+    "method": "GET",
+    "path": "/api/comms/settings/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "resetSettings",
+    "method": "POST",
+    "path": "/api/comms/settings/category/{param}/reset"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "resetSettings",
+    "method": "POST",
+    "path": "/api/comms/settings/channel/{param}/reset"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "resetSettings",
+    "method": "POST",
+    "path": "/api/comms/settings/workspace/reset"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setCapabilityConfiguration",
+    "method": "PUT",
+    "path": "/api/comms/settings/category/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setCapabilityConfiguration",
+    "method": "PUT",
+    "path": "/api/comms/settings/channel/{param}/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setCapabilityConfiguration",
+    "method": "PUT",
+    "path": "/api/comms/settings/workspace/capabilities"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setCapabilityLocks",
+    "method": "PUT",
+    "path": "/api/comms/settings/workspace/capability-locks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setDirectPolicy",
+    "method": "PATCH",
+    "path": "/api/comms/settings/workspace"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "setSettingsLocks",
+    "method": "PUT",
+    "path": "/api/comms/settings/workspace/locks"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "updateSettings",
+    "method": "PATCH",
+    "path": "/api/comms/settings/category/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "updateSettings",
+    "method": "PATCH",
+    "path": "/api/comms/settings/channel/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/settings-api.ts",
+    "function": "updateSettings",
+    "method": "PATCH",
+    "path": "/api/comms/settings/workspace"
+  },
+  {
     "adapter": "frontend/src/components/systems/comms/adapters/structure-api.ts",
     "function": "archiveConversation",
     "method": "POST",

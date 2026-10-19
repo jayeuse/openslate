@@ -86,7 +86,6 @@ export function createConversationPreferences({
       const key = personalKey(handle.context.user_id);
       const result = await handle.command({
         signal: options?.signal,
-        conditions: [{ key, if_match: options?.if_match }],
         authorize(world, execution) {
           activePerson(world, execution.context);
         },
@@ -119,7 +118,6 @@ export function createConversationPreferences({
       const key = memberKey(handle.context.user_id, id);
       const result = await handle.command({
         signal: options?.signal,
-        conditions: [{ key, if_match: options?.if_match }],
         authorize(world, execution) {
           projectConversation(world, execution.context, id);
         },
@@ -157,7 +155,6 @@ export function createConversationPreferences({
       const key = categoryKey(handle.context.user_id, id);
       const result = await handle.command({
         signal: options?.signal,
-        conditions: [{ key, if_match: options?.if_match }],
         authorize(world, execution) {
           ownedCategory(world, execution.context, id);
         },

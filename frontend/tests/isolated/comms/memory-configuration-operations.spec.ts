@@ -448,7 +448,7 @@ test("capability commands replace local grants only and enforce workspace locks 
   });
 });
 
-test("personal conversation and category preferences are isolated by user and revoked access stays refused", async ({
+test("C6 personal conversation and category preferences are last-write-wins while isolated and revoked access stays refused", async ({
   make,
 }) => {
   const f = make();
@@ -459,51 +459,65 @@ test("personal conversation and category preferences are isolated by user and re
   const peerMember = await f.peer.getMemberPreferences(f.channelId);
   const peerCategory = await f.peer.getCategoryPreferences(f.categoryId);
   const personal = await f.actor.getPersonalPreferences();
-  const saved = await f.actor.setPersonalPreferences(
-    {
-      ...personal.data,
-      density: "compact",
-      notifications: { notification_sound: false },
-    },
-    { if_match: personal.etag },
-  );
+  const saved = await f.actor.setPersonalPreferences({
+    ...personal.data,
+    density: "compact",
+    notifications: { notification_sound: false },
+  });
   expect(saved.data.density).toBe("compact");
   const member = await f.actor.getMemberPreferences(f.channelId);
-  const changed = await f.actor.updateMemberPreferences(
-    f.channelId,
-    { starred: true, manual_unread: true, mute: { kind: "indefinite" } },
-    { if_match: member.etag },
-  );
+  const changed = await f.actor.updateMemberPreferences(f.channelId, {
+    starred: true,
+    manual_unread: true,
+    mute: { kind: "indefinite" },
+  });
   expect(changed.data).toMatchObject({
     starred: true,
     manual_unread: true,
     mute: { kind: "indefinite" },
   });
   const category = await f.actor.getCategoryPreferences(f.categoryId);
-  await f.actor.setCategoryPreferences(
-    f.categoryId,
-    { collapsed: true, mute: { kind: "off" } },
-    { if_match: category.etag },
-  );
+  await f.actor.setCategoryPreferences(f.categoryId, {
+    collapsed: true,
+    mute: { kind: "off" },
+  });
   expect(
     (await f.actor.getCategoryPreferences(f.categoryId)).data.collapsed,
   ).toBe(true);
+  const lastPersonal = await f.actor.setPersonalPreferences(
+    { ...saved.data, density: "comfortable" },
+    { if_match: personal.etag },
+  );
+  expect((await f.actor.getPersonalPreferences()).data.density).toBe(
+    "comfortable",
+  );
+  expect(lastPersonal.etag).not.toBe(saved.etag);
+  const lastCategory = await f.actor.setCategoryPreferences(
+    f.categoryId,
+    { collapsed: false, mute: { kind: "indefinite" } },
+    { if_match: category.etag },
+  );
+  expect((await f.actor.getCategoryPreferences(f.categoryId)).data).toEqual({
+    collapsed: false,
+    mute: { kind: "indefinite" },
+  });
+  expect(lastCategory.etag).not.toBe(category.etag);
   expect(await f.peer.getPersonalPreferences()).toEqual(peerPersonal);
   expect(await f.peer.getMemberPreferences(f.channelId)).toEqual(peerMember);
   expect(await f.peer.getCategoryPreferences(f.categoryId)).toEqual(
     peerCategory,
   );
-  await refuses(
-    f,
-    () =>
-      f.actor.updateMemberPreferences(
-        f.channelId,
-        { starred: false },
-        { if_match: member.etag },
-      ),
-    412,
-    "comms_precondition_failed",
+  const lastMember = await f.actor.updateMemberPreferences(
+    f.channelId,
+    { starred: false },
+    { if_match: member.etag },
   );
+  expect((await f.actor.getMemberPreferences(f.channelId)).data).toMatchObject({
+    starred: false,
+    manual_unread: true,
+    mute: { kind: "indefinite" },
+  });
+  expect(lastMember.etag).not.toBe(changed.etag);
   // No markRead/bootstrap arithmetic here: preferences do not advance reads.
   expect(f.store.exportSnapshot().state.users[f.actorId].last_read_seq).toEqual(
     readBefore,
@@ -513,6 +527,12 @@ test("personal conversation and category preferences are isolated by user and re
   await refuses(
     f,
     () => f.peer.getMemberPreferences(room.data.id),
+    404,
+    "comms_not_found",
+  );
+  await refuses(
+    f,
+    () => f.peer.updateMemberPreferences(room.data.id, { starred: true }),
     404,
     "comms_not_found",
   );

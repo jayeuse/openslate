@@ -3121,6 +3121,203 @@
         "title": "BootstrapResponse",
         "type": "object"
       },
+      "CapabilityCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "access_source": {
+            "additionalProperties": true,
+            "title": "Access Source",
+            "type": "object"
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CapabilityDecision"
+            },
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "conversation_level": {
+            "enum": [
+              "none",
+              "read",
+              "post",
+              "manage"
+            ],
+            "title": "Conversation Level",
+            "type": "string"
+          },
+          "manager_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "creator",
+                  "membership_manager",
+                  "department_manager"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manager Source"
+          },
+          "membership_role": {
+            "enum": [
+              "admin",
+              "member",
+              "guest"
+            ],
+            "title": "Membership Role",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "user_id",
+          "conversation_id",
+          "category_id",
+          "membership_role",
+          "conversation_level",
+          "manager_source",
+          "access_source",
+          "capabilities"
+        ],
+        "title": "CapabilityCheck",
+        "type": "object"
+      },
+      "CapabilityConfiguration": {
+        "additionalProperties": false,
+        "properties": {
+          "everyone": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Everyone",
+            "type": "object"
+          },
+          "group_grants": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilityGrant"
+            },
+            "title": "Group Grants",
+            "type": "array"
+          },
+          "scope": {
+            "discriminator": {
+              "mapping": {
+                "category": "#/components/schemas/CategoryScope",
+                "channel": "#/components/schemas/ChannelScope",
+                "workspace": "#/components/schemas/WorkspaceScope"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceScope"
+              },
+              {
+                "$ref": "#/components/schemas/CategoryScope"
+              },
+              {
+                "$ref": "#/components/schemas/ChannelScope"
+              }
+            ],
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "group_grants",
+          "everyone"
+        ],
+        "title": "CapabilityConfiguration",
+        "type": "object"
+      },
+      "CapabilityDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "source": {
+            "additionalProperties": true,
+            "title": "Source",
+            "type": "object"
+          }
+        },
+        "required": [
+          "allowed",
+          "source"
+        ],
+        "title": "CapabilityDecision",
+        "type": "object"
+      },
+      "CapabilityGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "group_id": {
+            "format": "uuid",
+            "title": "Group Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "capability"
+        ],
+        "title": "CapabilityGrant",
+        "type": "object"
+      },
+      "CapabilityLocks": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          }
+        },
+        "required": [
+          "capabilities"
+        ],
+        "title": "CapabilityLocks",
+        "type": "object"
+      },
       "Category": {
         "additionalProperties": false,
         "properties": {
@@ -3203,7 +3400,7 @@
           "mute": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/MuteOff"
+                "$ref": "#/components/schemas/MuteOff-Output"
               },
               {
                 "$ref": "#/components/schemas/MuteUntil"
@@ -3213,6 +3410,40 @@
           }
         },
         "title": "CategoryPreferences",
+        "type": "object"
+      },
+      "CategoryPreferencesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "collapsed": {
+            "title": "Collapsed",
+            "type": "boolean"
+          },
+          "mute": {
+            "discriminator": {
+              "mapping": {
+                "indefinite": "#/components/schemas/MuteOff-Input",
+                "off": "#/components/schemas/MuteOff-Input",
+                "until": "#/components/schemas/MuteUntil"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MuteOff-Input"
+              },
+              {
+                "$ref": "#/components/schemas/MuteUntil"
+              }
+            ],
+            "title": "Mute"
+          }
+        },
+        "required": [
+          "collapsed",
+          "mute"
+        ],
+        "title": "CategoryPreferencesRequest",
         "type": "object"
       },
       "CategoryRequest": {
@@ -3263,6 +3494,27 @@
           "default_access"
         ],
         "title": "CategoryRequest",
+        "type": "object"
+      },
+      "CategoryScope": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "category",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "CategoryScope",
         "type": "object"
       },
       "CategorySummary": {
@@ -3405,6 +3657,27 @@
           }
         },
         "title": "ChannelPatch",
+        "type": "object"
+      },
+      "ChannelScope": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "channel",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "ChannelScope",
         "type": "object"
       },
       "ChartCreate": {
@@ -3938,6 +4211,53 @@
           "value"
         ],
         "title": "CreateRecordValue",
+        "type": "object"
+      },
+      "CreationCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/CapabilityDecision"
+          },
+          "membership_role": {
+            "enum": [
+              "admin",
+              "member",
+              "guest"
+            ],
+            "title": "Membership Role",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceScope"
+              },
+              {
+                "$ref": "#/components/schemas/CategoryScope"
+              }
+            ],
+            "title": "Scope"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "user_id",
+          "scope",
+          "membership_role",
+          "decision"
+        ],
+        "title": "CreationCheck",
         "type": "object"
       },
       "CurrentOrganizationResponse": {
@@ -9483,7 +9803,7 @@
           "mute": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/MuteOff"
+                "$ref": "#/components/schemas/MuteOff-Output"
               },
               {
                 "$ref": "#/components/schemas/MuteUntil"
@@ -9508,6 +9828,88 @@
           }
         },
         "title": "MemberPreferences",
+        "type": "object"
+      },
+      "MemberPreferencesPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "hidden": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hidden"
+          },
+          "manual_unread": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual Unread"
+          },
+          "mute": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "indefinite": "#/components/schemas/MuteOff-Input",
+                    "off": "#/components/schemas/MuteOff-Input",
+                    "until": "#/components/schemas/MuteUntil"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MuteOff-Input"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MuteUntil"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mute"
+          },
+          "notify": {
+            "anyOf": [
+              {
+                "enum": [
+                  "all",
+                  "mentions",
+                  "mute"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify"
+          },
+          "starred": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starred"
+          }
+        },
+        "title": "MemberPreferencesPatch",
         "type": "object"
       },
       "MemberResponse": {
@@ -9812,7 +10214,25 @@
         "title": "ModuleSortField",
         "type": "string"
       },
-      "MuteOff": {
+      "MuteOff-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "off",
+              "indefinite"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "MuteOff",
+        "type": "object"
+      },
+      "MuteOff-Output": {
         "additionalProperties": false,
         "properties": {
           "kind": {
@@ -9945,6 +10365,122 @@
         ],
         "title": "NotificationSort",
         "type": "string"
+      },
+      "Notifications": {
+        "additionalProperties": false,
+        "properties": {
+          "desktop_notifications": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desktop Notifications"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords"
+          },
+          "notification_badges": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Badges"
+          },
+          "notification_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "all",
+                  "mentions",
+                  "none"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Mode"
+          },
+          "notification_preview": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Preview"
+          },
+          "notification_sound": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Sound"
+          },
+          "notify_followed_threads": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify Followed Threads"
+          },
+          "quiet_hours_end": {
+            "anyOf": [
+              {
+                "pattern": "^(?:|(?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet Hours End"
+          },
+          "quiet_hours_start": {
+            "anyOf": [
+              {
+                "pattern": "^(?:|(?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet Hours Start"
+          }
+        },
+        "title": "Notifications",
+        "type": "object"
       },
       "NumberFieldConfig": {
         "additionalProperties": false,
@@ -10486,6 +11022,94 @@
           "bio"
         ],
         "title": "PersonCardResponse",
+        "type": "object"
+      },
+      "PersonalPreferences": {
+        "additionalProperties": false,
+        "properties": {
+          "avatars": {
+            "title": "Avatars",
+            "type": "boolean"
+          },
+          "channel_width": {
+            "exclusiveMinimum": 0.0,
+            "title": "Channel Width",
+            "type": "integer"
+          },
+          "density": {
+            "enum": [
+              "comfortable",
+              "compact"
+            ],
+            "title": "Density",
+            "type": "string"
+          },
+          "group_messages": {
+            "title": "Group Messages",
+            "type": "boolean"
+          },
+          "member_width": {
+            "exclusiveMinimum": 0.0,
+            "title": "Member Width",
+            "type": "integer"
+          },
+          "notifications": {
+            "$ref": "#/components/schemas/Notifications"
+          },
+          "previews": {
+            "title": "Previews",
+            "type": "boolean"
+          },
+          "send_shortcut": {
+            "enum": [
+              "enter",
+              "ctrl-enter"
+            ],
+            "title": "Send Shortcut",
+            "type": "string"
+          },
+          "shortcuts": {
+            "$ref": "#/components/schemas/Shortcuts"
+          },
+          "text_size": {
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ],
+            "title": "Text Size",
+            "type": "string"
+          },
+          "thread_width": {
+            "exclusiveMinimum": 0.0,
+            "title": "Thread Width",
+            "type": "integer"
+          },
+          "timestamps": {
+            "enum": [
+              "time",
+              "full",
+              "none"
+            ],
+            "title": "Timestamps",
+            "type": "string"
+          }
+        },
+        "required": [
+          "density",
+          "text_size",
+          "timestamps",
+          "group_messages",
+          "avatars",
+          "previews",
+          "send_shortcut",
+          "shortcuts",
+          "channel_width",
+          "member_width",
+          "thread_width",
+          "notifications"
+        ],
+        "title": "PersonalPreferences",
         "type": "object"
       },
       "PortableAggregateConfig": {
@@ -14639,6 +15263,243 @@
         "title": "ReportUpdate",
         "type": "object"
       },
+      "ResolvedValues": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_export": {
+            "default": true,
+            "title": "Allow Export",
+            "type": "boolean"
+          },
+          "allowed_file_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed File Types",
+            "type": "array"
+          },
+          "allowed_reactions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Reactions",
+            "type": "array"
+          },
+          "allowed_record_modules": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Record Modules",
+            "type": "array"
+          },
+          "auto_archive_days": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Auto Archive Days",
+            "type": "integer"
+          },
+          "default_member_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Default Member Ids",
+            "type": "array"
+          },
+          "default_thread_subscription": {
+            "default": true,
+            "title": "Default Thread Subscription",
+            "type": "boolean"
+          },
+          "delete_window_minutes": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Delete Window Minutes",
+            "type": "integer"
+          },
+          "desktop_notifications": {
+            "default": true,
+            "title": "Desktop Notifications",
+            "type": "boolean"
+          },
+          "edit_window_minutes": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Edit Window Minutes",
+            "type": "integer"
+          },
+          "file_downloads": {
+            "default": true,
+            "title": "File Downloads",
+            "type": "boolean"
+          },
+          "file_previews": {
+            "default": true,
+            "title": "File Previews",
+            "type": "boolean"
+          },
+          "formatting": {
+            "default": true,
+            "title": "Formatting",
+            "type": "boolean"
+          },
+          "join_rule": {
+            "default": "open",
+            "enum": [
+              "open",
+              "request",
+              "invite"
+            ],
+            "title": "Join Rule",
+            "type": "string"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keywords",
+            "type": "array"
+          },
+          "link_previews": {
+            "default": false,
+            "title": "Link Previews",
+            "type": "boolean"
+          },
+          "locked": {
+            "default": false,
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "max_file_size_mb": {
+            "default": 0,
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Max File Size Mb",
+            "type": "number"
+          },
+          "mention_limit": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Mention Limit",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "normal",
+            "enum": [
+              "normal",
+              "announcements",
+              "thread-first"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "notification_badges": {
+            "default": true,
+            "title": "Notification Badges",
+            "type": "boolean"
+          },
+          "notification_mode": {
+            "default": "all",
+            "enum": [
+              "all",
+              "mentions",
+              "none"
+            ],
+            "title": "Notification Mode",
+            "type": "string"
+          },
+          "notification_preview": {
+            "default": true,
+            "title": "Notification Preview",
+            "type": "boolean"
+          },
+          "notification_sound": {
+            "default": true,
+            "title": "Notification Sound",
+            "type": "boolean"
+          },
+          "notify_followed_threads": {
+            "default": true,
+            "title": "Notify Followed Threads",
+            "type": "boolean"
+          },
+          "pinned_record_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned Record Id"
+          },
+          "quiet_hours_end": {
+            "default": "",
+            "pattern": "^(?:|(?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "title": "Quiet Hours End",
+            "type": "string"
+          },
+          "quiet_hours_start": {
+            "default": "",
+            "pattern": "^(?:|(?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "title": "Quiet Hours Start",
+            "type": "string"
+          },
+          "record_card_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Record Card Fields",
+            "type": "array"
+          },
+          "require_record_link": {
+            "default": false,
+            "title": "Require Record Link",
+            "type": "boolean"
+          },
+          "restricted_person_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Restricted Person Ids",
+            "type": "array"
+          },
+          "restriction_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction Until"
+          },
+          "slow_mode_seconds": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Slow Mode Seconds",
+            "type": "integer"
+          },
+          "thread_branches": {
+            "default": "all",
+            "enum": [
+              "all",
+              "followed",
+              "none"
+            ],
+            "title": "Thread Branches",
+            "type": "string"
+          }
+        },
+        "title": "ResolvedValues",
+        "type": "object"
+      },
       "ResourceSort": {
         "enum": [
           "position",
@@ -16511,6 +17372,364 @@
         "title": "SetFieldAction",
         "type": "object"
       },
+      "SettingLocks": {
+        "additionalProperties": false,
+        "properties": {
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "title": "SettingLocks",
+        "type": "object"
+      },
+      "SettingsPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_export": {
+            "default": true,
+            "title": "Allow Export",
+            "type": "boolean"
+          },
+          "allowed_file_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed File Types",
+            "type": "array"
+          },
+          "allowed_reactions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Reactions",
+            "type": "array"
+          },
+          "allowed_record_modules": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Record Modules",
+            "type": "array"
+          },
+          "auto_archive_days": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Auto Archive Days",
+            "type": "integer"
+          },
+          "default_member_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Default Member Ids",
+            "type": "array"
+          },
+          "default_thread_subscription": {
+            "default": true,
+            "title": "Default Thread Subscription",
+            "type": "boolean"
+          },
+          "delete_window_minutes": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Delete Window Minutes",
+            "type": "integer"
+          },
+          "desktop_notifications": {
+            "default": true,
+            "title": "Desktop Notifications",
+            "type": "boolean"
+          },
+          "dm_rule": {
+            "default": "everyone",
+            "enum": [
+              "everyone",
+              "shared-channel",
+              "none"
+            ],
+            "title": "Dm Rule",
+            "type": "string"
+          },
+          "edit_window_minutes": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Edit Window Minutes",
+            "type": "integer"
+          },
+          "file_downloads": {
+            "default": true,
+            "title": "File Downloads",
+            "type": "boolean"
+          },
+          "file_previews": {
+            "default": true,
+            "title": "File Previews",
+            "type": "boolean"
+          },
+          "formatting": {
+            "default": true,
+            "title": "Formatting",
+            "type": "boolean"
+          },
+          "join_rule": {
+            "default": "open",
+            "enum": [
+              "open",
+              "request",
+              "invite"
+            ],
+            "title": "Join Rule",
+            "type": "string"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keywords",
+            "type": "array"
+          },
+          "link_previews": {
+            "default": false,
+            "title": "Link Previews",
+            "type": "boolean"
+          },
+          "locked": {
+            "default": false,
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "max_file_size_mb": {
+            "default": 0,
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Max File Size Mb",
+            "type": "number"
+          },
+          "mention_limit": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Mention Limit",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "normal",
+            "enum": [
+              "normal",
+              "announcements",
+              "thread-first"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "notification_badges": {
+            "default": true,
+            "title": "Notification Badges",
+            "type": "boolean"
+          },
+          "notification_mode": {
+            "default": "all",
+            "enum": [
+              "all",
+              "mentions",
+              "none"
+            ],
+            "title": "Notification Mode",
+            "type": "string"
+          },
+          "notification_preview": {
+            "default": true,
+            "title": "Notification Preview",
+            "type": "boolean"
+          },
+          "notification_sound": {
+            "default": true,
+            "title": "Notification Sound",
+            "type": "boolean"
+          },
+          "notify_followed_threads": {
+            "default": true,
+            "title": "Notify Followed Threads",
+            "type": "boolean"
+          },
+          "pinned_record_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned Record Id"
+          },
+          "quiet_hours_end": {
+            "default": "",
+            "pattern": "^(?:|(?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "title": "Quiet Hours End",
+            "type": "string"
+          },
+          "quiet_hours_start": {
+            "default": "",
+            "pattern": "^(?:|(?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "title": "Quiet Hours Start",
+            "type": "string"
+          },
+          "record_card_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Record Card Fields",
+            "type": "array"
+          },
+          "require_record_link": {
+            "default": false,
+            "title": "Require Record Link",
+            "type": "boolean"
+          },
+          "restricted_person_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Restricted Person Ids",
+            "type": "array"
+          },
+          "restriction_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restriction Until"
+          },
+          "slow_mode_seconds": {
+            "default": 0,
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Slow Mode Seconds",
+            "type": "integer"
+          },
+          "thread_branches": {
+            "default": "all",
+            "enum": [
+              "all",
+              "followed",
+              "none"
+            ],
+            "title": "Thread Branches",
+            "type": "string"
+          }
+        },
+        "title": "SettingsPatch",
+        "type": "object"
+      },
+      "SettingsReset": {
+        "additionalProperties": false,
+        "properties": {
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "title": "SettingsReset",
+        "type": "object"
+      },
+      "SettingsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effective": {
+            "$ref": "#/components/schemas/ResolvedValues"
+          },
+          "locked_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Locked Keys",
+            "type": "array"
+          },
+          "metadata": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Metadata",
+            "type": "array"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "overrides": {
+            "additionalProperties": true,
+            "title": "Overrides",
+            "type": "object"
+          },
+          "scope": {
+            "discriminator": {
+              "mapping": {
+                "category": "#/components/schemas/CategoryScope",
+                "channel": "#/components/schemas/ChannelScope",
+                "workspace": "#/components/schemas/WorkspaceScope"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceScope"
+              },
+              {
+                "$ref": "#/components/schemas/CategoryScope"
+              },
+              {
+                "$ref": "#/components/schemas/ChannelScope"
+              }
+            ],
+            "title": "Scope"
+          },
+          "sources": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Sources",
+            "type": "object"
+          }
+        },
+        "required": [
+          "org_id",
+          "scope",
+          "effective",
+          "overrides",
+          "sources",
+          "locked_keys",
+          "metadata"
+        ],
+        "title": "SettingsResponse",
+        "type": "object"
+      },
       "SharedReportRunResponse": {
         "additionalProperties": false,
         "description": "Only safe discovery fields, never a recipe or output bytes.",
@@ -16566,6 +17785,25 @@
           "created_at"
         ],
         "title": "SharedReportRunResponse",
+        "type": "object"
+      },
+      "Shortcuts": {
+        "additionalProperties": false,
+        "properties": {
+          "new_message": {
+            "title": "New Message",
+            "type": "string"
+          },
+          "search": {
+            "title": "Search",
+            "type": "string"
+          }
+        },
+        "required": [
+          "search",
+          "new_message"
+        ],
+        "title": "Shortcuts",
         "type": "object"
       },
       "SortOrder": {
@@ -19655,6 +20893,21 @@
         "title": "WorkspaceResponse",
         "type": "object"
       },
+      "WorkspaceScope": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "workspace",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "WorkspaceScope",
+        "type": "object"
+      },
       "WorkspaceSecurityResponse": {
         "properties": {
           "ip_allow_list": {
@@ -19993,6 +21246,73 @@
           "revision"
         ],
         "title": "WorkspaceSecurityUpdate",
+        "type": "object"
+      },
+      "WorkspaceSettingsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "dm_rule": {
+            "enum": [
+              "everyone",
+              "shared-channel",
+              "none"
+            ],
+            "title": "Dm Rule",
+            "type": "string"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/ResolvedValues"
+          },
+          "locked_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Locked Keys",
+            "type": "array"
+          },
+          "metadata": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Metadata",
+            "type": "array"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "overrides": {
+            "additionalProperties": true,
+            "title": "Overrides",
+            "type": "object"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/WorkspaceScope"
+          },
+          "sources": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Sources",
+            "type": "object"
+          }
+        },
+        "required": [
+          "org_id",
+          "scope",
+          "effective",
+          "overrides",
+          "sources",
+          "locked_keys",
+          "metadata",
+          "dm_rule"
+        ],
+        "title": "WorkspaceSettingsResponse",
         "type": "object"
       },
       "WorkspaceTheme": {
@@ -31305,6 +32625,101 @@
         ]
       }
     },
+    "/api/comms/capabilities/channel-creation": {
+      "get": {
+        "operationId": "creation_api_comms_capabilities_channel_creation_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope_kind",
+            "required": false,
+            "schema": {
+              "default": "workspace",
+              "enum": [
+                "workspace",
+                "category"
+              ],
+              "title": "Scope Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreationCheck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Creation",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
     "/api/comms/categories": {
       "get": {
         "operationId": "list_categories_api_comms_categories_get",
@@ -31731,6 +33146,160 @@
           }
         ],
         "summary": "Update Category",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/categories/{category_id}/preferences": {
+      "get": {
+        "operationId": "get_category_api_comms_categories__category_id__preferences_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryPreferences"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Response metadata only; preference writes are last-write-wins",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Category",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "put_category_api_comms_categories__category_id__preferences_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryPreferencesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryPreferences"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Response metadata only; preference writes are last-write-wins",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Category",
         "tags": [
           "comms"
         ]
@@ -32519,6 +34088,164 @@
           }
         ],
         "summary": "Archive",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/capabilities": {
+      "get": {
+        "operationId": "get_capabilities_api_comms_conversations__conversation_id__capabilities_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityCheck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Capabilities",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/capabilities/{user_id}": {
+      "get": {
+        "operationId": "check_person_api_comms_conversations__conversation_id__capabilities__user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityCheck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Check Person",
         "tags": [
           "comms"
         ]
@@ -33783,6 +35510,160 @@
         ]
       }
     },
+    "/api/comms/conversations/{conversation_id}/preferences": {
+      "get": {
+        "operationId": "get_member_api_comms_conversations__conversation_id__preferences_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberPreferences"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Response metadata only; preference writes are last-write-wins",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Member",
+        "tags": [
+          "comms"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_member_api_comms_conversations__conversation_id__preferences_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberPreferencesPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberPreferences"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Response metadata only; preference writes are last-write-wins",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Member",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
     "/api/comms/conversations/{conversation_id}/read": {
       "put": {
         "operationId": "mark_read_api_comms_conversations__conversation_id__read_put",
@@ -34507,6 +36388,1856 @@
           }
         ],
         "summary": "Group",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/preferences": {
+      "get": {
+        "operationId": "get_personal_api_comms_preferences_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalPreferences"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Response metadata only; preference writes are last-write-wins",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Personal",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "put_personal_api_comms_preferences_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalPreferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalPreferences"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Response metadata only; preference writes are last-write-wins",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Personal",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/category/{category_id}": {
+      "get": {
+        "operationId": "get_category_api_comms_settings_category__category_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Category",
+        "tags": [
+          "comms"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_category_api_comms_settings_category__category_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Category",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/category/{category_id}/capabilities": {
+      "get": {
+        "operationId": "get_category_capabilities_api_comms_settings_category__category_id__capabilities_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Category Capabilities",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "set_category_capabilities_api_comms_settings_category__category_id__capabilities_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CapabilityConfiguration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Category Capabilities",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/category/{category_id}/reset": {
+      "post": {
+        "operationId": "reset_category_api_comms_settings_category__category_id__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsReset"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reset Category",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/channel/{conversation_id}": {
+      "get": {
+        "operationId": "get_channel_api_comms_settings_channel__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Channel",
+        "tags": [
+          "comms"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_channel_api_comms_settings_channel__conversation_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Channel",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/channel/{conversation_id}/capabilities": {
+      "get": {
+        "operationId": "get_channel_capabilities_api_comms_settings_channel__conversation_id__capabilities_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Channel Capabilities",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "set_channel_capabilities_api_comms_settings_channel__conversation_id__capabilities_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CapabilityConfiguration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Channel Capabilities",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/channel/{conversation_id}/reset": {
+      "post": {
+        "operationId": "reset_channel_api_comms_settings_channel__conversation_id__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsReset"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reset Channel",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/workspace": {
+      "get": {
+        "operationId": "get_workspace_api_comms_settings_workspace_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Workspace",
+        "tags": [
+          "comms"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_workspace_api_comms_settings_workspace_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Workspace",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/workspace/capabilities": {
+      "get": {
+        "operationId": "get_workspace_capabilities_api_comms_settings_workspace_capabilities_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Workspace Capabilities",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "set_workspace_capabilities_api_comms_settings_workspace_capabilities_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CapabilityConfiguration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityConfiguration"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Workspace Capabilities",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/workspace/capability-locks": {
+      "get": {
+        "operationId": "get_capability_locks_api_comms_settings_workspace_capability_locks_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityLocks"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Capability Locks",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "set_capability_locks_api_comms_settings_workspace_capability_locks_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CapabilityLocks"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityLocks"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Capability Locks",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/workspace/locks": {
+      "put": {
+        "operationId": "set_locks_api_comms_settings_workspace_locks_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingLocks"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Locks",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/settings/workspace/reset": {
+      "post": {
+        "operationId": "reset_workspace_api_comms_settings_workspace_reset_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsReset"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Current scope operation is not permitted"
+          },
+          "404": {
+            "description": "Absent or unreadable resource"
+          },
+          "412": {
+            "description": "Configuration changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match is required"
+          },
+          "503": {
+            "description": "Configuration operation unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reset Workspace",
         "tags": [
           "comms"
         ]
