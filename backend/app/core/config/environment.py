@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 from dotenv.parser import parse_stream
 
@@ -16,6 +17,35 @@ _REFERENCE: Final = re.compile(r"\$\{([^}]*)\}")
 
 class ConfigurationError(RuntimeError):
     """An environment configuration error that never includes a configured value."""
+
+
+def with_realtime_publisher(values: Mapping[str, str]) -> dict[str, str]:
+    """Project the approved private publisher binding without rewriting the root file."""
+    projected = dict(values)
+    if values.get("ENVIRONMENT") == "development":
+        try:
+            port = int(values.get("SUPABASE_REALTIME_PUBLISH_PORT", "58001"))
+            if not 1 <= port <= 65535:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ConfigurationError(
+                "Invalid configuration: SUPABASE_REALTIME_PUBLISH_PORT"
+            ) from None
+        projected.setdefault(
+            "REALTIME_PUBLISH_URL", f"http://127.0.0.1:{port}/realtime/v1/api/broadcast"
+        )
+        try:
+            endpoint = urlsplit(projected["REALTIME_PUBLISH_URL"])
+            valid = endpoint.hostname in {"127.0.0.1", "localhost"} and endpoint.port == port
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ConfigurationError(
+                "Development REALTIME_PUBLISH_URL must target the owned loopback publisher"
+            )
+    elif values.get("ENVIRONMENT") == "production":
+        projected.setdefault("REALTIME_PUBLISH_URL", "http://api-gw:8001/realtime/v1/api/broadcast")
+    return projected
 
 
 def read_environment(path: Path) -> dict[str, str]:

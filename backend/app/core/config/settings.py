@@ -16,7 +16,11 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 from sqlalchemy.engine import make_url
 
 from app.core.config.development import is_local_development_host, is_relaxed_development
-from app.core.config.environment import ConfigurationError, environment_inputs
+from app.core.config.environment import (
+    ConfigurationError,
+    environment_inputs,
+    with_realtime_publisher,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 DOTENV_PATH = REPOSITORY_ROOT / ".env"
@@ -347,7 +351,10 @@ class ProvisionSettings(EnvironmentSettings):
 
 def _load[SettingType: EnvironmentSettings](settings_type: type[SettingType]) -> SettingType:
     try:
-        return settings_type.model_validate(environment_inputs(DOTENV_PATH))
+        values = environment_inputs(DOTENV_PATH)
+        return settings_type.model_validate(
+            with_realtime_publisher(values) if settings_type is Settings else values
+        )
     except ValidationError as error:
         names = sorted({str(item["loc"][0]) for item in error.errors() if item["loc"]})
         joined = ", ".join(names) if names else "environment"

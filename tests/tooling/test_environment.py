@@ -62,6 +62,62 @@ def fixture() -> dict[str, str]:
 
 
 class SupabaseEnvironmentTests(unittest.TestCase):
+    def test_publisher_url_is_derived_for_root_validation_and_backend_startup(self) -> None:
+        values = fixture()
+        values.pop("SUPABASE_REALTIME_PUBLISH_PORT", None)
+        values.pop("REALTIME_PUBLISH_URL", None)
+        environment.validate(values)
+        from app.core.config import settings
+
+        with patch.object(settings, "environment_inputs", return_value=values):
+            settings.get_settings.cache_clear()
+            try:
+                self.assertEqual(
+                    settings.get_settings().realtime_publish_url,
+                    "http://127.0.0.1:58001/realtime/v1/api/broadcast",
+                )
+            finally:
+                settings.get_settings.cache_clear()
+
+    def test_explicit_publisher_url_keeps_the_owned_development_loopback_binding(self) -> None:
+        values = {
+            **fixture(),
+            "SUPABASE_REALTIME_PUBLISH_PORT": "58111",
+            "REALTIME_PUBLISH_URL": "http://localhost:58111/realtime/v1/api/broadcast",
+        }
+        environment.validate(values)
+        for url in (
+            "http://api-gw:8001/realtime/v1/api/broadcast",
+            "http://192.0.2.1:58111/realtime/v1/api/broadcast",
+            "http://127.0.0.1:58000/realtime/v1/api/broadcast",
+        ):
+            with (
+                self.subTest(url=url),
+                self.assertRaisesRegex(environment.ConfigurationError, "REALTIME_PUBLISH_URL"),
+            ):
+                environment.validate({**values, "REALTIME_PUBLISH_URL": url})
+
+    def test_dev_stop_validation_accepts_an_omitted_optional_publisher_override(self) -> None:
+        dev_spec = importlib.util.spec_from_file_location(
+            "dev_projection_probe", ROOT / "scripts/dev.py"
+        )
+        assert dev_spec is not None and dev_spec.loader is not None
+        dev = importlib.util.module_from_spec(dev_spec)
+        dev_spec.loader.exec_module(dev)
+        values = fixture()
+        values.pop("REALTIME_PUBLISH_URL", None)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic.env"
+            environment.write_environment(path, values)
+            command = dev.build_command("stop", env_file=path)
+            args = command[command.index(str(dev.ENVIRONMENT_HELPER)) + 1 :]
+            with (
+                patch.object(environment, "_preflight_compose_mutation"),
+                patch.object(environment, "run_compose", return_value=0) as run,
+            ):
+                self.assertEqual(environment.main(args), 0)
+                self.assertEqual(run.call_args.args[0], ["stop"])
+
     def test_all_example_keys_are_declared_and_retired_names_are_rejected(self) -> None:
         names = set(environment.read_environment(ROOT / ".env.example"))
         self.assertFalse(names - environment.ROOT_ENVIRONMENT_KEYS)
@@ -110,9 +166,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
                         "SITE_URL": origin,
                     }
                 )
-        for name, value in (
-            ("PUBLIC_ORIGIN", "http://localhost:3001"),
-        ):
+        for name, value in (("PUBLIC_ORIGIN", "http://localhost:3001"),):
             with self.subTest(name=name), self.assertRaises(environment.ConfigurationError):
                 environment.validate({**values, name: value})
 
