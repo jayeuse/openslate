@@ -23,14 +23,19 @@ def test_comms_inventory_is_exactly_the_twenty_approved_tables(integration_owner
 
 def test_message_search_and_feed_indexes_exist_on_the_actual_database(integration_owner_db):
     connection = integration_owner_db.connection()
-    columns = {column["name"]: column for column in inspect(connection).get_columns(
-        "comms_messages", schema="public",
-    )}
+    columns = {
+        column["name"]: column
+        for column in inspect(connection).get_columns(
+            "comms_messages",
+            schema="public",
+        )
+    }
     generated = columns["body_tsv"]["computed"]
     assert generated["persisted"] is True
     assert "to_tsvector" in generated["sqltext"]
     assert "simple" in generated["sqltext"]
-    indexes = connection.execute(text("""
+    indexes = connection.execute(
+        text("""
         SELECT am.amname, ARRAY(
             SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY k(attnum,position)
             JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum
@@ -39,49 +44,69 @@ def test_message_search_and_feed_indexes_exist_on_the_actual_database(integratio
         FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
         JOIN pg_am am ON am.oid=c.relam
         WHERE i.indrelid='public.comms_messages'::regclass AND i.indisvalid
-    """)).all()
+    """)
+    ).all()
     assert any(method == "gin" and names == ["body_tsv"] for method, names, _ in indexes)
+    assert any(
+        method == "btree" and names == ["author_id", "created_at"] and predicate is None
+        for method, names, predicate in indexes
+    )
     assert any(names[-2:] == ["parent_id", "seq"] for _, names, _ in indexes)
     assert any(
-        names[:2] == ["org_id", "conversation_id"] and "seq" in names
-        and predicate and "parent_id IS NULL" in predicate and "is_deleted" in predicate
+        names[:2] == ["org_id", "conversation_id"]
+        and "seq" in names
+        and predicate
+        and "parent_id IS NULL" in predicate
+        and "is_deleted" in predicate
         for _, names, predicate in indexes
     )
 
 
 def _provider_catalog(connection):
     # Structural catalogs only: no provider records, secrets or credential columns.
-    schemas = connection.execute(text("""
+    schemas = connection.execute(
+        text("""
         SELECT nspname,nspowner::regrole::text,nspacl::text FROM pg_namespace
          WHERE nspname IN ('auth','storage','realtime') ORDER BY nspname
-    """)).all()
-    relations = connection.execute(text("""
+    """)
+    ).all()
+    relations = connection.execute(
+        text("""
         SELECT n.nspname,c.relname,c.relkind,c.relowner::regrole::text,
                c.relacl::text,c.relrowsecurity,c.relforcerowsecurity
           FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
          WHERE n.nspname IN ('auth','storage','realtime') ORDER BY 1,2
-    """)).all()
-    routines = connection.execute(text("""
+    """)
+    ).all()
+    routines = connection.execute(
+        text("""
         SELECT n.nspname,p.proname,pg_get_function_identity_arguments(p.oid),
                p.proowner::regrole::text,p.proacl::text,p.prosecdef
           FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
          WHERE n.nspname IN ('auth','storage','realtime') ORDER BY 1,2,3
-    """)).all()
-    roles = connection.execute(text("""
+    """)
+    ).all()
+    roles = connection.execute(
+        text("""
         SELECT rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolcanlogin,rolbypassrls
           FROM pg_roles WHERE rolname IN
           ('openslate_owner','openslate_runtime','openslate_app','anon','authenticated',
            'service_role','supabase_auth_admin','supabase_storage_admin','supabase_realtime_admin')
          ORDER BY rolname
-    """)).all()
-    memberships = connection.execute(text("""
+    """)
+    ).all()
+    memberships = connection.execute(
+        text("""
         SELECT roleid::regrole::text,member::regrole::text,admin_option,inherit_option,set_option
           FROM pg_auth_members ORDER BY 1,2
-    """)).all()
-    policies = connection.execute(text("""
+    """)
+    ).all()
+    policies = connection.execute(
+        text("""
         SELECT schemaname,tablename,policyname,permissive,roles,cmd,qual,with_check
           FROM pg_policies WHERE schemaname IN ('auth','storage','realtime') ORDER BY 1,2,3
-    """)).all()
+    """)
+    ).all()
     return schemas, relations, routines, roles, memberships, policies
 
 
@@ -99,16 +124,19 @@ def test_empty_comms_downgrade_upgrade_removes_owned_triggers_without_provider_c
                 assert connection.scalar(text(f"SELECT count(*) FROM {table}")) == 0
             before = _provider_catalog(connection)
             non_comms = set(inspect(connection).get_table_names(schema="public")) - COMMS_TABLES
-            triggers = connection.execute(text("""
+            triggers = connection.execute(
+                text("""
                 SELECT c.relname,p.oid::regprocedure::text
                   FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
                   JOIN pg_class c ON c.oid=t.tgrelid
                   JOIN pg_namespace n ON n.oid=c.relnamespace
                  WHERE n.nspname='public' AND c.relname IN
                        ('comms_messages','comms_message_revisions') AND NOT t.tgisinternal
-            """)).all()
+            """)
+            ).all()
             assert {table for table, _ in triggers} == {
-                "comms_messages", "comms_message_revisions",
+                "comms_messages",
+                "comms_message_revisions",
             }, "missing revision/fingerprint immutability guards"
             functions = {function for _, function in triggers}
         run_alembic(environment, "downgrade", BASELINE)
@@ -116,8 +144,10 @@ def test_empty_comms_downgrade_upgrade_removes_owned_triggers_without_provider_c
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == BASELINE
             assert set(inspect(connection).get_table_names(schema="public")) == non_comms
             for function in functions:
-                assert connection.scalar(text("SELECT to_regprocedure(:name)"),
-                                         {"name": function}) is None
+                assert (
+                    connection.scalar(text("SELECT to_regprocedure(:name)"), {"name": function})
+                    is None
+                )
             assert _provider_catalog(connection) == before
         run_alembic(environment, "upgrade", head)
         run_alembic(environment, "check")

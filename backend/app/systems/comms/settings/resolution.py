@@ -66,19 +66,30 @@ def scope_context(db: Session, scope: Scope) -> ScopeContext:
     category_id = scope.get("id") if scope["kind"] == "category" else None
     department_id = None
     if scope["kind"] == "channel":
-        conversation = db.scalar(select(CommsConversation).where(
-            CommsConversation.id == scope["id"],
-            CommsConversation.org_id == bound_organization_column(),
-            CommsConversation.is_deleted.is_(False), CommsConversation.deleted_at.is_(None),
-        ).execution_options(populate_existing=True))
+        conversation = db.scalar(
+            select(CommsConversation)
+            .where(
+                CommsConversation.id == scope["id"],
+                CommsConversation.org_id == bound_organization_column(),
+                CommsConversation.is_deleted.is_(False),
+                CommsConversation.deleted_at.is_(None),
+            )
+            .execution_options(populate_existing=True)
+        )
         if conversation is None:
             raise refusal("comms_not_found", "Conversation not found", 404)
         category_id, department_id = conversation.category_id, conversation.department_id
     if category_id is not None:
-        category = db.scalar(select(CommsCategory).where(
-            CommsCategory.org_id == bound_organization_column(), CommsCategory.id == category_id,
-            CommsCategory.is_deleted.is_(False), CommsCategory.deleted_at.is_(None),
-        ).execution_options(populate_existing=True))
+        category = db.scalar(
+            select(CommsCategory)
+            .where(
+                CommsCategory.org_id == bound_organization_column(),
+                CommsCategory.id == category_id,
+                CommsCategory.is_deleted.is_(False),
+                CommsCategory.deleted_at.is_(None),
+            )
+            .execution_options(populate_existing=True)
+        )
         if category is None:
             raise refusal("comms_not_found", "Category not found", 404)
         chain.append({"kind": "category", "id": category.id})
@@ -89,10 +100,12 @@ def scope_context(db: Session, scope: Scope) -> ScopeContext:
 
 
 def scope_clause(
-    model: type[CommsSettings] | type[CommsCapabilityGrant], scope: Scope,
+    model: type[CommsSettings] | type[CommsCapabilityGrant],
+    scope: Scope,
 ) -> ColumnElement[bool]:
     return and_(
-        model.org_id == bound_organization_column(), model.is_deleted.is_(False),
+        model.org_id == bound_organization_column(),
+        model.is_deleted.is_(False),
         model.scope == scope["kind"],
         model.category_id == (scope.get("id") if scope["kind"] == "category" else None),
         model.conversation_id == (scope.get("id") if scope["kind"] == "channel" else None),
@@ -100,10 +113,15 @@ def scope_clause(
 
 
 def locked_keys(db: Session, namespace: Literal["setting", "capability"]) -> set[str]:
-    return set(db.scalars(select(CommsSettingLock.key).where(
-        CommsSettingLock.org_id == bound_organization_column(),
-        CommsSettingLock.is_deleted.is_(False), CommsSettingLock.namespace == namespace,
-    )))
+    return set(
+        db.scalars(
+            select(CommsSettingLock.key).where(
+                CommsSettingLock.org_id == bound_organization_column(),
+                CommsSettingLock.is_deleted.is_(False),
+                CommsSettingLock.namespace == namespace,
+            )
+        )
+    )
 
 
 Watermark = Annotated[int, Field(ge=0, le=9007199254740991)]
@@ -114,6 +132,7 @@ class SettingsValues(BaseModel):
     """Stack-free value schema; references and workspace locks are DB admission."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
+    dm_rule: Literal["everyone", "shared-channel", "none"] = "everyone"
     mode: Literal["normal", "announcements", "thread-first"] = "normal"
     edit_window_minutes: Watermark = 0
     delete_window_minutes: Watermark = 0
@@ -151,8 +170,12 @@ class SettingsValues(BaseModel):
     allow_export: bool = True
     pinned_record_id: str | None = None
 
-    @field_validator("default_member_ids", "restricted_person_ids", "allowed_record_modules",
-                     "record_card_fields")
+    @field_validator(
+        "default_member_ids",
+        "restricted_person_ids",
+        "allowed_record_modules",
+        "record_card_fields",
+    )
     @classmethod
     def uuid_list(cls, values: list[str]) -> list[str]:
         normalized = [str(UUID(value)) for value in values]
@@ -200,9 +223,13 @@ class SettingsValues(BaseModel):
 def _paired_hours(values: Mapping[str, Any]) -> bool:
     keys = {"quiet_hours_start", "quiet_hours_end"}
     present = keys & values.keys()
-    return not present or (present == keys and bool(values["quiet_hours_start"]) == bool(
-        values["quiet_hours_end"],
-    ))
+    return not present or (
+        present == keys
+        and bool(values["quiet_hours_start"])
+        == bool(
+            values["quiet_hours_end"],
+        )
+    )
 
 
 def validated_values(payload: object) -> dict[str, Any]:
@@ -220,12 +247,15 @@ def stored_values(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Ignore individual legacy/malformed keys, never mutate the stored mapping."""
     values: dict[str, Any] = {}
     for key, value in payload.items():
-        if key not in SettingsValues.model_fields:
+        if key == "dm_rule" or key not in SettingsValues.model_fields:
             continue
         try:
-            values.update(SettingsValues.model_validate({key: value}).model_dump(
-                mode="json", exclude_unset=True,
-            ))
+            values.update(
+                SettingsValues.model_validate({key: value}).model_dump(
+                    mode="json",
+                    exclude_unset=True,
+                )
+            )
         except ValidationError:
             continue
     if not _paired_hours(values):
@@ -235,10 +265,11 @@ def stored_values(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def resolve_layers(
-    layers: Sequence[tuple[Scope, Mapping[str, Any]]], locks: set[str],
+    layers: Sequence[tuple[Scope, Mapping[str, Any]]],
+    locks: set[str],
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """The same pure resolver used by current DB reads; no copied ORM world."""
-    effective = SettingsValues().model_dump(mode="json")
+    effective = SettingsValues().model_dump(mode="json", exclude={"dm_rule"})
     sources: dict[str, dict[str, Any]] = {key: {"kind": "default"} for key in effective}
     for scope, values in layers:
         for key, value in stored_values(values).items():
@@ -252,36 +283,51 @@ def _metadata() -> list[dict[str, str]]:
     sections = {
         "overview": "mode pinned_record_id",
         "messaging": "edit_window_minutes delete_window_minutes slow_mode_seconds formatting "
-                     "link_previews allowed_reactions mention_limit",
+        "link_previews allowed_reactions mention_limit",
         "threads": "auto_archive_days default_thread_subscription thread_branches",
         "members": "join_rule default_member_ids",
         "notifications": "notification_mode keywords notify_followed_threads quiet_hours_start "
-                         "quiet_hours_end notification_sound notification_badges "
-                         "notification_preview desktop_notifications",
+        "quiet_hours_end notification_sound notification_badges "
+        "notification_preview desktop_notifications",
         "files": "allowed_file_types max_file_size_mb file_previews file_downloads "
-                 "allowed_record_modules require_record_link record_card_fields",
+        "allowed_record_modules require_record_link record_card_fields",
         "history": "locked restricted_person_ids restriction_until allow_export",
     }
-    common = {"mode", "edit_window_minutes", "delete_window_minutes", "notification_mode",
-              "allowed_file_types", "max_file_size_mb"}
-    return [{"key": key, "section": section, "tier": "common" if key in common else "advanced"}
-            for section, keys in sections.items() for key in keys.split()]
+    common = {
+        "mode",
+        "edit_window_minutes",
+        "delete_window_minutes",
+        "notification_mode",
+        "allowed_file_types",
+        "max_file_size_mb",
+    }
+    return [
+        {"key": key, "section": section, "tier": "common" if key in common else "advanced"}
+        for section, keys in sections.items()
+        for key in keys.split()
+    ]
 
 
 def resolve_settings(db: Session, scope: Scope) -> dict[str, Any]:
     context = scope_context(db, scope)
     layers: list[tuple[Scope, Mapping[str, Any]]] = []
     for ancestor in context.chain:
-        values = db.scalar(select(CommsSettings.values).where(
-            scope_clause(CommsSettings, ancestor),
-        ))
+        values = db.scalar(
+            select(CommsSettings.values).where(
+                scope_clause(CommsSettings, ancestor),
+            )
+        )
         layers.append((ancestor, values or {}))
     locks = locked_keys(db, "setting")
     effective, sources = resolve_layers(layers, locks)
     response: dict[str, Any] = {
-        "org_id": bound_organization(db), "scope": context.chain[-1],
-        "effective": effective, "sources": sources, "locked_keys": sorted(locks),
-        "overrides": stored_values(layers[-1][1]), "metadata": _metadata(),
+        "org_id": bound_organization(db),
+        "scope": context.chain[-1],
+        "effective": effective,
+        "sources": sources,
+        "locked_keys": sorted(locks),
+        "overrides": stored_values(layers[-1][1]),
+        "metadata": _metadata(),
     }
     if scope["kind"] == "workspace":
         rule = layers[0][1].get("dm_rule", "everyone")
@@ -290,8 +336,13 @@ def resolve_settings(db: Session, scope: Scope) -> dict[str, Any]:
 
 
 def _validate_references(db: Session, values: Mapping[str, Any]) -> None:
-    for key in ("default_member_ids", "restricted_person_ids", "allowed_record_modules",
-                "record_card_fields", "pinned_record_id"):
+    for key in (
+        "default_member_ids",
+        "restricted_person_ids",
+        "allowed_record_modules",
+        "record_card_fields",
+        "pinned_record_id",
+    ):
         value = values.get(key)
         if value is None:
             continue
@@ -299,17 +350,24 @@ def _validate_references(db: Session, values: Mapping[str, Any]) -> None:
         if not ids:
             continue
         if key in ("default_member_ids", "restricted_person_ids"):
-            statement = select(User.id).join(Membership, bound_membership_join()).where(
-                User.id.in_(ids), active_account_clause(),
+            statement = (
+                select(User.id)
+                .join(Membership, bound_membership_join())
+                .where(
+                    User.id.in_(ids),
+                    active_account_clause(),
+                )
             )
         else:
             models: dict[str, type[Module] | type[RecordField] | type[Record]] = {
-                "allowed_record_modules": Module, "record_card_fields": RecordField,
+                "allowed_record_modules": Module,
+                "record_card_fields": RecordField,
                 "pinned_record_id": Record,
             }
             model = models[key]
             statement = select(model.id).where(
-                model.id.in_(ids), model.org_id == bound_organization_column(),
+                model.id.in_(ids),
+                model.org_id == bound_organization_column(),
                 model.is_deleted.is_(False),
             )
         if set(db.scalars(statement)) != ids:
@@ -319,13 +377,25 @@ def _validate_references(db: Session, values: Mapping[str, Any]) -> None:
 def validate_settings_patch(db: Session, scope: Scope, payload: object) -> dict[str, Any]:
     context = scope_context(db, scope)
     values = validated_values(payload)
+    if "dm_rule" in values and context.chain[-1]["kind"] != "workspace":
+        raise refusal("comms_settings_invalid", "Direct policy requires workspace scope")
     _validate_references(db, values)
     if context.chain[-1]["kind"] != "workspace":
         locks = locked_keys(db, "setting")
-        local = db.scalar(select(CommsSettings.values).where(scope_clause(
-            CommsSettings, context.chain[-1],
-        ))) or {}
-        if any(key in locks and (key not in local or local[key] != value)
-               for key, value in values.items()):
+        local = (
+            db.scalar(
+                select(CommsSettings.values).where(
+                    scope_clause(
+                        CommsSettings,
+                        context.chain[-1],
+                    )
+                )
+            )
+            or {}
+        )
+        if any(
+            key in locks and (key not in local or local[key] != value)
+            for key, value in values.items()
+        ):
             raise refusal("comms_settings_locked", "Workspace setting is locked", 403)
     return values

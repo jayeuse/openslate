@@ -44,17 +44,20 @@ class CommsMessage(BaseModel):
         ForeignKeyConstraint(
             ["org_id", "conversation_id"],
             ["comms_conversations.org_id", "comms_conversations.id"],
-            name="fk_comms_messages_conversation", ondelete="RESTRICT",
+            name="fk_comms_messages_conversation",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
             ["org_id", "conversation_id", "parent_id"],
             ["comms_messages.org_id", "comms_messages.conversation_id", "comms_messages.id"],
-            name="fk_comms_messages_parent", ondelete="RESTRICT",
+            name="fk_comms_messages_parent",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
             ["org_id", "conversation_id", "reply_to_id"],
             ["comms_messages.org_id", "comms_messages.conversation_id", "comms_messages.id"],
-            name="fk_comms_messages_reply_to", ondelete="RESTRICT",
+            name="fk_comms_messages_reply_to",
+            ondelete="RESTRICT",
         ),
         CheckConstraint("seq BETWEEN 1 AND 9007199254740991", name="ck_comms_messages_sequence"),
         CheckConstraint("char_length(body) <= 4000", name="ck_comms_messages_body_length"),
@@ -75,13 +78,16 @@ class CommsMessage(BaseModel):
             name="ck_comms_messages_channel_reply",
         ),
         Index(
-            "ix_comms_messages_live_roots", "org_id", "conversation_id", "seq",
+            "ix_comms_messages_live_roots",
+            "org_id",
+            "conversation_id",
+            "seq",
             postgresql_where=text("parent_id IS NULL AND is_deleted = false"),
         ),
         Index("ix_comms_messages_replies", "org_id", "parent_id", "seq"),
         Index("ix_comms_messages_quote", "org_id", "reply_to_id"),
         Index("ix_comms_messages_body_search", "body_tsv", postgresql_using="gin"),
-        Index("ix_comms_messages_author", "author_id"),
+        Index("ix_comms_messages_author", "author_id", "created_at"),
         Index("ix_comms_messages_deleted_by", "deleted_by"),
         Index("ix_comms_messages_pinned_by", "pinned_by"),
     )
@@ -142,8 +148,10 @@ class CommsMessageRevision(BaseModel):
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_comms_message_revisions_org_id_id"),
         ForeignKeyConstraint(
-            ["org_id", "message_id"], ["comms_messages.org_id", "comms_messages.id"],
-            name="fk_comms_message_revisions_message", ondelete="RESTRICT",
+            ["org_id", "message_id"],
+            ["comms_messages.org_id", "comms_messages.id"],
+            name="fk_comms_message_revisions_message",
+            ondelete="RESTRICT",
         ),
         CheckConstraint("char_length(body) <= 4000", name="ck_comms_message_revisions_body_length"),
         Index("ix_comms_message_revisions_history", "org_id", "message_id", "created_at", "id"),
@@ -177,7 +185,8 @@ class CommsConversationCounter(BaseModel):
         ForeignKeyConstraint(
             ["org_id", "conversation_id"],
             ["comms_conversations.org_id", "comms_conversations.id"],
-            name="fk_comms_conversation_counters_conversation", ondelete="RESTRICT",
+            name="fk_comms_conversation_counters_conversation",
+            ondelete="RESTRICT",
         ),
         CheckConstraint(
             "last_seq BETWEEN 0 AND 9007199254740991",
@@ -207,7 +216,8 @@ class CommsReadState(BaseModel):
         ForeignKeyConstraint(
             ["org_id", "conversation_id"],
             ["comms_conversations.org_id", "comms_conversations.id"],
-            name="fk_comms_read_states_conversation", ondelete="RESTRICT",
+            name="fk_comms_read_states_conversation",
+            ondelete="RESTRICT",
         ),
         CheckConstraint(
             "last_read_seq BETWEEN 0 AND 9007199254740991", name="ck_comms_read_states_sequence"

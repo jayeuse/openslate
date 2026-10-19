@@ -30,8 +30,10 @@ class CommsCategory(BaseModel):
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_comms_categories_org_id_id"),
         ForeignKeyConstraint(
-            ["org_id", "department_id"], ["departments.org_id", "departments.id"],
-            name="fk_comms_categories_department", ondelete="RESTRICT",
+            ["org_id", "department_id"],
+            ["departments.org_id", "departments.id"],
+            name="fk_comms_categories_department",
+            ondelete="RESTRICT",
         ),
         CheckConstraint("btrim(name) <> ''", name="ck_comms_categories_name"),
         CheckConstraint("position >= 0", name="ck_comms_categories_position"),
@@ -57,12 +59,16 @@ class CommsConversation(BaseModel):
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_comms_conversations_org_id_id"),
         ForeignKeyConstraint(
-            ["org_id", "category_id"], ["comms_categories.org_id", "comms_categories.id"],
-            name="fk_comms_conversations_category", ondelete="RESTRICT",
+            ["org_id", "category_id"],
+            ["comms_categories.org_id", "comms_categories.id"],
+            name="fk_comms_conversations_category",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["org_id", "department_id"], ["departments.org_id", "departments.id"],
-            name="fk_comms_conversations_department", ondelete="RESTRICT",
+            ["org_id", "department_id"],
+            ["departments.org_id", "departments.id"],
+            name="fk_comms_conversations_department",
+            ondelete="RESTRICT",
         ),
         CheckConstraint("kind IN ('channel','direct','group')", name="ck_comms_conversations_kind"),
         CheckConstraint(
@@ -83,6 +89,13 @@ class CommsConversation(BaseModel):
         Index("ix_comms_conversations_category_order", "org_id", "category_id", "position", "id"),
         Index("ix_comms_conversations_department", "org_id", "department_id"),
         Index("ix_comms_conversations_creator", "created_by"),
+        Index(
+            "uq_comms_conversations_direct_key",
+            "org_id",
+            "direct_key",
+            unique=True,
+            postgresql_where=text("kind = 'direct'"),
+        ),
     )
 
     org_id: Mapped[UUID] = mapped_column(
@@ -90,6 +103,7 @@ class CommsConversation(BaseModel):
     )
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     scope: Mapped[str] = mapped_column(Text, nullable=False)
+    direct_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     category_id: Mapped[UUID | None] = mapped_column(nullable=True)
     department_id: Mapped[UUID | None] = mapped_column(nullable=True)
     name: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
@@ -116,17 +130,22 @@ class CommsConversationGroup(BaseModel):
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_comms_conversation_groups_org_id_id"),
         ForeignKeyConstraint(
-            ["org_id", "category_id"], ["comms_categories.org_id", "comms_categories.id"],
-            name="fk_comms_conversation_groups_category", ondelete="RESTRICT",
+            ["org_id", "category_id"],
+            ["comms_categories.org_id", "comms_categories.id"],
+            name="fk_comms_conversation_groups_category",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
             ["org_id", "conversation_id"],
             ["comms_conversations.org_id", "comms_conversations.id"],
-            name="fk_comms_conversation_groups_conversation", ondelete="RESTRICT",
+            name="fk_comms_conversation_groups_conversation",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["org_id", "group_id"], ["groups.org_id", "groups.id"],
-            name="fk_comms_conversation_groups_group", ondelete="RESTRICT",
+            ["org_id", "group_id"],
+            ["groups.org_id", "groups.id"],
+            name="fk_comms_conversation_groups_group",
+            ondelete="RESTRICT",
         ),
         CheckConstraint(
             "(category_id IS NOT NULL AND conversation_id IS NULL) OR "
@@ -140,8 +159,14 @@ class CommsConversationGroup(BaseModel):
         ),
         CheckConstraint("level IN ('read','post')", name="ck_comms_conversation_groups_level"),
         Index(
-            "uq_comms_conversation_groups_active", "org_id", "category_id", "conversation_id",
-            "subject", "group_id", unique=True, postgresql_nulls_not_distinct=True,
+            "uq_comms_conversation_groups_active",
+            "org_id",
+            "category_id",
+            "conversation_id",
+            "subject",
+            "group_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
             postgresql_where=text("is_deleted = false"),
         ),
         Index("ix_comms_conversation_groups_category", "org_id", "category_id"),
@@ -178,12 +203,17 @@ class CommsMember(BaseModel):
         ForeignKeyConstraint(
             ["org_id", "conversation_id"],
             ["comms_conversations.org_id", "comms_conversations.id"],
-            name="fk_comms_members_conversation", ondelete="RESTRICT",
+            name="fk_comms_members_conversation",
+            ondelete="RESTRICT",
         ),
         CheckConstraint("role IN ('member','manager')", name="ck_comms_members_role"),
         Index(
-            "uq_comms_members_active", "org_id", "conversation_id", "user_id",
-            unique=True, postgresql_where=text("is_deleted = false"),
+            "uq_comms_members_active",
+            "org_id",
+            "conversation_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
         ),
         Index("ix_comms_members_conversation", "org_id", "conversation_id"),
         Index("ix_comms_members_user", "user_id", "org_id", "conversation_id"),
