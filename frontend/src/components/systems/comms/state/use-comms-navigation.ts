@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type SetStateAction } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type SetStateAction,
+} from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   threadMessages,
   type Message,
@@ -11,27 +18,82 @@ import type { CommsPreferences } from "../domain/configuration";
 export function useCommsNavigationState(
   firstConversation = "",
   messages: Message[] = [],
+  threads: Thread[] = [],
 ) {
-  const [selected, setSelected] = useState(() =>
-    typeof window === "undefined"
-      ? firstConversation
-      : new URLSearchParams(window.location.search).get("conversation") ||
-        firstConversation,
+  const router = useRouter();
+  const [navigating, startNavigation] = useTransition();
+  const query = useSearchParams();
+  const messageId = query.get("message") ?? "";
+  const linkedMessage = messages.find((message) => message.id === messageId);
+  const linkedThread = threads.find(
+    (thread) => thread.id === query.get("thread"),
   );
-  useEffect(() => {
-    if (!selected && firstConversation) setSelected(firstConversation);
-  }, [selected, firstConversation]);
-  const [mobileConversation, setMobileConversation] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).has("conversation"),
-  );
-  const [threadId, setThreadId] = useState(() =>
-    typeof window === "undefined"
-      ? ""
-      : (new URLSearchParams(window.location.search).get("thread") ?? ""),
-  );
-  const [memberOpen, setMemberOpen] = useState(false);
+  const selected =
+    query.get("conversation") ??
+    (query.get("settings") === "permissions" ? query.get("channel") : null) ??
+    linkedMessage?.conversation ??
+    linkedThread?.conversation ??
+    (messageId || query.has("thread") ? "" : firstConversation);
+  const threadId =
+    query.get("thread") ??
+    (linkedMessage?.parentId
+      ? threads.find((thread) => thread.messageId === linkedMessage.parentId)
+          ?.id
+      : "") ??
+    "";
+  const panel = query.get("panel");
+  const memberOpen = panel === "members";
+  const membersVisible = panel === null || memberOpen;
+  const recordId = panel?.startsWith("record:") ? panel.slice(7) : "";
+  const mobileConversation =
+    query.has("conversation") || !!messageId || !!threadId;
+  function update(patch: Record<string, string | null>, push = false) {
+    const next = new URLSearchParams(query.toString());
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null || value === "") next.delete(key);
+      else next.set(key, value);
+    }
+    const href = next.size ? (`/comms?${next}` as const) : "/comms";
+    if (href === `/comms${query.size ? `?${query}` : ""}`) return;
+    startNavigation(() =>
+      (push ? router.push : router.replace)(href, { scroll: false }),
+    );
+  }
+  function navigate(id: string, detail: Record<string, string | null> = {}) {
+    update(
+      {
+        conversation: id,
+        thread: null,
+        message: null,
+        panel: null,
+        tool: null,
+        settings: null,
+        channel: null,
+        role: null,
+        ...detail,
+      },
+      id !== selected || !query.has("conversation"),
+    );
+  }
+  const setSelected = (id: string) => navigate(id);
+  const setThreadId = (action: SetStateAction<string>) => {
+    const id = typeof action === "function" ? action(threadId) : action;
+    update({
+      conversation: selected,
+      thread: id,
+      message: null,
+      panel: id ? "thread" : null,
+    });
+  };
+  const setMemberOpen = (action: SetStateAction<boolean>) => {
+    const open = typeof action === "function" ? action(memberOpen) : action;
+    update({
+      conversation: selected,
+      panel: open ? "members" : "none",
+      thread: null,
+      message: null,
+    });
+  };
   const [search, setSearch] = useState("");
   const [replyingToId, setReplyingToId] = useState("");
   const replyingTo =
@@ -45,12 +107,41 @@ export function useCommsNavigationState(
   const [highlightedId, setHighlightedId] = useState("");
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const messageList = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setSearch("");
+    setReplyingToId("");
+    setHighlightedId(messageId);
+    setAwayFromLatest(false);
+  }, [selected, messageId]);
 
   return {
     selected,
+    navigating,
+    query,
+    update,
+    navigate,
+    messageId,
+    membersVisible,
+    recordId,
+    setRecordId: (id: string) =>
+      update({
+        conversation: selected,
+        panel: id ? `record:${id}` : null,
+        thread: null,
+        message: null,
+      }),
     setSelected,
     mobileConversation,
-    setMobileConversation,
+    setMobileConversation: (open: boolean) => {
+      if (!open)
+        update({
+          conversation: null,
+          thread: null,
+          message: null,
+          panel: null,
+          tool: null,
+        });
+    },
     threadId,
     setThreadId,
     memberOpen,
@@ -67,7 +158,7 @@ export function useCommsNavigationState(
   };
 }
 
-type NavigationState = ReturnType<typeof useCommsNavigationState>;
+export type NavigationState = ReturnType<typeof useCommsNavigationState>;
 
 export function createCommsNavigationActions({
   state,
@@ -112,7 +203,7 @@ export function createCommsNavigationActions({
     );
   }
 
-  function select(id: string) {
+  function select(id: string, detail?: Record<string, string | null>) {
     const left = state.selected;
     patchPreferences({
       readAt: {
@@ -125,19 +216,15 @@ export function createCommsNavigationActions({
         [id]: Math.max(clockNow, latestChannelActivity(id)),
       },
     });
-    state.setSelected(id);
-    state.setMobileConversation(true);
-    state.setThreadId("");
+    state.navigate(id, detail);
     state.setSearch("");
     state.setReplyingTo(null);
     state.setHighlightedId("");
-    state.setMemberOpen(false);
     state.setAwayFromLatest(false);
   }
 
   function openThread(item: Thread, conversation: string) {
-    select(conversation);
-    state.setThreadId(item.id);
+    select(conversation, { thread: item.id, panel: "thread" });
     setThreadDirectory(null);
   }
 
@@ -147,12 +234,13 @@ export function createCommsNavigationActions({
     const containingThread = threads.find((item) =>
       threadMessages(item).some((reply) => reply.id === id),
     );
-    if (containingThread) state.setThreadId(containingThread.id);
-    requestAnimationFrame(() => {
-      const target = document.getElementById(id);
-      target?.focus();
-      target?.scrollIntoView({ block: "center" });
-    });
+    const message = allMessages.find((item) => item.id === id);
+    if (message)
+      state.navigate(message.conversation, {
+        message: id,
+        thread: containingThread?.id ?? null,
+        panel: containingThread ? "thread" : null,
+      });
   }
 
   function beginReply(message: Message) {

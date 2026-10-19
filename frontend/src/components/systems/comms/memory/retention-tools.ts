@@ -289,7 +289,7 @@ export function createRetentionTools(session: ToolSession): RetentionTools {
     },
     async previewPurge(id, options) {
       session.active(options);
-      const started = session.now();
+      const started = session.started();
       const initial = handle.read((world) => purgeState(world, id));
       const result = await handle.command({
         signal: session.signal(options),

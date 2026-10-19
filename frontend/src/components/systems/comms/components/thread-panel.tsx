@@ -174,7 +174,10 @@ export function ThreadPanel({
           aria-label="Copy thread link"
           onClick={() => {
             void navigator.clipboard.writeText(
-              `${window.location.origin}/comms?conversation=${encodeURIComponent(thread.conversation ?? message?.conversation ?? "")}&thread=${encodeURIComponent(thread.id)}`,
+              new URL(
+                `/comms?conversation=${encodeURIComponent(thread.conversation ?? message?.conversation ?? "")}&thread=${encodeURIComponent(thread.id)}`,
+                document.baseURI,
+              ).href,
             );
           }}
         >

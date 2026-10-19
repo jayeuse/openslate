@@ -12,7 +12,6 @@ export function createCommsConversationOperations({
   setNotice,
   setDmOpen,
   setThreadId,
-  setMemberOpen,
 }: {
   run: ReturnType<typeof useCommsCommands>["run"];
   thread: Thread | undefined;
@@ -21,7 +20,6 @@ export function createCommsConversationOperations({
   setNotice: (message: string) => void;
   setDmOpen: Dispatch<SetStateAction<boolean>>;
   setThreadId: Dispatch<SetStateAction<string>>;
-  setMemberOpen: Dispatch<SetStateAction<boolean>>;
 }) {
   async function startDirect(userId: string) {
     try {
@@ -48,7 +46,6 @@ export function createCommsConversationOperations({
           client.createThread(message.conversation, message.id, { signal }),
       );
       setThreadId(result.data.id);
-      setMemberOpen(false);
     } catch (error) {
       setNotice(
         messageFromCommsError(error, "The thread could not be opened."),

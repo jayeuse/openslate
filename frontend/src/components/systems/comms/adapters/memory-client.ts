@@ -20,11 +20,8 @@ import {
   type OperationalResources,
 } from "../memory/operational-resources";
 import { createOperationalFamily } from "../memory/operations";
-import {
-  createProtectedToolOperations,
-  createProtectedToolResources,
-  type ProtectedToolResources,
-} from "../memory/protected-tools";
+import { createLazyProtectedTools } from "../memory/lazy-protected-tools";
+import type { createProtectedToolResources } from "../memory/protected-tools";
 import { invalidMemoryState } from "../memory/snapshot";
 import { createMemoryStore } from "../memory/store";
 import type { MemoryRestoration, MemorySnapshot } from "../memory/store-types";
@@ -32,7 +29,7 @@ import type { MemoryRestoration, MemorySnapshot } from "../memory/store-types";
 export interface MemoryOwnedClientDependencies {
   readonly binding: MemoryClientBinding;
   readonly operational: OperationalResources;
-  readonly protectedTools: ProtectedToolResources;
+  readonly protectedTools: ReturnType<typeof createLazyProtectedTools>;
 }
 
 /** Compose real family Picks; this factory owns no state, resource or policy cache. */
@@ -48,7 +45,7 @@ export function createMemoryCommsClient(
     ...createConfigurationOperations(binding),
     ...createMessageFamily(binding, dependencies),
     ...createOperationalFamily(binding, operational),
-    ...createProtectedToolOperations(binding, protectedTools),
+    ...protectedTools.bind(binding),
     context: handle.context,
     events: Object.freeze({ subscribe: handle.events.subscribe }),
     async bootstrap(options) {
@@ -163,7 +160,7 @@ export function createMemoryCommsRuntime(
       ownerBinding,
       beforeScheduleSend: options.beforeScheduleSend,
     });
-    const protectedTools = createProtectedToolResources({
+    const protectedTools = createLazyProtectedTools({
       store,
       files,
       clock,

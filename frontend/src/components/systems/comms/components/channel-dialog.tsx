@@ -430,14 +430,3 @@ export function ChannelDialog(props: EditorProps) {
     />
   );
 }
-
-export function newChannel(categoryId: string): Channel {
-  return {
-    id: "",
-    name: "",
-    description: "",
-    categoryId,
-    scope: "groups",
-    archived: false,
-  };
-}

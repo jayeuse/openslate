@@ -83,3 +83,13 @@ export const EMOTES = [
   { emoji: "🙏", label: "Thanks" },
   { emoji: "✅", label: "Done" },
 ];
+export function newChannel(categoryId: string): Channel {
+  return {
+    id: "",
+    name: "",
+    description: "",
+    categoryId,
+    scope: "groups",
+    archived: false,
+  };
+}

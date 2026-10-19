@@ -287,7 +287,7 @@ export function createConfigurationTools(
     saveTemplate: save,
     async previewTemplateApply(id, input, options) {
       session.active(options);
-      const started = session.now();
+      const started = session.started();
       const parsed = S.templateApplyRequestSchema.safeParse(input);
       if (!parsed.success) return invalidInput();
       const initial = handle.read((world) =>

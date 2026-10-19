@@ -53,10 +53,14 @@ export interface ToolSession {
   readonly store: MemoryStore;
   readonly files: MemoryFileResources;
   now(): number;
+  started(): number;
   active(options?: C.RequestOptions): void;
   signal(options?: C.RequestOptions): AbortSignal;
   admin(world: Readonly<MemoryCommsState>, scope?: C.SettingsScope): void;
-  fresh(options?: C.RequestOptions | C.FreshAdminOptions): ToolInvocation;
+  fresh(
+    options?: C.RequestOptions | C.FreshAdminOptions,
+    started?: number,
+  ): ToolInvocation;
   token(execution: MemoryExecution): string;
   describe(value: unknown): string;
   digest(value: string): Promise<string>;
@@ -90,7 +94,7 @@ export interface ToolSession {
 const workspace = { kind: "workspace" } as const;
 const bindings = new WeakMap<
   ProtectedToolResources,
-  (binding: MemoryClientBinding) => ProtectedToolOperations
+  (binding: MemoryClientBinding, started?: number) => ProtectedToolOperations
 >();
 function cancelled(): never {
   throw Object.assign(new Error("OpenComms operation cancelled"), {
@@ -168,7 +172,7 @@ export function createProtectedToolResources(input: {
     MemoryHandle,
     {
       authority: MemoryClientBinding["authority"];
-      operations: ProtectedToolOperations;
+      operations(started?: number): ProtectedToolOperations;
       retire(): void;
     }
   >();
@@ -203,7 +207,7 @@ export function createProtectedToolResources(input: {
       if (!retired) anchor.dispose();
     },
   };
-  bindings.set(resources, (binding) => {
+  bindings.set(resources, (binding, started) => {
     const { handle } = binding;
     const active = (options?: C.RequestOptions) => {
       assertRequestActive(options);
@@ -219,13 +223,14 @@ export function createProtectedToolResources(input: {
     const cached = families.get(handle);
     if (cached) {
       if (cached.authority !== binding.authority) return invalidMemoryState();
-      return cached.operations;
+      return cached.operations(started);
     }
     const session: ToolSession = {
       binding,
       store,
       files,
       now: clock,
+      started: clock,
       active,
       signal(options) {
         active(options);
@@ -255,9 +260,9 @@ export function createProtectedToolResources(input: {
         );
         requireScopeRead(world, handle.context, scope);
       },
-      fresh(options) {
+      fresh(options, invokedAt) {
         active(options);
-        const started = clock();
+        const started = invokedAt ?? clock();
         const marker =
           options && "password" in options ? options.password : undefined;
         return {
@@ -396,10 +401,18 @@ export function createProtectedToolResources(input: {
         return page(rows, parsed.data);
       },
     };
-    const operations: ProtectedToolOperations = {
-      ...createRetentionTools(session),
-      ...createConfigurationTools(session),
-      ...exports.bind(session),
+    const operations = (invokedAt?: number): ProtectedToolOperations => {
+      const invocation = {
+        ...session,
+        started: () => invokedAt ?? clock(),
+        fresh: (options?: C.RequestOptions | C.FreshAdminOptions) =>
+          session.fresh(options, invokedAt),
+      };
+      return {
+        ...createRetentionTools(invocation),
+        ...createConfigurationTools(invocation),
+        ...exports.bind(invocation),
+      };
     };
     const retireHandle = () => {
       for (const [key, preview] of previews)
@@ -415,7 +428,7 @@ export function createProtectedToolResources(input: {
       operations,
       retire: retireHandle,
     });
-    return operations;
+    return operations(started);
   });
   return resources;
 }
@@ -423,8 +436,9 @@ export function createProtectedToolResources(input: {
 export function createProtectedToolOperations(
   binding: MemoryClientBinding,
   resources: ProtectedToolResources,
+  started?: number,
 ): ProtectedToolOperations {
   const bind = bindings.get(resources);
   if (!bind) return invalidMemoryState();
-  return bind(binding);
+  return bind(binding, started);
 }
