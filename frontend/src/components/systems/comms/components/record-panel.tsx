@@ -4,11 +4,8 @@ import Link from "next/link";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SampleRecord } from "../../shared/data/sample-data";
-import type { Person } from "../../shared/data/sample-people";
-import { recordContext, recordNumber } from "../domain/groups";
+import { recordContext } from "../domain/groups";
 import { GroupMark } from "./group-mark";
-import { formatDueDate } from "./message-timeline";
-import { cn } from "@/lib/utils";
 
 export type RecordMention = {
   messageId: string;
@@ -26,20 +23,11 @@ export function RecordPanel({
   onClose,
 }: {
   record: SampleRecord;
-  people: Person[];
   mentions: RecordMention[];
   onJump: (messageId: string) => void;
   onClose: () => void;
 }) {
   const { module, group } = recordContext(record);
-  // Code font only for data people read as data: the number and the date.
-  const details = [
-    ["Record", recordNumber(record.id), true],
-    ["Customer", record.customer, false],
-    ["Status", record.status, false],
-    ["Assigned to", record.assignee, false],
-    ["Due date", formatDueDate(record.dueDate), true],
-  ] as const;
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex min-h-14 shrink-0 items-center gap-2 border-b px-4">
@@ -59,7 +47,7 @@ export function RecordPanel({
           type="button"
           variant="ghost"
           size="icon"
-          className="ml-auto"
+          className="ml-auto min-h-11 min-w-11"
           aria-label="Close record"
           onClick={onClose}
         >
@@ -78,19 +66,17 @@ export function RecordPanel({
           </h3>
         </div>
         <dl className="border-card-edge overflow-hidden rounded-[calc(var(--radius)*1.25)] border text-sm">
-          {details.map(([label, value, data]) => (
+          {record.fields?.map((field) => (
             <div
-              key={label}
+              key={field.id}
               className="even:bg-muted/40 flex justify-between gap-3 border-b px-3 py-2 last:border-b-0"
             >
-              <dt className="text-muted-foreground">{label}</dt>
+              <dt className="text-muted-foreground">{field.label}</dt>
               <dd
-                className={cn(
-                  "truncate text-right text-sm",
-                  data && "font-mono text-xs leading-5 tabular-nums",
-                )}
+                className="min-w-0 text-right text-sm break-words whitespace-pre-wrap"
+                dir="auto"
               >
-                {value}
+                {field.displayValue}
               </dd>
             </div>
           ))}
@@ -104,7 +90,7 @@ export function RecordPanel({
                   <button
                     type="button"
                     onClick={() => onJump(mention.messageId)}
-                    className="hover:bg-muted focus-visible:outline-ring flex w-full flex-col gap-0.5 rounded-[var(--radius)] px-2 py-1.5 text-left outline-none focus-visible:outline-2"
+                    className="hover:bg-muted focus-visible:outline-ring flex min-h-11 w-full flex-col gap-0.5 rounded-[var(--radius)] px-2 py-1.5 text-left outline-none focus-visible:outline-2"
                   >
                     <span className="text-xs font-semibold">
                       {mention.conversationName} · {mention.author}

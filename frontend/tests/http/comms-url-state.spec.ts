@@ -149,6 +149,7 @@ test("Comms mobile Escape dismisses a reply-only deep link without reopening it 
   const root = page
     .getByRole("article")
     .filter({ hasText: "Root for the mobile reply link" });
+  const rootId = await root.getAttribute("id");
   await root.getByRole("button", { name: /^Message actions:/ }).click();
   await page
     .getByRole("menuitem", { name: "Create thread", exact: true })
@@ -175,9 +176,10 @@ test("Comms mobile Escape dismisses a reply-only deep link without reopening it 
     (url) =>
       url.searchParams.get("conversation") === conversationId &&
       url.searchParams.get("panel") === "none" &&
-      !url.searchParams.has("message") &&
+      url.searchParams.get("message") === rootId &&
       !url.searchParams.has("thread"),
   );
+  await expect(root).toBeFocused();
   await expect(
     page.getByRole("heading", { name: "url-workshop", exact: true }),
   ).toBeVisible();

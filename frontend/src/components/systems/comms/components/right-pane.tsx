@@ -1,5 +1,7 @@
 "use client";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Alert } from "@/components/ui/alert";
+import { Action } from "../../shared/components/ui";
 import dynamic from "next/dynamic";
 import { MembersPanel } from "./ui";
 import { RecordPanel } from "./record-panel";
@@ -38,7 +40,14 @@ export function RightPane({
   const { isPending } = useCommsCommands();
   const { selected } = navigation;
   const { canView, canParticipate, check, identity, viewerId } = conversation;
-  const allMessages = [...messages, ...threads.flatMap(threadMessages)];
+  const allMessages = [
+    ...new Map(
+      [...messages, ...threads.flatMap(threadMessages)].map((message) => [
+        message.id,
+        message,
+      ]),
+    ).values(),
+  ];
   const record = records.find((item) => item.id === navigation.recordId);
   if (currentThread)
     return (
@@ -87,13 +96,19 @@ export function RightPane({
         }
       />
     );
+  if (navigation.recordId && (!record || !canView))
+    return (
+      <Alert role="alert">
+        <span>Record unavailable</span>
+        <Action onClick={() => navigation.setRecordId("")}>Close record</Action>
+      </Alert>
+    );
   if (record && canView)
     return (
       <RecordPanel
         key={record.id}
         record={record}
-        people={people}
-        mentions={messages
+        mentions={allMessages
           .filter(
             (item) =>
               item.recordId === record.id &&
@@ -115,11 +130,16 @@ export function RightPane({
               .replace(/[*_`]/g, ""),
           }))}
         onJump={(id) => {
-          const target = messages.find((message) => message.id === id);
+          const target = allMessages.find((message) => message.id === id);
+          const thread = threads.find((item) =>
+            item.replies.some((reply) => reply.id === id),
+          );
           if (target)
             navigation.navigate(target.conversation, {
               message: id,
-              panel: wide ? `record:${record.id}` : null,
+              ...(thread
+                ? { thread: thread.id, panel: "thread" }
+                : { panel: wide ? `record:${record.id}` : null }),
             });
         }}
         onClose={() => navigation.setRecordId("")}

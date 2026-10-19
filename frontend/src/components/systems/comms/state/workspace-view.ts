@@ -44,7 +44,13 @@ export async function loadWorkspace(
   const [personal, workspaceSettings, threads] = await Promise.all([
     client.getPersonalPreferences(options),
     client.getSettings({ kind: "workspace" }, options),
-    complete((offset) => client.listThreads({ limit: 100, offset }, options)),
+    Promise.all(
+      [false, true].map((archived) =>
+        complete((offset) =>
+          client.listThreads({ limit: 100, offset, archived }, options),
+        ),
+      ),
+    ).then((pages) => pages.flat()),
   ]);
   config.workspace.settings = settingsView(workspaceSettings.data.overrides);
   config.workspace.capabilities = (

@@ -33,7 +33,7 @@ function CommsScreen({
 }) {
   // Start shared display metadata with the frame, not after history arrives.
   useWorkspaceDisplayRegion();
-  const { channels, messages, threads, records } = useCommsWorkspaceView();
+  const { channels, messages, threads } = useCommsWorkspaceView();
   const allMessages = [...messages, ...threads.flatMap(threadMessages)];
   const navigation = useCommsNavigationState(
     channels[0]?.id,
@@ -60,10 +60,7 @@ function CommsScreen({
           item.conversation === navigation.selected,
       )
     : undefined;
-  const openRecord =
-    canView && !currentThread
-      ? records.find((item) => item.id === navigation.recordId)
-      : undefined;
+  const openRecord = !currentThread && !!navigation.recordId;
   const layout = useCommsPanelLayout({
     preferences,
     hasThread: !!currentThread || !!openRecord,

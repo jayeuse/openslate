@@ -35,7 +35,7 @@ export async function submitCommsDraft(
           conversation_id: conversationId,
           parent_id: rootId ?? null,
           ...request,
-          also_send_to_channel: false,
+          also_send_to_channel: !!rootId && (draft.alsoSendToChannel ?? false),
           send_at: draft.scheduleAt,
         },
         options,
@@ -44,7 +44,10 @@ export async function submitCommsDraft(
       ? client.sendReply(
           conversationId,
           rootId,
-          { ...request, also_send_to_channel: false },
+          {
+            ...request,
+            also_send_to_channel: draft.alsoSendToChannel ?? false,
+          },
           options,
         )
       : client.sendMessage(conversationId, request, options));

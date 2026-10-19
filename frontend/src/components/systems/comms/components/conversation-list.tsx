@@ -17,7 +17,7 @@ import { GroupMark } from "./group-mark";
 import { SampleDataNote } from "./sample-data-note";
 import { CommsMenu } from "./comms-menu";
 import type { CommsDialogsState } from "./comms-dialogs";
-import { newChannel, type Thread } from "../domain/view-model";
+import { newChannel, threadMessages, type Thread } from "../domain/view-model";
 import { recordContext } from "../domain/groups";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 import { useCommsClient } from "../state/client-context";
@@ -46,7 +46,7 @@ export function ConversationList({
   select: (id: string) => void;
   openThread: (thread: Thread, conversation: string) => void;
 }) {
-  const { channels, categories, directs, records, messages } =
+  const { channels, categories, directs, records, messages, threads } =
     useCommsWorkspaceView();
   const { catalog } = useCommsClient();
   const { channel, menuAccess } = conversation;
@@ -72,7 +72,7 @@ export function ConversationList({
   );
   const followedRecords = [
     ...new Map(
-      [...messages]
+      [...messages, ...threads.flatMap(threadMessages)]
         .filter(
           (item) =>
             item.recordId &&

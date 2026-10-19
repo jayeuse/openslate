@@ -318,7 +318,9 @@ export function CommsLayout({
                 <Dialog
                   open
                   onOpenChange={(open) => {
-                    if (!open)
+                    if (!open && rightKind === "thread")
+                      navigation.setThreadId("");
+                    else if (!open)
                       navigation.update({
                         conversation: navigation.selected,
                         panel: "none",
@@ -328,6 +330,7 @@ export function CommsLayout({
                   }}
                 >
                   <DialogContent
+                    finalFocus={rightKind === "thread" ? false : undefined}
                     className={
                       detail
                         ? "h-[calc(100dvh-24px)] max-h-[calc(100dvh-24px)] max-w-lg overflow-hidden p-0"

@@ -77,5 +77,6 @@ export type MessageDraft = {
   mentionsChannel?: boolean;
   mentionsHere?: boolean;
   scheduleAt?: string;
+  alsoSendToChannel?: boolean;
   onFailure?: (error: unknown) => void;
 };

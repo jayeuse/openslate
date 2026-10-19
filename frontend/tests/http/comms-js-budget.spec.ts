@@ -23,8 +23,8 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-// Plan §6: S08 grows at most 5% from the previous committed slice, S07 (1d017316).
-const baselineColdGzipBytes = 578_833;
+// Plan §6: S09 grows at most 5% from the previous committed slice, S08 (b4c3373c).
+const baselineColdGzipBytes = 582_516;
 const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
 // S26 has a separate strict target: below the original S04 baseline, not +5%.
 const s04BaselineColdGzipBytes = 546_979;
@@ -189,14 +189,18 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
     page.getByRole("dialog", { name: "Moderation", exact: true }),
   ).toBeVisible();
   const tools = await checkpoint();
+  const growthBytes = cold.gzip_bytes - baselineColdGzipBytes;
+  const growthPercent = (growthBytes / baselineColdGzipBytes) * 100;
 
   const report = {
-    budget_slice: "S08",
-    previous_committed_slice: "S07@1d017316",
+    budget_slice: "S09",
+    previous_committed_slice: "S08@b4c3373c",
     s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
     s26_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
     baseline_cold_gzip_bytes: baselineColdGzipBytes,
     maximum_cold_gzip_bytes: maximumColdGzipBytes,
+    growth_bytes: growthBytes,
+    growth_percent: growthPercent,
     linked_route_requests: linkedRouteRequests,
     build_id: (await readFile(".next/BUILD_ID", "utf8")).trim(),
     lock_sha256: createHash("sha256")
@@ -223,7 +227,7 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
     contentType: "application/json",
   });
   console.info(
-    `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; limit=${maximumColdGzipBytes} bytes.`,
+    `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; growth=${growthBytes} bytes / ${growthPercent}%; limit=${maximumColdGzipBytes} bytes.`,
   );
   expect(cold.gzip_bytes).toBeLessThanOrEqual(maximumColdGzipBytes);
 });

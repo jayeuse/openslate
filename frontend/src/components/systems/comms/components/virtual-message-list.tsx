@@ -118,7 +118,11 @@ export function VirtualMessageList({
         style={{ height: virtual.getTotalSize() }}
         onFocusCapture={(event) => {
           const article = (event.target as HTMLElement).closest("article");
-          if (article) setFocusedId(article.id);
+          if (article)
+            setFocusedId(
+              article.closest<HTMLElement>("[data-message-id]")?.dataset
+                .messageId ?? article.id,
+            );
         }}
       >
         {virtual.getVirtualItems().map((item) => (

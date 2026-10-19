@@ -120,8 +120,10 @@ export function useCommsNavigationState(
     update({
       conversation: selected,
       thread: id,
-      message: null,
-      panel: id ? "thread" : null,
+      message: id
+        ? null
+        : (threads.find((thread) => thread.id === threadId)?.messageId ?? null),
+      panel: id ? "thread" : "none",
     });
   };
   const setMemberOpen = (action: SetStateAction<boolean>) => {

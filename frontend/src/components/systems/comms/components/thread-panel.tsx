@@ -1,4 +1,4 @@
-import { useRef, useState, type SetStateAction } from "react";
+import { useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import {
   Check,
   Link as LinkIcon,
@@ -13,7 +13,6 @@ import {
   type Thread,
 } from "../domain/view-model";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Empty,
   EmptyDescription,
@@ -21,11 +20,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import {
   MessageScroller,
   MessageScrollerContent,
@@ -43,7 +37,7 @@ import type {
   TimelineActions,
   TimelinePeople,
 } from "./message-shared";
-import { reportCommsError } from "../state/comms-feedback";
+import { reportCommsDone, reportCommsError } from "../state/comms-feedback";
 import { useCommsCommands } from "../state/runtime";
 import {
   createCommsMessageOperations,
@@ -93,6 +87,27 @@ export function ThreadPanel({
 } & TimelinePeople) {
   const { run, isPending } = useCommsCommands();
   const pending = parentPending || isPending();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const canManage = identity.capabilities?.manageThreads.allowed ?? false;
+  const canResolve =
+    canManage ||
+    (identity.membershipRole !== undefined &&
+      identity.membershipRole !== "guest" &&
+      message?.authorId === identity.viewerId);
+  const [alsoSend, setAlsoSend] = useSampleState(
+    `comms-thread-also-send-${thread.id}`,
+    false,
+  );
+  useLayoutEffect(() => {
+    const target = highlightedId
+      ? sectionRef.current?.querySelector<HTMLElement>(
+          `[id="${CSS.escape(highlightedId)}"]`,
+        )
+      : null;
+    (target ?? headingRef.current)?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "center", behavior: "instant" });
+  }, [thread.id, highlightedId]);
   const [replyingToId, setReplyingToId] = useSampleState<string>(
     `comms-thread-reply-${thread.id}`,
     "",
@@ -130,7 +145,7 @@ export function ThreadPanel({
     });
   }
   async function send(draft: MessageDraft): Promise<string | null> {
-    if (!canPost || thread.resolved) return "This thread is read-only.";
+    if (!canPost) return "This thread is read-only.";
     const error = validateDraft?.(draft);
     if (error) return error;
     await run(`reply:${thread.id}`, (client, signal) =>
@@ -144,6 +159,7 @@ export function ThreadPanel({
       ),
     );
     setReplyingTo(null);
+    setAlsoSend(false);
     if (!draft.scheduleAt)
       requestAnimationFrame(() =>
         list.current?.scrollTo({ top: list.current.scrollHeight }),
@@ -152,6 +168,7 @@ export function ThreadPanel({
   }
   return (
     <section
+      ref={sectionRef}
       role="region"
       aria-label="Thread conversation"
       className="flex h-full min-h-0 flex-col"
@@ -159,6 +176,8 @@ export function ThreadPanel({
       <header className="flex min-h-14 shrink-0 items-center gap-2 border-b px-4">
         <MessagesSquare className="size-4" />
         <h3
+          ref={headingRef}
+          tabIndex={-1}
           data-slot="section-title"
           className="min-w-0 flex-1 truncate text-sm font-semibold"
         >
@@ -169,7 +188,7 @@ export function ThreadPanel({
           variant="ghost"
           aria-label="Thread settings"
           onClick={(event) => onSettings?.(event.currentTarget)}
-          disabled={pending}
+          disabled={pending || !canManage}
         >
           <Settings2 className="size-4" />
         </Action>
@@ -177,13 +196,18 @@ export function ThreadPanel({
           size="icon"
           variant="ghost"
           aria-label="Copy thread link"
-          onClick={() => {
-            void navigator.clipboard.writeText(
-              new URL(
-                `/comms?conversation=${encodeURIComponent(thread.conversation ?? message?.conversation ?? "")}&thread=${encodeURIComponent(thread.id)}`,
-                document.baseURI,
-              ).href,
-            );
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(
+                new URL(
+                  `/comms?conversation=${encodeURIComponent(thread.conversation ?? message?.conversation ?? "")}&thread=${encodeURIComponent(thread.id)}`,
+                  document.baseURI,
+                ).href,
+              );
+              reportCommsDone("Thread link copied.");
+            } catch {
+              setNotice("The thread link could not be copied. Try again.");
+            }
           }}
         >
           <LinkIcon className="size-4" />
@@ -191,7 +215,7 @@ export function ThreadPanel({
         <Action
           size="sm"
           variant="ghost"
-          disabled={archived || pending}
+          disabled={pending || !canResolve}
           aria-label={thread.resolved ? "Reopen thread" : "Resolve thread"}
           onClick={() => {
             void Promise.resolve(onChange({ resolved: !thread.resolved })).then(
@@ -223,9 +247,9 @@ export function ThreadPanel({
         <p className="text-muted-foreground mt-1 line-clamp-3 text-xs leading-5">
           {message?.text}
         </p>
-        {thread.resolved && (
-          <Badge className="mt-2">{archived ? "Archived" : "Resolved"}</Badge>
-        )}
+        {thread.resolved && <Badge className="mt-2">Resolved</Badge>}
+        {thread.locked && <Badge className="mt-2 ml-1">Locked</Badge>}
+        {archived && <Badge className="mt-2 ml-1">Archived</Badge>}
       </div>
       <MessageScrollerProvider autoScroll={false} defaultScrollPosition="start">
         <MessageScroller className="min-h-0 flex-1">
@@ -272,29 +296,32 @@ export function ThreadPanel({
           </MessageScrollerViewport>
         </MessageScroller>
       </MessageScrollerProvider>
-      <Collapsible className="text-muted-foreground shrink-0 border-t px-4 py-2 text-xs">
-        <CollapsibleTrigger
-          render={<Button variant="ghost" size="sm" className="px-0" />}
+      <div className="text-muted-foreground flex shrink-0 flex-wrap items-center gap-2 border-t px-4 py-2 text-xs">
+        <Action
+          size="sm"
+          variant="ghost"
+          aria-label={thread.subscribed ? "Unfollow thread" : "Follow thread"}
+          aria-pressed={thread.subscribed}
+          disabled={pending}
+          onClick={() =>
+            void Promise.resolve(
+              onChange({ subscribed: !thread.subscribed }),
+            ).then((error) => {
+              if (error) setNotice(error);
+            })
+          }
         >
-          Thread notifications
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <Toggle
-            control="switch"
-            label="Notify me of new replies"
-            checked={thread.subscribed}
-            disabled={pending}
-            onCheckedChange={(checked) => {
-              void Promise.resolve(onChange({ subscribed: checked })).then(
-                (error) => {
-                  if (error) setNotice(error);
-                },
-              );
-            }}
-          />
-        </CollapsibleContent>
-      </Collapsible>
+          {thread.subscribed ? "Following" : "Follow"}
+        </Action>
+        <Toggle
+          label="Also send to channel"
+          checked={alsoSend}
+          onCheckedChange={setAlsoSend}
+          disabled={!canPost || pending}
+        />
+      </div>
       <MessageComposer
+        alsoSendToChannel={alsoSend}
         rootId={thread.messageId}
         onEditLast={(message) => {
           setEditRequest(message);
@@ -307,13 +334,13 @@ export function ThreadPanel({
         settings={identity.settings}
         label="Thread reply"
         sendLabel="Send reply"
-        canPost={canPost && !thread.resolved}
+        canPost={canPost}
         conversationName="this thread"
         unavailableReason={
           archived
             ? "This thread is archived. Restore it in thread settings to reply."
-            : thread.resolved
-              ? "This thread is resolved. Reopen it to reply."
+            : thread.locked
+              ? "This thread is locked. Unlock it in thread settings to reply."
               : "Your role cannot post in this thread."
         }
         records={records}

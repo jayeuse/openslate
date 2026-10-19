@@ -5,7 +5,8 @@ import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { presenceLabel, type Presence } from "../domain/view-model";
-import { Avatar, ProfilePopover } from "./floating";
+import { Avatar } from "./floating";
+import { PersonLink } from "./person-link";
 import { Action } from "../../shared/components/ui";
 
 export function MembersPanel({
@@ -53,48 +54,53 @@ export function MembersPanel({
         value={search}
         onChange={(event) => setSearch(event.target.value)}
       />
-      {([false, true] as const).map((offline) => {
+      {(["Online", "Away", "Offline"] as const).map((status) => {
         const group = filtered.filter(
-          (person) =>
-            (presenceLabel(presence, person.id) === "Offline") === offline,
+          (person) => presenceLabel(presence, person.id) === status,
         );
         return (
-          <section key={String(offline)} className="mt-2">
+          <section
+            key={status}
+            aria-label={`${status} members`}
+            className="mt-2"
+          >
             <h4 className="text-muted-foreground mb-2 text-xs font-semibold">
-              {offline ? "Offline" : "Online"}
+              {status}
               <span aria-hidden="true"> — {group.length}</span>
             </h4>
             <div className="flex flex-col gap-1">
               {group.map((person) => (
-                <ProfilePopover
-                  key={person.id}
-                  person={person}
-                  roleName={
-                    roles.find((role) => role.id === person.role)?.name ??
-                    "Unassigned"
-                  }
-                  presence={presenceLabel(presence, person.id)}
-                  onMessage={onDirect}
-                  className={cn(
-                    "hover:bg-muted min-h-12 w-full gap-3 px-1.5 py-1",
-                    offline && "text-muted-foreground",
-                  )}
-                >
-                  <Avatar
-                    name={person.name}
+                <div key={person.id}>
+                  <PersonLink
+                    person={person}
+                    roleName={
+                      roles.find((role) => role.id === person.role)?.name ??
+                      "Unassigned"
+                    }
                     presence={presenceLabel(presence, person.id)}
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">
-                      {person.name}
+                    onMessage={onDirect}
+                    className={cn(
+                      "hover:bg-muted min-h-12 w-full gap-3 px-1.5 py-1",
+                      status === "Offline" && "text-muted-foreground",
+                    )}
+                  >
+                    <Avatar
+                      name={person.name}
+                      presence={presenceLabel(presence, person.id)}
+                    />
+                    <span className="min-w-0">
+                      <bdi className="block truncate text-sm font-medium">
+                        {person.name}
+                      </bdi>
                     </span>
-                    <span className="text-muted-foreground block truncate text-xs">
-                      {roles.find((role) => role.id === person.role)?.name ??
-                        "Unassigned"}{" "}
-                      · {presenceLabel(presence, person.id)}
-                    </span>
-                  </span>
-                </ProfilePopover>
+                  </PersonLink>
+                  <p className="text-muted-foreground pl-12 text-xs">
+                    <bdi>
+                      {person.departments.join(", ") || "No department"}
+                    </bdi>{" "}
+                    · {status}
+                  </p>
+                </div>
               ))}
             </div>
           </section>

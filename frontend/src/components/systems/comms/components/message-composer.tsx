@@ -85,6 +85,7 @@ export function MessageComposer({
   onCancelReply,
   onSend,
   rootId,
+  alsoSendToChannel = false,
   onEditLast,
   pending = false,
   preferences = DEFAULT_COMMS_PREFERENCES,
@@ -103,6 +104,7 @@ export function MessageComposer({
   onCancelReply: () => void;
   onSend: (draft: MessageDraft) => string | null | Promise<string | null>;
   rootId?: string;
+  alsoSendToChannel?: boolean;
   onEditLast?: (message: { id: string; text: string }) => void;
   pending?: boolean;
   preferences?: CommsPreferences;
@@ -404,6 +406,7 @@ export function MessageComposer({
             mentionsChannel,
             mentionsHere,
             sendAt,
+            alsoSendToChannel,
           });
           if (sendIdentity.current?.draft !== fingerprint)
             sendIdentity.current = {
@@ -426,6 +429,7 @@ export function MessageComposer({
             mentionsChannel,
             mentionsHere,
             scheduleAt: sendAt,
+            alsoSendToChannel,
             onFailure: (error) => {
               const failure = composerFailure(error);
               if (

@@ -19,7 +19,8 @@ import {
   type Message,
   type Thread,
 } from "../domain/view-model";
-import { Avatar, MessageMenu, ProfilePopover } from "./floating";
+import { Avatar, MessageMenu } from "./floating";
+import { PersonLink } from "./person-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -112,18 +113,6 @@ function TableGlyph() {
       <path d="M2 6.5h12M6.5 6.5v7" />
     </svg>
   );
-}
-
-/** A record's due date in the viewer's own date format. */
-export function formatDueDate(value: string): string {
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleDateString([], {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
 }
 
 type TimelineProps = {
@@ -368,6 +357,10 @@ const TimelineRow = memo(function TimelineRow({
   setEditText: (text: string) => void;
 }) {
   const { client } = useCommsClient();
+  const domId =
+    position !== undefined && message.parentId
+      ? `channel-${message.id}`
+      : message.id;
   const lifetime = useRef<AbortController | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   useEffect(() => {
@@ -383,7 +376,7 @@ const TimelineRow = memo(function TimelineRow({
     requestAnimationFrame(() => {
       if (!lifetime.current?.signal.aborted)
         document
-          .getElementById(message.id)
+          .getElementById(domId)
           ?.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')
           ?.focus({ preventScroll: true });
     });
@@ -428,7 +421,7 @@ const TimelineRow = memo(function TimelineRow({
         position={position}
         pageSize={pageSize}
         onOpen={() => setNow(Date.now())}
-        id={message.id}
+        id={domId}
         highlighted={highlightedId === message.id}
         className={cn(
           "hover:bg-muted/40 px-3",
@@ -501,7 +494,8 @@ const TimelineRow = memo(function TimelineRow({
             <MessageHeader className="text-foreground mb-1 gap-3 px-0 pr-8">
               {preferences.avatars &&
                 (person ? (
-                  <ProfilePopover
+                  <PersonLink
+                    avatarOnly
                     person={person}
                     roleName={roleName}
                     presence={presenceLabel(presence, person.id)}
