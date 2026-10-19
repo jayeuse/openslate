@@ -136,6 +136,7 @@ type TimelineProps = {
   mutable: boolean;
   readBoundary?: number;
   firstUnread?: number | null;
+  editRequest?: { id: string; text: string };
   hasOlder?: boolean;
   viewportRef?: RefObject<HTMLDivElement | null>;
   restoreAnchor?: (align: (id: string, top: number) => boolean) => void;
@@ -200,6 +201,12 @@ export function MessageTimeline(props: TimelineProps) {
   } = props;
   const [editing, setEditing] = useState("");
   const [editText, setEditText] = useState("");
+  useEffect(() => {
+    if (props.editRequest) {
+      setEditing(props.editRequest.id);
+      setEditText(props.editRequest.text);
+    }
+  }, [props.editRequest]);
   const latest = useRef(props);
   useLayoutEffect(() => {
     latest.current = props;
@@ -503,7 +510,9 @@ const TimelineRow = memo(function TimelineRow({
                 ) : (
                   <Avatar name={authorName} />
                 ))}
-              <strong className="min-w-0 truncate text-sm">{authorName}</strong>
+              <strong className="min-w-0 truncate text-sm">
+                <bdi>{authorName}</bdi>
+              </strong>
               {preferences.timestamps !== "none" && (
                 <span className="text-muted-foreground shrink-0 text-xs">
                   {timestamp}
@@ -584,6 +593,7 @@ const TimelineRow = memo(function TimelineRow({
               </form>
             ) : (
               <p
+                dir="auto"
                 className={cn(
                   "leading-6 break-words whitespace-pre-wrap",
                   preferences.textSize === "small"

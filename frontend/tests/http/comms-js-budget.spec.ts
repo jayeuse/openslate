@@ -23,8 +23,11 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-const baselineColdGzipBytes = 546_979;
+// Plan §6: S08 grows at most 5% from the previous committed slice, S07 (1d017316).
+const baselineColdGzipBytes = 578_833;
 const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
+// S26 has a separate strict target: below the original S04 baseline, not +5%.
+const s04BaselineColdGzipBytes = 546_979;
 
 function manifestChunks(value: unknown): string[] {
   if (typeof value === "string") {
@@ -188,6 +191,10 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
   const tools = await checkpoint();
 
   const report = {
+    budget_slice: "S08",
+    previous_committed_slice: "S07@1d017316",
+    s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
+    s26_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
     baseline_cold_gzip_bytes: baselineColdGzipBytes,
     maximum_cold_gzip_bytes: maximumColdGzipBytes,
     linked_route_requests: linkedRouteRequests,

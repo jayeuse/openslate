@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Hash, MessageSquare } from "lucide-react";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { Alert } from "@/components/ui/alert";
@@ -59,6 +59,11 @@ export function ConversationView({
   } = conversation;
   const { selected, messageList, messageId, replyingTo, setReplyingTo } =
     navigation;
+  const [editRequest, setEditRequest] = useState<{
+    id: string;
+    text: string;
+  }>();
+  useEffect(() => setEditRequest(undefined), [selected]);
   const history = useCommsHistory(selected, messageId, canView, messageList);
   const records = history.records;
   const allMessages = useMemo(
@@ -280,6 +285,7 @@ export function ConversationView({
               }
               key={selected}
               viewportRef={messageList}
+              editRequest={editRequest}
               restoreAnchor={history.restore}
               targetId={messageId}
               followLatest={history.followLatest}
@@ -404,6 +410,10 @@ export function ConversationView({
         }
         records={records}
         onSend={send}
+        onEditLast={(message) => {
+          setEditRequest(message);
+          jumpToMessage(message.id);
+        }}
         pending={navigation.navigating || isPending(`message:send:${selected}`)}
       />
       <p role="status" className="sr-only">

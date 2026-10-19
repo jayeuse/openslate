@@ -19,23 +19,39 @@ export async function submitCommsDraft(
     body: draft.text,
     attachment_ids: draft.files.map((file) => file.id),
     record_ids: draft.recordId ? [draft.recordId] : [],
-    mention_user_ids: [],
-    mentions_channel: false,
-    mentions_here: false,
+    mention_user_ids: draft.mentionUserIds ?? [],
+    mentions_channel: draft.mentionsChannel ?? false,
+    mentions_here: draft.mentionsHere ?? false,
     reply_to_id: replyToId,
   };
   const signals = [signal, draft.signal].filter(
     (value): value is AbortSignal => value !== undefined,
   );
   const options = signals.length ? { signal: AbortSignal.any(signals) } : {};
-  return rootId
-    ? client.sendReply(
-        conversationId,
-        rootId,
-        { ...request, also_send_to_channel: false },
+  try {
+    if (draft.scheduleAt)
+      return await client.createSchedule(
+        {
+          conversation_id: conversationId,
+          parent_id: rootId ?? null,
+          ...request,
+          also_send_to_channel: false,
+          send_at: draft.scheduleAt,
+        },
         options,
-      )
-    : client.sendMessage(conversationId, request, options);
+      );
+    return await (rootId
+      ? client.sendReply(
+          conversationId,
+          rootId,
+          { ...request, also_send_to_channel: false },
+          options,
+        )
+      : client.sendMessage(conversationId, request, options));
+  } catch (error) {
+    draft.onFailure?.(error);
+    throw error;
+  }
 }
 export function createCommsMessageOperations({
   run,
@@ -174,8 +190,8 @@ export function createCommsMessageOperations({
     );
     if (!error) {
       setReplyingTo(null);
-      announce("Message sent.");
-      requestAnimationFrame(() => scrollToLatest());
+      announce(draft.scheduleAt ? "Message scheduled." : "Message sent.");
+      if (!draft.scheduleAt) requestAnimationFrame(() => scrollToLatest());
     }
     return error;
   }

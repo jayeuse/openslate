@@ -1,4 +1,4 @@
-import { useRef, type SetStateAction } from "react";
+import { useRef, useState, type SetStateAction } from "react";
 import {
   Check,
   Link as LinkIcon,
@@ -98,6 +98,10 @@ export function ThreadPanel({
     "",
   );
   const list = useRef<HTMLDivElement>(null);
+  const [editRequest, setEditRequest] = useState<{
+    id: string;
+    text: string;
+  }>();
   const replies = threadMessages(thread);
   const replyingTo =
     [...allMessages, ...replies].find(
@@ -140,9 +144,10 @@ export function ThreadPanel({
       ),
     );
     setReplyingTo(null);
-    requestAnimationFrame(() =>
-      list.current?.scrollTo({ top: list.current.scrollHeight }),
-    );
+    if (!draft.scheduleAt)
+      requestAnimationFrame(() =>
+        list.current?.scrollTo({ top: list.current.scrollHeight }),
+      );
     return null;
   }
   return (
@@ -227,6 +232,7 @@ export function ThreadPanel({
           <MessageScrollerViewport ref={list} aria-label="Thread messages">
             <MessageScrollerContent className="gap-0 pb-4">
               <MessageTimeline
+                editRequest={editRequest}
                 visibleMessages={replies}
                 allMessages={[...allMessages, ...replies]}
                 records={records}
@@ -289,6 +295,11 @@ export function ThreadPanel({
         </CollapsibleContent>
       </Collapsible>
       <MessageComposer
+        rootId={thread.messageId}
+        onEditLast={(message) => {
+          setEditRequest(message);
+          onJump(message.id);
+        }}
         key={thread.id}
         id={thread.id}
         conversationId={thread.conversation}

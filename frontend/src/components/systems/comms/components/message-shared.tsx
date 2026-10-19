@@ -73,4 +73,9 @@ export type MessageDraft = {
   text: string;
   files: LocalAttachment[];
   recordId: string;
+  mentionUserIds?: string[];
+  mentionsChannel?: boolean;
+  mentionsHere?: boolean;
+  scheduleAt?: string;
+  onFailure?: (error: unknown) => void;
 };
