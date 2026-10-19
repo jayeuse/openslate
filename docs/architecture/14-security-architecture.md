@@ -64,6 +64,15 @@ Storage write. Downloads are served as attachments with `nosniff`. OpenSlate
 runs no antivirus scan; type validation is not malware detection. A private
 bucket or privileged Storage key does not replace application authorization.
 
+Conversation attachments use the same inventory and private bucket with a
+`comms_attachment` purpose and an organization-bound conversation parent.
+[Comms file admission](../../backend/app/systems/comms/files/access.py) requires
+current conversation access; uploads additionally require the uploader and
+`attachFiles` capability. Transfers recheck authority after provider I/O. Generic
+UUID-only file reads do not expose conversation files, and existing administrator
+reconciliation also requires current private-parent access. Retained message links
+block file/source-record purge without exposing private conversation identifiers.
+
 Encrypted [backup exports](../../backend/app/systems/manage/backups/downloads.py)
 require an eligible administrator and current-password reauthentication through
 Supabase Auth. Admission is a short-lived, single-use handle bound to the actor,

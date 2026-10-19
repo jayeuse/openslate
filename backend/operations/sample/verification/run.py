@@ -14,6 +14,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from operations.sample.client import SampleClient
+from operations.sample.controls.comms_content_verification import verify_content_runs
 from operations.sample.controls.comms_settings import verify_settings_runs
 from operations.sample.controls.verification import configuration_mappings, verify_controls
 from operations.sample.packs.interface import OrganizationPack
@@ -307,6 +308,12 @@ def verify_sample_data(
                 )
                 observed.update(settings_counts)
                 issues.extend(settings_issues)
+                content_counts, content_issues = verify_content_runs(
+                    client, dataset, manifest, expected_admin_id, api_url=api_url, origin=origin,
+                    journal=journal, admin_login=(admin_email, admin_password),
+                )
+                observed.update(content_counts)
+                issues.extend(content_issues)
                 try:
                     configuration_maps = configuration_mappings(manifest, dataset)
                 except SampleVerificationError:

@@ -1,32 +1,29 @@
 """The eight S17 message routes; configuration, revision reads and S18 remain separate."""
 
-from datetime import datetime
 from hashlib import sha256
-from math import ceil
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Response
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.common.dependencies.auth import get_account_user, get_current_membership
 from app.core.base_model import utc_now
 from app.core.database.organization_scope import bound_organization_column
 from app.core.database.session import AuditSession, get_db
-from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.comms.access import (
-    LEVELS,
-    _conversation_access_statement,
-    conversation_reader_statement,
     error,
     require_conversation_access,
 )
 from app.systems.comms.capabilities import capability_check
-from app.systems.comms.conversations.models import CommsConversation, CommsMember
+from app.systems.comms.messages.admission import mentions as _mentions
+from app.systems.comms.messages.admission import posting_context as _posting_context
 from app.systems.comms.messages.bootstrap import bootstrap
+from app.systems.comms.messages.commands import send
 from app.systems.comms.messages.interaction_models import CommsMention
+from app.systems.comms.messages.link_models import CommsMessageAttachment, CommsMessageRecordLink
 from app.systems.comms.messages.models import (
     CommsConversationCounter,
     CommsMessage,
@@ -46,16 +43,8 @@ from app.systems.comms.messages.schemas import (
     SendRequest,
     Tombstone,
 )
-from app.systems.comms.messages.service import (
-    MAX_SEQUENCE,
-    InvalidSend,
-    SendConflict,
-    SendMessageCommand,
-    SendRateLimited,
-    send_message,
-)
+from app.systems.comms.messages.service import MAX_SEQUENCE
 from app.systems.comms.settings.models import CommsMemberPreferences
-from app.systems.comms.settings.resolution import Scope, resolve_settings
 
 VERSION_HEADERS = {
     "ETag": {"description": "Opaque response validator", "schema": {"type": "string"}}
@@ -105,91 +94,6 @@ def _counter(db: AuditSession, conversation_id: UUID) -> CommsConversationCounte
     if row is None:
         raise error("comms_not_found", "Conversation not found")
     return row
-
-
-def _posting_context(
-    db: AuditSession,
-    user: User,
-    conversation_id: UUID,
-) -> tuple[CommsConversation, dict[str, Any], dict[str, Any]]:
-    policy = _conversation_access_statement(
-        select(CommsConversation.id).where(CommsConversation.id == conversation_id),
-        [user.id],
-    ).subquery()
-    row = db.execute(
-        select(CommsConversation, policy.c.level, policy.c.role)
-        .join(
-            policy,
-            policy.c.conversation_id == CommsConversation.id,
-        )
-        .where(CommsConversation.org_id == bound_organization_column(), policy.c.level > 0)
-        .execution_options(populate_existing=True)
-    ).first()
-    if row is None:
-        raise error("comms_not_found", "Conversation not found")
-    conversation, level, role = row
-    check = {"conversation_level": LEVELS[level], "membership_role": role}
-    scope: Scope = (
-        {"kind": "channel", "id": conversation_id}
-        if conversation.kind == "channel"
-        else {
-            "kind": "workspace",
-        }
-    )
-    settings = resolve_settings(db, scope)["effective"]
-    until = settings["restriction_until"]
-    restricted = str(user.id) in settings["restricted_person_ids"] and (
-        until is None or datetime.fromisoformat(until.replace("Z", "+00:00")) > utc_now()
-    )
-    if (
-        check["membership_role"] == "guest"
-        or conversation.archived_at
-        or settings["locked"]
-        or restricted
-    ):
-        raise error("comms_post_denied", "Posting is not allowed", 403)
-    if conversation.kind == "direct":
-        require_conversation_access(db, user, conversation_id, "post")
-    return conversation, check, settings
-
-
-def _mentions(
-    db: AuditSession,
-    user: User,
-    conversation_id: UUID,
-    request: SendRequest | EditRequest,
-    settings: dict[str, Any],
-) -> None:
-    if request.mentions_channel or request.mentions_here:
-        capabilities = capability_check(db, user, conversation_id)["capabilities"]
-        if not capabilities["mentionChannel"]["allowed"]:
-            raise error("comms_capability_denied", "Capability required", 403)
-    count = len(request.mention_user_ids) + request.mentions_channel + request.mentions_here
-    if settings["mention_limit"] and count > settings["mention_limit"]:
-        raise error("comms_invalid_input", "Mention limit exceeded", 422)
-    ids = set(request.mention_user_ids)
-    if ids:
-        members = set(
-            db.scalars(
-                select(CommsMember.user_id).where(
-                    CommsMember.org_id == bound_organization_column(),
-                    CommsMember.conversation_id == conversation_id,
-                    CommsMember.user_id.in_(ids),
-                    CommsMember.is_deleted.is_(False),
-                    CommsMember.deleted_at.is_(None),
-                )
-            )
-        )
-        readable = set(
-            db.scalars(
-                conversation_reader_statement(
-                    select(CommsConversation.id).where(CommsConversation.id == conversation_id),
-                    ids,
-                )
-            )
-        )
-        if ids != members or ids != readable:
-            raise error("comms_invalid_input", "Mention target unavailable", 422)
 
 
 @router.get("/bootstrap", response_model=BootstrapResponse)
@@ -267,86 +171,13 @@ def create_message(
     user: Actor,
     response: Response,
 ) -> LiveMessage | Tombstone:
-    org_id = bound_organization(db)
-    if (
-        db.scalar(
-            select(CommsConversation.id).where(
-                CommsConversation.org_id == bound_organization_column(),
-                CommsConversation.id == conversation_id,
-                CommsConversation.is_deleted.is_(False),
-                CommsConversation.deleted_at.is_(None),
-            )
+    message, replayed = send(db, user, conversation_id, request)
+    response.status_code = 200 if replayed else 201
+    if not replayed:
+        response.headers["Location"] = (
+            f"/api/comms/conversations/{conversation_id}/messages/{message.id}"
         )
-        is None
-    ):
-        raise error("comms_not_found", "Conversation not found")
-
-    def authorize(replayed: bool) -> None:
-        if replayed:
-            require_conversation_access(db, user, conversation_id, "read")
-            return
-        conversation, check, settings = _posting_context(db, user, conversation_id)
-        if check["conversation_level"] == "read":
-            raise error("comms_post_denied", "Posting is not allowed", 403)
-        if conversation.kind == "channel" and (
-            settings["mode"] == "thread-first"
-            or settings["mode"] == "announcements"
-            and check["conversation_level"] != "manage"
-        ):
-            raise error("comms_post_denied", "Posting is not allowed", 403)
-        if settings["require_record_link"]:
-            raise error("comms_invalid_input", "A record link is required", 422)
-        _mentions(db, user, conversation_id, request, settings)
-        if request.reply_to_id is not None:
-            quoted = get_message(db, conversation_id, message_id=request.reply_to_id)
-            if quoted.is_deleted or quoted.deleted_at:
-                raise error("comms_not_found", "Message not found")
-        if settings["slow_mode_seconds"]:
-            latest = db.scalar(
-                select(func.max(CommsMessage.created_at)).where(
-                    CommsMessage.org_id == bound_organization_column(),
-                    CommsMessage.conversation_id == conversation_id,
-                    CommsMessage.author_id == user.id,
-                )
-            )
-            if latest is not None:
-                remaining = settings["slow_mode_seconds"] - (utc_now() - latest).total_seconds()
-                if remaining > 0:
-                    refused = error("comms_slow_mode", "Wait before sending again", 429)
-                    refused.headers = {"Retry-After": str(ceil(remaining))}
-                    raise refused
-
-    try:
-        result = send_message(
-            db,
-            org_id=org_id,
-            author_id=user.id,
-            conversation_id=conversation_id,
-            command=SendMessageCommand(**request.model_dump()),
-            authorize=authorize,
-        )
-        message = project_messages(db, user.id, [result.message])[0]
-        if not result.replayed and not isinstance(message, LiveMessage):
-            raise error("comms_unavailable", "Message changed before acknowledgement", 503)
-        response.status_code = 200 if result.replayed else 201
-        if not result.replayed:
-            response.headers["Location"] = (
-                f"/api/comms/conversations/{conversation_id}/messages/{message.id}"
-            )
-        return _version(response, message)
-    except SendRateLimited as exc:
-        refused = error("comms_rate_limited", "Wait before sending again", 429)
-        refused.headers = {"Retry-After": str(exc.retry_after)}
-        raise refused from exc
-    except SendConflict as exc:
-        raise error(
-            "comms_idempotency_mismatch", "Client key identifies a different send", 409
-        ) from exc
-    except InvalidSend as exc:
-        raise error("comms_invalid_input", "Message cannot be sent", 422) from exc
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise error("comms_unavailable", "Message unavailable", 503) from exc
+    return _version(response, message)
 
 
 def _change_message(
@@ -375,6 +206,11 @@ def _change_message(
     if own and minutes and (utc_now() - message.created_at).total_seconds() > minutes * 60:
         raise error("comms_post_denied", "Message change window has ended", 403)
     if request is not None:
+        if not request.body.strip() and not any(db.scalar(select(model.id).where(
+            model.org_id == bound_organization_column(), model.message_id == message_id,
+            model.is_deleted.is_(False),
+        ).limit(1)) for model in (CommsMessageAttachment, CommsMessageRecordLink)):
+            raise error("comms_message_empty", "Message is empty", 422)
         _mentions(db, user, conversation_id, request, settings)
         db.add(
             CommsMessageRevision(

@@ -68,7 +68,7 @@ The route guard keeps these exact authenticator-dependent routes in `INTERACTIVE
 - `POST /api/auth/mfa/factors/{factor_id}/verification` — real authenticator verification.
 - `DELETE /api/auth/mfa/factors/{factor_id}` — factor removal in the same provider acceptance journey.
 
-Real-provider interactive acceptance owns those three routes. Their count and reasons are reported separately; sample journals cannot claim executed pack coverage for them. There is no blanket MFA-prefix exemption. MFA status and workspace policy read/update remain required executable routes. Phase G's deferred scope includes notifications, language, licensing activation, and Comms beyond the structure/message/settings exceptions below. Board attachment routes are executed controls.
+Real-provider interactive acceptance owns those three routes. Their count and reasons are reported separately; sample journals cannot claim executed pack coverage for them. There is no blanket MFA-prefix exemption. MFA status and workspace policy read/update remain required executable routes. Phase G's deferred scope includes notifications, language, licensing activation, and later Comms features beyond the implemented controls below. Board attachment routes are executed controls.
 
 ### OpenComms structure, message and settings controls
 
@@ -77,6 +77,8 @@ Real-provider interactive acceptance owns those three routes. Their count and re
 `message_roundtrip` consumes an explicitly owned `comms_conversations` mapping at `primary:comms:messages`; it never chooses an arbitrary existing channel or creates structure through SQL. It reads bootstrap, sends a new message, reads it by ID and sequence, edits without an `If-Match` dependency, verifies current replay and keyset history, advances the actor's read watermark, and deletes its message as a verified tombstone. Message text uses the pack's workspace identity. Each mutation retains its actual request evidence, and read coverage comes from the HTTP journal. Conversation population remains a separate structure operation; readable revision history remains S22 work. See `backend/operations/sample/controls/comms.py`.
 
 `preferences_settings` and `partner_preferences_settings` consume the owned conversation/category mappings. They exercise all three private preference families without `If-Match`, ordinary settings patch/reset and local capability replacement at all three scopes, workspace setting/capability locks, and canonical own/person/creation checks. Each change is read back and restored; shared changes use the latest response ETag. Final verification reads both organizations through separately bound authenticated clients and checks the owned readback set. These controls do not write retention, templates or protected configuration history. Source: `backend/operations/sample/controls/comms_settings.py`.
+
+`s18_content` and `partner_s18_content` reserve, upload, associate and download a valid private file, create a thread, send and replay a quoted reply, exercise follow/reaction off→on, update thread metadata, and pin/read their owned message. The primary journey links its explicitly mapped pack record and reads its current card. The partner has no catalog producer and never reuses primary record/module IDs: its record-reference list is read, but no partner record-card creation is claimed. Final verification uses separately bound clients for retained messages, threads and file bytes. Source: `backend/operations/sample/controls/comms_content.py` and `comms_content_verification.py`.
 
 ### Boards
 

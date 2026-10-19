@@ -38,15 +38,21 @@ class File(BaseModel):
             ["org_id", "department_id"], ["departments.org_id", "departments.id"],
             name="fk_files_department_id_departments", ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["org_id", "conversation_id"], ["comms_conversations.org_id", "comms_conversations.id"],
+            name="fk_files_conversation_id_comms_conversations", ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "(purpose = 'record_attachment' AND record_id IS NOT NULL "
-            "AND board_id IS NULL AND department_id IS NULL) OR "
+            "AND board_id IS NULL AND department_id IS NULL AND conversation_id IS NULL) OR "
             "(purpose = 'board_attachment' AND board_id IS NOT NULL "
-            "AND record_id IS NULL AND department_id IS NULL) OR "
+            "AND record_id IS NULL AND department_id IS NULL AND conversation_id IS NULL) OR "
             "(purpose = 'library_document' AND department_id IS NOT NULL "
-            "AND record_id IS NULL AND board_id IS NULL) OR "
+            "AND record_id IS NULL AND board_id IS NULL AND conversation_id IS NULL) OR "
+            "(purpose = 'comms_attachment' AND conversation_id IS NOT NULL "
+            "AND record_id IS NULL AND board_id IS NULL AND department_id IS NULL) OR "
             "(purpose IN ('workspace_logo','user_avatar') AND record_id IS NULL "
-            "AND board_id IS NULL AND department_id IS NULL)",
+            "AND board_id IS NULL AND department_id IS NULL AND conversation_id IS NULL)",
             name="ck_files_purpose_parent",
         ),
         CheckConstraint(
@@ -96,6 +102,7 @@ class File(BaseModel):
     record_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     board_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     department_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
+    conversation_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     creator_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,

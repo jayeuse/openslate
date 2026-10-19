@@ -8,6 +8,8 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.core.database.organization_scope import bound_organization_column
+from app.systems.comms.messages.link_models import CommsMessageRecordLink
 from app.systems.openview.views.models import SavedView
 from app.systems.platform.files.models import File
 from app.systems.sandbox.lifecycle.access_dependencies import (
@@ -63,6 +65,30 @@ def _owned_terminal_event(event: RecordTriggerEvent, record_ids: list[UUID]) -> 
         TriggerEventState.SUCCEEDED,
         TriggerEventState.FAILED,
     }
+
+
+def _comms_reference_blockers(
+    db: Session, records: list[UUID], modules: list[UUID]
+) -> list[LifecycleBlocker]:
+    if not records and not modules:
+        return []
+    links = db.execute(
+        select(CommsMessageRecordLink.record_id, CommsMessageRecordLink.module_id).where(
+            CommsMessageRecordLink.org_id == bound_organization_column(),
+            or_(CommsMessageRecordLink.record_id.in_(records),
+                CommsMessageRecordLink.module_id.in_(modules)),
+        )
+    ).all()
+    # Retained links are FK dependencies even after message deletion. Report only
+    # the caller's source target, never a private conversation, message or link ID.
+    targets = {("records", record) if record in records else ("modules", module)
+               for record, module in links}
+    return [LifecycleBlocker(
+        code=LifecycleBlockerCode.PURGE_EXTERNAL_SCHEMA_DEPENDENCY,
+        entity_type=kind, entity_id=identity,
+        detail=("Retained content references this source; remove those references "
+                "through their supported lifecycle before purging"),
+    ) for kind, identity in sorted(targets)]
 
 
 def load_purge_dependencies(
@@ -284,6 +310,7 @@ def load_purge_dependencies(
     rows = access_rows + board_rows
     rows += record_link_rows + report_rows + board_widget_rows + chart_rows
     blockers = board_blockers + record_link_blockers
+    blockers += _comms_reference_blockers(db, record_ids, module_ids)
     blockers += report_blockers + board_widget_blockers + chart_blockers
     for file in files:
         state = row_state("files", file)
@@ -296,6 +323,7 @@ def load_purge_dependencies(
                     "purpose",
                     "record_id",
                     "department_id",
+                    "conversation_id",
                     "actual_size",
                     "expected_size",
                     "digest",

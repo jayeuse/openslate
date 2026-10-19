@@ -10,11 +10,10 @@ from sqlalchemy.orm import Session
 from app.core.database.organization_scope import bound_organization_column
 from app.systems.access.users.membership import bound_organization
 from app.systems.comms.access import error
+from app.systems.comms.messages import links, thread_state
 from app.systems.comms.messages.interaction_models import (
     CommsMention,
     CommsReaction,
-    CommsThread,
-    CommsThreadFollow,
 )
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
 from app.systems.comms.messages.schemas import (
@@ -22,7 +21,6 @@ from app.systems.comms.messages.schemas import (
     HistoryRequest,
     HistoryResponse,
     LiveMessage,
-    ThreadResponse,
     Tombstone,
 )
 
@@ -74,44 +72,10 @@ def project_messages(
         .order_by(CommsReaction.emoji, CommsReaction.user_id)
     ):
         reactions[message][emoji].append(person)
-    followed = set(
-        db.scalars(
-            select(CommsThreadFollow.root_message_id).where(
-                CommsThreadFollow.org_id == org,
-                CommsThreadFollow.user_id == user_id,
-                CommsThreadFollow.root_message_id.in_(roots),
-                CommsThreadFollow.is_deleted.is_(False),
-            )
-        )
-    )
-    threads = {}
-    for thread, count, last_reply in db.execute(
-        select(
-            CommsThread,
-            CommsMessage.reply_count,
-            CommsMessage.last_reply_at,
-        )
-        .join(CommsMessage, CommsMessage.id == CommsThread.root_message_id)
-        .where(
-            CommsThread.org_id == org,
-            CommsMessage.org_id == org,
-            CommsThread.root_message_id.in_(roots),
-            CommsThread.is_deleted.is_(False),
-        )
-    ):
-        threads[thread.root_message_id] = ThreadResponse(
-            id=thread.id,
-            org_id=thread.org_id,
-            conversation_id=thread.conversation_id,
-            root_message_id=thread.root_message_id,
-            name=thread.name,
-            resolved=thread.resolved,
-            locked=thread.locked,
-            archived=thread.archived,
-            followed=thread.root_message_id in followed,
-            reply_count=count,
-            last_reply_at=last_reply,
-        )
+    threads = thread_state.project(db, user_id, roots)
+    live_rows = [row for row in rows if row.id in live]
+    attachments = links.attachments(db, live_rows)
+    records = links.message_records(db, user_id, live_rows)
     result: list[LiveMessage | Tombstone] = []
     for row in rows:
         identity: dict[str, Any] = {
@@ -147,9 +111,8 @@ def project_messages(
                         {"emoji": emoji, "user_ids": people}
                         for emoji, people in reactions[row.id].items()
                     ],
-                    # The HTTP writer admits no attachments or record links until S18.
-                    attachments=[],
-                    record_references=[],
+                    attachments=attachments[row.id],
+                    record_references=records[row.id],
                     link_previews=[],
                 )
             )
@@ -185,9 +148,13 @@ def history(
     user_id: UUID,
     conversation_id: UUID,
     request: HistoryRequest,
+    *, root_message_id: UUID | None = None,
 ) -> HistoryResponse:
     m = CommsMessage
-    query = message_query(conversation_id).where(or_(m.parent_id.is_(None), m.also_send_to_channel))
+    query = message_query(conversation_id).where(
+        m.parent_id == root_message_id if root_message_id is not None else
+        or_(m.parent_id.is_(None), m.also_send_to_channel)
+    )
     high_water = (
         db.scalar(
             select(CommsConversationCounter.last_seq).where(
@@ -242,6 +209,7 @@ def history(
     return HistoryResponse(
         org_id=bound_organization(db),
         conversation_id=conversation_id,
+        thread_root_id=root_message_id,
         items=project_messages(db, user_id, rows),
         pagination=HistoryPagination(
             limit=request.limit,

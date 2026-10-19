@@ -100,6 +100,10 @@ def _payload(body="Initial route message"):
     return {"client_key": str(uuid7()), "body": body}
 
 
+def send(api, path, text="Message", **fields):
+    return _ok(api.post(path, json={**_payload(text), **fields}), 201)
+
+
 def _edit(body="Edited route message"):
     return {
         "body": body,

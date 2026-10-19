@@ -744,6 +744,102 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "downloadAttachment",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "getRecordReference",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/record-references/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "listLinkedRecords",
+    "method": "GET",
+    "path": "/api/comms/record-references"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "reserveAttachment",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/files"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
+    "function": "uploadAttachment",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/files/{param}/content"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "addReaction",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages/{param}/reactions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "createThread",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/threads/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "followThread",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/threads/{param}/follow"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "getReplies",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/threads/{param}/replies"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "getThread",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/threads/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "listPins",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/pins"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "listThreads",
+    "method": "GET",
+    "path": "/api/comms/threads"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "removeReaction",
+    "method": "DELETE",
+    "path": "/api/comms/conversations/{param}/messages/{param}/reactions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "sendReply",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/threads/{param}/replies"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "setPin",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/messages/{param}/pin"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/threads-api.ts",
+    "function": "updateThread",
+    "method": "PATCH",
+    "path": "/api/comms/conversations/{param}/threads/{param}"
+  },
+  {
     "adapter": "frontend/src/components/systems/comms/adapters/preferences-api.ts",
     "function": "getCategoryPreferences",
     "method": "GET",

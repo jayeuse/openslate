@@ -4015,6 +4015,112 @@
         "title": "CheckboxFieldConfig",
         "type": "object"
       },
+      "CommsFile": {
+        "additionalProperties": false,
+        "properties": {
+          "actual_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Size"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "creator_id": {
+            "format": "uuid",
+            "title": "Creator Id",
+            "type": "string"
+          },
+          "expected_size": {
+            "title": "Expected Size",
+            "type": "integer"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_deleted": {
+            "title": "Is Deleted",
+            "type": "boolean"
+          },
+          "media_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Type"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "purpose": {
+            "const": "comms_attachment",
+            "title": "Purpose",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/FileState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "conversation_id",
+          "creator_id",
+          "purpose",
+          "filename",
+          "expected_size",
+          "actual_size",
+          "media_type",
+          "state",
+          "failure_code",
+          "is_deleted",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "CommsFile",
+        "type": "object"
+      },
       "ConditionGroup": {
         "additionalProperties": false,
         "properties": {
@@ -7194,6 +7300,7 @@
         "enum": [
           "record_attachment",
           "board_attachment",
+          "comms_attachment",
           "library_document",
           "workspace_logo",
           "user_avatar"
@@ -7350,6 +7457,20 @@
         ],
         "title": "FileState",
         "type": "string"
+      },
+      "FollowRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "followed": {
+            "title": "Followed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "followed"
+        ],
+        "title": "FollowRequest",
+        "type": "object"
       },
       "GrantedChannel": {
         "additionalProperties": false,
@@ -11112,6 +11233,20 @@
         "title": "PersonalPreferences",
         "type": "object"
       },
+      "PinRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "pinned": {
+            "title": "Pinned",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pinned"
+        ],
+        "title": "PinRequest",
+        "type": "object"
+      },
       "PortableAggregateConfig": {
         "additionalProperties": false,
         "properties": {
@@ -13521,6 +13656,21 @@
         "title": "Reaction",
         "type": "object"
       },
+      "ReactionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "emoji": {
+            "minLength": 1,
+            "title": "Emoji",
+            "type": "string"
+          }
+        },
+        "required": [
+          "emoji"
+        ],
+        "title": "ReactionRequest",
+        "type": "object"
+      },
       "ReadAllResponse": {
         "properties": {
           "updated_count": {
@@ -14868,6 +15018,79 @@
         ],
         "title": "RelationshipVisibility",
         "type": "string"
+      },
+      "ReplyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "also_send_to_channel": {
+            "default": false,
+            "title": "Also Send To Channel",
+            "type": "boolean"
+          },
+          "attachment_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Attachment Ids",
+            "type": "array"
+          },
+          "body": {
+            "maxLength": 4000,
+            "title": "Body",
+            "type": "string"
+          },
+          "client_key": {
+            "format": "uuid",
+            "title": "Client Key",
+            "type": "string"
+          },
+          "mention_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Mention User Ids",
+            "type": "array"
+          },
+          "mentions_channel": {
+            "default": false,
+            "title": "Mentions Channel",
+            "type": "boolean"
+          },
+          "mentions_here": {
+            "default": false,
+            "title": "Mentions Here",
+            "type": "boolean"
+          },
+          "record_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Record Ids",
+            "type": "array"
+          },
+          "reply_to_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply To Id"
+          }
+        },
+        "required": [
+          "body",
+          "client_key"
+        ],
+        "title": "ReplyRequest",
+        "type": "object"
       },
       "ReportCreate": {
         "additionalProperties": false,
@@ -17266,7 +17489,7 @@
               "format": "uuid",
               "type": "string"
             },
-            "maxItems": 0,
+            "maxItems": 10,
             "title": "Attachment Ids",
             "type": "array"
           },
@@ -17303,7 +17526,6 @@
               "format": "uuid",
               "type": "string"
             },
-            "maxItems": 0,
             "title": "Record Ids",
             "type": "array"
           },
@@ -17814,6 +18036,40 @@
         "title": "SortOrder",
         "type": "string"
       },
+      "StandardListResponse_Annotated_Union_LiveMessage__Tombstone___FieldInfo_annotation_NoneType__required_True__discriminator__state____": {
+        "properties": {
+          "items": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "deleted": "#/components/schemas/Tombstone",
+                  "live": "#/components/schemas/LiveMessage"
+                },
+                "propertyName": "state"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/LiveMessage"
+                },
+                {
+                  "$ref": "#/components/schemas/Tombstone"
+                }
+              ]
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[Annotated[Union[LiveMessage, Tombstone], FieldInfo(annotation=NoneType, required=True, discriminator='state')]]",
+        "type": "object"
+      },
       "StandardListResponse_AssignableUserResponse_": {
         "properties": {
           "items": {
@@ -18054,6 +18310,53 @@
         "title": "StandardListResponse[SharedReportRunResponse]",
         "type": "object"
       },
+      "StandardListResponse_ThreadResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ThreadResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[ThreadResponse]",
+        "type": "object"
+      },
+      "StandardListResponse_Union_AvailableRecord__UnavailableRecord__": {
+        "properties": {
+          "items": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AvailableRecord"
+                },
+                {
+                  "$ref": "#/components/schemas/UnavailableRecord"
+                }
+              ]
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMetadata"
+          }
+        },
+        "required": [
+          "items",
+          "pagination"
+        ],
+        "title": "StandardListResponse[Union[AvailableRecord, UnavailableRecord]]",
+        "type": "object"
+      },
       "StandardListResponse_Union_OrganizationChannel__DepartmentChannel__GrantedChannel__PrivateChannel__DirectConversation__GroupConversation__": {
         "properties": {
           "items": {
@@ -18190,6 +18493,57 @@
           "kind"
         ],
         "title": "TextFieldConfig",
+        "type": "object"
+      },
+      "ThreadPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locked"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "resolved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved"
+          }
+        },
+        "title": "ThreadPatch",
         "type": "object"
       },
       "ThreadResponse": {
@@ -34393,6 +34747,261 @@
         ]
       }
     },
+    "/api/comms/conversations/{conversation_id}/files": {
+      "post": {
+        "operationId": "reserve_api_comms_conversations__conversation_id__files_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoardFileCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommsFile"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reserve",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/files/{file_id}/content": {
+      "get": {
+        "operationId": "download_api_comms_conversations__conversation_id__files__file_id__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Private file bytes with attachment disposition and nosniff",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download",
+        "tags": [
+          "comms"
+        ]
+      },
+      "put": {
+        "operationId": "upload_api_comms_conversations__conversation_id__files__file_id__content_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "contentMediaType": "application/octet-stream",
+                "title": "Content",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommsFile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
     "/api/comms/conversations/{conversation_id}/members": {
       "get": {
         "operationId": "list_members_api_comms_conversations__conversation_id__members_get",
@@ -35510,6 +36119,410 @@
         ]
       }
     },
+    "/api/comms/conversations/{conversation_id}/messages/{message_id}/pin": {
+      "put": {
+        "operationId": "set_pin_api_comms_conversations__conversation_id__messages__message_id__pin_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "deleted": "#/components/schemas/Tombstone",
+                      "live": "#/components/schemas/LiveMessage"
+                    },
+                    "propertyName": "state"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveMessage"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Tombstone"
+                    }
+                  ],
+                  "title": "Response Set Pin Api Comms Conversations  Conversation Id  Messages  Message Id  Pin Put"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Pin",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/messages/{message_id}/reactions": {
+      "delete": {
+        "operationId": "remove_reaction_api_comms_conversations__conversation_id__messages__message_id__reactions_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "deleted": "#/components/schemas/Tombstone",
+                      "live": "#/components/schemas/LiveMessage"
+                    },
+                    "propertyName": "state"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveMessage"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Tombstone"
+                    }
+                  ],
+                  "title": "Response Remove Reaction Api Comms Conversations  Conversation Id  Messages  Message Id  Reactions Delete"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Reaction",
+        "tags": [
+          "comms"
+        ]
+      },
+      "post": {
+        "operationId": "add_reaction_api_comms_conversations__conversation_id__messages__message_id__reactions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "deleted": "#/components/schemas/Tombstone",
+                      "live": "#/components/schemas/LiveMessage"
+                    },
+                    "propertyName": "state"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveMessage"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Tombstone"
+                    }
+                  ],
+                  "title": "Response Add Reaction Api Comms Conversations  Conversation Id  Messages  Message Id  Reactions Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Reaction",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/pins": {
+      "get": {
+        "operationId": "list_pins_api_comms_conversations__conversation_id__pins_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TimeSort",
+              "default": "created_at"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_Annotated_Union_LiveMessage__Tombstone___FieldInfo_annotation_NoneType__required_True__discriminator__state____"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Pins",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
     "/api/comms/conversations/{conversation_id}/preferences": {
       "get": {
         "operationId": "get_member_api_comms_conversations__conversation_id__preferences_get",
@@ -35759,6 +36772,89 @@
         ]
       }
     },
+    "/api/comms/conversations/{conversation_id}/record-references/{reference_id}": {
+      "get": {
+        "operationId": "get_reference_api_comms_conversations__conversation_id__record_references__reference_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "reference_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Reference Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/AvailableRecord"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UnavailableRecord"
+                    }
+                  ],
+                  "title": "Response Get Reference Api Comms Conversations  Conversation Id  Record References  Reference Id  Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Reference",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
     "/api/comms/conversations/{conversation_id}/restore": {
       "post": {
         "operationId": "restore_api_comms_conversations__conversation_id__restore_post",
@@ -35881,6 +36977,629 @@
           }
         ],
         "summary": "Restore",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/threads/{root_message_id}": {
+      "get": {
+        "operationId": "get_thread_api_comms_conversations__conversation_id__threads__root_message_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "root_message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Root Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Thread",
+        "tags": [
+          "comms"
+        ]
+      },
+      "patch": {
+        "operationId": "update_thread_api_comms_conversations__conversation_id__threads__root_message_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "root_message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Root Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Thread changed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "428": {
+            "description": "If-Match required"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Thread",
+        "tags": [
+          "comms"
+        ]
+      },
+      "post": {
+        "operationId": "create_thread_api_comms_conversations__conversation_id__threads__root_message_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "root_message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Root Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Thread",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/threads/{root_message_id}/follow": {
+      "put": {
+        "operationId": "follow_thread_api_comms_conversations__conversation_id__threads__root_message_id__follow_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "root_message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Root Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FollowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Follow Thread",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/conversations/{conversation_id}/threads/{root_message_id}/replies": {
+      "get": {
+        "operationId": "get_replies_api_comms_conversations__conversation_id__threads__root_message_id__replies_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "root_message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Root Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "around_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Around Seq"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Replies",
+        "tags": [
+          "comms"
+        ]
+      },
+      "post": {
+        "operationId": "send_reply_api_comms_conversations__conversation_id__threads__root_message_id__replies_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "root_message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Root Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Current replay"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "discriminator": {
+                    "mapping": {
+                      "deleted": "#/components/schemas/Tombstone",
+                      "live": "#/components/schemas/LiveMessage"
+                    },
+                    "propertyName": "state"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LiveMessage"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Tombstone"
+                    }
+                  ],
+                  "title": "Response Send Reply Api Comms Conversations  Conversation Id  Threads  Root Message Id  Replies Post"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Send Reply",
         "tags": [
           "comms"
         ]
@@ -36522,6 +38241,102 @@
           }
         ],
         "summary": "Put Personal",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/record-references": {
+      "get": {
+        "operationId": "list_references_api_comms_record_references_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TimeSort",
+              "default": "created_at"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_Union_AvailableRecord__UnavailableRecord__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List References",
         "tags": [
           "comms"
         ]
@@ -38238,6 +40053,144 @@
           }
         ],
         "summary": "Reset Workspace",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/threads": {
+      "get": {
+        "operationId": "list_threads_api_comms_threads_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder",
+              "default": "asc"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TimeSort",
+              "default": "created_at"
+            }
+          },
+          {
+            "in": "query",
+            "name": "followed",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Followed"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolved",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resolved"
+            }
+          },
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardListResponse_ThreadResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Threads",
         "tags": [
           "comms"
         ]

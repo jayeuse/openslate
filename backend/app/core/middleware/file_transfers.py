@@ -23,12 +23,15 @@ _UUID = (
 )
 _FILE_ROUTE = re.compile(rf"/api/files/{_UUID}/(content|reconcile|purge)")
 _BOARD_FILE_ROUTE = re.compile(rf"/api/boards/{_UUID}/files/{_UUID}/(content|reconcile|purge)")
+_COMMS_FILE_ROUTE = re.compile(rf"/api/comms/conversations/{_UUID}/files/{_UUID}/content")
 _BOARD_CONTENT_ROUTE = re.compile(
     rf"/api/boards/{_UUID}/(?:events|posts)/{_UUID}/attachments/{_UUID}/content"
 )
 
 
 def file_transfer_policy(path: str, method: str) -> FileTransferPolicy | None:
+    if method in {"GET", "PUT"} and _COMMS_FILE_ROUTE.fullmatch(path):
+        return FileTransferPolicy(10 * 1024 * 1024 if method == "PUT" else 1024 * 1024, 120)
     if path == "/api/workspace/logo" and method == "GET":
         return FileTransferPolicy(1024 * 1024, 120)
     if method == "GET" and _BOARD_CONTENT_ROUTE.fullmatch(path):

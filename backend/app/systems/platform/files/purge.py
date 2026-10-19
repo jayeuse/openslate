@@ -106,6 +106,8 @@ def purge_confirmed(
         require_unlinked(db, file.id)
     elif board_id is not None:
         raise error("file_not_found", "File not found", 404)
+    if file.purpose == "comms_attachment":
+        require_unlinked(db, file.id)
     if file.state == "purged":
         return FileResponse.model_validate(file)
     if not file.is_deleted:

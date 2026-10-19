@@ -23,3 +23,13 @@ def test_reset_deletes_saved_charts_after_widgets_and_before_their_sources() -> 
         assert order.index(widget_table) < order.index("charts")
     for source_table in ("modules", "departments"):
         assert order.index("charts") < order.index(source_table)
+
+
+def test_reset_releases_file_links_before_inventory_and_conversation_parents() -> None:
+    order = reset_models.DELETE_ORDER
+    for link in (
+        "comms_message_attachments", "board_attachments", "board_post_revision_attachments",
+    ):
+        assert order.index(link) < order.index("files")
+    assert order.index("files") < order.index("comms_conversations")
+    assert order.index("comms_conversations") < order.index("comms_categories")

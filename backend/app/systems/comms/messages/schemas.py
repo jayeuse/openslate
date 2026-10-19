@@ -29,8 +29,6 @@ class MessageContent(WireModel):
                 raise error("comms_invalid_input", "Invalid message text", 422) from exc
             if "\x00" in value:
                 raise error("comms_invalid_input", "Invalid message text", 422)
-            if not value.strip():
-                raise error("comms_message_empty", "Message is empty", 422)
         return value
 
     @field_validator("mention_user_ids", check_fields=False)
@@ -43,12 +41,29 @@ class MessageContent(WireModel):
 
 class SendRequest(MessageContent):
     client_key: UUID
-    attachment_ids: list[UUID] = Field(default_factory=list, max_length=0)
-    record_ids: list[UUID] = Field(default_factory=list, max_length=0)
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    record_ids: list[UUID] = Field(default_factory=list)
     mention_user_ids: list[UUID] = Field(default_factory=list)
     mentions_channel: bool = Field(False, strict=True)
     mentions_here: bool = Field(False, strict=True)
     reply_to_id: UUID | None = None
+
+    @field_validator("attachment_ids", "record_ids")
+    @classmethod
+    def distinct_links(cls, values: list[UUID]) -> list[UUID]:
+        if len(set(values)) != len(values):
+            raise ValueError("References must be distinct")
+        return values
+
+    @model_validator(mode="after")
+    def nonempty(self) -> Self:
+        if not self.body.strip() and not self.attachment_ids and not self.record_ids:
+            raise error("comms_message_empty", "Message is empty", 422)
+        return self
+
+
+class ReplyRequest(SendRequest):
+    also_send_to_channel: bool = Field(False, strict=True)
 
 
 class EditRequest(MessageContent):

@@ -2,6 +2,30 @@
 
 COMMS_ROUTES = frozenset(
     {
+        *(
+            (
+                method,
+                "/api/comms/conversations/{conversation_id}/threads/{root_message_id}" + suffix,
+            )
+            for method, suffix in (
+                ("GET", ""),
+                ("POST", ""),
+                ("PATCH", ""),
+                ("GET", "/replies"),
+                ("POST", "/replies"),
+                ("PUT", "/follow"),
+            )
+        ),
+        ("GET", "/api/comms/threads"),
+        ("POST", "/api/comms/conversations/{conversation_id}/messages/{message_id}/reactions"),
+        ("DELETE", "/api/comms/conversations/{conversation_id}/messages/{message_id}/reactions"),
+        ("PUT", "/api/comms/conversations/{conversation_id}/messages/{message_id}/pin"),
+        ("GET", "/api/comms/conversations/{conversation_id}/pins"),
+        ("POST", "/api/comms/conversations/{conversation_id}/files"),
+        ("PUT", "/api/comms/conversations/{conversation_id}/files/{file_id}/content"),
+        ("GET", "/api/comms/conversations/{conversation_id}/files/{file_id}/content"),
+        ("GET", "/api/comms/conversations/{conversation_id}/record-references/{reference_id}"),
+        ("GET", "/api/comms/record-references"),
         ("GET", "/api/comms/conversations"),
         ("POST", "/api/comms/conversations"),
         ("GET", "/api/comms/conversations/{conversation_id}"),

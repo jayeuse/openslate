@@ -14,10 +14,15 @@ from app.core.database.organization_scope import session_organization
 from app.core.database.session import AuditSession
 from app.systems.access.users.models import Membership, User
 from app.systems.comms.conversations.models import CommsConversation
-from app.systems.comms.messages.interaction_models import CommsMention, CommsThread
+from app.systems.comms.messages.interaction_models import (
+    CommsMention,
+    CommsThread,
+    CommsThreadFollow,
+)
 from app.systems.comms.messages.link_models import CommsMessageAttachment, CommsMessageRecordLink
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
 from app.systems.comms.rate_limit import admit_message_send
+from app.systems.comms.settings.resolution import Scope, resolve_settings
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.listeners import PENDING_CHANGES_KEY, REALTIME_INVALIDATION_KEY
 from app.systems.platform.files.models import File
@@ -29,6 +34,10 @@ MAX_SEQUENCE = 9007199254740991
 
 class InvalidSend(ValueError):
     """The command or supplied transaction cannot be used for a send."""
+
+
+class MessageReferenceUnavailable(InvalidSend):
+    """A quoted or root message is absent from the bound conversation."""
 
 
 class SendRateLimited(InvalidSend):
@@ -149,8 +158,11 @@ def _lock_context(
         CommsMessage.org_id == org_id, CommsMessage.conversation_id == conversation_id,
         CommsMessage.id.in_(ids),
     ).order_by(CommsMessage.id).with_for_update().execution_options(populate_existing=True)).all()
-    if len(references) != len(ids) or any(row.is_deleted for row in references):
-        raise InvalidSend("Message reference unavailable")
+    if len(references) != len(ids) or any(
+        (row.is_deleted or row.deleted_at is not None) and row.id == command.reply_to_id
+        for row in references
+    ):
+        raise MessageReferenceUnavailable("Message reference unavailable")
     root = next((row for row in references if row.id == command.parent_id), None)
     thread = None
     if root is not None:
@@ -217,6 +229,21 @@ def _stage_children(
                 org_id=message.org_id, conversation_id=message.conversation_id,
                 root_message_id=root.id,
             ))
+        conversation = db.get(CommsConversation, message.conversation_id)
+        assert conversation is not None
+        scope: Scope = (
+            {"kind": "channel", "id": conversation.id}
+            if conversation.kind == "channel" else {"kind": "workspace"}
+        )
+        if resolve_settings(db, scope)["effective"]["default_thread_subscription"]:
+            followed = db.scalar(select(CommsThreadFollow.id).where(
+                CommsThreadFollow.org_id == message.org_id,
+                CommsThreadFollow.root_message_id == root.id,
+                CommsThreadFollow.user_id == message.author_id,
+            ))
+            if followed is None:
+                db.add(CommsThreadFollow(org_id=message.org_id, root_message_id=root.id,
+                                         user_id=message.author_id))
     for user_id in command.mention_user_ids:
         db.add(CommsMention(org_id=message.org_id, message_id=message.id, user_id=user_id))
     for file_id in command.attachment_ids:
@@ -268,11 +295,13 @@ def send_message(
             return _replay(existing, fingerprint)
         if counter is None or counter.is_deleted:
             raise InvalidSend("Conversation unavailable")
+        root, thread = _lock_context(db, org_id, conversation_id, command)
+        records = _link_targets(db, org_id, command)
         if authorize is not None:
+            # File/record/conversation waits must not retain earlier grants or settings.
             authorize(False)
         if retry_after is not None:
             raise SendRateLimited(retry_after)
-        root, thread = _lock_context(db, org_id, conversation_id, command)
         _validate_payload(command)
         if counter.last_seq >= MAX_SEQUENCE:
             raise InvalidSend("Conversation sequence exhausted")
@@ -288,7 +317,6 @@ def send_message(
         db.add(message)
         # Establish the parent and its timestamp before any dependent insert.
         db.flush()
-        records = _link_targets(db, org_id, command)
         _stage_children(db, message, command, root, thread, records)
         db.commit()
         db.refresh(message)

@@ -145,6 +145,20 @@ def test_cached_live_reference_is_rechecked_after_another_session_deletes_it(
             row.deleted_by = org.author
             remover.commit()
         before = _stored_state(comms_world)
+        if reference == "parent_id":
+            # S18 retains one-level discussion after root deletion; the stale identity
+            # map must still be refreshed, and the root must remain a tombstone.
+            result = send_message(
+                caller, org_id=org.id, author_id=org.author, conversation_id=org.conversation,
+                command=Command(client_key=uuid7(), body="Continued thread", parent_id=root),
+            )
+            assert result.message.parent_id == root and result.message.seq == 2
+            assert cached.is_deleted is True and cached.deleted_at == NOW
+            with comms_world.owner.connect() as connection:
+                assert connection.execute(text(
+                    "SELECT is_deleted,reply_count FROM comms_messages WHERE id=:id"
+                ), {"id": root}).one() == (True, 1)
+            return
         with pytest.raises(Invalid):
             send_message(
                 caller, org_id=org.id, author_id=org.author, conversation_id=org.conversation,
