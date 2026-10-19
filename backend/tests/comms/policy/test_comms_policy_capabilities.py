@@ -15,15 +15,31 @@ from tests.rbac.support import make_group_access
 pytestmark = pytest.mark.integration
 
 CONVERSATION_CAPABILITIES = (
-    "react", "reply", "createThread", "attachFiles", "linkRecords", "mentionChannel",
-    "pin", "manageThreads", "deleteOthersMessages", "moderate", "manageChannel",
+    "react",
+    "reply",
+    "createThread",
+    "attachFiles",
+    "linkRecords",
+    "mentionChannel",
+    "pin",
+    "manageThreads",
+    "deleteOthersMessages",
+    "moderate",
+    "manageChannel",
 )
 
 
 @pytest.mark.parametrize("source", ["creator", "membership_manager", "department_manager"])
 def test_manager_sources_are_distinct_and_immutable_without_org_promotion(policy_case, source):
     c, db = policy_case, policy_case.db
-    channel = c.conversation(category=c.category, creator=c.actor if source == "creator" else None)
+    channel = c.conversation(
+        category=c.category,
+        creator=c.actor if source == "creator" else None,
+        scope="department" if source == "department_manager" else "members",
+        department=c.department if source == "department_manager" else None,
+    )
+    if source == "creator":
+        c.member(channel, c.actor)
     if source == "membership_manager":
         c.member(channel, c.actor, role="manager")
     if source == "department_manager":
@@ -38,7 +54,8 @@ def test_manager_sources_are_distinct_and_immutable_without_org_promotion(policy
     assert check["access_source"] == {"kind": "manager", "reason": source}
     for capability in CONVERSATION_CAPABILITIES:
         assert check["capabilities"][capability] == {
-            "allowed": True, "source": {"kind": "manager", "reason": source},
+            "allowed": True,
+            "source": {"kind": "manager", "reason": source},
         }
     assert check["capabilities"]["manageWorkspace"]["allowed"] is False
     creation = channel_creation_check(db, c.actor, {"kind": "category", "id": c.category.id})
@@ -58,13 +75,20 @@ def test_guest_cap_and_admin_eligibility_precede_manager_and_grant_shortcuts(pol
     assert check["conversation_level"] == "read"
     assert check["manager_source"] is None
     assert set(check["capabilities"]) == {
-        *CONVERSATION_CAPABILITIES, "createChannel", "manageWorkspace",
+        *CONVERSATION_CAPABILITIES,
+        "createChannel",
+        "manageWorkspace",
     }
-    assert all(decision == {"allowed": False, "source": {"kind": "guest_cap"}}
-               for decision in check["capabilities"].values())
+    assert all(
+        decision == {"allowed": False, "source": {"kind": "guest_cap"}}
+        for decision in check["capabilities"].values()
+    )
+    c.member(channel, c.admin)
     admin = inspect_capabilities(db, c.admin, channel.id)
-    assert all(decision == {"allowed": True, "source": {"kind": "admin"}}
-               for decision in admin["capabilities"].values())
+    assert all(
+        decision == {"allowed": True, "source": {"kind": "admin"}}
+        for decision in admin["capabilities"].values()
+    )
     c.admin.status = "disabled"
     db.flush()
     with pytest.raises(HTTPException) as refused:
@@ -85,11 +109,16 @@ def test_everyone_switches_grants_and_person_specific_locks(policy_case):
         switches[capability] = c.grant(category, capability, granted=False)
     check = capability_check(db, c.actor, channel.id)
     assert {key: check["capabilities"][key]["allowed"] for key in switches} == {
-        "react": False, "reply": False, "createThread": False,
-        "attachFiles": False, "linkRecords": False,
+        "react": False,
+        "reply": False,
+        "createThread": False,
+        "attachFiles": False,
+        "linkRecords": False,
     }
     assert check["capabilities"]["react"]["source"] == {
-        "kind": "everyone", "scope": category, "enabled": False,
+        "kind": "everyone",
+        "scope": category,
+        "enabled": False,
     }
     local_react = c.grant(local, "react", granted=True)
     c.grant(workspace, "reply", group=actor_group)
@@ -100,8 +129,13 @@ def test_everyone_switches_grants_and_person_specific_locks(policy_case):
     check = capability_check(db, c.actor, channel.id)
     assert check["capabilities"]["react"]["allowed"] is True
     assert check["capabilities"]["reply"] == {
-        "allowed": True, "source": {"kind": "group_grant", "scope": workspace,
-                                   "group_id": actor_group.id, "group_name": actor_group.name},
+        "allowed": True,
+        "source": {
+            "kind": "group_grant",
+            "scope": workspace,
+            "group_id": actor_group.id,
+            "group_name": actor_group.name,
+        },
     }
     assert check["capabilities"]["manageChannel"]["allowed"] is True
     assert check["manager_source"] is None
@@ -122,15 +156,18 @@ def test_everyone_switches_grants_and_person_specific_locks(policy_case):
     c.grant(category, "pin", group=peer_group)
     c.lock("capability", "pin")
     assert capability_check(db, c.actor, channel.id)["capabilities"]["pin"] == {
-        "allowed": True, "source": {"kind": "workspace_lock", "enabled": True},
+        "allowed": True,
+        "source": {"kind": "workspace_lock", "enabled": True},
     }
     assert capability_check(db, c.peer, channel.id)["capabilities"]["pin"] == {
-        "allowed": False, "source": {"kind": "workspace_lock", "enabled": False},
+        "allowed": False,
+        "source": {"kind": "workspace_lock", "enabled": False},
     }
     # A lock freezes the person's workspace result, not the category false or a global bool.
     c.lock("capability", "react")
     assert capability_check(db, c.peer, channel.id)["capabilities"]["react"] == {
-        "allowed": True, "source": {"kind": "workspace_lock", "enabled": True},
+        "allowed": True,
+        "source": {"kind": "workspace_lock", "enabled": True},
     }
 
 
@@ -147,7 +184,9 @@ def test_reader_grants_never_supply_missing_read_or_parent_authority(policy_case
     check = inspect_capabilities(db, c.actor, channel.id)
     assert check["conversation_level"] == "read"
     assert check["access_source"] == {
-        "kind": "group", "group_id": group.id, "group_name": group.name,
+        "kind": "group",
+        "group_id": group.id,
+        "group_name": group.name,
     }
     assert check["capabilities"]["reply"]["allowed"] is True
     assert check["capabilities"]["attachFiles"]["allowed"] is False
@@ -163,6 +202,7 @@ def test_reader_grants_never_supply_missing_read_or_parent_authority(policy_case
         inspect_capabilities(db, c.actor, hidden.id)
     assert refused.value.status_code == 404
     # Inspectors may explain a known eligible nonreader, but cannot discover foreign people.
+    c.member(hidden, c.admin)
     no_access = inspect_capabilities(db, c.admin, hidden.id, user_id=c.actor.id)
     assert no_access["conversation_level"] == "none"
     assert no_access["capabilities"]["reply"]["allowed"] is False
@@ -183,9 +223,13 @@ def test_configuration_admission_rejects_illegal_subjects_scopes_and_lock_change
     channel = c.conversation()
     group = c.group(c.actor)
     scope = {"kind": "channel", "id": channel.id}
-    valid = {"scope": scope, "everyone": {"reply": False}, "group_grants": [
-        {"group_id": str(group.id), "capability": "reply"},
-    ]}
+    valid = {
+        "scope": scope,
+        "everyone": {"reply": False},
+        "group_grants": [
+            {"group_id": str(group.id), "capability": "reply"},
+        ],
+    }
     assert validate_capability_configuration(db, scope, valid)["everyone"] == {"reply": False}
     invalid = [
         {**valid, "group_grants": [{"group_id": str(group.id), "capability": "createChannel"}]},

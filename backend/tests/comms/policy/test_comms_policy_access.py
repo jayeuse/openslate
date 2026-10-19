@@ -18,7 +18,7 @@ from app.systems.comms.access import (
     require_conversation_access,
     visible_conversation_clause,
 )
-from app.systems.comms.capabilities import inspect_capabilities
+from app.systems.comms.capabilities import capability_check, inspect_capabilities
 from app.systems.comms.conversations.models import (
     CommsConversation,
     CommsConversationGroup,
@@ -35,9 +35,14 @@ def assert_views(db, actor, conversations, expected):
     actual = {row.id: conversation_level(db, actor, row) for row in conversations}
     assert actual == expected
     readable = {identity for identity, level in expected.items() if level != "none"}
-    sql_ids = set(db.scalars(select(CommsConversation.id).where(
-        CommsConversation.id.in_(expected), visible_conversation_clause(db, actor),
-    )))
+    sql_ids = set(
+        db.scalars(
+            select(CommsConversation.id).where(
+                CommsConversation.id.in_(expected),
+                visible_conversation_clause(db, actor),
+            )
+        )
+    )
     assert sql_ids == readable
     assert readable_conversation_ids(db, actor) & expected.keys() == readable
     for row in conversations:
@@ -57,8 +62,15 @@ def test_scope_forms_agree_without_board_fallback_or_category_default_leak(polic
     ungranted_groups = c.conversation(scope="groups", category=c.category)
     c.access(everyone, level="read")
     rows = [
-        organization, department, grouped, private, direct, group_chat, everyone,
-        ungranted_private, ungranted_groups,
+        organization,
+        department,
+        grouped,
+        private,
+        direct,
+        group_chat,
+        everyone,
+        ungranted_private,
+        ungranted_groups,
     ]
     c.member(private, c.actor)
     c.member(direct, c.actor)
@@ -68,29 +80,51 @@ def test_scope_forms_agree_without_board_fallback_or_category_default_leak(polic
     c.access(grouped, group=low, level="read")
     high_grant = c.access(grouped, group=high, level="post")
     # Category access rows are creation defaults, not another live inheritance source.
-    db.add(CommsConversationGroup(
-        org_id=c.org.id, category_id=c.category.id, subject="everyone", level="post",
-    ))
+    db.add(
+        CommsConversationGroup(
+            org_id=c.org.id,
+            category_id=c.category.id,
+            subject="everyone",
+            level="post",
+        )
+    )
     module = add_module(db, c.department)
     module_grant = make_group_access(db, [c.actor], c.department, module, level="manage")
     db.flush()
     expected = {
-        organization.id: "post", department.id: "none", grouped.id: "post",
-        private.id: "post", direct.id: "post", group_chat.id: "none", everyone.id: "read",
-        ungranted_private.id: "none", ungranted_groups.id: "none",
+        organization.id: "post",
+        department.id: "none",
+        grouped.id: "post",
+        private.id: "post",
+        direct.id: "post",
+        group_chat.id: "none",
+        everyone.id: "read",
+        ungranted_private.id: "none",
+        ungranted_groups.id: "none",
     }
     assert_views(db, c.actor, rows, expected)
     all_visible = {organization.id, grouped.id, private.id, direct.id, everyone.id}
     assert readable_conversation_ids(db, c.actor) == all_visible
-    assert set(db.scalars(select(CommsConversation.id).where(
-        visible_conversation_clause(db, c.actor),
-    ))) == all_visible
-    assert conversation_reader_ids(db, group_chat) == {c.admin.id, c.peer.id}
+    assert (
+        set(
+            db.scalars(
+                select(CommsConversation.id).where(
+                    visible_conversation_clause(db, c.actor),
+                )
+            )
+        )
+        == all_visible
+    )
+    assert conversation_reader_ids(db, group_chat) == {c.peer.id}
     # The Comms delta is write->post; canonical per-group specificity remains existing coverage.
     department_group = db.get(Group, module_grant.group_id)
     assert department_group is not None
     department_grant = make_group_access(
-        db, [], c.department, level="write", group=department_group,
+        db,
+        [],
+        c.department,
+        level="write",
+        group=department_group,
     )
     expected[department.id] = "post"
     assert_views(db, c.actor, rows, expected)
@@ -106,6 +140,7 @@ def test_guest_and_ineligible_admin_caps_agree_in_all_access_forms(policy_case):
     c, db = policy_case, policy_case.db
     organization = c.conversation(scope="organization")
     private = c.conversation()
+    c.member(private, c.admin)
     guest = c.person("Guest manager", role="guest")
     c.member(private, guest, role="manager")
     assert_views(db, guest, [organization, private], {organization.id: "read", private.id: "read"})
@@ -113,13 +148,99 @@ def test_guest_and_ineligible_admin_caps_agree_in_all_access_forms(policy_case):
     db.flush()
     assert_views(db, guest, [organization, private], {organization.id: "none", private.id: "none"})
     assert_views(
-        db, c.admin, [organization, private], {organization.id: "manage", private.id: "manage"},
+        db,
+        c.admin,
+        [organization, private],
+        {organization.id: "manage", private.id: "manage"},
     )
     c.admin.status = "disabled"
     db.flush()
     assert_views(
-        db, c.admin, [organization, private], {organization.id: "none", private.id: "none"},
+        db,
+        c.admin,
+        [organization, private],
+        {organization.id: "none", private.id: "none"},
     )
+
+
+def test_admin_private_access_tracks_membership_in_every_projection(policy_case):
+    c, db = policy_case, policy_case.db
+    public = [
+        c.conversation(scope="organization", creator=c.peer),
+        c.conversation(scope="department", department=c.department, creator=c.peer),
+        c.conversation(scope="groups", creator=c.peer),
+    ]
+    private = [
+        c.conversation(category=c.category, creator=c.peer),
+        c.conversation(kind="direct", creator=c.peer),
+        c.conversation(kind="group", creator=c.peer),
+    ]
+    expected = {row.id: "manage" for row in public} | {row.id: "none" for row in private}
+    assert_views(db, c.admin, public + private, expected)
+    for row in private:
+        with pytest.raises(HTTPException) as refused:
+            require_conversation_access(db, c.admin, row.id, "read")
+        assert refused.value.status_code == 404
+        assert refused.value.detail["code"] == "comms_not_found"
+        with pytest.raises(HTTPException) as refused:
+            inspect_capabilities(db, c.admin, row.id)
+        assert refused.value.status_code == 404
+    members = [c.member(row, c.admin) for row in private]
+    assert_views(db, c.admin, public + private, {row.id: "manage" for row in public + private})
+    for row in private:
+        assert require_conversation_access(db, c.admin, row.id, "read").id == row.id
+    for member in members:
+        member.is_deleted = True
+        member.deleted_at = datetime(2000, 1, 1, tzinfo=UTC)
+    db.flush()
+    assert_views(db, c.admin, public + private, expected)
+
+
+@pytest.mark.parametrize("scope", ["members", "organization"])
+def test_creator_management_ends_with_membership_without_erasing_other_access(policy_case, scope):
+    c, db = policy_case, policy_case.db
+    channel = c.conversation(scope=scope, creator=c.actor)
+    member = c.member(channel, c.actor)
+    assert_views(db, c.actor, [channel], {channel.id: "manage"})
+    assert capability_check(db, c.actor, channel.id)["manager_source"] == "creator"
+    member.is_deleted = True
+    member.deleted_at = datetime(2000, 1, 1, tzinfo=UTC)
+    db.flush()
+    expected = "post" if scope == "organization" else "none"
+    assert_views(db, c.actor, [channel], {channel.id: expected})
+    check = capability_check(db, c.actor, channel.id)
+    assert check["manager_source"] is None
+    assert check["capabilities"]["manageChannel"]["allowed"] is False
+
+
+def test_department_manager_cannot_manage_private_category_sibling(policy_case):
+    c, db = policy_case, policy_case.db
+    own_department = c.conversation(
+        scope="department",
+        department=c.department,
+        category=c.category,
+    )
+    private = c.conversation(category=c.category)
+    make_group_access(db, [c.actor], c.department, level="manage")
+    assert_views(
+        db,
+        c.actor,
+        [own_department, private],
+        {own_department.id: "manage", private.id: "none"},
+    )
+    with pytest.raises(HTTPException) as refused:
+        require_conversation_access(db, c.actor, private.id, "read")
+    assert refused.value.status_code == 404
+    c.member(private, c.actor)
+    assert_views(
+        db,
+        c.actor,
+        [own_department, private],
+        {own_department.id: "manage", private.id: "post"},
+    )
+    check = capability_check(db, c.actor, private.id)
+    assert check["manager_source"] is None
+    assert check["capabilities"]["manageChannel"]["allowed"] is False
 
 
 def test_hidden_and_foreign_objects_are_not_readable_even_to_local_admin(policy_case):
@@ -175,6 +296,10 @@ def test_direct_start_policy_and_blocks_do_not_erase_existing_history(policy_cas
     with pytest.raises(HTTPException) as refused:
         require_conversation_access(db, c.actor, direct.id, "post")
     assert refused.value.status_code == 403
+    assert refused.value.detail == {
+        "code": "comms_post_denied",
+        "message": "Conversation access denied",
+    }
     assert require_conversation_access(db, c.actor, direct.id, "read").id == direct.id
     blocked.is_deleted = True
     db.flush()
@@ -204,7 +329,10 @@ def test_committed_membership_changes_replace_cached_positive_decisions(comms_wo
         assert initial["capabilities"]["react"]["allowed"] is True
         # Sequential independent commits are deterministic: no timing, fake policy or sleep.
         for change, expected in (
-            ("guest", "read"), ("expired", "none"), ("restored", "post"), ("removed", "none"),
+            ("guest", "read"),
+            ("expired", "none"),
+            ("restored", "post"),
+            ("removed", "none"),
         ):
             with comms_world.session(org) as writer:
                 current = organization_membership(writer, org.peer, fresh=True)

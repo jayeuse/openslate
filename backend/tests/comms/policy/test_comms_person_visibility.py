@@ -47,6 +47,25 @@ def test_comms_sharing_leave_and_access_loss_are_current_not_positive_cached(pol
     hidden(db, c.actor, c.peer)
 
 
+def test_organization_channel_makes_eligible_members_mutually_visible_including_guests(policy_case):
+    c, db = policy_case, policy_case.db
+    guest = c.person("Guest viewer", role="guest")
+    hidden(db, c.actor, c.peer)
+    hidden(db, guest, c.actor)
+    channel = c.conversation(scope="organization")
+    # No explicit Comms membership or shared module, Board, or group is needed.
+    people = (c.actor, c.peer, guest)
+    for actor in people:
+        peers = {person.id for person in people if person.id != actor.id}
+        assert visible_person_ids(db, actor, peers | {c.world.second.peer}) == peers
+        for peer_id in peers:
+            assert visible_person(db, actor, peer_id).id == peer_id
+    channel.is_deleted = True
+    db.flush()
+    hidden(db, c.actor, c.peer)
+    hidden(db, guest, c.actor)
+
+
 @pytest.mark.parametrize("fallback", ["board", "module", "group"])
 def test_independent_non_comms_fallback_survives_and_is_not_assumed_absent(policy_case, fallback):
     c, db = policy_case, policy_case.db
