@@ -5,6 +5,16 @@ from sqlalchemy import inspect, text
 
 pytestmark = pytest.mark.integration
 
+# S15's accepted inventory; row-security imports this same organization inventory.
+COMMS_TABLES = frozenset(
+    "comms_categories comms_conversations comms_conversation_groups comms_members "
+    "comms_direct_blocks comms_settings comms_setting_locks comms_capability_grants "
+    "comms_personal_preferences comms_member_preferences comms_read_states "
+    "comms_conversation_counters comms_threads comms_thread_follows comms_messages "
+    "comms_message_revisions comms_reactions comms_mentions comms_message_attachments "
+    "comms_message_record_links".split()
+)
+
 # S04 proves schema ownership and paired keys; test_organization_row_security proves RLS.
 ORGANIZATION_TABLES = frozenset(
     "audit_logs board_attachments board_event_reminders board_events board_groups "
@@ -17,7 +27,7 @@ ORGANIZATION_TABLES = frozenset(
     "report_run_rows report_runs report_schedules reports sandbox_bindings sandbox_documents "
     "sandbox_publications sandbox_test_runs sandbox_versions saved_views scheduled_work "
     "security_events".split()
-)
+) | COMMS_TABLES
 MIXED_TABLES = frozenset({"audit_logs", "files", "security_events", "in_app_notifications"})
 
 

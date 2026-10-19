@@ -5,7 +5,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import inspect, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstanceState, Session
 from sqlalchemy.orm.base import LoaderCallableStatus
 
 from app.systems.access.policy.models import GroupAccess
@@ -15,6 +15,16 @@ from app.systems.boards.models import Board, BoardGroup, BoardScope, BoardWidget
 from app.systems.boards.post_models import BoardPost, BoardPostRevision
 from app.systems.boards.record_link_models import BoardPostRevisionRecordLink, BoardRecordLink
 from app.systems.boards.reminder_models import BoardEventReminder
+from app.systems.comms.conversations.models import (
+    CommsCategory,
+    CommsConversation,
+    CommsConversationGroup,
+    CommsMember,
+)
+from app.systems.comms.messages.interaction_models import CommsMention, CommsReaction, CommsThread
+from app.systems.comms.messages.link_models import CommsMessageAttachment, CommsMessageRecordLink
+from app.systems.comms.messages.models import CommsMessage, CommsMessageRevision
+from app.systems.comms.settings.models import CommsCapabilityGrant, CommsSettings
 from app.systems.openview.charts.models import Chart
 from app.systems.openview.dashboards.models import Dashboard
 from app.systems.openview.reports.models import Report
@@ -40,6 +50,15 @@ _BOARD_CHILDREN = (
     BoardEventReminder,
 )
 _REVISION_CHILDREN = (BoardPostRevisionAttachment, BoardPostRevisionRecordLink)
+_COMMS_SCOPED_CHILDREN = (CommsConversationGroup, CommsSettings, CommsCapabilityGrant)
+_COMMS_CONVERSATION_CHILDREN = (CommsMember, CommsMessage, CommsThread)
+_COMMS_MESSAGE_CHILDREN = (
+    CommsMessageRevision,
+    CommsMention,
+    CommsReaction,
+    CommsMessageAttachment,
+    CommsMessageRecordLink,
+)
 
 
 def _ids(instances: Iterable[object], attribute: str) -> set[UUID]:
@@ -65,12 +84,31 @@ def _parent(instance: object, relationship: str, foreign_id: UUID | None) -> obj
     return foreign_id
 
 
+def _comms_department(instance: CommsCategory | CommsConversation) -> DepartmentRef:
+    state = cast(InstanceState[CommsCategory | CommsConversation], inspect(instance))
+    assert state is not None
+    attribute = state.attrs.department
+    department = attribute.loaded_value
+    # A changed relationship, including None, wins before FK synchronization.
+    # An unchanged loaded parent must not mask an explicit FK edit.
+    if (isinstance(department, Department) or department is None) and (
+        attribute.history.has_changes()
+        or (
+            instance.department_id is None
+            and not state.attrs.department_id.history.has_changes()
+        )
+    ):
+        return department
+    return instance.department_id
+
+
 class DepartmentAncestry:
     """Prefer in-memory parents, then batch-read surviving parents before flush."""
 
     def __init__(self, session: Session, changes: Iterable[object]) -> None:
         instances = tuple(changes)
         known = tuple(session.identity_map.values()) + tuple(session.new) + tuple(session.deleted)
+        self._load_comms(session, instances, known)
         self.modules = {item.id: item for item in known if isinstance(item, Module) and item.id}
         self.records = {item.id: item for item in known if isinstance(item, Record) and item.id}
         self.boards = {item.id: item for item in known if isinstance(item, Board) and item.id}
@@ -176,6 +214,99 @@ class DepartmentAncestry:
             }
             if module_ids - self.modules.keys()
             else {}
+        )
+
+    def _load_comms(
+        self, session: Session, instances: tuple[object, ...], known: tuple[object, ...]
+    ) -> None:
+        self.comms_messages = {
+            item.id: item for item in known if isinstance(item, CommsMessage) and item.id
+        }
+        self.comms_conversations = {
+            item.id: item for item in known if isinstance(item, CommsConversation) and item.id
+        }
+        self.comms_categories = {
+            item.id: item for item in known if isinstance(item, CommsCategory) and item.id
+        }
+        message_ids = _ids(
+            (item for item in instances if isinstance(item, _COMMS_MESSAGE_CHILDREN)), "message_id"
+        )
+        missing_messages = message_ids - self.comms_messages.keys()
+        self.comms_message_conversations = (
+            dict(session.execute(
+                select(CommsMessage.id, CommsMessage.conversation_id).where(
+                    CommsMessage.id.in_(missing_messages)
+                )
+            ).tuples().all()) if missing_messages else {}
+        )
+        # In-memory parents include relationship-assigned new/dirty parents whose
+        # foreign key has not been synchronized yet. Never lazy-load one per child.
+        conversation_ids = _ids(
+            (item for item in (*instances, *known)
+             if isinstance(item, (*_COMMS_CONVERSATION_CHILDREN, *_COMMS_SCOPED_CHILDREN))),
+            "conversation_id",
+        ) | set(self.comms_message_conversations.values())
+        missing_conversations = conversation_ids - self.comms_conversations.keys()
+        self.comms_conversation_departments = (
+            {identity: (kind, scope, department_id)
+             for identity, kind, scope, department_id in session.execute(
+                 select(CommsConversation.id, CommsConversation.kind,
+                        CommsConversation.scope, CommsConversation.department_id).where(
+                     CommsConversation.id.in_(missing_conversations)
+                 )
+             ).tuples()} if missing_conversations else {}
+        )
+        category_ids = _ids(
+            (item for item in instances if isinstance(item, _COMMS_SCOPED_CHILDREN)), "category_id"
+        )
+        missing_categories = category_ids - self.comms_categories.keys()
+        self.comms_category_departments = (
+            dict(session.execute(
+                select(CommsCategory.id, CommsCategory.department_id).where(
+                    CommsCategory.id.in_(missing_categories)
+                )
+            ).tuples().all()) if missing_categories else {}
+        )
+
+    def _comms_category(self, category: CommsCategory | UUID | None) -> DepartmentRef:
+        if isinstance(category, UUID):
+            cached = self.comms_categories.get(category)
+            return (self._comms_category(cached) if cached is not None
+                    else self.comms_category_departments.get(category))
+        if category is None:
+            return None
+        return _comms_department(category)
+
+    def _comms_conversation(
+        self, conversation: CommsConversation | UUID | None
+    ) -> DepartmentRef:
+        if isinstance(conversation, UUID):
+            cached = self.comms_conversations.get(conversation)
+            if cached is not None:
+                return self._comms_conversation(cached)
+            kind, scope, department_id = self.comms_conversation_departments.get(
+                conversation, (None, None, None)
+            )
+            return department_id if kind == "channel" and scope == "department" else None
+        if (
+            conversation is None
+            or conversation.kind != "channel"
+            or conversation.scope != "department"
+        ):
+            return None
+        # Category placement is not channel access and cannot confer audit visibility.
+        return _comms_department(conversation)
+
+    def _comms_message(self, message: CommsMessage | UUID | None) -> DepartmentRef:
+        if isinstance(message, UUID):
+            cached = self.comms_messages.get(message)
+            return (self._comms_message(cached) if cached is not None
+                    else self._comms_conversation(self.comms_message_conversations.get(message)))
+        if message is None:
+            return None
+        conversation = _parent(message, "conversation", message.conversation_id)
+        return self._comms_conversation(
+            conversation if isinstance(conversation, CommsConversation) else message.conversation_id
         )
 
     def _module(self, module: Module | UUID | None) -> DepartmentRef:
@@ -284,4 +415,25 @@ class DepartmentAncestry:
             return self._post(instance.post_id)
         if isinstance(instance, _REVISION_CHILDREN):
             return self._revision(instance.revision_id)
+        if isinstance(instance, CommsCategory):
+            return self._comms_category(instance)
+        if isinstance(instance, CommsConversation):
+            return self._comms_conversation(instance)
+        if isinstance(instance, _COMMS_SCOPED_CHILDREN):
+            category = _parent(instance, "category", instance.category_id)
+            if category is not None:
+                return self._comms_category(
+                    category if isinstance(category, CommsCategory) else instance.category_id
+                )
+        if isinstance(instance, (*_COMMS_CONVERSATION_CHILDREN, *_COMMS_SCOPED_CHILDREN)):
+            conversation = _parent(instance, "conversation", instance.conversation_id)
+            return self._comms_conversation(
+                conversation if isinstance(conversation, CommsConversation)
+                else instance.conversation_id
+            )
+        if isinstance(instance, _COMMS_MESSAGE_CHILDREN):
+            message = _parent(instance, "message", instance.message_id)
+            return self._comms_message(
+                message if isinstance(message, CommsMessage) else instance.message_id
+            )
         return None

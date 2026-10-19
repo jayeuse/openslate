@@ -19,6 +19,26 @@ from app.systems.boards.record_link_models import (  # noqa: F401
     BoardRecordLink,
 )
 from app.systems.boards.reminder_models import BoardEventReminder  # noqa: F401
+from app.systems.comms.conversations.models import CommsCategory as CommsCategory
+from app.systems.comms.conversations.models import CommsConversation as CommsConversation
+from app.systems.comms.conversations.models import CommsConversationGroup as CommsConversationGroup
+from app.systems.comms.conversations.models import CommsDirectBlock as CommsDirectBlock
+from app.systems.comms.conversations.models import CommsMember as CommsMember
+from app.systems.comms.messages.interaction_models import CommsMention as CommsMention
+from app.systems.comms.messages.interaction_models import CommsReaction as CommsReaction
+from app.systems.comms.messages.interaction_models import CommsThread as CommsThread
+from app.systems.comms.messages.interaction_models import CommsThreadFollow as CommsThreadFollow
+from app.systems.comms.messages.link_models import CommsMessageAttachment as CommsMessageAttachment
+from app.systems.comms.messages.link_models import CommsMessageRecordLink as CommsMessageRecordLink
+from app.systems.comms.messages.models import CommsConversationCounter as CommsConversationCounter
+from app.systems.comms.messages.models import CommsMessage as CommsMessage
+from app.systems.comms.messages.models import CommsMessageRevision as CommsMessageRevision
+from app.systems.comms.messages.models import CommsReadState as CommsReadState
+from app.systems.comms.settings.models import CommsCapabilityGrant as CommsCapabilityGrant
+from app.systems.comms.settings.models import CommsMemberPreferences as CommsMemberPreferences
+from app.systems.comms.settings.models import CommsPersonalPreferences as CommsPersonalPreferences
+from app.systems.comms.settings.models import CommsSettingLock as CommsSettingLock
+from app.systems.comms.settings.models import CommsSettings as CommsSettings
 from app.systems.manage.audit.models import AuditLog, SecurityEvent  # noqa: F401
 from app.systems.manage.backups.models import (  # noqa: F401
     BackupExportOperation,
