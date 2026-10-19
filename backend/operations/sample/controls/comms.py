@@ -109,6 +109,10 @@ def execute_comms_control(
     *,
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
+    if action.values.get("operation") in ("search_roundtrip", "partner_search_roundtrip"):
+        from operations.sample.controls.comms_search import execute_search_control
+
+        return execute_search_control(action, dataset, context, on_substep=on_substep)
     if action.values.get("operation") in ("s18_content", "partner_s18_content"):
         from operations.sample.controls.comms_content import execute_content_control
 

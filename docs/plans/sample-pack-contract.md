@@ -80,6 +80,8 @@ Real-provider interactive acceptance owns those three routes. Their count and re
 
 `s18_content` and `partner_s18_content` reserve, upload, associate and download a valid private file, create a thread, send and replay a quoted reply, exercise follow/reaction off→on, update thread metadata, and pin/read their owned message. The primary journey links its explicitly mapped pack record and reads its current card. The partner has no catalog producer and never reuses primary record/module IDs: its record-reference list is read, but no partner record-card creation is claimed. Final verification uses separately bound clients for retained messages, threads and file bytes. Source: `backend/operations/sample/controls/comms_content.py` and `comms_content_verification.py`.
 
+`search_roundtrip` and `partner_search_roundtrip` send an owned, uniquely marked message through the API, search it with sender/conversation/UTC-day filters, verify literal text and code-point offsets, delete it, and confirm the indexed tombstone no longer appears. Search uses the existing PostgreSQL `simple` FTS column with plain AND terms; filters are applied before offset paging, and captured conversation access is rechecked before returning. No HTML highlighter or global-search source is used. Current primary/partner verification reads the same source and query through separately bound clients. Source: `backend/operations/sample/controls/comms_search.py`.
+
 ### Boards
 
 Every Board action shares these pack prerequisites:

@@ -2,6 +2,7 @@
 
 COMMS_ROUTES = frozenset(
     {
+        ("GET", "/api/comms/search"),
         *(
             (
                 method,

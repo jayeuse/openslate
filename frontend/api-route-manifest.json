@@ -744,6 +744,12 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/search-api.ts",
+    "function": "search",
+    "method": "GET",
+    "path": "/api/comms/search"
+  },
+  {
     "adapter": "frontend/src/components/systems/comms/adapters/assets-api.ts",
     "function": "downloadAttachment",
     "method": "GET",
