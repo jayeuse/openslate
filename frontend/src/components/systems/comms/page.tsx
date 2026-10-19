@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   useCallback,
   useEffect,
   useRef,
@@ -23,11 +24,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import {
-  useSampleState,
-  type SampleTransactionDraft,
-} from "../shared/runtime/sample-state";
-import { SampleOperationError } from "../shared/runtime/sample-runtime";
+import { useVerifiedWorkspaceUserId } from "../shared/runtime/workspace-identity";
 import {
   Dialog,
   DialogContent,
@@ -85,17 +82,14 @@ import {
   MessageComposer,
 } from "./components/ui";
 import { Action } from "../shared/components/ui";
+import { messageFromCommsError, useCommsCommands } from "./state/runtime";
 import {
-  COMMS_CONFIGURATION_KEY,
-  messageFromCommsError,
-  readCommsConfiguration,
-  stageCommsConfiguration,
-} from "./state/runtime";
-import {
-  INITIAL_DIRECTS,
   useCommsWorkspace,
+  CommsWorkspaceProvider,
 } from "./state/use-comms-workspace";
+import { useCommsClient } from "./state/client-context";
 import { useCommsPanelLayout } from "./state/use-comms-panel-layout";
+import { wirePreferences } from "./state/settings-wire";
 import {
   createCommsNavigationActions,
   useCommsNavigationState,
@@ -113,26 +107,14 @@ import {
   type CommsThreadListItem,
 } from "./components/thread-list";
 import {
-  CATEGORIES,
-  CHANNELS,
-  MESSAGES,
-  OPEN_PERMISSIONS,
   messageAuthorId,
   threadMessages,
   type Category,
   type Channel,
-  type Direct,
-  type Message,
-  type RecordThread,
-} from "./domain/model";
+} from "./domain/view-model";
 
 import {
-  CommsConfigurationProvider,
-  CommsPlatformPreferencesProvider,
-} from "./state/configuration-state";
-import {
   DEFAULT_COMMS_PREFERENCES,
-  resolveCommsPermission,
   resolveCommsSettings,
   type CommsScope,
   type CommsPreferences,
@@ -144,13 +126,10 @@ import {
   type ConfirmActionRequest,
 } from "./components/confirm-action-dialog";
 import { reportCommsDone, reportCommsError } from "./state/comms-feedback";
-import { EXAMPLE_FLOWS } from "./data/examples";
-import { isCommsManager } from "./domain/message-policy";
 import {
   channelGroupAccess,
   channelTone,
   commsGroup,
-  personGroupAccess,
   recordContext,
   visibleToLabel,
   type GroupTone,
@@ -158,39 +137,9 @@ import {
 import { GroupMark } from "./components/group-mark";
 import { RecordPanel } from "./components/record-panel";
 
-function stageCommsEditor(
-  draft: SampleTransactionDraft,
-  value: Channel | Category,
-  beforeId: string,
-): void {
-  if ("categoryId" in value)
-    draft.update<Channel[]>("commsChannels", CHANNELS, (items) => {
-      const next = items.some((item) => item.id === value.id)
-        ? items.map((item) => (item.id === value.id ? value : item))
-        : [...items, value];
-      if (beforeId === "unchanged") return next;
-      const reordered = next.filter((item) => item.id !== value.id);
-      const at = reordered.findIndex((item) => item.id === beforeId);
-      reordered.splice(at < 0 ? reordered.length : at, 0, value);
-      return reordered;
-    });
-  else
-    draft.update<Category[]>("commsCategories", CATEGORIES, (items) => {
-      const next = items.some((item) => item.id === value.id)
-        ? items.map((item) => (item.id === value.id ? value : item))
-        : [...items, value];
-      if (beforeId === "unchanged") return next;
-      const reordered = next.filter((item) => item.id !== value.id);
-      const at = reordered.findIndex((item) => item.id === beforeId);
-      reordered.splice(at < 0 ? reordered.length : at, 0, value);
-      return reordered;
-    });
-}
-
 type ToolView =
   | "management"
   | "templates"
-  | "automation"
   | "history"
   | "moderation"
   | "outbox"
@@ -211,7 +160,6 @@ type WorkspaceSetting =
   | "workspace"
   | "management"
   | "templates"
-  | "automation"
   | "history"
   | "moderation"
   | "outbox"
@@ -321,7 +269,6 @@ function CommsMenu({
       tools: [
         { id: "workspace", label: "Workspace settings" },
         { id: "templates", label: "Channel templates" },
-        { id: "automation", label: "Automation" },
         { id: "management", label: "Bulk channel changes" },
         { id: "history", label: "Settings history" },
       ],
@@ -536,8 +483,9 @@ export default function SampleComms() {
   const [announcement, setAnnouncement] = useState("");
   const [confirmRequest, setConfirmRequest] =
     useState<ConfirmActionRequest | null>(null);
-  const { commsResource, workspace, run, isPending } =
-    useCommsWorkspace(setNotice);
+  const { commsResource, workspace, client } = useCommsWorkspace();
+  const { run, isPending } = useCommsCommands();
+  const { groups } = useCommsClient();
   const {
     configuration: config,
     people,
@@ -548,11 +496,12 @@ export default function SampleComms() {
     threads: storedThreads,
     directs,
     records,
-    recordThreads,
     account,
-    platformPreferences,
   } = workspace;
-  const navigation = useCommsNavigationState();
+  const navigation = useCommsNavigationState(channels[0]?.id, [
+    ...messages,
+    ...storedThreads.flatMap(threadMessages),
+  ]);
   const {
     selected,
     setSelected,
@@ -599,107 +548,98 @@ export default function SampleComms() {
   const [threadDirectory, setThreadDirectory] = useState<HTMLElement | null>(
     null,
   );
-  const [panelWidths] = useSampleState("commsPanelWidths", {
-    channels: 240,
-    members: 220,
-  });
-  const [preferredThreadWidth] = useSampleState("commsThreadWidth", 380);
   const [membersVisible, setMembersVisible] = useState(true);
   const [memberSearch, setMemberSearch] = useState("");
   const [conversationSearch, setConversationSearch] = useState("");
   const [threadFilter, setThreadFilter] = useState<"active" | "inactive">(
     "active",
   );
-  const viewerId = "sample-eli";
-  const viewer = people.find(
-    (person) => person.id === viewerId && person.active,
-  );
+  const viewerId = useVerifiedWorkspaceUserId();
   const activePeople = people.filter((person) => person.active);
   const channel = channels.find((item) => item.id === selected);
   const direct = directs.find((item) => item.id === selected);
-  const preferences = config.preferences[viewerId] ?? {
-    ...DEFAULT_COMMS_PREFERENCES,
-    channelWidth: panelWidths.channels,
-    memberWidth: panelWidths.members,
-    threadWidth: preferredThreadWidth,
-  };
-  const settings = resolveCommsSettings(config, channel, categories).values;
+  const preferences = config.preferences[viewerId] ?? DEFAULT_COMMS_PREFERENCES;
+  const settings = resolveCommsSettings(config, channel).values;
   const [clockNow, setClockNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setClockNow(Date.now()), 60000);
     return () => clearInterval(timer);
   }, []);
-  const threads = storedThreads.map((thread) => {
-    const parent = channels.find(
-      (item) =>
-        item.id ===
-        (thread.conversation ??
-          messages.find((message) => message.id === thread.messageId)
-            ?.conversation),
-    );
-    const days = resolveCommsSettings(config, parent, categories).values
-      .autoArchiveDays;
-    const activity = Math.max(
-      messages.find((message) => message.id === thread.messageId)?.created ?? 0,
-      ...threadMessages(thread).map((message) => message.created),
-    );
-    const meta = config.threadMeta[thread.id];
-    return {
-      ...thread,
-      resolved:
-        Boolean(meta?.archived) ||
-        (meta?.resolved ??
-          (thread.resolved ||
-            Boolean(
-              days > 0 && activity && clockNow - activity >= days * 86400000,
-            ))),
-      subscribed: meta?.followedBy?.includes("sample-eli") ?? thread.subscribed,
-    };
-  });
-  const permission = (action: Parameters<typeof resolveCommsPermission>[2]) =>
-    resolveCommsPermission(
-      config,
-      { person: viewer, channel, categories },
-      action,
-    ).allowed;
-  const canView = permission("viewChannel");
+  const threads = storedThreads;
+  const check = workspace.checks[selected];
+  const canView = !!(channel || direct);
   const canParticipate =
-    canView && !channel?.archived && !direct?.blocked && !settings.locked;
+    !!client &&
+    canView &&
+    !!check &&
+    check.membership_role !== "guest" &&
+    !channel?.archived &&
+    !direct?.blocked &&
+    !settings.locked;
   const canPost =
     canParticipate &&
-    permission("post") &&
+    (check?.conversation_level === "post" ||
+      check?.conversation_level === "manage") &&
     // Announcements: the same manager rule the send check uses.
-    (settings.mode !== "announcements" ||
-      isCommsManager({ config, person: viewer, channel, categories }));
-  const elevated = permission("pin");
+    (settings.mode !== "announcements" || check?.manager_source !== null);
+  const elevated = check?.capabilities.pin.allowed ?? false;
   const commsMenuAccess = {
-    canManageChannel: permission("manageChannel"),
-    canCreate: permission("createChannel"),
-    canAdminister: permission("manageWorkspace") || permission("moderate"),
-    recoverableCount: Object.keys(config.tombstones).length,
+    canManageChannel: check?.capabilities.manageChannel.allowed ?? false,
+    canCreate: check?.capabilities.createChannel.allowed ?? false,
+    canAdminister:
+      check?.capabilities.manageWorkspace.allowed ||
+      check?.capabilities.moderate.allowed ||
+      false,
+    recoverableCount: workspace.removedCount,
   };
   async function patchPreferences(patch: Partial<CommsPreferences>) {
     try {
-      await run(
-        "preferences",
-        (draft) => {
-          const current = readCommsConfiguration(draft);
-          const currentPreferences = current.preferences[viewerId] ?? {
-            ...DEFAULT_COMMS_PREFERENCES,
-            channelWidth: panelWidths.channels,
-            memberWidth: panelWidths.members,
-            threadWidth: preferredThreadWidth,
-          };
-          stageCommsConfiguration(draft, (value) => ({
-            ...value,
-            preferences: {
-              ...value.preferences,
-              [viewerId]: { ...currentPreferences, ...patch },
-            },
-          }));
-        },
-        [COMMS_CONFIGURATION_KEY],
-      );
+      if (!client) throw new Error("Organization is not admitted");
+      if (
+        Object.keys(patch).some(
+          (key) =>
+            !["favorites", "hiddenChannels", "mutedUntil", "readAt"].includes(
+              key,
+            ),
+        )
+      ) {
+        const current = await client.getPersonalPreferences();
+        await client.setPersonalPreferences(
+          wirePreferences({ ...preferences, ...patch }),
+          { if_match: current.etag },
+        );
+      }
+      for (const row of (await client.bootstrap()).conversations) {
+        const id = row.conversation.id;
+        const change = {
+          ...(patch.favorites ? { starred: patch.favorites.includes(id) } : {}),
+          ...(patch.hiddenChannels
+            ? { hidden: patch.hiddenChannels.includes(id) }
+            : {}),
+          ...(patch.mutedUntil && id in patch.mutedUntil
+            ? {
+                mute:
+                  patch.mutedUntil[id] === Number.MAX_SAFE_INTEGER
+                    ? { kind: "indefinite" as const }
+                    : patch.mutedUntil[id]
+                      ? {
+                          kind: "until" as const,
+                          until: new Date(patch.mutedUntil[id]).toISOString(),
+                        }
+                      : { kind: "off" as const },
+              }
+            : {}),
+          ...(patch.readAt?.[id] === 0 ? { manual_unread: true } : {}),
+        };
+        if (Object.keys(change).length) {
+          const current = await client.getMemberPreferences(id);
+          await client.updateMemberPreferences(id, change, {
+            if_match: current.etag,
+          });
+        }
+        if (patch.readAt?.[id])
+          await client.markRead(id, { last_read_seq: row.high_water_seq });
+      }
     } catch (error) {
       setNotice(
         messageFromCommsError(error, "Preferences could not be saved."),
@@ -711,10 +651,13 @@ export default function SampleComms() {
     roles,
     viewerId,
     viewerPresence: account.presence,
+    presence: workspace.presence,
     elevated,
-    allowDownload: permission("downloadFiles"),
+    allowDownload: canView && settings.fileDownloads,
     preferences,
     settings,
+    capabilities: check?.capabilities,
+    membershipRole: check?.membership_role,
   };
   const allMessages = [...messages, ...threads.flatMap(threadMessages)];
   const channelThreads = canView
@@ -733,18 +676,16 @@ export default function SampleComms() {
     : [];
   // A channel's members are the people its groups let in (shown, not yet
   // enforced), so the list agrees with "Who can use".
-  const members = activePeople.filter((person) =>
-    channel
-      ? personGroupAccess(person, channelGroupAccess(channel, categories)) !==
-        "none"
-      : person.name === direct?.user,
+  const memberIds = new Set(
+    workspace.members[selected]?.map((member) => member.user_id),
   );
+  const members = activePeople.filter((person) => memberIds.has(person.id));
   const currentThread = canView
     ? threads.find((item) => item.id === threadId)
     : undefined;
   // A linked record opens in the same place as a thread; a thread wins.
   const [recordId, setRecordId] = useState("");
-  const conversationsLoaded = commsResource.data !== undefined;
+  const conversationsLoaded = commsResource.hydrated;
   const openRecord = currentThread
     ? undefined
     : records.find((item) => item.id === recordId);
@@ -788,9 +729,7 @@ export default function SampleComms() {
   const { startDirect, startThread, patchThread } =
     createCommsConversationOperations({
       run,
-      selected,
-      threadId,
-      viewerId,
+      thread: currentThread,
       select,
       setDirectError,
       setNotice,
@@ -801,14 +740,13 @@ export default function SampleComms() {
   const threadMessage = allMessages.find(
     (item) => item.id === currentThread?.messageId,
   );
-  const visibleMessages =
-    canView && permission("viewHistory")
-      ? messages.filter(
-          (item) =>
-            item.conversation === selected &&
-            item.text.toLowerCase().includes(search.toLowerCase()),
-        )
-      : [];
+  const visibleMessages = canView
+    ? messages.filter(
+        (item) =>
+          item.conversation === selected &&
+          item.text.toLowerCase().includes(search.toLowerCase()),
+      )
+    : [];
   const channelThreadItems: CommsThreadListItem[] = channelThreads.map(
     (item) => ({
       id: item.id,
@@ -826,12 +764,6 @@ export default function SampleComms() {
   );
   const filteredChannels = channels.filter(
     (item) =>
-      viewer &&
-      resolveCommsPermission(
-        config,
-        { person: viewer, channel: item, categories },
-        "viewChannel",
-      ).allowed &&
       !preferences.hiddenChannels.includes(item.id) &&
       item.name.toLowerCase().includes(conversationSearch.toLowerCase()),
   );
@@ -926,7 +858,6 @@ export default function SampleComms() {
       [
         "management",
         "templates",
-        "automation",
         "history",
         "moderation",
         "outbox",
@@ -948,7 +879,7 @@ export default function SampleComms() {
     } else if (setting === "create-channel")
       setEditor({
         kind: "channel",
-        value: newChannel(category?.id ?? categories[0].id),
+        value: newChannel(category?.id ?? categories[0]?.id ?? ""),
         opener,
       });
     else if (setting === "edit-channel" && channel)
@@ -956,7 +887,7 @@ export default function SampleComms() {
     else if (setting === "create-category")
       setEditor({
         kind: "category",
-        value: { id: "", name: "", ...OPEN_PERMISSIONS },
+        value: { id: "", name: "" },
         opener,
       });
     else if (setting === "edit-category" && category)
@@ -966,22 +897,12 @@ export default function SampleComms() {
     const message = allMessages.find((entry) => entry.id === item.messageId);
     const conversation = item.conversation ?? message?.conversation;
     const parentChannel = channels.find((entry) => entry.id === conversation);
-    if (
-      !parentChannel ||
-      !viewer ||
-      !resolveCommsPermission(
-        config,
-        { person: viewer, channel: parentChannel, categories },
-        "viewChannel",
-      ).allowed
-    )
-      return [];
+    if (!parentChannel) return [];
     return [
       {
         thread: item,
         channel: parentChannel,
-        title:
-          config.threadMeta[item.id]?.name || message?.text || "Discussion",
+        title: item.name || message?.text || "Discussion",
       },
     ];
   });
@@ -1008,37 +929,36 @@ export default function SampleComms() {
     selected,
     viewerId,
     replyingTo,
-    setThreadId,
     setReplyingTo,
     setNotice,
     announce: setAnnouncement,
     scrollToLatest,
-    config,
-    viewer,
-    channel,
-    categories,
-    people,
-    roles,
     allMessages,
-    channelThreads,
-    records,
   });
   async function moveCategory(id: string, direction: number) {
     try {
-      await run(
-        `category:move:${id}`,
-        (draft) => {
-          draft.update<Category[]>("commsCategories", CATEGORIES, (items) => {
-            const next = [...items];
-            const from = next.findIndex((item) => item.id === id);
-            const to = from + direction;
-            if (from >= 0 && to >= 0 && to < next.length)
-              [next[from], next[to]] = [next[to], next[from]];
-            return next;
-          });
-        },
-        ["commsCategories"],
+      if (!client) throw new Error("Organization is not admitted");
+      const rows = (await client.bootstrap()).categories.map(
+        (row) => row.category,
       );
+      const from = rows.findIndex((row) => row.id === id),
+        to = from + direction;
+      if (from < 0 || to < 0 || to >= rows.length) return;
+      [rows[from], rows[to]] = [rows[to], rows[from]];
+      for (const [position, row] of rows.entries()) {
+        if (row.position === position) continue;
+        const current = await client.getCategory(row.id);
+        await client.updateCategory(
+          row.id,
+          {
+            name: current.data.name,
+            department_id: current.data.department_id,
+            default_access: current.data.default_access,
+            position,
+          },
+          { if_match: current.etag },
+        );
+      }
     } catch (error) {
       setNotice(
         messageFromCommsError(error, "The category order could not be saved."),
@@ -1047,32 +967,15 @@ export default function SampleComms() {
   }
   async function duplicateChannel(channel: Channel) {
     try {
-      await run(
-        `channel:duplicate:${channel.id}`,
-        (draft) => {
-          const id = `sample-channel-${crypto.randomUUID()}`;
-          const copy = {
-            ...channel,
-            id,
-            name: `${channel.name}-copy`,
-            archived: false,
-          };
-          draft.update<Channel[]>("commsChannels", CHANNELS, (items) => [
-            ...items,
-            copy,
-          ]);
-          stageCommsConfiguration(draft, (current) => ({
-            ...current,
-            channels: {
-              ...current.channels,
-              [id]: current.channels[channel.id] ?? {
-                settings: {},
-                permissions: {},
-              },
-            },
-          }));
+      if (!client) throw new Error("Organization is not admitted");
+      const current = await client.getConversation(channel.id);
+      await client.duplicateChannel(
+        channel.id,
+        {
+          name: `${channel.name}-copy`,
+          category_id: channel.categoryId || null,
         },
-        ["commsChannels", COMMS_CONFIGURATION_KEY],
+        { if_match: current.etag },
       );
     } catch (error) {
       setNotice(
@@ -1086,7 +989,7 @@ export default function SampleComms() {
   async function deleteWithUndo(id: string): Promise<string | null> {
     const original = messages.find((item) => item.id === id);
     const error = await deleteMessage(id);
-    if (!error && original)
+    if (!error && original && check?.capabilities.deleteOthersMessages.allowed)
       reportCommsDone("Message deleted.", {
         label: "Undo",
         onClick: () => {
@@ -1126,17 +1029,12 @@ export default function SampleComms() {
   ) {
     const channelId = target.id;
     try {
-      await run(
-        `channel:archive:${channelId}`,
-        (draft) => {
-          draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
-            items.map((item) =>
-              item.id === channelId ? { ...item, archived } : item,
-            ),
-          );
-        },
-        ["commsChannels"],
-      );
+      if (!client) throw new Error("Organization is not admitted");
+      const current = await client.getConversation(channelId);
+      await (
+        archived ? client.archiveConversation : client.restoreConversation
+      )(channelId, { if_match: current.etag });
+      await client.bootstrap();
     } catch (error) {
       setNotice(
         messageFromCommsError(
@@ -1153,67 +1051,38 @@ export default function SampleComms() {
         onClick: () => void setChannelArchived(target, false),
       });
   }
-  async function ensureRecordThread(item: RecordThread) {
-    try {
-      await run(
-        `record-thread:${item.id}`,
-        (draft) => {
-          const currentChannels = draft.read<Channel[]>(
-            "commsChannels",
-            CHANNELS,
-          );
-          if (currentChannels.some((entry) => entry.id === item.id)) return;
-          const currentCategories = draft.read<Category[]>(
-            "commsCategories",
-            CATEGORIES,
-          );
-          const categoryId = currentCategories[0]?.id ?? CATEGORIES[0].id;
-          draft.update<Channel[]>("commsChannels", CHANNELS, (items) => [
-            ...items,
-            {
-              ...newChannel(categoryId),
-              id: item.id,
-              name: item.text,
-            },
-          ]);
-          draft.update<Message[]>("commsMessages", MESSAGES, (items) => [
-            ...items,
-            {
-              id: `${item.id}-opening`,
-              conversation: item.id,
-              author: "You",
-              text: item.text,
-              created: Date.now(),
-              pinned: false,
-              recordId: item.recordId,
-            },
-          ]);
-        },
-        ["commsChannels", "commsCategories", "commsMessages"],
-      );
-      select(item.id);
-    } catch (error) {
-      setNotice(
-        messageFromCommsError(
-          error,
-          "The record conversation could not be opened.",
-        ),
-      );
-    }
-  }
   async function toggleDirect(directId: string, field: "read" | "blocked") {
     try {
-      await run(
-        `direct:update:${directId}:${field}`,
-        (draft) => {
-          draft.update<Direct[]>("commsDirects", INITIAL_DIRECTS, (items) =>
-            items.map((item) =>
-              item.id === directId ? { ...item, [field]: !item[field] } : item,
-            ),
+      if (!client) throw new Error("Organization is not admitted");
+      const current = await client.getConversation(directId);
+      if (current.data.kind !== "direct") return;
+      if (field === "read") {
+        const summary = (await client.bootstrap()).conversations.find(
+          (row) => row.conversation.id === directId,
+        );
+        if (!summary) throw new Error("Conversation is unavailable");
+        if (summary.preferences.manual_unread || summary.unread_count)
+          await client.markRead(directId, {
+            last_read_seq: summary.high_water_seq,
+          });
+        else {
+          const preferences = await client.getMemberPreferences(directId);
+          await client.updateMemberPreferences(
+            directId,
+            { manual_unread: true },
+            { if_match: preferences.etag },
           );
-        },
-        ["commsDirects"],
-      );
+        }
+      } else {
+        const recipient = current.data.participant_ids.find(
+          (id) => id !== viewerId,
+        );
+        if (!recipient) throw new Error("Recipient is unavailable");
+        const blocks = await client.listDirectBlocks();
+        if (blocks.items.some((block) => block.blocked_user_id === recipient))
+          await client.unblockDirect(recipient);
+        else await client.blockDirect({ blocked_user_id: recipient });
+      }
     } catch (error) {
       setNotice(
         messageFromCommsError(
@@ -1223,41 +1092,13 @@ export default function SampleComms() {
       );
     }
   }
-  async function saveEditor(
-    value: Channel | Category,
-    beforeId: string,
-    transaction?: SampleTransactionDraft,
-  ) {
-    if (transaction) {
-      stageCommsEditor(transaction, value, beforeId);
-      return;
-    }
-    const result = await run(
-      `editor:save:${value.id}`,
-      (draft) => {
-        stageCommsEditor(draft, value, beforeId);
-        return null;
-      },
-      ["commsChannels", "commsCategories"],
-    ).catch((error: unknown) =>
-      messageFromCommsError(
-        error,
-        "The conversation settings could not be saved.",
-      ),
-    );
-    if (result) {
-      setNotice(result);
-      throw new SampleOperationError("conflict", result);
-    }
-    if ("categoryId" in value && selected !== value.id) select(value.id);
-    setEditor(null);
-  }
   const membersContent = (
     <MembersPanel
       members={members}
       roles={roles}
       viewerId={viewerId}
       viewerPresence={account.presence}
+      presence={workspace.presence}
       onClose={() => {
         setMemberOpen(false);
         setMembersVisible(false);
@@ -1275,15 +1116,15 @@ export default function SampleComms() {
       onJump={jumpToMessage}
       records={records}
       {...identity}
-      archived={config.threadMeta[currentThread.id]?.archived}
+      archived={currentThread.archived}
       canPost={
-        !config.threadMeta[currentThread.id]?.archived &&
+        !currentThread.archived &&
         canParticipate &&
-        permission("reply") &&
-        !config.threadMeta[currentThread.id]?.locked
+        (check?.capabilities.reply.allowed ?? false) &&
+        !currentThread.locked
       }
-      threadName={config.threadMeta[currentThread.id]?.name}
-      validateDraft={(draft) => validateDraft(draft, "reply")}
+      threadName={currentThread.name}
+      validateDraft={validateDraft}
       onSettings={(opener) =>
         setToolsDialog({
           view: "thread",
@@ -1319,11 +1160,7 @@ export default function SampleComms() {
   const visibleConversation = (id: string) => {
     const target = channels.find((item) => item.id === id);
     if (!target) return directs.some((item) => item.id === id);
-    return resolveCommsPermission(
-      config,
-      { person: viewer, channel: target, categories },
-      "viewChannel",
-    ).allowed;
+    return true;
   };
   const recordMessages = messages.filter(
     (item) => item.recordId && visibleConversation(item.conversation),
@@ -1367,7 +1204,7 @@ export default function SampleComms() {
     />
   );
 
-  if (commsResource.status === "error" && commsResource.data === undefined)
+  if (commsResource.status === "error" && !commsResource.hydrated)
     return (
       <section
         aria-label="OpenComms"
@@ -1383,29 +1220,42 @@ export default function SampleComms() {
     );
 
   return (
-    <CommsConfigurationProvider value={config}>
-      <CommsPlatformPreferencesProvider value={platformPreferences}>
-        <ProfilePopoverProvider>
-          <div
-            ref={container}
-            className="bg-card relative flex min-h-0 flex-1 overflow-hidden"
+    <CommsWorkspaceProvider value={workspace}>
+      <ProfilePopoverProvider>
+        <div
+          ref={container}
+          className="bg-card relative flex min-h-0 flex-1 overflow-hidden"
+        >
+          <LoadingRegion
+            loading={
+              commsResource.status === "loading" && !commsResource.hydrated
+            }
+            label="Loading conversations"
+            skeleton={
+              <CommsSkeleton
+                channelWidth={channelWidth}
+                memberWidth={memberWidth}
+                conversationFirst={mobileConversation}
+                members={membersVisible}
+              />
+            }
+            className="flex min-h-0 min-w-0 flex-1 *:flex *:min-h-0 *:min-w-0 *:flex-1"
           >
-            <LoadingRegion
-              loading={
-                commsResource.status === "loading" &&
-                commsResource.data === undefined
-              }
-              label="Loading conversations"
-              skeleton={
-                <CommsSkeleton
-                  channelWidth={channelWidth}
-                  memberWidth={memberWidth}
-                  conversationFirst={mobileConversation}
-                  members={membersVisible}
-                />
-              }
-              className="flex min-h-0 min-w-0 flex-1 *:flex *:min-h-0 *:min-w-0 *:flex-1"
-            >
+            {commsResource.hydrated && !commsResource.data && (
+              <div className="bg-card absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 p-6">
+                {commsResource.status === "error" ? (
+                  <>
+                    <Alert role="alert" variant="destructive">
+                      {commsResource.error}
+                    </Alert>
+                    <Action onClick={commsResource.reload}>Try again</Action>
+                  </>
+                ) : (
+                  <p role="status">Verifying conversation access…</p>
+                )}
+              </div>
+            )}
+            <Activity mode={commsResource.data ? "visible" : "hidden"}>
               {(commsResource.refreshing || commsResource.error) && (
                 <div className="bg-background/95 absolute inset-x-0 top-0 z-20 flex items-center gap-2 border-b px-4 py-2 text-xs backdrop-blur">
                   <p role="status" className="text-muted-foreground flex-1">
@@ -1643,8 +1493,8 @@ export default function SampleComms() {
                                     {category.groupId && (
                                       <GroupMark
                                         tone={
-                                          commsGroup(category.groupId)?.tone ??
-                                          0
+                                          commsGroup(category.groupId, groups)
+                                            ?.tone ?? 0
                                         }
                                         className="ml-0.5"
                                       />
@@ -1655,7 +1505,9 @@ export default function SampleComms() {
                                       </span>
                                       {category.groupId && (
                                         <span className="text-muted-foreground truncate text-xs font-normal">
-                                          {category.groupId} group
+                                          {commsGroup(category.groupId, groups)
+                                            ?.name ?? "Access"}{" "}
+                                          group
                                         </span>
                                       )}
                                     </span>
@@ -1888,27 +1740,18 @@ export default function SampleComms() {
                                             .filter(
                                               (entry) =>
                                                 entry.channel.id === item.id &&
-                                                !config.threadMeta[
-                                                  entry.thread.id
-                                                ]?.archived &&
+                                                !entry.thread.archived &&
                                                 resolveCommsSettings(
                                                   config,
                                                   item,
-                                                  categories,
                                                 ).values.threadBranches !==
                                                   "none" &&
                                                 (resolveCommsSettings(
                                                   config,
                                                   item,
-                                                  categories,
                                                 ).values.threadBranches !==
                                                   "followed" ||
-                                                  (config.threadMeta[
-                                                    entry.thread.id
-                                                  ]?.followedBy?.includes(
-                                                    viewerId,
-                                                  ) ??
-                                                    entry.thread.subscribed)),
+                                                  entry.thread.subscribed),
                                             )
                                             .map((entry) => (
                                               <Tooltip key={entry.thread.id}>
@@ -1988,7 +1831,6 @@ export default function SampleComms() {
                                   value: {
                                     id: "",
                                     name: "",
-                                    ...OPEN_PERMISSIONS,
                                   },
                                 })
                               }
@@ -2007,10 +1849,8 @@ export default function SampleComms() {
                                 className="mt-1 flex flex-col"
                               >
                                 {followedRecords.map((record) => {
-                                  const { module, group } = recordContext(
-                                    record,
-                                    people,
-                                  );
+                                  const { module, group } =
+                                    recordContext(record);
                                   return (
                                     <li key={record.id}>
                                       <Button
@@ -2090,16 +1930,6 @@ export default function SampleComms() {
                                 )}
                               </Button>
                             ))}
-                          {recordThreads.map((item) => (
-                            <Action
-                              key={item.id}
-                              variant="ghost"
-                              className="h-auto w-full justify-start text-left whitespace-normal"
-                              onClick={() => void ensureRecordThread(item)}
-                            >
-                              {item.text}
-                            </Action>
-                          ))}
                         </div>
                       </ScrollArea>
                     </aside>
@@ -2153,12 +1983,14 @@ export default function SampleComms() {
                               <GroupMark
                                 tone={channelTone(
                                   channelGroupAccess(channel, categories),
+                                  groups,
                                 )}
                                 className="size-2"
                               />
                               <span className="truncate">
                                 {visibleToLabel(
                                   channelGroupAccess(channel, categories),
+                                  groups,
                                 )}
                               </span>
                             </p>
@@ -2168,9 +2000,11 @@ export default function SampleComms() {
                           <AccessChip
                             label={visibleToLabel(
                               channelGroupAccess(channel, categories),
+                              groups,
                             )}
                             tone={channelTone(
                               channelGroupAccess(channel, categories),
+                              groups,
                             )}
                             onOpen={
                               commsMenuAccess.canManageChannel
@@ -2223,8 +2057,7 @@ export default function SampleComms() {
                                   <span className="mb-1 block text-xs font-medium">
                                     {people.find(
                                       (person) =>
-                                        person.id ===
-                                        messageAuthorId(message, people),
+                                        person.id === messageAuthorId(message),
                                     )?.name ?? message.author}
                                   </span>
                                   <span className="text-muted-foreground line-clamp-3 text-sm">
@@ -2383,9 +2216,6 @@ export default function SampleComms() {
                                     key={selected}
                                     visibleMessages={visibleMessages}
                                     allMessages={allMessages}
-                                    flows={EXAMPLE_FLOWS.filter(
-                                      (flow) => flow.conversation === selected,
-                                    )}
                                     onOpenRecord={showRecord}
                                     records={records}
                                     threads={channelThreads}
@@ -2432,7 +2262,7 @@ export default function SampleComms() {
                         id={selected}
                         preferences={preferences}
                         settings={settings}
-                        canPost={replyingTo ? canParticipate : canPost}
+                        canPost={canPost}
                         replyingTo={replyingTo}
                         people={people}
                         onCancelReply={() => setReplyingTo(null)}
@@ -2639,7 +2469,7 @@ export default function SampleComms() {
                   channels={channels}
                   existing={editor.kind === "channel" ? channels : categories}
                   onClose={() => setEditor(null)}
-                  onSave={saveEditor}
+                  people={people}
                   onAcceptedChannelSave={select}
                 />
               )}
@@ -2673,7 +2503,7 @@ export default function SampleComms() {
                           key={person.id}
                           variant="ghost"
                           className="justify-start"
-                          onClick={() => startDirect(person.name)}
+                          onClick={() => startDirect(person.id)}
                         >
                           <Avatar name={person.name} />
                           Message {person.name}
@@ -2685,10 +2515,10 @@ export default function SampleComms() {
                   </div>
                 </DialogContent>
               </Dialog>
-            </LoadingRegion>
-          </div>
-        </ProfilePopoverProvider>
-      </CommsPlatformPreferencesProvider>
-    </CommsConfigurationProvider>
+            </Activity>
+          </LoadingRegion>
+        </div>
+      </ProfilePopoverProvider>
+    </CommsWorkspaceProvider>
   );
 }

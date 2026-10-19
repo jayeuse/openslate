@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Card,
   CardHeader,
@@ -10,33 +10,10 @@ import {
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { FieldGroup } from "@/components/ui/field";
-
-import { useCommsConfiguration } from "../state/configuration-state";
-import {
-  getCommsScope,
-  resolveCommsSettings,
-  resolveCommsPermission,
-  type CommsHistoryEntry,
-  type CommsThreadMeta,
-} from "../domain/configuration";
+import { NativeSelectOption } from "@/components/ui/native-select";
+import { Choice, Toggle } from "../../shared/components/ui";
+import type * as C from "../contract/types";
 import { ConfigurationFrame } from "./configuration-frame";
-import { useSampleState } from "../../shared/runtime/sample-state";
-import {
-  CHANNELS,
-  CATEGORIES,
-  MESSAGES,
-  type Message,
-  type Thread,
-  type Direct,
-  threadMessages,
-} from "../domain/model";
-import { initialPeople, initialRoles } from "../../shared/data/sample-people";
-import { INITIAL_RECORDS } from "../../shared/data/sample-data";
-import {
-  recordScopeChange,
-  restoreConfigurationEntry,
-  toolChannelMessages,
-} from "../domain/tools-helpers";
 import {
   ConfigurationChanges,
   ConfigurationHistoryFields,
@@ -47,23 +24,21 @@ import {
   MessageReportFields,
   OutboxFields,
   ThreadSettingsFields,
+  type ThreadDraft,
 } from "./tools-conversation-sections";
 import { ModerationFields } from "./tools-moderation-section";
 import { ManagementTools } from "./tools-management";
-import { AutomationTools } from "./tools-automation";
-import { validateCommsMessage } from "../domain/message-policy";
+import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { complete } from "../state/workspace-view";
 import {
-  COMMS_CONFIGURATION_KEY,
   messageFromCommsError,
-  readCommsConfiguration,
-  stageCommsConfiguration,
   useCommsCommands,
+  useCommsRead,
 } from "../state/runtime";
 
 export type CommsToolsView =
   | "management"
   | "templates"
-  | "automation"
   | "history"
   | "moderation"
   | "outbox"
@@ -79,17 +54,9 @@ export interface CommsToolsDialogProps {
   opener: HTMLElement | null;
   onClose: () => void;
 }
-export function CommsToolsDialog(props: CommsToolsDialogProps) {
-  if (props.view === "management" || props.view === "templates")
-    return <ManagementTools {...props} view={props.view} />;
-  if (props.view === "automation") return <AutomationTools {...props} />;
-  return <LifecycleTools {...props} />;
-}
-// Titles match the OpenComms menu labels that open them.
 const titles: Record<CommsToolsView, string> = {
   management: "Bulk channel changes",
   templates: "Channel templates",
-  automation: "Automation",
   history: "Settings history",
   moderation: "Moderation",
   outbox: "Scheduled messages",
@@ -98,17 +65,24 @@ const titles: Record<CommsToolsView, string> = {
   "message-history": "Message history",
   report: "Report message",
 };
-const descriptions: Partial<Record<CommsToolsView, string>> = {
-  history: "Every settings change. Preview one to restore its earlier values.",
-  moderation:
-    "Review reports, limit who can post, and restore removed messages.",
-  outbox:
-    "Messages set to send later. In this example, nothing is sent outside OpenComms.",
-  retention:
-    "See which messages a retention period would remove. Nothing is deleted.",
-  "message-history": "Earlier versions of this message.",
-  report: "Tell moderators what is wrong with this message.",
+export function CommsToolsDialog(props: CommsToolsDialogProps) {
+  return props.view === "management" || props.view === "templates" ? (
+    <ManagementTools {...props} view={props.view} />
+  ) : (
+    <LifecycleTools {...props} />
+  );
+}
+type ToolData = {
+  reports: C.Report[];
+  removed: C.Tombstone[];
+  schedules: C.Schedule[];
+  history: C.ConfigurationHistory[];
+  revisions: C.MessageRevision[];
+  settings?: C.Settings;
+  retention?: C.Versioned<C.RetentionResponse>;
 };
+const sampleMarker = "CONFIRM LOCAL SAMPLE";
+
 function LifecycleTools({
   view,
   channelId,
@@ -117,712 +91,319 @@ function LifecycleTools({
   opener,
   onClose,
 }: CommsToolsDialogProps) {
-  const [config] = useCommsConfiguration();
-  const { run } = useCommsCommands();
-  const [channels] = useSampleState("commsChannels", CHANNELS);
-  const [categories] = useSampleState("commsCategories", CATEGORIES);
-  const [directs] = useSampleState<Direct[]>("commsDirects", []);
-  const [people] = useSampleState("access-people", initialPeople);
-  const [roles] = useSampleState("access-roles", initialRoles);
-  const [records] = useSampleState("records", INITIAL_RECORDS);
-  const [messages] = useSampleState<Message[]>("commsMessages", MESSAGES);
-  const [threads] = useSampleState<Thread[]>("commsThreads", []);
-  const thread = threads.find((t) => t.id === threadId);
-  const message =
-    messages.find((m) => m.id === messageId) ??
-    threads.flatMap(threadMessages).find((m) => m.id === messageId) ??
-    config.tombstones[messageId ?? ""];
-  const sourceThread = threads.find(
-    (item) => item.id === message?.conversation,
-  );
+  const workspace = useCommsWorkspaceView();
+  const { run, isPending } = useCommsCommands();
+  const { channels, people, messages, threads } = workspace;
+  const thread = threads.find((item) => item.id === threadId);
+  const message = [
+    ...messages,
+    ...threads.flatMap((thread) => thread.replies),
+  ].find((item) => item.id === messageId);
   const conversationId =
-    sourceThread?.conversation ??
     channelId ??
     thread?.conversation ??
-    message?.conversation;
-  const channel = channels.find((c) => c.id === conversationId);
-  const direct = directs.find((item) => item.id === conversationId);
-  const viewer = people.find((p) => p.id === "sample-eli");
-  const [meta, setMeta] = useState<CommsThreadMeta>(
-    config.threadMeta[threadId ?? ""] ?? {
-      resolved: thread?.resolved,
-      followedBy: thread?.subscribed ? ["sample-eli"] : [],
+    message?.conversation ??
+    channels[0]?.id ??
+    "";
+  const [moderationChannel, setModerationChannel] = useState(conversationId);
+  const [retentionTarget, setRetentionTarget] = useState("workspace");
+  const retentionScope: C.RetentionPolicy["scope"] =
+    retentionTarget === "workspace"
+      ? { kind: "workspace" }
+      : { kind: "channel", id: retentionTarget };
+  const resource = useCommsRead<ToolData>(
+    `tool:${view}:${conversationId}:${moderationChannel}:${retentionTarget}:${messageId ?? ""}`,
+    async (client, signal) => {
+      const options = { signal };
+      const data: ToolData = {
+        reports: [],
+        removed: [],
+        schedules: [],
+        history: [],
+        revisions: [],
+      };
+      if (view === "moderation") {
+        data.reports = await complete((offset) =>
+          client.listReports({ limit: 100, offset }, options),
+        );
+        if (moderationChannel) {
+          data.removed = await complete((offset) =>
+            client.listRemovedMessages(
+              moderationChannel,
+              { limit: 100, offset },
+              options,
+            ),
+          );
+          data.settings = (
+            await client.getSettings(
+              { kind: "channel", id: moderationChannel },
+              options,
+            )
+          ).data.effective;
+        }
+      } else if (view === "outbox")
+        data.schedules = await complete((offset) =>
+          client.listSchedules({ limit: 100, offset }, options),
+        );
+      else if (view === "history") {
+        const bootstrap = await client.bootstrap(options);
+        const scopes: C.SettingsScope[] = [
+          { kind: "workspace" },
+          ...bootstrap.categories.map(({ category }) => ({
+            kind: "category" as const,
+            id: category.id,
+          })),
+          ...bootstrap.conversations.flatMap(({ conversation }) =>
+            conversation.kind === "channel"
+              ? [{ kind: "channel" as const, id: conversation.id }]
+              : [],
+          ),
+        ];
+        for (const scope of scopes)
+          data.history.push(
+            ...(await complete((offset) =>
+              client.listConfigurationHistory(
+                scope,
+                { limit: 100, offset },
+                options,
+              ),
+            )),
+          );
+        data.history.sort(
+          (a, b) =>
+            Date.parse(a.created_at) - Date.parse(b.created_at) ||
+            a.id.localeCompare(b.id),
+        );
+      } else if (view === "message-history" && messageId)
+        data.revisions = await complete((offset) =>
+          client.listMessageRevisions(
+            conversationId,
+            messageId,
+            { limit: 100, offset },
+            options,
+          ),
+        );
+      else if (view === "retention")
+        data.retention = await client.getRetention(retentionScope, options);
+      else if (view === "thread" && conversationId)
+        data.settings = (
+          await client.getSettings(
+            channels.some((channel) => channel.id === conversationId)
+              ? { kind: "channel", id: conversationId }
+              : { kind: "workspace" },
+            options,
+          )
+        ).data.effective;
+      return data;
     },
   );
+  const [meta, setMeta] = useState<ThreadDraft>({
+    name: thread?.name ?? "",
+    resolved: thread?.resolved ?? false,
+    locked: thread?.locked ?? false,
+    archived: thread?.archived ?? false,
+    followed: thread?.subscribed ?? false,
+  });
+  const confirmedMeta = useRef<ThreadDraft | null>(null);
   const [reason, setReason] = useState("");
+  const reportSaved = useRef(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
-  const [restore, setRestore] = useState<CommsHistoryEntry | null>(null);
-  const [previewTime] = useState(() => Date.now());
-  const [days, setDays] = useState(
-    resolveCommsSettings(config, channel, categories).values.retentionDays,
-  );
+  const [sampleConfirmed, setSampleConfirmed] = useState(false);
+  const [days, setDays] = useState(0);
+  const [inheritRetention, setInheritRetention] = useState(false);
+  const [retentionPreview, setRetentionPreview] = useState<{
+    value: C.RetentionPreview;
+    etag: string;
+    policy: C.RetentionPolicy;
+  }>();
+  const [restore, setRestore] = useState<{
+    entry: C.ConfigurationHistory;
+    preview: C.Versioned<C.ConfigurationRestorePreview>;
+  }>();
   const [scheduleId, setScheduleId] = useState("");
-  const [moderationChannel, setModerationChannel] = useState(
-    channelId ?? channels[0]?.id ?? "",
+  const createdSchedule = useRef<string | null>(null);
+  const scheduleKey = useRef<string | null>(null);
+  const selectedSchedule = resource.data?.schedules.find(
+    (row) => row.id === scheduleId,
   );
-  const [restrictedId, setRestrictedId] = useState("");
-  const [restrictionHours, setRestrictionHours] = useState(24);
-  const selectedSchedule = config.schedules.find((s) => s.id === scheduleId);
   const [creatingSchedule, setCreatingSchedule] = useState(
-    view === "outbox" && Boolean(message && (channel || direct)),
+    view === "outbox" && !!message,
   );
   const [text, setText] = useState(
     view === "outbox" ? (message?.text ?? "") : "",
   );
   const [sendAt, setSendAt] = useState("");
   const [preview, setPreview] = useState(false);
-  const allowed = (
-    action: Parameters<typeof resolveCommsPermission>[2],
-    target = channel,
-  ) =>
-    resolveCommsPermission(
-      config,
-      { person: viewer, channel: target, categories },
-      action,
-    ).allowed;
+  const [restrictedId, setRestrictedId] = useState("");
+  const [restrictionHours, setRestrictionHours] = useState(24);
+  useEffect(() => {
+    if (dirty || !resource.data?.retention) return;
+    setDays(resource.data.retention.data.effective.message_days);
+    setInheritRetention(
+      resource.data.retention.data.policy.message_days === null,
+    );
+  }, [resource.data?.retention, dirty]);
+  async function action(
+    key: string,
+    operation: Parameters<typeof run<void>>[1],
+    success?: string,
+  ) {
+    setError("");
+    setStatus("");
+    try {
+      await run(key, operation);
+      if (success) setStatus(success);
+      resource.reload();
+      return true;
+    } catch (failure) {
+      setError(
+        messageFromCommsError(
+          failure,
+          "The change could not be completed. Your draft is still here.",
+        ),
+      );
+      return false;
+    }
+  }
   async function save() {
-    if (view === "report") {
-      if (!reason.trim() || !message) {
-        setError("Enter a reason for reporting this message.");
-        return;
-      }
-      if (!allowed("viewChannel")) {
-        setError("Channel access is required.");
-        return;
-      }
-      const result = await run(
-        `report:${message.id}`,
-        (draft) => {
-          const current = readCommsConfiguration(draft);
-          const currentMessages = draft.read<Message[]>(
-            "commsMessages",
-            MESSAGES,
+    let confirmedWrite = false;
+    const ok = await action(`save:${view}`, async (client, signal) => {
+      const options = { signal };
+      if (view === "report") {
+        if (!messageId || !reason.trim())
+          throw new Error("Enter a report reason");
+        if (!reportSaved.current) {
+          await client.reportMessage(
+            conversationId,
+            messageId,
+            { reason: reason.trim() },
+            options,
           );
-          const currentThreads = draft.read<Thread[]>("commsThreads", []);
-          const currentMessage =
-            currentMessages.find((item) => item.id === message.id) ??
-            currentThreads
-              .flatMap(threadMessages)
-              .find((item) => item.id === message.id);
-          if (!currentMessage && !current.tombstones[message.id])
-            return draft.reject("This message is no longer available.");
-          stageCommsConfiguration(draft, (value) => ({
-            ...value,
-            reports: [
-              ...value.reports,
-              {
-                id: crypto.randomUUID(),
-                messageId: message.id,
-                reporterId: "sample-eli",
-                reason: reason.trim(),
-                created: Date.now(),
-                status: "open",
-              },
-            ],
-          }));
-          return null;
-        },
-        [COMMS_CONFIGURATION_KEY, "commsMessages", "commsThreads"],
-      ).catch((error: unknown) =>
-        messageFromCommsError(error, "The report could not be submitted."),
-      );
-      if (result) {
-        setError(result);
-        return;
-      }
-      onClose();
-      return;
-    }
-    if (view === "thread") {
-      if (!thread) return;
-      if (!allowed("manageThreads")) {
-        setError("Thread management access is required.");
-        return;
-      }
-      const result = await run(
-        `thread-settings:${thread.id}`,
-        (draft) => {
-          const currentThreads = draft.read<Thread[]>("commsThreads", []);
-          if (!currentThreads.some((item) => item.id === thread.id))
-            return draft.reject("This thread is no longer available.");
-          stageCommsConfiguration(draft, (current) => ({
-            ...current,
-            threadMeta: { ...current.threadMeta, [thread.id]: meta },
-          }));
-          draft.update<Thread[]>("commsThreads", [], (all) =>
-            all.map((item) =>
-              item.id === thread.id
-                ? {
-                    ...item,
-                    resolved: meta.resolved ?? item.resolved,
-                    subscribed:
-                      meta.followedBy?.includes("sample-eli") ??
-                      item.subscribed,
-                  }
-                : item,
-            ),
-          );
-          return null;
-        },
-        ["commsThreads", COMMS_CONFIGURATION_KEY],
-      ).catch((error: unknown) =>
-        messageFromCommsError(error, "Thread settings could not be saved."),
-      );
-      if (result) {
-        setError(result);
-        return;
-      }
-      setDirty(false);
-      onClose();
-      return;
-    }
-    if (view === "outbox" && (selectedSchedule || creatingSchedule)) {
-      const time = Date.parse(sendAt);
-      if (!text.trim() || !Number.isFinite(time)) {
-        setError("Enter a message and valid scheduled time.");
-        return;
-      }
-      if (selectedSchedule) {
-        const result = await run(
-          `schedule:update:${selectedSchedule.id}`,
-          (draft) => {
-            const current = readCommsConfiguration(draft);
-            if (
-              !current.schedules.some((item) => item.id === selectedSchedule.id)
-            )
-              return draft.reject("This scheduled message no longer exists.");
-            stageCommsConfiguration(draft, (value) => ({
-              ...value,
-              schedules: value.schedules.map((item) =>
-                item.id === selectedSchedule.id
-                  ? { ...item, text: text.trim(), sendAt: time }
-                  : item,
-              ),
-            }));
-            return null;
-          },
-          [COMMS_CONFIGURATION_KEY],
-        ).catch((error: unknown) =>
-          messageFromCommsError(
-            error,
-            "The scheduled message could not be saved.",
-          ),
-        );
-        if (result) {
-          setError(result);
-          return;
+          reportSaved.current = true;
         }
-      } else {
-        if (!conversationId || !message || !viewer) return;
-        const schedule = {
-          id: crypto.randomUUID(),
-          channelId: conversationId,
-          text: text.trim(),
-          sendAt: time,
-          authorId: viewer.id,
-          ...(message.recordId ? { recordId: message.recordId } : {}),
+        confirmedWrite = true;
+      } else if (view === "thread") {
+        if (!thread) throw new Error("Thread is unavailable");
+        const current = await client.getThread(
+          thread.conversation,
+          thread.messageId,
+          options,
+        );
+        const before = confirmedMeta.current ?? {
+          ...current.data,
+          followed: current.data.followed,
         };
-        const result = await run(
-          `schedule:create:${conversationId}`,
-          (draft) => {
-            stageCommsConfiguration(draft, (value) => ({
-              ...value,
-              schedules: [...value.schedules, schedule],
-            }));
-            return null;
-          },
-          [COMMS_CONFIGURATION_KEY],
-        ).catch((error: unknown) =>
-          messageFromCommsError(
-            error,
-            "The scheduled message could not be saved.",
-          ),
+        const patch = Object.fromEntries(
+          (["name", "locked", "resolved", "archived"] as const)
+            .filter((key) => before[key] !== meta[key])
+            .map((key) => [key, meta[key]]),
         );
-        if (result) {
-          setError(result);
-          return;
+        if (Object.keys(patch).length) {
+          await client.updateThread(
+            thread.conversation,
+            thread.messageId,
+            patch,
+            { ...options, if_match: current.etag },
+          );
+          confirmedMeta.current = { ...meta, followed: before.followed };
+          confirmedWrite = true;
         }
-        setScheduleId(schedule.id);
-        setCreatingSchedule(false);
+        if ((confirmedMeta.current ?? before).followed !== meta.followed) {
+          await client.followThread(
+            thread.conversation,
+            thread.messageId,
+            { followed: meta.followed },
+            options,
+          );
+          confirmedMeta.current = { ...meta };
+          confirmedWrite = true;
+        }
+      } else if (view === "outbox") {
+        const id = scheduleId || createdSchedule.current;
+        const current = id ? await client.getSchedule(id, options) : undefined;
+        scheduleKey.current ??= crypto.randomUUID();
+        const request: C.ScheduleRequest = {
+          ...(current?.data.request ?? {
+            client_key: scheduleKey.current,
+            conversation_id: conversationId,
+            attachment_ids: [],
+            record_ids: [],
+            mention_user_ids: [],
+            mentions_channel: false,
+            mentions_here: false,
+            reply_to_id: null,
+            parent_id: null,
+            also_send_to_channel: false,
+          }),
+          body: text,
+          send_at: new Date(sendAt).toISOString(),
+        };
+        const accepted = current
+          ? await client.updateSchedule(current.data.id, request, {
+              ...options,
+              if_match: current.etag,
+            })
+          : await client.createSchedule(request, options);
+        createdSchedule.current = accepted.data.id;
+        confirmedWrite = true;
       }
-      setError("");
-      setDirty(false);
-      setStatus("Scheduled message saved. No external message was sent.");
+    });
+    if (!ok) {
+      if (confirmedWrite)
+        setError(
+          "Some changes were saved. Your remaining changes are still here. Review them and try again.",
+        );
+      return false;
     }
-  }
-  async function restoreMessage(original: Message) {
-    if (
-      !allowed(
-        "moderate",
-        channels.find((c) => c.id === original.conversation),
-      )
-    ) {
-      setError("Moderation access is required.");
-      return;
-    }
-    const result = await run(
-      `message:restore:${original.id}`,
-      (draft) => {
-        const currentConfig = readCommsConfiguration(draft);
-        const currentThreads = draft.read<Thread[]>("commsThreads", []);
-        const currentChannels = draft.read("commsChannels", CHANNELS);
-        const currentCategories = draft.read("commsCategories", CATEGORIES);
-        const currentPeople = draft.read("access-people", initialPeople);
-        const targetThread = currentThreads.find(
-          (item) => item.id === original.conversation,
-        );
-        const targetChannel = currentChannels.find(
-          (item) =>
-            item.id === (targetThread?.conversation ?? original.conversation),
-        );
-        const currentViewer = currentPeople.find(
-          (item) => item.id === "sample-eli" && item.active,
-        );
-        if (
-          !currentViewer ||
-          !resolveCommsPermission(
-            currentConfig,
-            {
-              person: currentViewer,
-              channel: targetChannel,
-              categories: currentCategories,
-            },
-            "moderate",
-          ).allowed
-        )
-          return draft.reject("Moderation access is required.");
-        if (!currentConfig.tombstones[original.id])
-          return draft.reject("This removed message is no longer available.");
-        if (targetThread)
-          draft.update<Thread[]>("commsThreads", [], (all) =>
-            all.map((item) =>
-              item.id === targetThread.id
-                ? {
-                    ...item,
-                    replies: [
-                      ...threadMessages(item).filter(
-                        (entry) => entry.id !== original.id,
-                      ),
-                      original,
-                    ].sort((a, b) => a.created - b.created),
-                  }
-                : item,
-            ),
-          );
-        else
-          draft.update<Message[]>("commsMessages", MESSAGES, (all) =>
-            [...all.filter((item) => item.id !== original.id), original].sort(
-              (a, b) => a.created - b.created,
-            ),
-          );
-        stageCommsConfiguration(draft, (current) => {
-          const tombstones = { ...current.tombstones };
-          delete tombstones[original.id];
-          return { ...current, tombstones };
-        });
-        return null;
-      },
-      [
-        COMMS_CONFIGURATION_KEY,
-        "commsMessages",
-        "commsThreads",
-        "commsChannels",
-        "commsCategories",
-        "access-people",
-      ],
-    ).catch((error: unknown) =>
-      messageFromCommsError(error, "The message could not be restored."),
-    );
-    if (result) {
-      setError(result);
-      return;
-    }
-    setStatus("Message restored.");
-  }
-  async function sendNow() {
-    if (!selectedSchedule) return;
-    const scheduleId = selectedSchedule.id;
-    const result = await run(
-      `schedule:send:${scheduleId}`,
-      (draft) => {
-        const currentConfig = readCommsConfiguration(draft);
-        const currentSchedule = currentConfig.schedules.find(
-          (item) => item.id === scheduleId,
-        );
-        const currentChannels = draft.read("commsChannels", CHANNELS);
-        const currentCategories = draft.read("commsCategories", CATEGORIES);
-        const currentDirects = draft.read<Direct[]>("commsDirects", []);
-        const currentPeople = draft.read("access-people", initialPeople);
-        const currentRoles = draft.read("access-roles", initialRoles);
-        const currentRecords = draft.read("records", INITIAL_RECORDS);
-        const currentMessages = draft.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const currentThreads = draft.read<Thread[]>("commsThreads", []);
-        if (!currentSchedule)
-          return draft.reject("This scheduled message no longer exists.");
-        const target = currentChannels.find(
-          (item) => item.id === currentSchedule.channelId,
-        );
-        const recipient = currentDirects.find(
-          (item) => item.id === currentSchedule.channelId,
-        );
-        if (!target && !recipient)
-          return draft.reject("The scheduled conversation is unavailable.");
-        if (recipient?.blocked)
-          return draft.reject("Unblock this conversation before sending.");
-        const error = validateCommsMessage({
-          config: currentConfig,
-          person: currentPeople.find(
-            (person) => person.id === currentSchedule.authorId,
-          ),
-          channel: target,
-          categories: currentCategories,
-          people: currentPeople,
-          roles: currentRoles,
-          messages: toolChannelMessages(
-            currentMessages,
-            currentThreads,
-            currentSchedule.channelId,
-          ),
-          text: currentSchedule.text,
-          files: [],
-          record: currentRecords.find(
-            (record) => record.id === currentSchedule.recordId,
-          ),
-          kind: "post",
-        });
-        if (error) return draft.reject(error);
-        draft.update<Message[]>("commsMessages", MESSAGES, (all) => [
-          ...all,
-          {
-            id: crypto.randomUUID(),
-            conversation: currentSchedule.channelId,
-            text: currentSchedule.text,
-            author: "You",
-            authorId: currentSchedule.authorId,
-            created: Date.now(),
-            pinned: false,
-            ...(currentSchedule.recordId
-              ? { recordId: currentSchedule.recordId }
-              : {}),
-          },
-        ]);
-        stageCommsConfiguration(draft, (current) => ({
-          ...current,
-          schedules: current.schedules.filter((item) => item.id !== scheduleId),
-        }));
-        return null;
-      },
-      [
-        COMMS_CONFIGURATION_KEY,
-        "commsMessages",
-        "commsThreads",
-        "commsChannels",
-        "commsCategories",
-        "commsDirects",
-        "access-people",
-        "access-roles",
-        "records",
-      ],
-    ).catch((error: unknown) =>
-      messageFromCommsError(error, "The scheduled message could not be sent."),
-    );
-    if (result) {
-      setError(result);
-      return;
-    }
-    setScheduleId("");
-    setPreview(false);
-    setStatus(
-      "Message added to the conversation. No external message was sent.",
-    );
-  }
-  async function cancelSchedule(scheduleId: string) {
-    const result = await run(
-      `schedule:cancel:${scheduleId}`,
-      (draft) => {
-        const current = readCommsConfiguration(draft);
-        if (!current.schedules.some((item) => item.id === scheduleId))
-          return draft.reject("This scheduled message no longer exists.");
-        stageCommsConfiguration(draft, (value) => ({
-          ...value,
-          schedules: value.schedules.filter((item) => item.id !== scheduleId),
-        }));
-        return null;
-      },
-      [COMMS_CONFIGURATION_KEY],
-    ).catch((error: unknown) =>
-      messageFromCommsError(
-        error,
-        "The scheduled message could not be cancelled.",
-      ),
-    );
-    if (result) {
-      setError(result);
-      return;
-    }
-    setScheduleId("");
     setDirty(false);
-    setPreview(false);
+    if (view === "outbox") {
+      setScheduleId(createdSchedule.current ?? scheduleId);
+      setCreatingSchedule(false);
+      setStatus("Scheduled message saved.");
+    } else onClose();
+    return true;
   }
-  async function updateModeration(action: "restrict" | "clear" | "lock") {
-    const result = await run(
-      `moderation:${action}:${moderationChannel}`,
-      (draft) => {
-        const current = readCommsConfiguration(draft);
-        const currentChannels = draft.read("commsChannels", CHANNELS);
-        const currentCategories = draft.read("commsCategories", CATEGORIES);
-        const currentPeople = draft.read("access-people", initialPeople);
-        const currentViewer = currentPeople.find(
-          (person) => person.id === "sample-eli" && person.active,
-        );
-        const target = currentChannels.find(
-          (item) => item.id === moderationChannel,
-        );
-        if (!target || !currentViewer)
-          return draft.reject("Select an available channel.");
-        if (
-          !resolveCommsPermission(
-            current,
-            {
-              person: currentViewer,
-              channel: target,
-              categories: currentCategories,
-            },
-            "moderate",
-          ).allowed
-        )
-          return draft.reject("Moderation access is required.");
-        if (action === "restrict") {
-          if (
-            !restrictedId ||
-            !Number.isFinite(restrictionHours) ||
-            restrictionHours < 1
-          )
-            return draft.reject("Select a person and positive duration.");
-          const scope = { kind: "channel" as const, id: target.id };
-          const before = getCommsScope(current, scope);
-          const settings = resolveCommsSettings(
-            current,
-            target,
-            currentCategories,
-          ).values;
-          stageCommsConfiguration(draft, (value) =>
-            recordScopeChange(
-              value,
-              scope,
-              {
-                ...before,
-                settings: {
-                  ...before.settings,
-                  restrictedPersonIds: [
-                    ...new Set([...settings.restrictedPersonIds, restrictedId]),
-                  ],
-                  restrictionUntil: Date.now() + restrictionHours * 3600000,
-                },
-              },
-              "Temporary posting restriction",
-            ),
-          );
-        } else if (action === "clear") {
-          const scope = { kind: "channel" as const, id: target.id };
-          const before = getCommsScope(current, scope);
-          stageCommsConfiguration(draft, (value) =>
-            recordScopeChange(
-              value,
-              scope,
-              {
-                ...before,
-                settings: { ...before.settings, restrictedPersonIds: [] },
-              },
-              "Cleared posting restrictions",
-            ),
-          );
-        } else {
-          const scope = { kind: "channel" as const, id: target.id };
-          const before = getCommsScope(current, scope);
-          const settings = resolveCommsSettings(
-            current,
-            target,
-            currentCategories,
-          ).values;
-          stageCommsConfiguration(draft, (value) =>
-            recordScopeChange(
-              value,
-              scope,
-              {
-                ...before,
-                settings: { ...before.settings, locked: !settings.locked },
-              },
-              "Changed channel lock",
-            ),
-          );
-        }
-        return null;
-      },
-      [
-        COMMS_CONFIGURATION_KEY,
-        "commsChannels",
-        "commsCategories",
-        "access-people",
-      ],
-    ).catch((error: unknown) =>
-      messageFromCommsError(error, "The moderation change could not be saved."),
-    );
-    if (result) {
-      setError(result);
-      return;
-    }
-    setStatus(
-      action === "restrict"
-        ? "Posting restriction applied."
-        : action === "clear"
-          ? "Channel posting restrictions cleared."
-          : "Channel lock updated.",
-    );
-  }
-  async function resolveReport(reportId: string) {
-    const result = await run(
-      `report:resolve:${reportId}`,
-      (draft) => {
-        stageCommsConfiguration(draft, (current) => ({
-          ...current,
-          reports: current.reports.map((report) =>
-            report.id === reportId
-              ? { ...report, status: "resolved" as const }
-              : report,
-          ),
-        }));
-        return null;
-      },
-      [COMMS_CONFIGURATION_KEY],
-    ).catch((error: unknown) =>
-      messageFromCommsError(error, "The report could not be resolved."),
-    );
-    if (result) setError(result);
-  }
-  async function removeReportedMessage(messageToRemove: Message) {
-    const result = await run(
-      `moderation:remove:${messageToRemove.id}`,
-      (draft) => {
-        const current = readCommsConfiguration(draft);
-        const currentChannels = draft.read("commsChannels", CHANNELS);
-        const currentCategories = draft.read("commsCategories", CATEGORIES);
-        const currentPeople = draft.read("access-people", initialPeople);
-        const currentMessages = draft.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const currentThreads = draft.read<Thread[]>("commsThreads", []);
-        const currentViewer = currentPeople.find(
-          (person) => person.id === "sample-eli" && person.active,
-        );
-        const sourceThread = currentThreads.find(
-          (item) => item.id === messageToRemove.conversation,
-        );
-        const target = currentChannels.find(
-          (item) =>
-            item.id ===
-            (sourceThread?.conversation ?? messageToRemove.conversation),
-        );
-        if (
-          !currentViewer ||
-          !resolveCommsPermission(
-            current,
-            {
-              person: currentViewer,
-              channel: target,
-              categories: currentCategories,
-            },
-            "moderate",
-          ).allowed
-        )
-          return draft.reject("Moderation access is required.");
-        if (
-          !currentMessages.some((item) => item.id === messageToRemove.id) &&
-          !currentThreads.some((item) =>
-            threadMessages(item).some(
-              (entry) => entry.id === messageToRemove.id,
-            ),
-          )
-        )
-          return draft.reject("This message is no longer available.");
-        stageCommsConfiguration(draft, (value) => ({
-          ...value,
-          tombstones: {
-            ...value.tombstones,
-            [messageToRemove.id]: messageToRemove,
-          },
-        }));
-        draft.update<Message[]>("commsMessages", MESSAGES, (all) =>
-          all.filter((item) => item.id !== messageToRemove.id),
-        );
-        draft.update<Thread[]>("commsThreads", [], (all) =>
-          all.map((item) => ({
-            ...item,
-            replies: threadMessages(item).filter(
-              (entry) => entry.id !== messageToRemove.id,
-            ),
-          })),
-        );
-        return null;
-      },
-      [
-        COMMS_CONFIGURATION_KEY,
-        "commsMessages",
-        "commsThreads",
-        "commsChannels",
-        "commsCategories",
-        "access-people",
-      ],
-    ).catch((error: unknown) =>
-      messageFromCommsError(error, "The message could not be removed."),
-    );
-    if (result) {
-      setError(result);
-      return;
-    }
-    setStatus("Message removed and kept recoverable.");
-  }
-  const retainMessages = [
-    ...messages.filter((m) => !channel || m.conversation === channel.id),
-    ...threads
-      .filter((t) => !channel || t.conversation === channel.id)
-      .flatMap(threadMessages),
-  ];
-  const impacted =
-    days > 0
-      ? retainMessages.filter((m) => m.created < previewTime - days * 86400000)
-      : [];
-  const entityNames = Object.fromEntries(
-    [...people, ...roles, ...records].map((item) => [
-      item.id,
-      "name" in item ? item.name : item.title,
-    ]),
+  const names = Object.fromEntries(
+    [...people, ...channels].map((item) => [item.id, item.name]),
   );
+  const protectedView = view === "history" || view === "retention";
   return (
     <ConfigurationFrame
       title={titles[view]}
-      description={descriptions[view]}
+      description={
+        view === "moderation"
+          ? "Review reports, limit posting, and restore removed messages."
+          : view === "retention"
+            ? "Preview and save retention for local sample data."
+            : view === "history"
+              ? "Preview a saved change before restoring its earlier values."
+              : undefined
+      }
       opener={opener}
       onClose={onClose}
       dirty={dirty}
+      disabled={isPending()}
       onSave={
-        ["report", "thread"].includes(view) ||
-        (view === "outbox" && (selectedSchedule || creatingSchedule))
+        view === "report" ||
+        view === "thread" ||
+        (view === "outbox" &&
+          (creatingSchedule || selectedSchedule?.status === "pending"))
           ? save
           : undefined
       }
       saveLabel={view === "report" ? "Submit report" : "Save changes"}
     >
       <FieldGroup className="p-5 sm:p-6">
-        {error && (
+        {(error || resource.error) && (
           <Alert role="alert" variant="destructive">
-            {error}
+            {error || "Tool data could not be loaded."}
+            {resource.error && (
+              <Button variant="outline" onClick={resource.reload}>
+                Try again
+              </Button>
+            )}
           </Alert>
         )}
         {status && (
@@ -830,15 +411,23 @@ function LifecycleTools({
             {status}
           </Alert>
         )}
+        {!resource.data && resource.status === "loading" && (
+          <p role="status">Loading tool…</p>
+        )}
+        {protectedView && (
+          <Toggle
+            label="Confirm sample operation — local example data only; no account password required."
+            checked={sampleConfirmed}
+            onCheckedChange={setSampleConfirmed}
+          />
+        )}
         {view === "thread" && (
           <ThreadSettingsFields
             thread={thread}
             meta={meta}
             setMeta={setMeta}
             setDirty={setDirty}
-            config={config}
-            channel={channel}
-            categories={categories}
+            settings={resource.data?.settings}
           />
         )}
         {view === "report" && (
@@ -849,80 +438,87 @@ function LifecycleTools({
             setDirty={setDirty}
           />
         )}
-        {view === "message-history" && (
+        {view === "message-history" && resource.data && (
           <MessageHistoryFields
-            history={config.messageHistory[messageId ?? ""] ?? []}
+            history={resource.data.revisions}
             currentMessage={message}
           />
         )}
-        {view === "history" && (
+        {view === "history" && resource.data && (
           <>
             <ConfigurationHistoryFields
-              history={config.history}
-              names={entityNames}
-              onPreview={setRestore}
+              history={resource.data.history}
+              names={names}
+              disabled={!sampleConfirmed || isPending()}
+              onPreview={(entry) => {
+                void action(
+                  `history-preview:${entry.id}`,
+                  async (client, signal) => {
+                    const current = await client.getSettings(entry.scope, {
+                      signal,
+                    });
+                    const preview = await client.previewConfigurationRestore(
+                      entry.scope,
+                      entry.id,
+                      {
+                        signal,
+                        if_match: current.etag,
+                        password: sampleMarker,
+                      },
+                    );
+                    setRestore({ entry, preview });
+                  },
+                );
+              }}
             />
             {restore && (
               <Card aria-label="Restoration preview" className="w-full">
                 <CardHeader>
-                  <CardTitle>Restore {restore.label}</CardTitle>
+                  <CardTitle>
+                    Restore {restore.entry.scope.kind} settings
+                  </CardTitle>
                   <CardDescription>
-                    Replaces this scope’s current overrides with the saved
-                    before-values
-                    {restore.beforeLocks ? " and workspace locks" : ""}. Other
-                    scopes and conversations remain unchanged.
+                    Replaces this scope’s overrides with the previewed values.
+                    Other scopes remain unchanged.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3">
                   <ConfigurationChanges
-                    before={getCommsScope(config, restore.scope)}
-                    after={restore.before}
-                    beforeLocks={
-                      restore.beforeLocks
-                        ? {
-                            settings: config.lockedSettings,
-                            permissions: config.lockedPermissions,
-                          }
-                        : undefined
-                    }
-                    afterLocks={restore.beforeLocks}
-                    names={entityNames}
+                    before={restore.preview.data.before}
+                    after={restore.preview.data.after}
+                    names={names}
                   />
-
                   <Button
+                    disabled={!sampleConfirmed || isPending()}
                     onClick={() => {
-                      if (!allowed("manageWorkspace")) {
-                        setError("Workspace management access is required.");
-                        return;
-                      }
-                      void (async () => {
-                        const result = await run(
-                          `configuration:restore:${restore.id}`,
-                          (draft) => {
-                            stageCommsConfiguration(draft, (current) =>
-                              restoreConfigurationEntry(current, restore),
-                            );
-                            return null;
-                          },
-                          [COMMS_CONFIGURATION_KEY],
-                        ).catch((error: unknown) =>
-                          messageFromCommsError(
-                            error,
-                            "Configuration could not be restored.",
-                          ),
-                        );
-                        if (result) {
-                          setError(result);
-                          return;
-                        }
-                        setRestore(null);
-                        setStatus("Configuration restored.");
-                      })();
+                      void action(
+                        `restore:${restore.entry.id}`,
+                        async (client, signal) => {
+                          await client.restoreConfiguration(
+                            restore.entry.scope,
+                            {
+                              history_id: restore.entry.id,
+                              preview_digest:
+                                restore.preview.data.preview_digest,
+                            },
+                            {
+                              signal,
+                              if_match: restore.preview.etag,
+                              password: sampleMarker,
+                            },
+                          );
+                          setRestore(undefined);
+                        },
+                        "Configuration restored.",
+                      );
                     }}
                   >
                     Confirm restoration
                   </Button>
-                  <Button variant="outline" onClick={() => setRestore(null)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => setRestore(undefined)}
+                  >
                     Cancel restoration
                   </Button>
                 </CardContent>
@@ -931,16 +527,99 @@ function LifecycleTools({
           </>
         )}
         {view === "retention" && (
-          <RetentionPreviewFields
-            days={days}
-            setDays={setDays}
-            impacted={impacted}
-            total={retainMessages.length}
-          />
+          <>
+            <Choice
+              label="Retention scope"
+              value={retentionTarget}
+              onChange={(event) => {
+                setRetentionTarget(event.target.value);
+                setRetentionPreview(undefined);
+                setDirty(false);
+              }}
+            >
+              <NativeSelectOption value="workspace">
+                This organization
+              </NativeSelectOption>
+              {channels.map((channel) => (
+                <NativeSelectOption key={channel.id} value={channel.id}>
+                  #{channel.name}
+                </NativeSelectOption>
+              ))}
+            </Choice>
+            <RetentionPreviewFields
+              days={days}
+              setDays={(value) => {
+                setDays(value);
+                setDirty(true);
+                setRetentionPreview(undefined);
+              }}
+              preview={retentionPreview?.value}
+              disabled={
+                !sampleConfirmed || isPending() || !resource.data?.retention
+              }
+              inherited={retentionTarget !== "workspace" && inheritRetention}
+              onInherit={
+                retentionTarget === "workspace"
+                  ? undefined
+                  : () => {
+                      setInheritRetention(!inheritRetention);
+                      setDirty(true);
+                      setRetentionPreview(undefined);
+                    }
+              }
+              onPreview={() => {
+                void action("retention-preview", async (client, signal) => {
+                  const current = await client.getRetention(retentionScope, {
+                    signal,
+                  });
+                  const policy: C.RetentionPolicy =
+                    retentionScope.kind === "workspace"
+                      ? {
+                          scope: retentionScope,
+                          message_days: days,
+                          file_days: current.data.effective.file_days,
+                        }
+                      : {
+                          scope: retentionScope,
+                          message_days: inheritRetention ? null : days,
+                          file_days: current.data.policy.file_days,
+                        };
+                  const value = await client.previewRetention(policy, {
+                    signal,
+                    if_match: current.etag,
+                    password: sampleMarker,
+                  });
+                  setRetentionPreview({ value, policy, etag: current.etag });
+                });
+              }}
+              onApply={() => {
+                if (!retentionPreview) return;
+                void action(
+                  "retention-save",
+                  async (client, signal) => {
+                    await client.updateRetention(
+                      {
+                        ...retentionPreview.policy,
+                        preview_digest: retentionPreview.value.preview_digest,
+                      },
+                      {
+                        signal,
+                        if_match: retentionPreview.etag,
+                        password: sampleMarker,
+                      },
+                    );
+                    setRetentionPreview(undefined);
+                    setDirty(false);
+                  },
+                  "Retention policy saved.",
+                );
+              }}
+            />
+          </>
         )}
-        {view === "outbox" && (
+        {view === "outbox" && resource.data && (
           <OutboxFields
-            config={config}
+            schedules={resource.data.schedules}
             selectedSchedule={selectedSchedule}
             creatingSchedule={creatingSchedule}
             setCreatingSchedule={setCreatingSchedule}
@@ -953,29 +632,149 @@ function LifecycleTools({
             setDirty={setDirty}
             preview={preview}
             setPreview={setPreview}
-            onSendNow={() => void sendNow()}
-            onCancelSchedule={(id) => void cancelSchedule(id)}
+            onSendNow={() => {
+              if (!selectedSchedule) return;
+              void action(
+                `send-now:${selectedSchedule.id}`,
+                async (client, signal) => {
+                  const current = await client.getSchedule(
+                    selectedSchedule.id,
+                    { signal },
+                  );
+                  const result = await client.sendScheduleNow(current.data.id, {
+                    signal,
+                    if_match: current.etag,
+                  });
+                  if (result.status !== "succeeded")
+                    throw new Error("Scheduled message did not send");
+                },
+                "Scheduled message sent.",
+              );
+            }}
+            onCancelSchedule={(id) => {
+              void action(
+                `cancel:${id}`,
+                async (client, signal) => {
+                  const current = await client.getSchedule(id, { signal });
+                  await client.cancelSchedule(id, {
+                    signal,
+                    if_match: current.etag,
+                  });
+                },
+                "Scheduled message cancelled.",
+              );
+            }}
           />
         )}
-        {view === "moderation" && (
+        {view === "moderation" && resource.data && (
           <ModerationFields
-            config={config}
             channels={channels}
-            categories={categories}
             people={people}
-            messages={messages}
-            threads={threads}
+            messages={[
+              ...messages,
+              ...threads.flatMap((thread) => thread.replies),
+            ]}
+            reports={resource.data.reports}
+            removed={resource.data.removed}
+            settings={resource.data.settings}
             moderationChannel={moderationChannel}
             setModerationChannel={setModerationChannel}
             restrictedId={restrictedId}
             setRestrictedId={setRestrictedId}
             restrictionHours={restrictionHours}
             setRestrictionHours={setRestrictionHours}
-            updateModeration={updateModeration}
-            allowed={allowed}
-            resolveReport={resolveReport}
-            removeReportedMessage={removeReportedMessage}
-            restoreMessage={restoreMessage}
+            pending={isPending()}
+            updateModeration={(operation) => {
+              void action(
+                `moderation:${moderationChannel}`,
+                async (client, signal) => {
+                  const scope = {
+                    kind: "channel",
+                    id: moderationChannel,
+                  } as const;
+                  const current = await client.getSettings(scope, { signal });
+                  if (operation === "lock")
+                    await client.updateSettings(
+                      scope,
+                      { locked: !current.data.effective.locked },
+                      { signal, if_match: current.etag },
+                    );
+                  else
+                    await client.setPostingRestrictions(
+                      moderationChannel,
+                      {
+                        user_ids:
+                          operation === "clear"
+                            ? []
+                            : [
+                                ...new Set([
+                                  ...current.data.effective
+                                    .restricted_person_ids,
+                                  restrictedId,
+                                ]),
+                              ],
+                        until:
+                          operation === "clear"
+                            ? null
+                            : new Date(
+                                Date.now() + restrictionHours * 3600000,
+                              ).toISOString(),
+                      },
+                      { signal, if_match: current.etag },
+                    );
+                },
+                "Moderation settings saved.",
+              );
+            }}
+            resolveReport={(id) => {
+              void action(
+                `resolve-report:${id}`,
+                async (client, signal) => {
+                  const current = await client.getReport(id, { signal });
+                  await client.resolveReport(id, {
+                    signal,
+                    if_match: current.etag,
+                  });
+                },
+                "Report resolved.",
+              );
+            }}
+            removeReportedMessage={(report) => {
+              void action(
+                `remove:${report.message_id}`,
+                async (client, signal) => {
+                  const current = await client.getMessage(
+                    report.conversation_id,
+                    report.message_id,
+                    { signal },
+                  );
+                  await client.removeMessage(
+                    report.conversation_id,
+                    report.message_id,
+                    { signal, if_match: current.etag },
+                  );
+                },
+                "Message removed and kept recoverable.",
+              );
+            }}
+            restoreMessage={(message) => {
+              void action(
+                `restore:${message.id}`,
+                async (client, signal) => {
+                  const current = await client.getMessage(
+                    message.conversation_id,
+                    message.id,
+                    { signal },
+                  );
+                  await client.restoreMessage(
+                    message.conversation_id,
+                    message.id,
+                    { signal, if_match: current.etag },
+                  );
+                },
+                "Message restored.",
+              );
+            }}
           />
         )}
       </FieldGroup>

@@ -1,216 +1,204 @@
 "use client";
-import {
-  NativeSelectOption,
-  NativeSelectOptGroup,
-} from "@/components/ui/native-select";
-
 import { useState } from "react";
+import { NativeSelectOption } from "@/components/ui/native-select";
 import { Alert } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-} from "@/components/ui/empty";
 import { Badge } from "@/components/ui/badge";
 import { FieldGroup } from "@/components/ui/field";
-import type { Person, Role } from "../../shared/data/sample-people";
+import type { Person } from "../../shared/data/sample-people";
 import { Action, Choice, Toggle } from "../../shared/components/ui";
 import { ConfigurationFrame } from "./configuration-frame";
+import type { Channel } from "../domain/view-model";
+import type * as C from "../contract/types";
 import {
-  COMMS_PERMISSIONS,
-  resolveCommsPermission,
-  type CommsConfiguration,
-  type CommsPermission,
-  type CommsScopeConfiguration,
-  type PermissionOverride,
-} from "../domain/configuration";
-import type { Category, Channel } from "../domain/model";
+  capabilitySchema,
+  capabilityDefaults,
+  capabilityGroupScopes,
+  everyoneCapabilitySchema,
+  lockableCapabilitySchema,
+} from "../contract/schemas";
+import { useCommsClient } from "../state/client-context";
+import { useCommsRead } from "../state/runtime";
 
-export const PERMISSION_LABELS: Record<CommsPermission, string> = {
-  viewChannel: "View channel",
-  viewHistory: "View message history",
-  post: "Start new messages",
+export const PERMISSION_LABELS: Record<C.Capability, string> = {
+  react: "Add reactions",
   reply: "Reply to messages",
   createThread: "Create threads",
-  manageThreads: "Manage threads",
-  react: "Add reactions",
-  mentionPeople: "Mention people",
-  mentionRoles: "Mention roles",
-  mentionEveryone: "Mention everyone",
   attachFiles: "Attach files",
-  downloadFiles: "Download files",
   linkRecords: "Link records",
+  mentionChannel: "Mention channel and here",
   pin: "Pin messages",
-  editMessages: "Edit messages",
-  deleteMessages: "Delete messages",
+  manageThreads: "Manage threads",
   deleteOthersMessages: "Delete other people’s messages",
-  invite: "Invite people",
+  moderate: "Moderate conversations",
   manageChannel: "Manage channel",
-  managePermissions: "Manage permissions",
   createChannel: "Create channels",
   manageWorkspace: "Manage workspace",
-  exportHistory: "Export history",
-  moderate: "Moderate conversations",
 };
-
 export function PermissionFields({
   value,
-  roles,
-  people,
+  scope,
   locked,
-  workspace,
   search,
   modifiedOnly,
-  initialSubject = "everyone",
   onChange,
   onLock,
   onInspect,
 }: {
-  value: CommsScopeConfiguration["permissions"];
-  roles: Role[];
-  people: Person[];
-  locked: CommsPermission[];
-  workspace: boolean;
+  value: C.CapabilityConfiguration;
+  scope: C.SettingsScope;
+  locked: C.Capability[];
   search: string;
   modifiedOnly: boolean;
-  initialSubject?: string;
-  onChange: (
-    subject: string,
-    permission: CommsPermission,
-    value: PermissionOverride,
-  ) => void;
-  onLock: (permission: CommsPermission, value: boolean) => void;
+  onChange: (value: C.CapabilityConfiguration) => void;
+  onLock: (key: C.Capability, value: boolean) => void;
   onInspect: () => void;
 }) {
-  const [subject, setSubject] = useState(initialSubject);
-  const permissions = COMMS_PERMISSIONS.filter(
-    (permission) =>
-      PERMISSION_LABELS[permission]
-        .toLowerCase()
-        .includes(search.toLowerCase()) &&
-      (!modifiedOnly ||
-        (value[subject]?.[permission] &&
-          value[subject][permission] !== "inherit")),
+  const { groups } = useCommsClient();
+  const [subject, setSubject] = useState("everyone");
+  const capabilities = capabilitySchema.options.filter(
+    (key) =>
+      PERMISSION_LABELS[key].toLowerCase().includes(search.toLowerCase()) &&
+      (!modifiedOnly || subject === "everyone"
+        ? !modifiedOnly || Object.hasOwn(value.everyone, key)
+        : value.group_grants.some(
+            (row) => row.group_id === subject && row.capability === key,
+          )),
   );
   return (
     <FieldGroup>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-muted-foreground max-w-md text-xs">
-          Access is decided from the workspace down to the channel. At each
-          level, a rule for a person beats a rule for their role, which beats
-          the rule for everyone. Inherit uses the broader rule.
+          Groups add capabilities. There are no person grants or deny rules.
+          Guests remain read-only.
         </p>
         <Action type="button" onClick={onInspect}>
-          Inspect effective access
+          Check one person
         </Action>
       </div>
       <Choice
-        label="Permissions for"
+        label="Capabilities for"
         value={subject}
         onChange={(event) => setSubject(event.target.value)}
       >
         <NativeSelectOption value="everyone">Everyone</NativeSelectOption>
-        <NativeSelectOptGroup label="Roles">
-          {roles.map((role) => (
-            <NativeSelectOption key={role.id} value={`role:${role.id}`}>
-              {role.name}
-            </NativeSelectOption>
-          ))}
-        </NativeSelectOptGroup>
-        <NativeSelectOptGroup label="People">
-          {people.map((person) => (
-            <NativeSelectOption key={person.id} value={`person:${person.id}`}>
-              {person.name}
-              {person.active ? "" : " (inactive)"}
-            </NativeSelectOption>
-          ))}
-        </NativeSelectOptGroup>
+        {groups.map((group) => (
+          <NativeSelectOption key={group.id} value={group.id}>
+            {group.name}
+          </NativeSelectOption>
+        ))}
       </Choice>
-      {subject === "person:sample-eli" && (
-        <Alert>
-          Eli owns OpenComms, so Eli always has every permission here. Channel
-          locks and message limits still apply.
-        </Alert>
-      )}
-      {!permissions.length && (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>No permissions match these filters.</EmptyTitle>
-            <EmptyDescription>
-              Try another search or turn off Modified only.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      )}
-      {permissions.map((permission, index) => (
-        <div key={permission} className="flex flex-col gap-2 pb-3">
-          <Choice
-            label={PERMISSION_LABELS[permission]}
-            disabled={!workspace && locked.includes(permission)}
-            value={value[subject]?.[permission] ?? "inherit"}
-            onChange={(event) =>
-              onChange(
-                subject,
-                permission,
-                event.target.value as PermissionOverride,
-              )
-            }
-          >
-            <NativeSelectOption value="inherit">Inherit</NativeSelectOption>
-            <NativeSelectOption value="allow">Allow</NativeSelectOption>
-            <NativeSelectOption value="deny">Deny</NativeSelectOption>
-          </Choice>
-          <p className="text-muted-foreground text-xs">
-            {!workspace && locked.includes(permission)
-              ? "Locked by workspace"
-              : value[subject]?.[permission] &&
-                  value[subject][permission] !== "inherit"
-                ? "Set here"
-                : "Not set here, so a broader rule applies"}
-          </p>
-          {workspace && (
-            <Toggle
-              control="switch"
-              label={`Lock ${PERMISSION_LABELS[permission]} for categories and channels`}
-              checked={locked.includes(permission)}
-              onCheckedChange={(checked) => onLock(permission, checked)}
-            />
-          )}
-          {index < permissions.length - 1 && <Separator />}
-        </div>
-      ))}
+      {capabilities.map((capability, index) => {
+        const everyone = everyoneCapabilitySchema.safeParse(capability);
+        const grantable = capabilityGroupScopes[capability].includes(
+          scope.kind,
+        );
+        const disabled =
+          scope.kind !== "workspace" && locked.includes(capability);
+        return (
+          <div key={capability} className="flex flex-col gap-2 pb-3">
+            {subject === "everyone" && everyone.success ? (
+              <Choice
+                label={PERMISSION_LABELS[capability]}
+                disabled={disabled}
+                value={
+                  value.everyone[everyone.data] === undefined
+                    ? "inherit"
+                    : value.everyone[everyone.data]
+                      ? "enabled"
+                      : "disabled"
+                }
+                onChange={(event) => {
+                  const next = { ...value.everyone };
+                  if (event.target.value === "inherit")
+                    delete next[everyone.data];
+                  else next[everyone.data] = event.target.value === "enabled";
+                  onChange({ ...value, everyone: next });
+                }}
+              >
+                <NativeSelectOption value="inherit">Inherit</NativeSelectOption>
+                <NativeSelectOption value="enabled">Enabled</NativeSelectOption>
+                <NativeSelectOption value="disabled">
+                  Disabled
+                </NativeSelectOption>
+              </Choice>
+            ) : subject !== "everyone" && grantable ? (
+              <Toggle
+                label={PERMISSION_LABELS[capability]}
+                checked={value.group_grants.some(
+                  (row) =>
+                    row.group_id === subject && row.capability === capability,
+                )}
+                disabled={disabled}
+                onCheckedChange={(checked) =>
+                  onChange({
+                    ...value,
+                    group_grants: [
+                      ...value.group_grants.filter(
+                        (row) =>
+                          row.group_id !== subject ||
+                          row.capability !== capability,
+                      ),
+                      ...(checked ? [{ group_id: subject, capability }] : []),
+                    ],
+                  })
+                }
+              />
+            ) : (
+              <p className="text-sm">
+                <strong>{PERMISSION_LABELS[capability]}</strong> · Default:{" "}
+                {capabilityDefaults[capability].replaceAll("_", " ")}. Not
+                grantable here.
+              </p>
+            )}
+            {disabled && (
+              <p className="text-muted-foreground text-xs">
+                Locked by workspace
+              </p>
+            )}
+            {scope.kind === "workspace" &&
+              lockableCapabilitySchema.safeParse(capability).success && (
+                <Toggle
+                  control="switch"
+                  label={`Lock ${PERMISSION_LABELS[capability]} for categories and channels`}
+                  checked={locked.includes(capability)}
+                  onCheckedChange={(checked) => onLock(capability, checked)}
+                />
+              )}
+            {index < capabilities.length - 1 && <Separator />}
+          </div>
+        );
+      })}
     </FieldGroup>
   );
 }
 
 export function PermissionInspector({
-  config,
   channel,
   channels,
-  categories,
   people,
   opener,
   onBack,
 }: {
-  config: CommsConfiguration;
   channel?: Channel;
   channels: Channel[];
-  categories: Category[];
   people: Person[];
   opener: HTMLElement | null;
   onBack: () => void;
 }) {
-  const [personId, setPersonId] = useState("sample-eli");
-  const [channelId, setChannelId] = useState(channel?.id ?? "");
-  const selectedChannel =
-    channel ?? channels.find((item) => item.id === channelId);
-  const person = people.find((item) => item.id === personId);
+  const { client, groups } = useCommsClient();
+  const [personId, setPersonId] = useState(client?.context.user_id ?? "");
+  const [channelId, setChannelId] = useState(
+    channel?.id ?? channels[0]?.id ?? "",
+  );
+  const resource = useCommsRead(
+    `inspect:${channelId}:${personId}`,
+    (client, signal) => client.checkPerson(channelId, personId, { signal }),
+  );
   return (
     <ConfigurationFrame
       title="Effective access"
-      description="See what one person can do with your unsaved changes. This does not sign you in as them."
+      description="Check saved access for one person. Unsaved changes do not change their permissions."
       closeLabel="Back to settings"
       opener={opener}
       onClose={onBack}
@@ -226,10 +214,9 @@ export function PermissionInspector({
           value={personId}
           onChange={(event) => setPersonId(event.target.value)}
         >
-          {people.map((item) => (
-            <NativeSelectOption key={item.id} value={item.id}>
-              {item.name}
-              {item.active ? "" : " (inactive)"}
+          {people.map((person) => (
+            <NativeSelectOption key={person.id} value={person.id}>
+              {person.name}
             </NativeSelectOption>
           ))}
         </Choice>
@@ -239,7 +226,6 @@ export function PermissionInspector({
             value={channelId}
             onChange={(event) => setChannelId(event.target.value)}
           >
-            <NativeSelectOption value="">Workspace defaults</NativeSelectOption>
             {channels.map((item) => (
               <NativeSelectOption key={item.id} value={item.id}>
                 #{item.name}
@@ -247,54 +233,50 @@ export function PermissionInspector({
             ))}
           </Choice>
         )}
-        {(() => {
-          const results = COMMS_PERMISSIONS.map((permission) => ({
-            permission,
-            result: resolveCommsPermission(
-              config,
-              { person, channel: selectedChannel, categories },
-              permission,
-            ),
-          }));
-          // One reason for every row (the owner rule) is said once, above.
-          const sharedReason = results.every(
-            ({ result }) => result.reason === results[0]?.result.reason,
-          )
-            ? results[0]?.result.reason
-            : undefined;
-          return (
-            <>
-              {sharedReason && <Alert>{sharedReason}</Alert>}
-              <div className="flex flex-col">
-                {results.map(({ permission, result }, index) => {
-                  return (
-                    <div key={permission} className="grid gap-2 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h3 className="text-sm font-medium">
-                          {PERMISSION_LABELS[permission]}
-                        </h3>
-                        <Badge
-                          variant={result.allowed ? "secondary" : "outline"}
-                        >
-                          {result.allowed ? "Allowed" : "Denied"}
-                        </Badge>
-                      </div>
-                      {!sharedReason && (
-                        <p className="text-muted-foreground text-xs">
-                          {result.reason}
-                        </p>
-                      )}
-                      <p className="text-muted-foreground text-xs break-words">
-                        Source: {result.source}
-                      </p>
-                      {index < COMMS_PERMISSIONS.length - 1 && <Separator />}
+        {resource.error && (
+          <Alert role="alert" variant="destructive">
+            Access could not be checked.{" "}
+            <Action onClick={resource.reload}>Try again</Action>
+          </Alert>
+        )}
+        {resource.data && (
+          <>
+            <Alert>
+              Conversation access: {resource.data.conversation_level}.
+              Membership: {resource.data.membership_role}.
+            </Alert>
+            <div className="flex flex-col">
+              {capabilitySchema.options.map((capability, index) => {
+                const decision = resource.data!.capabilities[capability];
+                const source = decision.source;
+                return (
+                  <div key={capability} className="grid gap-2 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-medium">
+                        {PERMISSION_LABELS[capability]}
+                      </h3>
+                      <Badge
+                        variant={decision.allowed ? "secondary" : "outline"}
+                      >
+                        {decision.allowed ? "Allowed" : "Denied"}
+                      </Badge>
                     </div>
-                  );
-                })}
-              </div>
-            </>
-          );
-        })()}
+                    <p className="text-muted-foreground text-xs break-words">
+                      Source: {source.kind.replaceAll("_", " ")}
+                      {"group_id" in source
+                        ? ` · ${groups.find((group) => group.id === source.group_id)?.name ?? source.group_id}`
+                        : ""}
+                      {"scope" in source ? ` · ${source.scope.kind}` : ""}
+                    </p>
+                    {index < capabilitySchema.options.length - 1 && (
+                      <Separator />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </FieldGroup>
     </ConfigurationFrame>
   );

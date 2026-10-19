@@ -1,21 +1,26 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type SetStateAction } from "react";
 import {
-  CHANNELS,
   threadMessages,
   type Message,
   type Thread,
-} from "../domain/model";
+} from "../domain/view-model";
 import type { CommsPreferences } from "../domain/configuration";
 
-export function useCommsNavigationState() {
+export function useCommsNavigationState(
+  firstConversation = "",
+  messages: Message[] = [],
+) {
   const [selected, setSelected] = useState(() =>
     typeof window === "undefined"
-      ? CHANNELS[0].id
+      ? firstConversation
       : new URLSearchParams(window.location.search).get("conversation") ||
-        CHANNELS[0].id,
+        firstConversation,
   );
+  useEffect(() => {
+    if (!selected && firstConversation) setSelected(firstConversation);
+  }, [selected, firstConversation]);
   const [mobileConversation, setMobileConversation] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -28,7 +33,15 @@ export function useCommsNavigationState() {
   );
   const [memberOpen, setMemberOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [replyingToId, setReplyingToId] = useState("");
+  const replyingTo =
+    messages.find(
+      (message) => message.id === replyingToId && !message.deleted,
+    ) ?? null;
+  function setReplyingTo(action: SetStateAction<Message | null>) {
+    const next = typeof action === "function" ? action(replyingTo) : action;
+    setReplyingToId(next?.id ?? "");
+  }
   const [highlightedId, setHighlightedId] = useState("");
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const messageList = useRef<HTMLDivElement>(null);

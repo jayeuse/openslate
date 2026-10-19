@@ -918,6 +918,7 @@ export function AppPage({ children }: AppPageProps) {
         <VerifiedWorkspaceIdentityProvider
           key={`${verifiedUserId}:${organizationId}`}
           userId={verifiedUserId}
+          organizationId={organizationId}
           suspended={checking}
         >
           <AppQueryProvider>

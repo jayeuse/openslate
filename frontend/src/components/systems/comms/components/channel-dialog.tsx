@@ -5,25 +5,21 @@ import { useRef, useState } from "react";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Alert } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  initialPeople,
-  type Person,
-  type Role,
-} from "../../shared/data/sample-people";
-import {
-  useSampleState,
-  type SampleTransactionDraft,
-} from "../../shared/runtime/sample-state";
+import type { Person, Role } from "../../shared/data/sample-people";
 import { CommsSettingsDialog } from "./settings-dialog";
 import { GroupAccessField } from "./group-access-field";
-import { COMMS_GROUPS } from "../domain/groups";
+import { GroupAccessSummary } from "./group-access-summary";
 import { Action, Choice } from "../../shared/components/ui";
 import { TextField } from "./ui";
-import { OPEN_PERMISSIONS, type Category, type Channel } from "../domain/model";
+import type { Category, Channel } from "../domain/view-model";
+import { useCommsClient } from "../state/client-context";
+import type { GroupAccess, ChannelPatch } from "../contract/types";
+import type { CommsScope } from "../domain/configuration-model";
 
 type EditorProps = {
   opener: HTMLElement;
   roles: Role[];
+  people: Person[];
   categories: Category[];
   onClose: () => void;
   onAcceptedChannelSave?: (id: string) => void;
@@ -33,28 +29,19 @@ type EditorProps = {
       kind: "channel";
       value: Channel;
       existing: { id: string; name: string }[];
-      onSave: (
-        value: Channel,
-        beforeId: string,
-        draft?: SampleTransactionDraft,
-      ) => void;
     }
   | {
       kind: "category";
       value: Category;
       existing: { id: string; name: string }[];
-      onSave: (
-        value: Category,
-        beforeId: string,
-        draft?: SampleTransactionDraft,
-      ) => void;
     }
 );
 
 export function ChannelDialog(props: EditorProps) {
+  const { client, groups } = useCommsClient();
   const [draft, setDraft] = useState(() => ({
     ...props.value,
-    id: props.value.id || `sample-${props.kind}-${crypto.randomUUID()}`,
+    id: props.value.id || crypto.randomUUID(),
   }));
   const [initialDraft] = useState(draft);
   const [beforeId, setBeforeId] = useState("unchanged");
@@ -65,7 +52,24 @@ export function ChannelDialog(props: EditorProps) {
     | null
   >(null);
   const acceptedChannelId = useRef<string | null>(null);
-  const [people] = useSampleState<Person[]>("access-people", initialPeople);
+  const savedId = useRef(props.value.id);
+  const confirmedDetails = useRef(
+    "categoryId" in props.value
+      ? JSON.stringify({
+          name: props.value.name,
+          topic: props.value.description,
+          category_id: props.value.categoryId || null,
+        })
+      : "",
+  );
+  const confirmedCategory = useRef({
+    name: props.value.name,
+    groupId: "groupId" in props.value ? props.value.groupId : undefined,
+  });
+  const confirmedAccess = useRef(
+    "groupAccess" in props.value ? JSON.stringify(props.value.groupAccess) : "",
+  );
+  const people = props.people;
   const creating = !props.value.id;
   const channel = "categoryId" in draft ? draft : undefined;
   const channels = channel
@@ -83,7 +87,7 @@ export function ChannelDialog(props: EditorProps) {
     if (
       props.existing.some(
         (item) =>
-          item.id !== draft.id &&
+          item.id !== (savedId.current || draft.id) &&
           item.name.toLowerCase() === name.toLowerCase(),
       )
     ) {
@@ -101,15 +105,171 @@ export function ChannelDialog(props: EditorProps) {
     }
     return true;
   }
-  function stageMetadata(draftState: SampleTransactionDraft) {
+  async function stageMetadata(
+    accepted: (scope: CommsScope) => void,
+  ): Promise<CommsScope> {
+    if (!client) throw new Error("Organization is not admitted");
     const pending = pendingSave.current;
     pendingSave.current = null;
-    if (!pending) return;
-    if (pending.kind === "channel" && props.kind === "channel") {
-      props.onSave(pending.value, pending.beforeId, draftState);
-      acceptedChannelId.current = pending.value.id;
-    } else if (pending.kind === "category" && props.kind === "category")
-      props.onSave(pending.value, pending.beforeId, draftState);
+    if (!pending) throw new Error("No editor changes prepared");
+    const value = pending.value;
+    const scope = () => ({ kind: pending.kind, id: savedId.current });
+    const access = (rows: Record<string, string>): GroupAccess[] =>
+      Object.entries(rows).flatMap(([group_id, level]) =>
+        level === "read" || level === "post"
+          ? [
+              group_id === "everyone"
+                ? { subject: "everyone" as const, level }
+                : { subject: "group" as const, group_id, level },
+            ]
+          : [],
+      );
+    if (pending.kind === "channel" && "categoryId" in value) {
+      const details = {
+        name: value.name,
+        topic: value.description,
+        category_id: value.categoryId || null,
+      };
+      if (!savedId.current) {
+        const defaults = value.categoryId
+          ? (await client.getCategory(value.categoryId)).data.default_access
+          : [{ subject: "everyone" as const, level: "post" as const }];
+        const created = await client.createChannel({
+          ...details,
+          scope: "groups",
+          access: value.groupAccess ? access(value.groupAccess) : defaults,
+          position: props.channels.length,
+        });
+        savedId.current = created.data.id;
+        confirmedDetails.current = JSON.stringify(details);
+        confirmedAccess.current = JSON.stringify(value.groupAccess);
+        accepted(scope());
+      } else if (confirmedDetails.current !== JSON.stringify(details)) {
+        const current = await client.getConversation(savedId.current);
+        const previous: ChannelPatch = JSON.parse(confirmedDetails.current);
+        const patch: ChannelPatch = {};
+        if (previous.name !== details.name) patch.name = details.name;
+        if (previous.topic !== details.topic) patch.topic = details.topic;
+        if (previous.category_id !== details.category_id)
+          patch.category_id = details.category_id;
+        await client.updateChannel(savedId.current, patch, {
+          if_match: current.etag,
+        });
+        confirmedDetails.current = JSON.stringify(details);
+        accepted(scope());
+      }
+      if (
+        value.groupAccess &&
+        confirmedAccess.current !== JSON.stringify(value.groupAccess)
+      ) {
+        const current = await client.getConversation(savedId.current);
+        await client.setChannelAccess(
+          savedId.current,
+          { access: access(value.groupAccess) },
+          { if_match: current.etag },
+        );
+        confirmedAccess.current = JSON.stringify(value.groupAccess);
+        accepted(scope());
+      }
+      const current = await client.getConversation(savedId.current);
+      if ((current.data.archived_at !== null) !== value.archived) {
+        await (
+          value.archived
+            ? client.archiveConversation
+            : client.restoreConversation
+        )(savedId.current, { if_match: current.etag });
+        accepted(scope());
+      }
+      acceptedChannelId.current = savedId.current;
+    } else if (pending.kind === "category" && !("categoryId" in value)) {
+      const current = savedId.current
+        ? await client.getCategory(savedId.current)
+        : null;
+      const details = {
+        name:
+          !current || value.name !== confirmedCategory.current.name
+            ? value.name
+            : current.data.name,
+        position: current?.data.position ?? props.categories.length,
+        department_id: current?.data.department_id ?? null,
+        default_access:
+          current && value.groupId === confirmedCategory.current.groupId
+            ? current.data.default_access
+            : value.groupId
+              ? [
+                  {
+                    subject: "group" as const,
+                    group_id: value.groupId,
+                    level: "post" as const,
+                  },
+                ]
+              : [{ subject: "everyone" as const, level: "post" as const }],
+      };
+      if (!current) {
+        savedId.current = (await client.createCategory(details)).data.id;
+        confirmedCategory.current = {
+          name: value.name,
+          groupId: value.groupId,
+        };
+        accepted(scope());
+      } else if (
+        confirmedCategory.current.name !== value.name ||
+        confirmedCategory.current.groupId !== value.groupId
+      ) {
+        await client.updateCategory(savedId.current, details, {
+          if_match: current.etag,
+        });
+        confirmedCategory.current = {
+          name: value.name,
+          groupId: value.groupId,
+        };
+        accepted(scope());
+      }
+    }
+    if (pending.beforeId !== "unchanged") {
+      const current = await client.bootstrap();
+      const ordered: { id: string; position: number }[] =
+        pending.kind === "category"
+          ? current.categories.map((row) => row.category)
+          : current.conversations.flatMap(({ conversation: row }) =>
+              row.kind === "channel" &&
+              "categoryId" in value &&
+              row.category_id === (value.categoryId || null)
+                ? [{ id: row.id, position: row.position }]
+                : [],
+            );
+      const moving = ordered.find((row) => row.id === savedId.current);
+      if (moving) {
+        const remaining = ordered.filter((row) => row.id !== moving.id);
+        const index = remaining.findIndex((row) => row.id === pending.beforeId);
+        remaining.splice(index < 0 ? remaining.length : index, 0, moving);
+        for (const [position, row] of remaining.entries()) {
+          if (row.position === position) continue;
+          if (pending.kind === "channel") {
+            const latest = await client.getConversation(row.id);
+            await client.updateChannel(
+              row.id,
+              { position },
+              { if_match: latest.etag },
+            );
+          } else {
+            const latest = await client.getCategory(row.id);
+            await client.updateCategory(
+              row.id,
+              {
+                name: latest.data.name,
+                department_id: latest.data.department_id,
+                default_access: latest.data.default_access,
+                position,
+              },
+              { if_match: latest.etag },
+            );
+          }
+          accepted(scope());
+        }
+      }
+    }
+    return scope();
   }
   return (
     <CommsSettingsDialog
@@ -126,7 +286,7 @@ export function ChannelDialog(props: EditorProps) {
       opener={props.opener}
       onClose={props.onClose}
       onBeforeSave={saveMetadata}
-      onBeforeSaveTransaction={stageMetadata}
+      onSaveMetadata={stageMetadata}
       onAfterSave={() => {
         const id = acceptedChannelId.current;
         acceptedChannelId.current = null;
@@ -205,14 +365,22 @@ export function ChannelDialog(props: EditorProps) {
                   </NativeSelectOption>
                 ))}
               </Choice>
-              <GroupAccessField
-                channel={channel}
-                categories={props.categories}
-                people={people}
-                onChange={(groupAccess) =>
-                  setDraft({ ...channel, groupAccess })
-                }
-              />
+              {channel.scope === "groups" ? (
+                <GroupAccessField
+                  channel={channel}
+                  categories={props.categories}
+                  people={people}
+                  onChange={(groupAccess) =>
+                    setDraft({ ...channel, groupAccess })
+                  }
+                />
+              ) : (
+                <GroupAccessSummary
+                  scope="channel"
+                  channel={channel}
+                  categories={props.categories}
+                />
+              )}
             </>
           )}
           {!channel && (
@@ -227,7 +395,7 @@ export function ChannelDialog(props: EditorProps) {
               }
             >
               <NativeSelectOption value="">Everyone</NativeSelectOption>
-              {COMMS_GROUPS.map((group) => (
+              {groups.map((group) => (
                 <NativeSelectOption key={group.id} value={group.id}>
                   {group.name}
                 </NativeSelectOption>
@@ -269,9 +437,7 @@ export function newChannel(categoryId: string): Channel {
     name: "",
     description: "",
     categoryId,
-    inherit: true,
+    scope: "groups",
     archived: false,
-    system: true,
-    ...OPEN_PERMISSIONS,
   };
 }

@@ -4,7 +4,9 @@ import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import type { Person, Role } from "../../shared/data/sample-people";
-import type { LocalAttachment, Message } from "../domain/model";
+import type { LocalAttachment, Message } from "../domain/view-model";
+import type { Presence } from "../domain/view-model";
+import type { CapabilityCheck } from "../contract/types";
 import type { CommsPreferences, CommsSettings } from "../domain/configuration";
 
 export function TextField({
@@ -45,6 +47,9 @@ export type TimelineActions = {
   ) => void;
 };
 export type TimelinePeople = {
+  presence?: Presence;
+  capabilities?: CapabilityCheck["capabilities"];
+  membershipRole?: CapabilityCheck["membership_role"];
   people: Person[];
   roles: Role[];
   viewerId: string;
@@ -62,6 +67,8 @@ export function formatFileSize(size: number): string {
       : `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 export type MessageDraft = {
+  clientKey?: string;
+  signal?: AbortSignal;
   sentAt: number;
   text: string;
   files: LocalAttachment[];

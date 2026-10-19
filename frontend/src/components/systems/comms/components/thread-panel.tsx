@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type SetStateAction } from "react";
 import {
   Check,
   Link as LinkIcon,
@@ -7,7 +7,11 @@ import {
   X,
 } from "lucide-react";
 import type { SampleRecord } from "../../shared/data/sample-data";
-import { threadMessages, type Message, type Thread } from "../domain/model";
+import {
+  threadMessages,
+  type Message,
+  type Thread,
+} from "../domain/view-model";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +44,11 @@ import type {
   TimelinePeople,
 } from "./message-shared";
 import { reportCommsError } from "../state/comms-feedback";
+import { useCommsCommands } from "../state/runtime";
+import {
+  createCommsMessageOperations,
+  submitCommsDraft,
+} from "../state/use-comms-message-operations";
 
 export function ThreadPanel({
   thread,
@@ -58,7 +67,7 @@ export function ThreadPanel({
   validateDraft,
   onSettings,
   onMessageTool,
-  pending = false,
+  pending: parentPending = false,
   ...identity
 }: {
   thread: Thread;
@@ -82,39 +91,54 @@ export function ThreadPanel({
   onThread: (message: Message) => void;
   onDirect: (name: string) => void;
 } & TimelinePeople) {
-  const [replyingTo, setReplyingTo] = useSampleState<Message | null>(
+  const { run, isPending } = useCommsCommands();
+  const pending = parentPending || isPending();
+  const [replyingToId, setReplyingToId] = useSampleState<string>(
     `comms-thread-reply-${thread.id}`,
-    null,
+    "",
   );
   const list = useRef<HTMLDivElement>(null);
   const replies = threadMessages(thread);
+  const replyingTo =
+    [...allMessages, ...replies].find(
+      (message) => message.id === replyingToId && !message.deleted,
+    ) ?? null;
+  function setReplyingTo(action: SetStateAction<Message | null>) {
+    const next = typeof action === "function" ? action(replyingTo) : action;
+    setReplyingToId(next?.id ?? "");
+  }
   // Failures show as a visible OpenComms notice (state/comms-feedback.ts).
   const setNotice = reportCommsError;
+  function scrollToLatest() {
+    list.current?.scrollTo({ top: list.current.scrollHeight });
+  }
+  function messageOperations() {
+    return createCommsMessageOperations({
+      run,
+      selected: thread.conversation,
+      viewerId: identity.viewerId,
+      replyingTo,
+      setReplyingTo,
+      setNotice,
+      announce: () => {},
+      scrollToLatest,
+      allMessages: [...allMessages, ...replies],
+    });
+  }
   async function send(draft: MessageDraft): Promise<string | null> {
     if (!canPost || thread.resolved) return "This thread is read-only.";
     const error = validateDraft?.(draft);
     if (error) return error;
-    const person = identity.people.find(
-      (item) => item.id === identity.viewerId,
+    await run(`reply:${thread.id}`, (client, signal) =>
+      submitCommsDraft(
+        client,
+        thread.conversation,
+        draft,
+        replyingTo?.id ?? null,
+        thread.messageId,
+        signal,
+      ),
     );
-    const result = await onChange({
-      replies: [
-        ...replies,
-        {
-          id: `sample-reply-${crypto.randomUUID()}`,
-          conversation: thread.id,
-          author: person?.name ?? "You",
-          authorId: identity.viewerId,
-          text: draft.text.trim() || "Shared a file",
-          created: draft.sentAt,
-          pinned: false,
-          files: draft.files,
-          recordId: draft.recordId || undefined,
-          replyToId: replyingTo?.id,
-        },
-      ],
-    });
-    if (result) return result;
     setReplyingTo(null);
     requestAnimationFrame(() =>
       list.current?.scrollTo({ top: list.current.scrollHeight }),
@@ -184,7 +208,8 @@ export function ThreadPanel({
       <div className="bg-muted/20 shrink-0 border-b px-4 py-3">
         <p className="text-xs font-medium">
           {message?.author === "You"
-            ? identity.people.find((person) => person.id === "sample-eli")?.name
+            ? identity.people.find((person) => person.id === identity.viewerId)
+                ?.name
             : message?.author}
         </p>
         <p className="text-muted-foreground mt-1 line-clamp-3 text-xs leading-5">
@@ -207,34 +232,10 @@ export function ThreadPanel({
                 mutable={canPost && !pending}
                 {...identity}
                 onMessageTool={onMessageTool}
-                onChange={(id, patch) => {
-                  const original = replies.find((item) => item.id === id);
-                  return onChange(
-                    {
-                      replies: replies.map((item) =>
-                        item.id === id ? { ...item, ...patch } : item,
-                      ),
-                    },
-                    {
-                      ...(original && patch.text !== undefined
-                        ? { historyMessage: original }
-                        : {}),
-                      replyBase: replies,
-                    },
-                  );
-                }}
-                onDelete={(id) => {
-                  const original = replies.find((item) => item.id === id);
-                  return onChange(
-                    {
-                      replies: replies.filter((item) => item.id !== id),
-                    },
-                    {
-                      ...(original ? { archiveMessage: original } : {}),
-                      replyBase: replies,
-                    },
-                  );
-                }}
+                onChange={(id, patch) =>
+                  messageOperations().changeMessage(id, patch)
+                }
+                onDelete={(id) => messageOperations().deleteMessage(id)}
                 onReply={(item) => {
                   setReplyingTo(item);
                   requestAnimationFrame(() =>
@@ -287,6 +288,7 @@ export function ThreadPanel({
       <MessageComposer
         key={thread.id}
         id={thread.id}
+        conversationId={thread.conversation}
         preferences={identity.preferences}
         settings={identity.settings}
         label="Thread reply"

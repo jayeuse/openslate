@@ -21,7 +21,6 @@ export type RecordMention = {
  *  talk about it. The record itself lives in OpenView. */
 export function RecordPanel({
   record,
-  people,
   mentions,
   onJump,
   onClose,
@@ -32,7 +31,7 @@ export function RecordPanel({
   onJump: (messageId: string) => void;
   onClose: () => void;
 }) {
-  const { module, group } = recordContext(record, people);
+  const { module, group } = recordContext(record);
   // Code font only for data people read as data: the number and the date.
   const details = [
     ["Record", recordNumber(record.id), true],

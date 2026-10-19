@@ -13,37 +13,32 @@ import {
   EmptyDescription,
 } from "@/components/ui/empty";
 import type { Person, Role } from "../../shared/data/sample-people";
-import { previewCommsNotification } from "../domain/notification-policy";
-import { type SampleTransactionDraft } from "../../shared/runtime/sample-state";
+import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
 import { Action, Toggle } from "../../shared/components/ui";
-import { TextField } from "./ui";
-import { OPEN_PERMISSIONS, type Category, type Channel } from "../domain/model";
+import type { Category, Channel } from "../domain/view-model";
+import type * as C from "../contract/types";
+import { lockableCapabilitySchema } from "../contract/schemas";
 import { ConfigurationFrame } from "./configuration-frame";
+import { TextField } from "./message-shared";
+import { useCommsConfiguration } from "../state/configuration-state";
+import { useCommsClient } from "../state/client-context";
 import {
-  DEFAULT_PLATFORM_PREFERENCES,
-  useCommsConfiguration,
-  useCommsPlatformPreferences,
-} from "../state/configuration-state";
+  wirePreferences,
+  wireScope,
+  wireSettingKey,
+  wireSettings,
+} from "../state/settings-wire";
 import {
   DEFAULT_COMMS_PREFERENCES,
   getCommsScope,
-  patchCommsScope,
   resolveCommsSettings,
-  type CommsConfiguration,
   type CommsScope,
-  type CommsScopeConfiguration,
   type CommsSettingKey,
   type CommsSettings,
 } from "../domain/configuration";
 import { PersonalFields } from "./settings-personal-fields";
 import { MembershipPreview, NotificationPreview } from "./settings-previews";
-import {
-  changed,
-  cleanSettings,
-  mergeFields,
-  mergeScope,
-  settingsError,
-} from "./settings-draft";
+import { changed, cleanSettings, settingsError } from "./settings-draft";
 import {
   SettingsFields,
   SETTINGS_LABELS,
@@ -55,15 +50,7 @@ import {
   ConfirmActionDialog,
   type ConfirmActionRequest,
 } from "./confirm-action-dialog";
-import {
-  COMMS_CONFIGURATION_KEY,
-  messageFromCommsError,
-  readCommsConfiguration,
-  stageCommsConfiguration,
-  useCommsCommands,
-} from "../state/runtime";
-
-const PERSON_ID = "sample-eli";
+import { messageFromCommsError, useCommsCommands } from "../state/runtime";
 
 export interface CommsSettingsDialogProps {
   scope: CommsScope | "personal";
@@ -75,11 +62,12 @@ export interface CommsSettingsDialogProps {
   onClose: () => void;
   title?: string;
   overview?: ReactNode;
-  /** Shown at the end of Overview, after its settings (for example, archive). */
   overviewEnd?: ReactNode;
   additionalDirty?: boolean;
   onBeforeSave?: () => boolean | Promise<boolean>;
-  onBeforeSaveTransaction?: (draft: SampleTransactionDraft) => void;
+  onSaveMetadata?: (
+    accepted: (scope: CommsScope) => void,
+  ) => Promise<CommsScope>;
   onAfterSave?: () => void;
   saveLabel?: string;
   initialSubject?: string;
@@ -91,7 +79,6 @@ export function CommsSettingsDialog({
   channels,
   categories,
   people,
-  roles,
   opener,
   onClose,
   title,
@@ -99,43 +86,63 @@ export function CommsSettingsDialog({
   overviewEnd,
   additionalDirty = false,
   onBeforeSave,
-  onBeforeSaveTransaction,
+  onSaveMetadata,
   onAfterSave,
   saveLabel,
   initialSubject,
   initialTab,
 }: CommsSettingsDialogProps) {
+  const userId = useVerifiedWorkspaceUserId();
+  const { client } = useCommsClient();
+  const { run } = useCommsCommands();
+  const [config] = useCommsConfiguration();
   const personal = scope === "personal";
   const target: CommsScope = personal
     ? { kind: "workspace", id: "workspace" }
     : scope;
-  const [config] = useCommsConfiguration();
-  const { run } = useCommsCommands();
   const [baseline] = useState(() =>
     structuredClone(getCommsScope(config, target)),
   );
   const [draft, setDraft] = useState(baseline);
+  const [initialPreferences] = useState(() =>
+    structuredClone(config.preferences[userId] ?? DEFAULT_COMMS_PREFERENCES),
+  );
+  const [preferences, setPreferences] = useState(initialPreferences);
+  const [initialLocks] = useState({
+    settings: config.lockedSettings,
+    capabilities: config.lockedCapabilities,
+  });
+  const [lockedSettings, setLockedSettings] = useState(initialLocks.settings);
+  const [lockedCapabilities, setLockedCapabilities] = useState(
+    initialLocks.capabilities,
+  );
+  const confirmed = useRef(structuredClone(baseline));
+  const confirmedPersonal = useRef(structuredClone(initialPreferences));
+  const confirmedLocks = useRef(structuredClone(initialLocks));
+  const savedTarget = useRef(target);
+  const savedAnything = useRef(false);
+  const [query, setQuery] = useState("");
+  const [section, setSection] = useState(
+    initialTab === "permissions"
+      ? "permissions"
+      : (initialTab ?? (personal ? "appearance" : "overview")),
+  );
+  const [modifiedOnly, setModifiedOnly] = useState(false);
+  const [inspect, setInspect] = useState(false);
+  const [notificationPreview, setNotificationPreview] = useState(false);
   const [confirmReset, setConfirmReset] = useState<ConfirmActionRequest | null>(
     null,
   );
-  const [initialPreferences] = useState(() =>
-    structuredClone(config.preferences[PERSON_ID] ?? DEFAULT_COMMS_PREFERENCES),
-  );
-  const [preferences, setPreferences] = useState(initialPreferences);
-  const [initialLockedSettings] = useState(config.lockedSettings);
-  const [lockedSettings, setLockedSettings] = useState(config.lockedSettings);
-  const [initialLockedPermissions] = useState(config.lockedPermissions);
-  const [lockedPermissions, setLockedPermissions] = useState(
-    config.lockedPermissions,
-  );
-  const [platformPreferences] = useCommsPlatformPreferences();
-  const [initialPlatformPreferences] = useState(platformPreferences);
-  const [platformDraft, setPlatformDraft] = useState(platformPreferences);
-  const [section, setSection] = useState(
-    initialTab ?? (personal ? "appearance" : "overview"),
-  );
-  const [query, setQuery] = useState("");
+  const [error, setError] = useState("");
+  const [memberRoles, setMemberRoles] = useState<
+    Record<string, "member" | "manager">
+  >({});
+  const confirmedRoles = useRef<Record<string, "member" | "manager">>({});
   const [verticalTabs, setVerticalTabs] = useState(false);
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
   useEffect(() => {
     const media = window.matchMedia("(min-width: 640px)");
     const update = () => setVerticalTabs(media.matches);
@@ -143,71 +150,34 @@ export function CommsSettingsDialog({
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-  const [modifiedOnly, setModifiedOnly] = useState(false);
-  const [inspect, setInspect] = useState(false);
-  const [error, setError] = useState("");
-  const errorRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (error) errorRef.current?.focus();
-  }, [error]);
-  const [notificationPreview, setNotificationPreview] = useState(false);
   const channel =
     target.kind === "channel"
       ? channels.find((item) => item.id === target.id)
-      : target.kind === "category"
-        ? {
-            ...OPEN_PERMISSIONS,
-            id: "",
-            name: "",
-            categoryId: target.id,
-            description: "",
-            inherit: true,
-            archived: false,
-            system: true,
-          }
-        : undefined;
-  const previewConfig = {
-    ...patchCommsScope(config, target, draft),
-    lockedSettings,
-    lockedPermissions,
-  };
-  const resolved = resolveCommsSettings(previewConfig, channel, categories);
-  const values = { ...resolved.values };
-  if (personal)
-    for (const key of Object.keys(preferences.settings) as CommsSettingKey[]) {
-      if (!lockedSettings.includes(key))
-        Object.assign(values, { [key]: preferences.settings[key] });
-    }
-  const notificationResult = previewCommsNotification({
-    config: personal
-      ? {
-          ...previewConfig,
-          preferences: {
-            ...previewConfig.preferences,
-            [PERSON_ID]: preferences,
-          },
-        }
-      : previewConfig,
-    platformPreferences: platformDraft,
-    person: people.find((person) => person.id === PERSON_ID),
-    channel,
-    categories,
-    event: {
-      kind: "thread",
-      text: "Mara Santos mentioned you in a followed conversation.",
-      mentioned: true,
-      followedThread: true,
-    },
-  });
+      : undefined;
+  const resolved =
+    target.kind === "category"
+      ? (config.resolved[`category:${target.id}`] ??
+        resolveCommsSettings(config))
+      : resolveCommsSettings(config, channel);
   const overrides = personal ? preferences.settings : draft.settings;
+  const values = {
+    ...resolved.values,
+    ...Object.fromEntries(
+      Object.entries(overrides).filter(
+        ([key]) =>
+          (target.kind === "workspace" && !personal) ||
+          !lockedSettings.includes(key as CommsSettingKey),
+      ),
+    ),
+  };
   const dirty =
     additionalDirty ||
+    Object.keys(memberRoles).length > 0 ||
     (personal
-      ? changed(initialPreferences, preferences) ||
-        changed(initialPlatformPreferences, platformDraft)
+      ? changed(initialPreferences, preferences)
       : changed(baseline, draft) ||
-        changed(initialLockedSettings, lockedSettings) ||
-        changed(initialLockedPermissions, lockedPermissions));
+        changed(initialLocks.settings, lockedSettings) ||
+        changed(initialLocks.capabilities, lockedCapabilities));
   const currentLabel = personal
     ? "My preferences"
     : target.kind === "workspace"
@@ -230,46 +200,21 @@ export function CommsSettingsDialog({
   }
   function resetDefaults() {
     setError("");
-    if (personal) {
-      setPreferences(structuredClone(DEFAULT_COMMS_PREFERENCES));
-      setPlatformDraft({ threads: true, records: true, digest: false });
-      return;
-    }
-    if (target.kind === "workspace") {
-      setDraft({ settings: {}, permissions: {} });
-      setLockedSettings([]);
-      setLockedPermissions([]);
-      return;
-    }
-    const permissions: CommsScopeConfiguration["permissions"] = {};
-    for (const [subject, overrides] of Object.entries(draft.permissions)) {
-      permissions[subject] = Object.fromEntries(
-        Object.keys(overrides).map((permission) => [permission, "inherit"]),
-      );
-    }
-    const legacy =
-      target.kind === "category"
-        ? categories.find((item) => item.id === target.id)
-        : channel && !channel.inherit
-          ? channel
-          : undefined;
-    if (legacy) {
-      for (const [permission, restricted, allowedRoles] of [
-        ["viewChannel", legacy.access === "roles", legacy.roles],
-        ["post", legacy.posting === "roles", legacy.postRoles],
-      ] as const) {
-        if (!restricted) continue;
-        for (const subject of [
-          "everyone",
-          ...allowedRoles.map((id) => `role:${id}`),
-        ])
-          permissions[subject] = {
-            ...permissions[subject],
-            [permission]: "inherit",
-          };
+    if (personal) setPreferences(structuredClone(DEFAULT_COMMS_PREFERENCES));
+    else {
+      setDraft({
+        settings: {},
+        capabilities: {
+          scope: wireScope(target),
+          everyone: {},
+          group_grants: [],
+        },
+      });
+      if (target.kind === "workspace") {
+        setLockedSettings([]);
+        setLockedCapabilities([]);
       }
     }
-    setDraft({ settings: {}, permissions });
   }
   async function save() {
     const cleaned = cleanSettings(overrides);
@@ -287,126 +232,230 @@ export function CommsSettingsDialog({
         setSection("shortcuts");
         return false;
       }
-      if (
-        !Number.isInteger(preferences.channelWidth) ||
-        preferences.channelWidth < 200 ||
-        preferences.channelWidth > 360 ||
-        !Number.isInteger(preferences.memberWidth) ||
-        preferences.memberWidth < 200 ||
-        preferences.memberWidth > 360 ||
-        !Number.isInteger(preferences.threadWidth) ||
-        preferences.threadWidth < 320 ||
-        preferences.threadWidth > 560
-      ) {
-        setError(
-          "Channel and member widths must be 200–360 pixels; thread width must be 320–560 pixels.",
-        );
-        setSection("navigation");
-        return false;
-      }
     }
     if (onBeforeSave && !(await onBeforeSave())) {
       setSection("overview");
       setQuery("");
       return false;
     }
-    const result = await run(
-      `settings:save:${target.kind}:${target.id}`,
-      (transaction) => {
-        const current = readCommsConfiguration(transaction);
-        if (personal) {
-          const live =
-            current.preferences[PERSON_ID] ?? DEFAULT_COMMS_PREFERENCES;
-          stageCommsConfiguration(transaction, (value) => ({
-            ...value,
-            preferences: {
-              ...value.preferences,
-              [PERSON_ID]: {
-                ...mergeFields(live, initialPreferences, preferences),
-                settings: mergeFields(
-                  live.settings,
-                  initialPreferences.settings,
-                  cleaned,
-                ),
-                shortcuts: mergeFields(
-                  live.shortcuts,
-                  initialPreferences.shortcuts,
-                  preferences.shortcuts,
-                ),
-              },
-            },
-          }));
-        } else {
-          const before = getCommsScope(current, target);
-          const after = mergeScope(before, baseline, {
-            ...draft,
-            settings: cleaned,
-          });
-          const next: CommsConfiguration = {
-            ...patchCommsScope(current, target, after),
-            lockedSettings: changed(initialLockedSettings, lockedSettings)
-              ? lockedSettings
-              : current.lockedSettings,
-            lockedPermissions: changed(
-              initialLockedPermissions,
-              lockedPermissions,
-            )
-              ? lockedPermissions
-              : current.lockedPermissions,
-          };
-          if (
-            changed(before, after) ||
-            changed(current.lockedSettings, next.lockedSettings) ||
-            changed(current.lockedPermissions, next.lockedPermissions)
-          )
-            next.history = [
-              ...current.history,
-              {
-                id: crypto.randomUUID(),
-                created: Date.now(),
-                actorId: PERSON_ID,
-                label: `Updated ${title ?? currentLabel}`,
-                scope: target,
-                before,
-                after,
-                ...(target.kind === "workspace"
-                  ? {
-                      beforeLocks: {
-                        settings: current.lockedSettings,
-                        permissions: current.lockedPermissions,
-                      },
-                      afterLocks: {
-                        settings: next.lockedSettings,
-                        permissions: next.lockedPermissions,
-                      },
-                    }
-                  : {}),
-              },
-            ];
-          transaction.update(COMMS_CONFIGURATION_KEY, null, next);
-        }
-        onBeforeSaveTransaction?.(transaction);
-        if (personal && changed(initialPlatformPreferences, platformDraft))
-          transaction.update(
-            "platformNotificationPreferences",
-            DEFAULT_PLATFORM_PREFERENCES,
-            (current) =>
-              mergeFields(current, initialPlatformPreferences, platformDraft),
-          );
-        return true;
-      },
-      [
-        COMMS_CONFIGURATION_KEY,
-        "platformNotificationPreferences",
-        ...(onBeforeSaveTransaction
-          ? ["commsChannels", "commsCategories"]
-          : []),
-      ],
-    ).catch((error: unknown) => {
-      setError(messageFromCommsError(error, "Changes could not be saved."));
+    if (!client) {
+      setError("Your organization must be verified before saving.");
       return false;
-    });
-    if (!result) return false;
+    }
+    try {
+      await run("settings:save", async () => {
+        if (onSaveMetadata)
+          savedTarget.current = await onSaveMetadata((accepted) => {
+            savedTarget.current = accepted;
+            savedAnything.current = true;
+          });
+        if (personal) {
+          const desired = { ...preferences, settings: cleaned };
+          if (
+            changed(
+              wirePreferences(confirmedPersonal.current),
+              wirePreferences(desired),
+            )
+          ) {
+            const current = await client.getPersonalPreferences();
+            await client.setPersonalPreferences(wirePreferences(desired), {
+              if_match: current.etag,
+            });
+            confirmedPersonal.current = {
+              ...desired,
+              favorites: confirmedPersonal.current.favorites,
+              hiddenChannels: confirmedPersonal.current.hiddenChannels,
+            };
+            savedAnything.current = true;
+          }
+          for (const id of new Set([
+            ...confirmedPersonal.current.favorites,
+            ...preferences.favorites,
+            ...confirmedPersonal.current.hiddenChannels,
+            ...preferences.hiddenChannels,
+          ])) {
+            const starred = preferences.favorites.includes(id),
+              hidden = preferences.hiddenChannels.includes(id);
+            if (
+              confirmedPersonal.current.favorites.includes(id) === starred &&
+              confirmedPersonal.current.hiddenChannels.includes(id) === hidden
+            )
+              continue;
+            const current = await client.getMemberPreferences(id);
+            await client.updateMemberPreferences(
+              id,
+              { starred, hidden },
+              { if_match: current.etag },
+            );
+            for (const [key, enabled] of [
+              ["favorites", starred],
+              ["hiddenChannels", hidden],
+            ] as const)
+              confirmedPersonal.current[key] = enabled
+                ? [...new Set([...confirmedPersonal.current[key], id])]
+                : confirmedPersonal.current[key].filter((item) => item !== id);
+            savedAnything.current = true;
+          }
+        } else {
+          const actualScope = wireScope(savedTarget.current);
+          if (actualScope.kind === "channel")
+            for (const [userId, role] of Object.entries(memberRoles)) {
+              if (confirmedRoles.current[userId] === role) continue;
+              const current = await client.getConversation(actualScope.id);
+              await client.setMemberRole(
+                actualScope.id,
+                userId,
+                { role },
+                { if_match: current.etag },
+              );
+              confirmedRoles.current[userId] = role;
+              savedAnything.current = true;
+            }
+          const removed = Object.keys(confirmed.current.settings).filter(
+            (key) => key !== "dmRule" && !Object.hasOwn(cleaned, key),
+          );
+          let current = await client.getSettings(actualScope);
+          if (removed.length) {
+            current = await client.resetSettings(
+              actualScope,
+              { keys: removed.map(wireSettingKey) },
+              { if_match: current.etag },
+            );
+            for (const key of removed)
+              delete confirmed.current.settings[key as CommsSettingKey];
+            savedAnything.current = true;
+          }
+          const remaining = Object.fromEntries(
+            Object.entries(cleaned).filter(
+              ([key, value]) =>
+                key !== "dmRule" &&
+                changed(
+                  value,
+                  confirmed.current.settings[key as CommsSettingKey],
+                ),
+            ),
+          );
+          if (Object.keys(remaining).length) {
+            await client.updateSettings(actualScope, wireSettings(remaining), {
+              if_match: current.etag,
+            });
+            confirmed.current.settings = {
+              ...confirmed.current.settings,
+              ...remaining,
+            };
+            savedAnything.current = true;
+          }
+          if (
+            actualScope.kind === "workspace" &&
+            changed(confirmed.current.settings.dmRule, cleaned.dmRule)
+          ) {
+            const policy = await client.getDirectPolicy();
+            await client.setDirectPolicy(
+              { dm_rule: cleaned.dmRule ?? "everyone" },
+              { if_match: policy.etag },
+            );
+            confirmed.current.settings.dmRule = cleaned.dmRule;
+            savedAnything.current = true;
+          }
+          const before = confirmed.current.capabilities,
+            wanted = draft.capabilities;
+          if (
+            changed(before.everyone, wanted.everyone) ||
+            changed(before.group_grants, wanted.group_grants)
+          ) {
+            const current =
+              await client.getCapabilityConfiguration(actualScope);
+            const everyone = { ...current.data.everyone };
+            for (const key of new Set([
+              ...Object.keys(before.everyone),
+              ...Object.keys(wanted.everyone),
+            ]) as Set<keyof C.CapabilityConfiguration["everyone"]>) {
+              if (!changed(before.everyone[key], wanted.everyone[key]))
+                continue;
+              if (Object.hasOwn(wanted.everyone, key))
+                everyone[key] = wanted.everyone[key];
+              else delete everyone[key];
+            }
+            const identity = (
+              row: C.CapabilityConfiguration["group_grants"][number],
+            ) => `${row.group_id}:${row.capability}`;
+            const removed = new Set(
+              before.group_grants
+                .filter(
+                  (row) =>
+                    !wanted.group_grants.some(
+                      (next) => identity(next) === identity(row),
+                    ),
+                )
+                .map(identity),
+            );
+            const grants = current.data.group_grants.filter(
+              (row) => !removed.has(identity(row)),
+            );
+            for (const row of wanted.group_grants)
+              if (
+                !before.group_grants.some(
+                  (old) => identity(old) === identity(row),
+                ) &&
+                !grants.some((old) => identity(old) === identity(row))
+              )
+                grants.push(row);
+            await client.setCapabilityConfiguration(
+              { scope: actualScope, everyone, group_grants: grants },
+              { if_match: current.etag },
+            );
+            confirmed.current.capabilities = structuredClone(wanted);
+            savedAnything.current = true;
+          }
+          if (
+            actualScope.kind === "workspace" &&
+            changed(confirmedLocks.current.settings, lockedSettings)
+          ) {
+            const current = await client.getSettings(actualScope);
+            await client.setSettingsLocks(
+              { keys: lockedSettings.map(wireSettingKey) },
+              { if_match: current.etag },
+            );
+            confirmedLocks.current.settings = [...lockedSettings];
+            savedAnything.current = true;
+          }
+          if (
+            actualScope.kind === "workspace" &&
+            changed(confirmedLocks.current.capabilities, lockedCapabilities)
+          ) {
+            const current = await client.getCapabilityLocks();
+            await client.setCapabilityLocks(
+              {
+                capabilities: lockableCapabilitySchema
+                  .array()
+                  .parse(lockedCapabilities),
+              },
+              { if_match: current.etag },
+            );
+            confirmedLocks.current.capabilities = [...lockedCapabilities];
+            savedAnything.current = true;
+          }
+        }
+      });
+    } catch (failure) {
+      try {
+        if (personal) await client.getPersonalPreferences();
+        else {
+          await client.getSettings(wireScope(savedTarget.current));
+          await client.getCapabilityConfiguration(
+            wireScope(savedTarget.current),
+          );
+        }
+      } catch {
+        /* Readback failure retains the draft and never replays a write. */
+      }
+      setError(
+        savedAnything.current
+          ? "Some changes were saved. Your unsaved changes are still here. Review them and try again."
+          : messageFromCommsError(failure, "Changes could not be saved."),
+      );
+      return false;
+    }
     onAfterSave?.();
     onClose();
     return true;
@@ -414,10 +463,8 @@ export function CommsSettingsDialog({
   if (inspect)
     return (
       <PermissionInspector
-        config={previewConfig}
         channel={channel}
         channels={channels}
-        categories={categories}
         people={people}
         opener={opener}
         onBack={() => setInspect(false)}
@@ -430,16 +477,12 @@ export function CommsSettingsDialog({
         { id: "navigation", label: "Navigation & panels" },
         { id: "shortcuts", label: "Shortcuts" },
       ]
-    : [
-        // Everyday behavior first; who may do what comes last.
-        ...SETTINGS_SECTIONS,
-        { id: "permissions", label: "Permissions" },
-      ];
+    : [...SETTINGS_SECTIONS, { id: "permissions", label: "Permissions" }];
   const search = query.trim().toLowerCase();
   function fields(keys: CommsSettingKey[]) {
     const visible = keys.filter(
       (key) =>
-        (key !== "dmRule" || target.kind === "workspace") &&
+        (key !== "dmRule" || (!personal && target.kind === "workspace")) &&
         (!search ||
           `${SETTINGS_LABELS[key]} ${key}`.toLowerCase().includes(search)) &&
         (!modifiedOnly || Object.hasOwn(overrides, key)),
@@ -472,6 +515,26 @@ export function CommsSettingsDialog({
       </Empty>
     );
   }
+  const capabilities = (query: string) => (
+    <PermissionFields
+      value={draft.capabilities}
+      scope={wireScope(target)}
+      locked={lockedCapabilities}
+      search={query}
+      modifiedOnly={modifiedOnly}
+      onChange={(capabilities) =>
+        setDraft((current) => ({ ...current, capabilities }))
+      }
+      onLock={(capability, locked) =>
+        setLockedCapabilities((current) =>
+          locked
+            ? [...new Set([...current, capability])]
+            : current.filter((item) => item !== capability),
+        )
+      }
+      onInspect={() => setInspect(true)}
+    />
+  );
   return (
     <ConfigurationFrame
       title={title ?? currentLabel}
@@ -481,8 +544,10 @@ export function CommsSettingsDialog({
           : target.kind === "workspace"
             ? "Defaults for every category and channel. Categories and channels can change them unless you lock a setting."
             : target.kind === "category"
-              ? "Defaults for the channels in this category. A channel can change them unless the workspace locks a setting."
-              : `Settings for #${channels.find((item) => item.id === target.id)?.name ?? "this channel"} only.`
+              ? "Defaults for the channels in this category."
+              : channel?.name
+                ? `Settings for #${channel.name} only.`
+                : "Choose the new channel's details and settings."
       }
       opener={opener}
       dirty={dirty}
@@ -495,13 +560,7 @@ export function CommsSettingsDialog({
           className="mr-auto"
           onClick={(event) =>
             setConfirmReset({
-              title: `Reset ${
-                personal
-                  ? "your preferences"
-                  : target.kind === "workspace"
-                    ? "workspace settings"
-                    : `these ${target.kind} settings`
-              } to default?`,
+              title: `Reset ${personal ? "your preferences" : target.kind === "workspace" ? "workspace settings" : `these ${target.kind} settings`} to default?`,
               description: `This clears every section of this dialog back to its default. Nothing is saved until you select ${saveLabel ?? "Save changes"}.`,
               confirmLabel: "Reset to default",
               onConfirm: resetDefaults,
@@ -526,7 +585,7 @@ export function CommsSettingsDialog({
         <Toggle
           label="Modified only"
           checked={modifiedOnly}
-          onCheckedChange={(checked) => setModifiedOnly(checked)}
+          onCheckedChange={setModifiedOnly}
         />
       </div>
       <Separator />
@@ -581,40 +640,7 @@ export function CommsSettingsDialog({
               ) : (
                 fields(SETTINGS_SECTIONS.flatMap((item) => item.keys))
               )}
-              {!personal && (
-                <div className="mt-6">
-                  <PermissionFields
-                    initialSubject={initialSubject}
-                    value={draft.permissions}
-                    roles={roles}
-                    people={people}
-                    locked={lockedPermissions}
-                    workspace={target.kind === "workspace"}
-                    search={search}
-                    modifiedOnly={modifiedOnly}
-                    onChange={(subject, permission, value) =>
-                      setDraft((current) => ({
-                        ...current,
-                        permissions: {
-                          ...current.permissions,
-                          [subject]: {
-                            ...current.permissions[subject],
-                            [permission]: value,
-                          },
-                        },
-                      }))
-                    }
-                    onLock={(permission, locked) =>
-                      setLockedPermissions((current) =>
-                        locked
-                          ? [...new Set([...current, permission])]
-                          : current.filter((item) => item !== permission),
-                      )
-                    }
-                    onInspect={() => setInspect(true)}
-                  />
-                </div>
-              )}
+              {!personal && <div className="mt-6">{capabilities(search)}</div>}
               {personal &&
                 fields(
                   SETTINGS_SECTIONS.find((item) => item.id === "notifications")!
@@ -625,49 +651,11 @@ export function CommsSettingsDialog({
             <TabsContent value={section}>
               <FieldGroup>
                 {section === "notifications" ? (
-                  <>
-                    <p className="text-muted-foreground text-xs">
-                      These preferences extend your shared notification center.
-                    </p>
-                    <Toggle
-                      control="switch"
-                      label="Thread reply notifications"
-                      checked={platformDraft.threads}
-                      onCheckedChange={(checked) =>
-                        setPlatformDraft({
-                          ...platformDraft,
-                          threads: checked,
-                        })
-                      }
-                    />
-                    <Toggle
-                      control="switch"
-                      label="Record update notifications"
-                      checked={platformDraft.records}
-                      onCheckedChange={(checked) =>
-                        setPlatformDraft({
-                          ...platformDraft,
-                          records: checked,
-                        })
-                      }
-                    />
-                    <Toggle
-                      control="switch"
-                      label="Daily digest"
-                      checked={platformDraft.digest}
-                      onCheckedChange={(checked) =>
-                        setPlatformDraft({
-                          ...platformDraft,
-                          digest: checked,
-                        })
-                      }
-                    />
-                    {fields(
-                      SETTINGS_SECTIONS.find(
-                        (item) => item.id === "notifications",
-                      )!.keys,
-                    )}
-                  </>
+                  fields(
+                    SETTINGS_SECTIONS.find(
+                      (item) => item.id === "notifications",
+                    )!.keys,
+                  )
                 ) : (
                   <PersonalFields
                     preferences={preferences}
@@ -706,7 +694,7 @@ export function CommsSettingsDialog({
                       Preview notification
                     </Action>
                     {notificationPreview && (
-                      <NotificationPreview result={notificationResult} />
+                      <NotificationPreview settings={values} />
                     )}
                     <Link
                       href="/platform?section=notifications"
@@ -730,22 +718,12 @@ export function CommsSettingsDialog({
             <TabsContent value="permissions" className="flex flex-col gap-6">
               <GroupAccessSummary
                 scope={target.kind}
-                channel={channels.find((item) => item.id === target.id)}
+                channel={channel}
                 category={categories.find((item) => item.id === target.id)}
                 categories={categories}
                 onChangeGroups={
                   overview && target.kind !== "workspace"
-                    ? () => {
-                        setSection("overview");
-                        // Keep keyboard focus: go to the field it names.
-                        setTimeout(() => {
-                          const field = document.getElementById(
-                            `who-can-use-${target.id}`,
-                          );
-                          field?.scrollIntoView({ block: "start" });
-                          field?.focus();
-                        });
-                      }
+                    ? () => setSection("overview")
                     : undefined
                 }
               />
@@ -758,45 +736,12 @@ export function CommsSettingsDialog({
                     aria-hidden="true"
                     className="text-muted-foreground size-4 shrink-0 transition-transform duration-(--motion-fast) group-open/exceptions:rotate-90 motion-reduce:transition-none"
                   />
-                  <span className="mr-auto">
-                    Exceptions for roles and people
-                  </span>
+                  <span className="mr-auto">Capabilities by group</span>
                   <span className="text-muted-foreground text-xs font-normal">
-                    Applied today
+                    Advanced
                   </span>
                 </summary>
-                <div className="border-t p-3">
-                  <PermissionFields
-                    initialSubject={initialSubject}
-                    value={draft.permissions}
-                    roles={roles}
-                    people={people}
-                    locked={lockedPermissions}
-                    workspace={target.kind === "workspace"}
-                    search=""
-                    modifiedOnly={modifiedOnly}
-                    onChange={(subject, permission, value) =>
-                      setDraft((current) => ({
-                        ...current,
-                        permissions: {
-                          ...current.permissions,
-                          [subject]: {
-                            ...current.permissions[subject],
-                            [permission]: value,
-                          },
-                        },
-                      }))
-                    }
-                    onLock={(permission, locked) =>
-                      setLockedPermissions((current) =>
-                        locked
-                          ? [...new Set([...current, permission])]
-                          : current.filter((item) => item !== permission),
-                      )
-                    }
-                    onInspect={() => setInspect(true)}
-                  />
-                </div>
+                <div className="border-t p-3">{capabilities("")}</div>
               </details>
             </TabsContent>
           ) : (
@@ -819,38 +764,20 @@ export function CommsSettingsDialog({
                 {section === "overview" && overview}
                 {section === "members" && (
                   <MembershipPreview
-                    config={previewConfig}
                     channel={channel}
-                    categories={categories}
                     people={people}
                     settings={values}
+                    roles={memberRoles}
+                    onRoleChange={(id, role) =>
+                      setMemberRoles((current) => ({ ...current, [id]: role }))
+                    }
                   />
-                )}
-                {section === "members" && target.kind !== "workspace" && (
-                  <p className="text-muted-foreground text-xs">
-                    Workspace settings control who can start direct messages.
-                  </p>
                 )}
                 {fields(
                   SETTINGS_SECTIONS.find((item) => item.id === section)?.keys ??
                     [],
                 )}
                 {section === "overview" && overviewEnd}
-                {section === "notifications" && (
-                  <>
-                    <Action
-                      type="button"
-                      onClick={() =>
-                        setNotificationPreview(!notificationPreview)
-                      }
-                    >
-                      Preview notification
-                    </Action>
-                    {notificationPreview && (
-                      <NotificationPreview result={notificationResult} />
-                    )}
-                  </>
-                )}
               </FieldGroup>
             </TabsContent>
           )}

@@ -14,42 +14,37 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  type CommsConfiguration,
-  type CommsThreadMeta,
-  resolveCommsSettings,
-} from "../domain/configuration";
-import type { Category, Channel, Thread } from "../domain/model";
+import type { ThreadPatch, Settings, Schedule } from "../contract/types";
+import type { Thread } from "../domain/view-model";
 
+export type ThreadDraft = ThreadPatch & { followed: boolean };
 export function ThreadSettingsFields({
   thread,
   meta,
   setMeta,
   setDirty,
-  config,
-  channel,
-  categories,
+  settings,
 }: {
   thread: Thread | undefined;
-  meta: CommsThreadMeta;
-  setMeta: Dispatch<SetStateAction<CommsThreadMeta>>;
+  meta: ThreadDraft;
+  setMeta: Dispatch<SetStateAction<ThreadDraft>>;
   setDirty: Dispatch<SetStateAction<boolean>>;
-  config: CommsConfiguration;
-  channel: Channel | undefined;
-  categories: Category[];
+  settings?: Settings;
 }) {
-  return !thread ? (
-    <Empty>
-      <EmptyHeader>
-        <EmptyTitle>Thread no longer exists.</EmptyTitle>
-      </EmptyHeader>
-    </Empty>
-  ) : (
+  if (!thread)
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>Thread no longer exists.</EmptyTitle>
+        </EmptyHeader>
+      </Empty>
+    );
+  return (
     <>
       <Field>
-        <FieldLabel htmlFor="tools-dialog-field-1">Thread name</FieldLabel>
+        <FieldLabel htmlFor="tools-thread-name">Thread name</FieldLabel>
         <Input
-          id="tools-dialog-field-1"
+          id="tools-thread-name"
           value={meta.name ?? ""}
           onChange={(event) => {
             setMeta({ ...meta, name: event.target.value });
@@ -57,59 +52,39 @@ export function ThreadSettingsFields({
           }}
         />
       </Field>
-      {(["locked", "resolved", "archived"] as const).map((key) => (
+      {(["locked", "resolved", "archived", "followed"] as const).map((key) => (
         <Field key={key} className="flex-row items-center gap-2">
           <Checkbox
-            id={`tools-dialog-field-2-${key}`}
+            id={`tools-thread-${key}`}
             checked={meta[key] ?? false}
             onCheckedChange={(checked) => {
               setMeta({ ...meta, [key]: checked });
               setDirty(true);
             }}
           />
-          <FieldLabel htmlFor={`tools-dialog-field-2-${key}`}>
-            {key[0].toUpperCase() + key.slice(1)}
+          <FieldLabel htmlFor={`tools-thread-${key}`}>
+            {key === "followed"
+              ? "Follow thread"
+              : key[0].toUpperCase() + key.slice(1)}
           </FieldLabel>
         </Field>
       ))}
-      <Field className="flex-row items-center gap-2">
-        <Checkbox
-          id="tools-dialog-field-3"
-          checked={meta.followedBy?.includes("sample-eli") ?? false}
-          onCheckedChange={(checked) => {
-            setMeta({
-              ...meta,
-              followedBy: checked
-                ? [...new Set([...(meta.followedBy ?? []), "sample-eli"])]
-                : (meta.followedBy ?? []).filter((id) => id !== "sample-eli"),
-            });
-            setDirty(true);
-          }}
-        />
-        <FieldLabel htmlFor="tools-dialog-field-3">Follow thread</FieldLabel>
-      </Field>
-      <p className="text-muted-foreground text-sm">
-        Channel defaults: auto-archive{" "}
-        {resolveCommsSettings(config, channel, categories).values
-          .autoArchiveDays || "off"}
-        ; branches{" "}
-        {
-          resolveCommsSettings(config, channel, categories).values
-            .threadBranches
-        }
-        .
-      </p>
+      {settings && (
+        <p className="text-muted-foreground text-sm">
+          Channel defaults: auto-archive {settings.auto_archive_days || "off"};
+          branches {settings.thread_branches}.
+        </p>
+      )}
     </>
   );
 }
-
 export function MessageReportFields({
   messageText,
   reason,
   setReason,
   setDirty,
 }: {
-  messageText: string | undefined;
+  messageText?: string;
   reason: string;
   setReason: Dispatch<SetStateAction<string>>;
   setDirty: Dispatch<SetStateAction<boolean>>;
@@ -125,9 +100,9 @@ export function MessageReportFields({
         </CardContent>
       </Card>
       <Field>
-        <FieldLabel htmlFor="tools-dialog-field-4">Reason</FieldLabel>
+        <FieldLabel htmlFor="tools-report-reason">Reason</FieldLabel>
         <Textarea
-          id="tools-dialog-field-4"
+          id="tools-report-reason"
           className="min-h-28"
           value={reason}
           onChange={(event) => {
@@ -139,11 +114,8 @@ export function MessageReportFields({
     </>
   );
 }
-
-type ScheduledMessage = CommsConfiguration["schedules"][number];
-
 export function OutboxFields({
-  config,
+  schedules,
   selectedSchedule,
   creatingSchedule,
   setCreatingSchedule,
@@ -159,8 +131,8 @@ export function OutboxFields({
   onSendNow,
   onCancelSchedule,
 }: {
-  config: CommsConfiguration;
-  selectedSchedule: ScheduledMessage | undefined;
+  schedules: Schedule[];
+  selectedSchedule?: Schedule;
   creatingSchedule: boolean;
   setCreatingSchedule: Dispatch<SetStateAction<boolean>>;
   setScheduleId: Dispatch<SetStateAction<string>>;
@@ -178,38 +150,39 @@ export function OutboxFields({
   return (
     <>
       <p className="text-muted-foreground text-sm">
-        Scheduled messages are not delivered automatically. Messages send only
-        when you choose Send Now.
+        In this local example, scheduled messages send when you choose Send Now.
       </p>
-      {!config.schedules.length && (
+      {!schedules.length && (
         <Empty>
           <EmptyHeader>
             <EmptyTitle>No scheduled messages.</EmptyTitle>
           </EmptyHeader>
         </Empty>
       )}
-      {config.schedules.map((schedule) => (
+      {schedules.map((schedule) => (
         <Card key={schedule.id} className="w-full">
           <CardHeader>
             <CardTitle>Scheduled message</CardTitle>
             <CardDescription>
-              {new Date(schedule.sendAt).toLocaleString()}
+              {new Date(schedule.request.send_at).toLocaleString()} ·{" "}
+              {schedule.status}
+              {schedule.failure_code
+                ? ` · ${schedule.failure_code.replaceAll("_", " ")}`
+                : ""}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Button
               variant="outline"
               className="h-auto justify-start text-left whitespace-normal"
-              aria-label={`${schedule.text} · ${new Date(schedule.sendAt).toLocaleString()}`}
+              aria-label={`${schedule.request.body} · ${new Date(schedule.request.send_at).toLocaleString()}`}
               onClick={() => {
                 setScheduleId(schedule.id);
                 setCreatingSchedule(false);
-                setText(schedule.text);
+                setText(schedule.request.body);
+                const time = Date.parse(schedule.request.send_at);
                 setSendAt(
-                  new Date(
-                    schedule.sendAt -
-                      new Date(schedule.sendAt).getTimezoneOffset() * 60000,
-                  )
+                  new Date(time - new Date(time).getTimezoneOffset() * 60000)
                     .toISOString()
                     .slice(0, 16),
                 );
@@ -217,7 +190,7 @@ export function OutboxFields({
                 setDirty(false);
               }}
             >
-              {schedule.text}
+              {schedule.request.body}
             </Button>
           </CardContent>
         </Card>
@@ -225,13 +198,16 @@ export function OutboxFields({
       {(selectedSchedule || creatingSchedule) && (
         <>
           <Field>
-            <FieldLabel htmlFor="tools-dialog-field-6">
+            <FieldLabel htmlFor="tools-scheduled-message">
               Scheduled message
             </FieldLabel>
             <Textarea
-              id="tools-dialog-field-6"
+              id="tools-scheduled-message"
               className="min-h-28"
               value={text}
+              disabled={
+                !!selectedSchedule && selectedSchedule.status !== "pending"
+              }
               onChange={(event) => {
                 setText(event.target.value);
                 setDirty(true);
@@ -240,13 +216,16 @@ export function OutboxFields({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="tools-dialog-field-7">
+            <FieldLabel htmlFor="tools-scheduled-time">
               Scheduled time
             </FieldLabel>
             <Input
-              id="tools-dialog-field-7"
+              id="tools-scheduled-time"
               type="datetime-local"
               value={sendAt}
+              disabled={
+                !!selectedSchedule && selectedSchedule.status !== "pending"
+              }
               onChange={(event) => {
                 setSendAt(event.target.value);
                 setDirty(true);
@@ -266,19 +245,25 @@ export function OutboxFields({
               <CardHeader>
                 <CardTitle>Scheduled message preview</CardTitle>
                 <CardDescription>
-                  {new Date(selectedSchedule.sendAt).toLocaleString()}
+                  {new Date(selectedSchedule.request.send_at).toLocaleString()}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
-                <p>{selectedSchedule.text}</p>
+                <p>{selectedSchedule.request.body}</p>
                 <Separator />
-                <Button onClick={onSendNow}>Send Now</Button>
+                <Button
+                  disabled={selectedSchedule.status !== "pending"}
+                  onClick={onSendNow}
+                >
+                  Send Now
+                </Button>
               </CardContent>
             </Card>
           )}
           {selectedSchedule && (
             <Button
               variant="outline"
+              disabled={selectedSchedule.status !== "pending"}
               onClick={() => onCancelSchedule(selectedSchedule.id)}
             >
               Cancel scheduled message

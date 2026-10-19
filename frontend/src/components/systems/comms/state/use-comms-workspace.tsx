@@ -1,272 +1,104 @@
 "use client";
+import { createContext, useContext, useState, type ReactNode } from "react";
 
-import { useEffect } from "react";
-import {
-  initialPeople,
-  initialRoles,
-  type Person,
-  type Role,
-} from "../../shared/data/sample-people";
-import {
-  INITIAL_RECORDS,
-  type SampleRecord,
-} from "../../shared/data/sample-data";
 import { useSampleResource } from "../../shared/runtime/sample-async";
-import { SampleOperationError } from "../../shared/runtime/sample-runtime";
-import {
-  useSampleRuntime,
-  useSampleState,
-} from "../../shared/runtime/sample-state";
-import {
-  DEFAULT_PLATFORM_PREFERENCES,
-  type CommsPlatformPreferences,
-  useCommsConfiguration,
-} from "./configuration-state";
-import {
-  COMMS_CONFIGURATION_KEY,
-  messageFromCommsError,
-  useCommsCommands,
-  readCommsConfiguration,
-  stageCommsConfiguration,
-} from "./runtime";
-import { DEFAULT_COMMS_PREFERENCES } from "../domain/configuration-model";
+import { createCommsConfiguration } from "../domain/configuration-model";
+import type { CapabilityCheck, Member, Settings } from "../contract/types";
+import type { Presence } from "../domain/view-model";
+import { useCommsClient } from "./client-context";
+import { loadWorkspace } from "./workspace-view";
+import { isCommsReadRefusal } from "./runtime";
+type CommsWorkspace = Awaited<ReturnType<typeof loadWorkspace>>;
 
-// Example channels start read except these, so unread marks stand out.
-const SAMPLE_UNREAD_CHANNELS = new Set(["workshop", "dispatch", "customers"]);
-const SAMPLE_READ_AT = Date.UTC(2026, 8, 12);
-import {
-  CATEGORIES,
-  CHANNELS,
-  MESSAGES,
-  PEOPLE,
-  type Category,
-  type Channel,
-  type Direct,
-  type Message,
-  type RecordThread,
-  type Thread,
-} from "../domain/model";
-import {
-  EXAMPLE_CATEGORIES,
-  EXAMPLE_CHANNELS,
-  EXAMPLE_DIRECTS,
-  EXAMPLE_MESSAGES,
-  EXAMPLE_PEOPLE,
-  EXAMPLE_THREADS,
-} from "../data/examples";
-
-const COMMS_RESOURCE_KEYS = [
-  "comms-configuration",
-  "access-people",
-  "access-roles",
-  "commsCategories",
-  "commsChannels",
-  "commsMessages",
-  "commsThreads",
-  "commsDirects",
-  "records",
-  "commsRecordThreads",
-  "platformAccount",
-  "platformNotificationPreferences",
-] as const;
-
-export type SampleAccount = {
-  language: string;
-  theme: string;
-  presence: string;
-  passwordChanged: boolean;
-  signedOut: boolean;
+const empty = {
+  presence: {} as Presence,
+  removedCount: 0,
+  configuration: createCommsConfiguration(),
+  people: [],
+  roles: [],
+  categories: [],
+  channels: [],
+  messages: [],
+  threads: [],
+  directs: [],
+  records: [],
+  account: { presence: "Offline" },
+  checks: {} as Record<string, CapabilityCheck>,
+  members: {} as Record<string, Member[]>,
+  effective: {} as Record<string, Settings>,
 };
 
-const INITIAL_ACCOUNT: SampleAccount = {
-  language: "English",
-  theme: "Light",
-  presence: "Available",
-  passwordChanged: false,
-  signedOut: false,
-};
-
-export const INITIAL_DIRECTS: Direct[] = [
-  { id: "sample-dm-alex", user: PEOPLE[0], read: false, blocked: false },
-];
-
-type CommsWorkspace = {
-  configuration: ReturnType<typeof readCommsConfiguration>;
-  people: Person[];
-  roles: Role[];
-  categories: Category[];
-  channels: Channel[];
-  messages: Message[];
-  threads: Thread[];
-  directs: Direct[];
-  records: SampleRecord[];
-  recordThreads: RecordThread[];
-  account: SampleAccount;
-  platformPreferences: CommsPlatformPreferences;
-};
-
-function appendExamples<T extends { id: string }>(
-  current: T[],
-  examples: T[],
-): T[] {
-  const existing = new Set(current.map((item) => item.id));
-  return [...current, ...examples.filter((item) => !existing.has(item.id))];
+export function useCommsWorkspace() {
+  const binding = useCommsClient();
+  const [refused, setRefused] = useState(false);
+  const [lastGood, setLastGood] = useState<CommsWorkspace>();
+  const resource = useSampleResource<CommsWorkspace>({
+    keys: ["comms-memory-v1"],
+    queryKey: binding.client
+      ? `${binding.client.context.user_id}:${binding.client.context.org_id}:${binding.generation}`
+      : "unadmitted",
+    load: async (signal) => {
+      if (!binding.client)
+        return Promise.reject(new Error("Organization is not admitted"));
+      try {
+        const value = await loadWorkspace(
+          binding.client,
+          signal,
+          binding.groups,
+        );
+        if (!signal.aborted) {
+          setRefused(false);
+          setLastGood(value);
+        }
+        return value;
+      } catch (error) {
+        if (!signal.aborted && isCommsReadRefusal(error)) setRefused(true);
+        throw error;
+      }
+    },
+  });
+  const data =
+    !refused && binding.client && resource.data?.client === binding.client
+      ? resource.data
+      : undefined;
+  return {
+    commsResource: {
+      ...resource,
+      data,
+      hydrated: lastGood !== undefined,
+      status: binding.error
+        ? "error"
+        : !binding.client
+          ? "loading"
+          : resource.status,
+      error: binding.error || resource.error,
+      reload: binding.error ? binding.reload : resource.reload,
+    },
+    // Retained only to preserve mounted drafts. The page conceals this tree
+    // until the current binding has produced an authorized read model.
+    workspace: data ?? lastGood ?? empty,
+    client: binding.client,
+  };
 }
 
-export function useCommsWorkspace(onSeedError: (message: string) => void) {
-  const [initialConfig] = useCommsConfiguration();
-  const runtime = useSampleRuntime();
-  const { run, isPending } = useCommsCommands();
-  const commsResource = useSampleResource<CommsWorkspace>({
-    keys: COMMS_RESOURCE_KEYS,
-    queryKey: "comms-workspace",
-    load: (signal) =>
-      runtime.load(
-        (draft) => ({
-          configuration: readCommsConfiguration(draft),
-          people: draft.read<Person[]>("access-people", initialPeople),
-          roles: draft.read<Role[]>("access-roles", initialRoles),
-          categories: draft.read<Category[]>("commsCategories", CATEGORIES),
-          channels: draft.read<Channel[]>("commsChannels", CHANNELS),
-          messages: draft.read<Message[]>("commsMessages", MESSAGES),
-          threads: draft.read<Thread[]>("commsThreads", []),
-          directs: draft.read<Direct[]>("commsDirects", INITIAL_DIRECTS),
-          records: draft.read<SampleRecord[]>("records", INITIAL_RECORDS),
-          recordThreads: draft.read<RecordThread[]>("commsRecordThreads", []),
-          account: draft.read<SampleAccount>(
-            "platformAccount",
-            INITIAL_ACCOUNT,
-          ),
-          platformPreferences: draft.read(
-            "platformNotificationPreferences",
-            DEFAULT_PLATFORM_PREFERENCES,
-          ),
-        }),
-        { keys: COMMS_RESOURCE_KEYS, signal },
-      ),
-  });
-  const workspace: CommsWorkspace = commsResource.data ?? {
-    configuration: initialConfig,
-    people: initialPeople,
-    roles: initialRoles,
-    categories: CATEGORIES,
-    channels: CHANNELS,
-    messages: MESSAGES,
-    threads: [],
-    directs: INITIAL_DIRECTS,
-    records: INITIAL_RECORDS,
-    recordThreads: [],
-    account: INITIAL_ACCOUNT,
-    platformPreferences: DEFAULT_PLATFORM_PREFERENCES,
-  };
-  const [examplesLoaded] = useSampleState("commsExamplesLoaded", false);
-
-  useEffect(() => {
-    if (examplesLoaded) return;
-    void run(
-      "seed-examples",
-      (draft) => {
-        if (draft.read("commsExamplesLoaded", false)) return false;
-        const currentCategories = draft.read<Category[]>(
-          "commsCategories",
-          CATEGORIES,
-        );
-        const currentChannels = draft.read<Channel[]>(
-          "commsChannels",
-          CHANNELS,
-        );
-        const currentDirects = draft.read<Direct[]>(
-          "commsDirects",
-          INITIAL_DIRECTS,
-        );
-        const currentMessages = draft.read<Message[]>(
-          "commsMessages",
-          MESSAGES,
-        );
-        const categoryIds = new Set(
-          [...currentCategories, ...EXAMPLE_CATEGORIES].map((item) => item.id),
-        );
-        const newChannels = EXAMPLE_CHANNELS.filter((item) =>
-          categoryIds.has(item.categoryId),
-        );
-        const conversationIds = new Set(
-          [
-            ...currentChannels,
-            ...newChannels,
-            ...currentDirects,
-            ...EXAMPLE_DIRECTS,
-          ].map((item) => item.id),
-        );
-        const newMessages = EXAMPLE_MESSAGES.filter((item) =>
-          conversationIds.has(item.conversation),
-        );
-        const messageIds = new Set(
-          [...currentMessages, ...newMessages].map((item) => item.id),
-        );
-        draft.update<Person[]>("access-people", initialPeople, (items) =>
-          appendExamples(items, EXAMPLE_PEOPLE),
-        );
-        draft.update<Category[]>("commsCategories", CATEGORIES, (items) =>
-          appendExamples(items, EXAMPLE_CATEGORIES),
-        );
-        draft.update<Channel[]>("commsChannels", CHANNELS, (items) =>
-          appendExamples(items, newChannels),
-        );
-        draft.update<Direct[]>("commsDirects", INITIAL_DIRECTS, (items) =>
-          appendExamples(items, EXAMPLE_DIRECTS),
-        );
-        draft.update<Message[]>("commsMessages", MESSAGES, (items) =>
-          appendExamples(items, newMessages),
-        );
-        draft.update<Thread[]>("commsThreads", [], (items) =>
-          appendExamples(
-            items,
-            EXAMPLE_THREADS.filter((item) => messageIds.has(item.messageId)),
-          ),
-        );
-        const readAt = Object.fromEntries(
-          [...CHANNELS, ...newChannels]
-            .filter((item) => !SAMPLE_UNREAD_CHANNELS.has(item.name))
-            .map((item) => [item.id, SAMPLE_READ_AT]),
-        );
-        stageCommsConfiguration(draft, (current) => {
-          const viewer =
-            current.preferences["sample-eli"] ?? DEFAULT_COMMS_PREFERENCES;
-          return {
-            ...current,
-            preferences: {
-              ...current.preferences,
-              "sample-eli": {
-                ...viewer,
-                readAt: { ...readAt, ...viewer.readAt },
-              },
-            },
-          };
-        });
-        draft.update("commsExamplesLoaded", false, true);
-        return true;
-      },
-      [
-        "access-people",
-        "commsCategories",
-        "commsChannels",
-        "commsDirects",
-        "commsMessages",
-        "commsThreads",
-        "commsExamplesLoaded",
-        COMMS_CONFIGURATION_KEY,
-      ],
-    ).catch((error: unknown) => {
-      // A newer run of this seed (React runs effects twice in development)
-      // or a newer change cancelled this one; that run seeds instead, so a
-      // cancellation is not a failure to report.
-      if (error instanceof SampleOperationError && error.kind === "aborted")
-        return;
-      onSeedError(
-        messageFromCommsError(error, "Conversations could not be loaded."),
-      );
-    });
-  }, [examplesLoaded, onSeedError, run]);
-
-  return { commsResource, workspace, run, isPending };
+type WorkspaceView = ReturnType<typeof useCommsWorkspace>["workspace"];
+const WorkspaceContext = createContext<WorkspaceView | null>(null);
+export function CommsWorkspaceProvider({
+  value,
+  children,
+}: {
+  value: WorkspaceView;
+  children: ReactNode;
+}) {
+  return (
+    <WorkspaceContext.Provider value={value}>
+      {children}
+    </WorkspaceContext.Provider>
+  );
+}
+export function useCommsWorkspaceView() {
+  const value = useContext(WorkspaceContext);
+  if (!value)
+    throw new Error("OpenComms requires its client-resolved workspace");
+  return value;
 }

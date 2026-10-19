@@ -31,20 +31,11 @@ export function mergeScope(
   baseline: CommsScopeConfiguration,
   draft: CommsScopeConfiguration,
 ): CommsScopeConfiguration {
-  const permissions = { ...current.permissions };
-  for (const subject of new Set([
-    ...Object.keys(baseline.permissions),
-    ...Object.keys(draft.permissions),
-  ])) {
-    permissions[subject] = mergeFields(
-      current.permissions[subject] ?? {},
-      baseline.permissions[subject] ?? {},
-      draft.permissions[subject] ?? {},
-    );
-  }
   return {
     settings: mergeFields(current.settings, baseline.settings, draft.settings),
-    permissions,
+    capabilities: changed(baseline.capabilities, draft.capabilities)
+      ? draft.capabilities
+      : current.capabilities,
   };
 }
 
@@ -70,12 +61,5 @@ export function settingsError(settings: Partial<CommsSettings>): string {
       return `${SETTINGS_LABELS[key as CommsSettingKey]} must be a whole number of zero or more.`;
   if (Boolean(settings.quietHoursStart) !== Boolean(settings.quietHoursEnd))
     return "Choose both the start and end of quiet hours.";
-  if (
-    settings.recordCardFields?.some(
-      (field) =>
-        !["title", "customer", "status", "assignee", "dueDate"].includes(field),
-    )
-  )
-    return "Record card fields must be title, customer, status, assignee, or dueDate.";
   return "";
 }

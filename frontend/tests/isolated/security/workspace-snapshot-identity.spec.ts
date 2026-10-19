@@ -15,12 +15,46 @@ import {
   ownedCommsDraftTextId,
 } from "../../../src/components/systems/comms/state/draft-text";
 
-test("workspace state reloads only for the same verified account", () => {
-  const saved = serializeSampleSessionSnapshot("user-a", {
-    "sandbox.design": { changed: true },
+test("workspace snapshots bind all draft parts to the admitted organization in both key and envelope", () => {
+  const values = {
+    "comms-draft-files-channel": [{ id: "file-a", name: "A.pdf" }],
+    "comms-draft-record-channel": "record-a",
+    "comms-replying-to": "message-a",
+    "comms-draft-text-thread": "A reply",
+  };
+  const saved = serializeSampleSessionSnapshot("user-a", values, "org-a");
+  expect(restoreSampleSessionSnapshot(saved, "user-a", "org-a")).toEqual({
+    recovered: false,
+    values,
   });
+  expect(restoreSampleSessionSnapshot(saved, "user-a", "org-b")).toEqual({
+    recovered: false,
+    values: {},
+  });
+  expect(sampleSessionSnapshotStorageKey("user-a", "org-a")).not.toBe(
+    sampleSessionSnapshotStorageKey("user-a", "org-b"),
+  );
+});
 
-  expect(restoreSampleSessionSnapshot(saved, "user-a")).toEqual({
+test("a user-only snapshot has no provable organization and is not adopted", () => {
+  const legacy = JSON.stringify({
+    userId: "user-a",
+    values: { "comms-draft-files-channel": [{ id: "file-a" }] },
+  });
+  expect(restoreSampleSessionSnapshot(legacy, "user-a", "org-a")).toEqual({
+    recovered: false,
+    values: {},
+  });
+});
+
+test("workspace state reloads only for the same verified account", () => {
+  const saved = serializeSampleSessionSnapshot(
+    "user-a",
+    { "sandbox.design": { changed: true } },
+    "org-a",
+  );
+
+  expect(restoreSampleSessionSnapshot(saved, "user-a", "org-a")).toEqual({
     recovered: false,
     values: { "sandbox.design": { changed: true } },
   });
@@ -29,16 +63,19 @@ test("workspace state reloads only for the same verified account", () => {
 test("workspace state remains private across account switches in one tab", () => {
   const snapshots = new Map<string, string>();
   snapshots.set(
-    sampleSessionSnapshotStorageKey("user-a"),
-    serializeSampleSessionSnapshot("user-a", {
-      "sandbox.design": { changed: true },
-    }),
+    sampleSessionSnapshotStorageKey("user-a", "org-a"),
+    serializeSampleSessionSnapshot(
+      "user-a",
+      { "sandbox.design": { changed: true } },
+      "org-a",
+    ),
   );
 
   expect(
     restoreSampleSessionSnapshot(
-      snapshots.get(sampleSessionSnapshotStorageKey("user-b")) ?? null,
+      snapshots.get(sampleSessionSnapshotStorageKey("user-b", "org-a")) ?? null,
       "user-b",
+      "org-a",
     ),
   ).toEqual({
     recovered: false,
@@ -46,8 +83,9 @@ test("workspace state remains private across account switches in one tab", () =>
   });
   expect(
     restoreSampleSessionSnapshot(
-      snapshots.get(sampleSessionSnapshotStorageKey("user-a")) ?? null,
+      snapshots.get(sampleSessionSnapshotStorageKey("user-a", "org-a")) ?? null,
       "user-a",
+      "org-a",
     ),
   ).toEqual({
     recovered: false,
@@ -60,18 +98,18 @@ test("legacy or unowned workspace state is not restored", () => {
     "sandbox.design": { changed: true },
   });
 
-  expect(restoreSampleSessionSnapshot(saved, "user-b")).toEqual({
+  expect(restoreSampleSessionSnapshot(saved, "user-b", "org-a")).toEqual({
     recovered: false,
     values: {},
   });
-  expect(restoreSampleSessionSnapshot(null, "user-b")).toEqual({
+  expect(restoreSampleSessionSnapshot(null, "user-b", "org-a")).toEqual({
     recovered: false,
     values: {},
   });
 });
 
 test("unreadable saved workspace state remains recoverable", () => {
-  expect(restoreSampleSessionSnapshot("{", "user-a")).toEqual({
+  expect(restoreSampleSessionSnapshot("{", "user-a", "org-a")).toEqual({
     recovered: true,
     values: {},
   });
@@ -111,28 +149,34 @@ test("session cleanup removes Access drafts without deleting another account's s
   });
   try {
     data.set("openslate.sample.v1", "legacy workspace");
-    data.set(workspaceSessionSnapshotStorageKey("user-a"), "A workspace");
-    data.set(workspaceSessionSnapshotStorageKey("user-b"), "B workspace");
+    data.set(
+      workspaceSessionSnapshotStorageKey("user-a", "org-a"),
+      "A workspace",
+    );
+    data.set(
+      workspaceSessionSnapshotStorageKey("user-b", "org-a"),
+      "B workspace",
+    );
     data.set(accessDraftStorageKey("user-a", "identity"), "A Access draft");
     data.set(accessDraftStorageKey("user-b", "identity"), "B Access draft");
     data.set(commsDraftTextKey("thread-1"), "legacy draft");
     data.set(
-      commsDraftTextKey(ownedCommsDraftTextId("user-a", "thread-1")),
+      commsDraftTextKey(ownedCommsDraftTextId("user-a", "thread-1", "org-a")),
       "A draft",
     );
     data.set(
-      commsDraftTextKey(ownedCommsDraftTextId("user-b", "thread-1")),
+      commsDraftTextKey(ownedCommsDraftTextId("user-b", "thread-1", "org-a")),
       "B draft",
     );
 
     await clearVerifiedWorkspaceSessionSnapshot("user-a");
 
     expect(
-      data.get(workspaceSessionSnapshotStorageKey("user-a")),
+      data.get(workspaceSessionSnapshotStorageKey("user-a", "org-a")),
     ).toBeUndefined();
-    expect(data.get(workspaceSessionSnapshotStorageKey("user-b"))).toBe(
-      "B workspace",
-    );
+    expect(
+      data.get(workspaceSessionSnapshotStorageKey("user-b", "org-a")),
+    ).toBe("B workspace");
     expect(data.get("openslate.sample.v1")).toBe("legacy workspace");
     expect(
       data.get(accessDraftStorageKey("user-a", "identity")),
@@ -141,10 +185,14 @@ test("session cleanup removes Access drafts without deleting another account's s
       data.get(accessDraftStorageKey("user-b", "identity")),
     ).toBeUndefined();
     expect(
-      data.get(commsDraftTextKey(ownedCommsDraftTextId("user-a", "thread-1"))),
+      data.get(
+        commsDraftTextKey(ownedCommsDraftTextId("user-a", "thread-1", "org-a")),
+      ),
     ).toBeUndefined();
     expect(
-      data.get(commsDraftTextKey(ownedCommsDraftTextId("user-b", "thread-1"))),
+      data.get(
+        commsDraftTextKey(ownedCommsDraftTextId("user-b", "thread-1", "org-a")),
+      ),
     ).toBe("B draft");
     expect(data.get(commsDraftTextKey("thread-1"))).toBe("legacy draft");
 

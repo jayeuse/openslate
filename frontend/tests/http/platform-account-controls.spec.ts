@@ -1,5 +1,6 @@
 import {
   controlledSession,
+  defaultOrganization,
   expect,
   expectNoHorizontalScroll,
   heldResponse,
@@ -9,7 +10,7 @@ import {
   type Route,
 } from "./helpers/test";
 import { mockAccessApi, ids, created } from "./helpers/access-api";
-import { profileSelf } from "./helpers/profile-api";
+import { avatarPng, profileSelf } from "./helpers/profile-api";
 import { accessDraftStorageKey } from "../../src/components/systems/access/state/draft-journal-storage";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 import {
@@ -40,8 +41,14 @@ const workspaceSettings = {
 };
 const cleanupKeys = [
   accessDraftStorageKey(accountUser, "identity"),
-  workspaceSessionSnapshotStorageKey(accountUser),
-  commsDraftTextKey(ownedCommsDraftTextId(accountUser, "owned-composer")),
+  workspaceSessionSnapshotStorageKey(accountUser, defaultOrganization.org_id),
+  commsDraftTextKey(
+    ownedCommsDraftTextId(
+      accountUser,
+      "owned-composer",
+      defaultOrganization.org_id,
+    ),
+  ),
 ];
 
 const currentSession = {
@@ -678,16 +685,32 @@ test("current-session revocation clears owned drafts and attachment URLs through
     };
   });
   await openAccount(page);
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        ...profileSelf(accountUser, "admin"),
+        memberships: [{ ...defaultOrganization, role: "admin" }],
+        current_organization: {
+          ...defaultOrganization,
+          role: "admin",
+          access: [],
+          owner: true,
+        },
+      },
+    }),
+  );
   await page.goto("/comms");
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Owned unsent draft");
   await page.getByLabel("Upload files", { exact: true }).setInputFiles({
-    name: "owned-note.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("Owned synthetic attachment"),
+    name: "owned-image.png",
+    mimeType: "image/png",
+    buffer: avatarPng,
   });
-  await expect(page.getByText("owned-note.txt", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("owned-image.png", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Your profile", exact: true })
@@ -701,7 +724,7 @@ test("current-session revocation clears owned drafts and attachment URLs through
   );
   const persistedComms = await page.evaluate(() =>
     Object.keys(sessionStorage).filter((key) =>
-      key.startsWith("openslate.sample.draft-text.v1."),
+      key.startsWith("openslate.sample.draft-text.v2."),
     ),
   );
   expect(persistedComms.length).toBeGreaterThan(0);

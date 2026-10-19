@@ -21,7 +21,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { releaseAllLocalAttachments } from "./local-attachments";
 import { clearCommsDraftTextStore } from "../../comms/state/draft-text";
-import { useVerifiedWorkspaceUserId } from "./workspace-identity";
+import {
+  useVerifiedWorkspaceUserId,
+  useVerifiedWorkspaceOrganizationId,
+} from "./workspace-identity";
 import {
   Dialog,
   DialogContent,
@@ -59,17 +62,22 @@ const SampleContext = createContext<SampleContextValue | null>(null);
 export function serializeSampleSessionSnapshot(
   userId: string,
   values: Snapshot,
+  organizationId: string,
 ): string {
-  return JSON.stringify({ userId, values });
+  return JSON.stringify({ userId, organizationId, values });
 }
 
-export function sampleSessionSnapshotStorageKey(userId: string): string {
-  return workspaceSessionSnapshotStorageKey(userId);
+export function sampleSessionSnapshotStorageKey(
+  userId: string,
+  organizationId: string,
+): string {
+  return workspaceSessionSnapshotStorageKey(userId, organizationId);
 }
 
 export function restoreSampleSessionSnapshot(
   raw: string | null,
   userId: string,
+  organizationId: string,
 ): RestoredSampleSessionSnapshot {
   if (raw === null) return { values: {}, recovered: false };
   try {
@@ -78,6 +86,8 @@ export function restoreSampleSessionSnapshot(
       isSnapshot(parsed) &&
       typeof parsed.userId === "string" &&
       parsed.userId === userId &&
+      typeof parsed.organizationId === "string" &&
+      parsed.organizationId === organizationId &&
       isSnapshot(parsed.values)
     )
       return {
@@ -161,8 +171,13 @@ export function applySampleTransaction(
 
 export function SampleProvider({ children }: { children: ReactNode }) {
   const userId = useVerifiedWorkspaceUserId();
+  const organizationId = useVerifiedWorkspaceOrganizationId();
   return (
-    <SampleProviderForUser key={userId} userId={userId}>
+    <SampleProviderForUser
+      key={`${userId}:${organizationId}`}
+      userId={userId}
+      organizationId={organizationId}
+    >
       {children}
     </SampleProviderForUser>
   );
@@ -171,11 +186,13 @@ export function SampleProvider({ children }: { children: ReactNode }) {
 function SampleProviderForUser({
   children,
   userId,
+  organizationId,
 }: {
   children: ReactNode;
   userId: string;
+  organizationId: string;
 }) {
-  const storageKey = sampleSessionSnapshotStorageKey(userId);
+  const storageKey = sampleSessionSnapshotStorageKey(userId, organizationId);
   const [runtime] = useState(() =>
     createSampleRuntime(decodeSampleStoredValue),
   );
@@ -212,25 +229,29 @@ function SampleProviderForUser({
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(storageKey);
-      const restored = restoreSampleSessionSnapshot(raw, userId);
+      const restored = restoreSampleSessionSnapshot(
+        raw,
+        userId,
+        organizationId,
+      );
       runtime.reset(restored.values);
       setRecovered(restored.recovered);
     } catch {
       setStorageUnavailable(true);
     }
     setReady(true);
-  }, [runtime, storageKey, userId]);
+  }, [runtime, storageKey, userId, organizationId]);
   useEffect(() => {
     if (!ready || persistenceSuspended.current) return;
     try {
       sessionStorage.setItem(
         storageKey,
-        serializeSampleSessionSnapshot(userId, values),
+        serializeSampleSessionSnapshot(userId, values, organizationId),
       );
     } catch {
       setStorageUnavailable(true);
     }
-  }, [ready, storageKey, userId, values]);
+  }, [ready, storageKey, userId, organizationId, values]);
   const update = useCallback(
     (key: string, action: (previous: unknown) => unknown) => {
       runtime.commit((draft) => {
@@ -292,7 +313,7 @@ function SampleProviderForUser({
             <Button
               onClick={() => {
                 releaseAllLocalAttachments();
-                clearCommsDraftTextStore(userId);
+                clearCommsDraftTextStore(userId, organizationId);
                 clearOwnedSnapshot();
                 runtime.reset();
                 setGeneration((value) => value + 1);

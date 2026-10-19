@@ -141,13 +141,16 @@ export async function signedOut(target: Page | BrowserContext): Promise<void> {
 export async function signedInSession(
   target: Page | BrowserContext,
   userId: string,
-  options: { setupRequired?: boolean } = {},
+  options: { setupRequired?: boolean; organizationId?: string | null } = {},
 ): Promise<void> {
   await target.route("**/api/auth/session", (route) =>
     route.fulfill({
       json: {
         authenticated: true,
         user_id: userId,
+        ...(options.organizationId === undefined
+          ? {}
+          : { organization_id: options.organizationId }),
         default_organization_blocked: null,
         setup_required: options.setupRequired ?? false,
       },
@@ -159,9 +162,12 @@ export async function signedInSession(
 export async function signedInAs(
   target: Page | BrowserContext,
   identity: SignedInIdentity,
-  options: { setupRequired?: boolean } = {},
+  options: { setupRequired?: boolean; organizationId?: string | null } = {},
 ): Promise<void> {
-  await signedInSession(target, identity.id, options);
+  await signedInSession(target, identity.id, {
+    organizationId: defaultOrganization.org_id,
+    ...options,
+  });
   await target.route("**/api/auth/me", (route) =>
     route.fulfill({ json: authMeBody(identity) }),
   );
@@ -200,6 +206,7 @@ export async function controlledSession(
         ? {
             authenticated: true,
             user_id: session.identity.id,
+            organization_id: defaultOrganization.org_id,
             default_organization_blocked: null,
             setup_required: false,
           }
@@ -225,6 +232,7 @@ export const test = base.extend({
         json: {
           authenticated: true,
           user_id: defaultSignedInIdentity.id,
+          organization_id: defaultOrganization.org_id,
           default_organization_blocked: null,
           setup_required: false,
         },

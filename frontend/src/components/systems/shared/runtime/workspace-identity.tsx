@@ -4,11 +4,12 @@ import { createContext, useContext, type ReactNode } from "react";
 import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal-storage";
 
 const VerifiedWorkspaceIdentityContext = createContext<string | null>(null);
+const VerifiedWorkspaceOrganizationContext = createContext<string | null>(null);
 const WorkspaceInteractionSuspendedContext = createContext(false);
 const WorkspaceSignOutContext = createContext<(() => Promise<void>) | null>(
   null,
 );
-const WORKSPACE_SNAPSHOT_KEY = "openslate.sample.v1";
+const WORKSPACE_SNAPSHOT_KEY = "openslate.sample.v2";
 const sessionClearListeners = new Map<string, Set<() => void>>();
 
 export function WorkspaceSignOutProvider({
@@ -34,18 +35,23 @@ export function useWorkspaceSignOut(): () => Promise<void> {
 
 export function VerifiedWorkspaceIdentityProvider({
   userId,
+  organizationId = null,
   children,
   suspended = false,
 }: {
   userId: string | null;
+  /** The admitted organization, never the pending tab selection. */
+  organizationId?: string | null;
   children: ReactNode;
   suspended?: boolean;
 }) {
   return (
     <VerifiedWorkspaceIdentityContext.Provider value={userId}>
-      <WorkspaceInteractionSuspendedContext.Provider value={suspended}>
-        {children}
-      </WorkspaceInteractionSuspendedContext.Provider>
+      <VerifiedWorkspaceOrganizationContext.Provider value={organizationId}>
+        <WorkspaceInteractionSuspendedContext.Provider value={suspended}>
+          {children}
+        </WorkspaceInteractionSuspendedContext.Provider>
+      </VerifiedWorkspaceOrganizationContext.Provider>
     </VerifiedWorkspaceIdentityContext.Provider>
   );
 }
@@ -61,8 +67,18 @@ export function useVerifiedWorkspaceUserId(): string {
   return userId;
 }
 
-export function workspaceSessionSnapshotStorageKey(userId: string): string {
-  return `${WORKSPACE_SNAPSHOT_KEY}.${encodeURIComponent(userId)}`;
+export function useVerifiedWorkspaceOrganizationId(): string {
+  const organizationId = useContext(VerifiedWorkspaceOrganizationContext);
+  if (organizationId === null)
+    throw new Error("Workspace state requires an admitted organization");
+  return organizationId;
+}
+
+export function workspaceSessionSnapshotStorageKey(
+  userId: string,
+  organizationId: string,
+): string {
+  return `${WORKSPACE_SNAPSHOT_KEY}.${encodeURIComponent(userId)}.${encodeURIComponent(organizationId)}`;
 }
 
 export function registerWorkspaceSessionClear(
@@ -88,10 +104,22 @@ export function clearVerifiedWorkspaceSessionSnapshot(
   return Promise.resolve().then(async () => {
     let cleared = clearAccessDraftStorageExcept(null);
     if (userId === null) return cleared;
+    const keys = new Set([`openslate.sample.v1.${encodeURIComponent(userId)}`]);
     try {
-      sessionStorage.removeItem(workspaceSessionSnapshotStorageKey(userId));
+      const prefix = `${WORKSPACE_SNAPSHOT_KEY}.${encodeURIComponent(userId)}.`;
+      for (let index = 0; index < sessionStorage.length; index++) {
+        const key = sessionStorage.key(index);
+        if (key?.startsWith(prefix)) keys.add(key);
+      }
     } catch {
       cleared = false;
+    }
+    for (const key of keys) {
+      try {
+        sessionStorage.removeItem(key);
+      } catch {
+        cleared = false;
+      }
     }
     for (const clear of listeners) {
       try {

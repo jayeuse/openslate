@@ -1,12 +1,12 @@
 "use client";
 
 import {
-  COMMS_GROUPS,
   EVERYONE_GROUP_ID,
   channelGroupAccess,
   commsGroup,
 } from "../domain/groups";
-import type { Category, Channel, GroupAccessLevel } from "../domain/model";
+import type { Category, Channel, GroupAccessLevel } from "../domain/view-model";
+import { useCommsClient } from "../state/client-context";
 import { Action } from "../../shared/components/ui";
 import { GroupMark } from "./group-mark";
 
@@ -33,6 +33,7 @@ export function GroupAccessSummary({
   categories: Category[];
   onChangeGroups?: () => void;
 }) {
+  const { groups } = useCommsClient();
   const rows =
     scope === "channel" && channel
       ? (() => {
@@ -45,7 +46,7 @@ export function GroupAccessSummary({
               tone: 0 as const,
               level: everyone,
             },
-            ...COMMS_GROUPS.map((group) => ({
+            ...groups.map((group) => ({
               ...group,
               level:
                 everyone === "post" || access[group.id] === "post"
@@ -57,14 +58,14 @@ export function GroupAccessSummary({
           ];
         })()
       : [];
-  const categoryGroup = commsGroup(category?.groupId);
+  const categoryGroup = commsGroup(category?.groupId, groups);
   return (
     <section className="flex flex-col gap-3">
       <div>
         <h3 className="text-sm font-semibold">Access by group</h3>
         <p className="text-muted-foreground mt-1 text-xs">
           {scope === "channel"
-            ? "Who can use this channel. Groups are shown but not enforced yet; the exceptions below are what OpenComms applies today."
+            ? "Saved group access is enforced on local sample conversations. Guests remain read-only."
             : scope === "category"
               ? categoryGroup
                 ? `This category belongs to the ${categoryGroup.name} group. New channels here start with that group.`

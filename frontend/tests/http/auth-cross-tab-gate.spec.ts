@@ -1,4 +1,11 @@
-import { expect, heldResponse, quietEventSource, test } from "./helpers/test";
+import {
+  authMeBody,
+  defaultOrganization,
+  expect,
+  heldResponse,
+  quietEventSource,
+  test,
+} from "./helpers/test";
 import { mockManageSecurity } from "./helpers/manage-security";
 import { mockManageBackups } from "./helpers/manage-backups";
 import {
@@ -756,12 +763,18 @@ for (const transition of [
   }) => {
     const changingAccount = transition.includes("account-change");
     let activeUser: string | null = userA;
+    await page.route("**/api/auth/me", (route) =>
+      activeUser
+        ? route.fulfill({ json: authMeBody({ id: activeUser, role: "admin" }) })
+        : route.fulfill({ status: 401 }),
+    );
     await page.route("**/api/auth/session", (route) =>
       route.fulfill({
         json: activeUser
           ? {
               authenticated: true,
               user_id: activeUser,
+              organization_id: defaultOrganization.org_id,
               setup_required: false,
               default_organization_blocked: null,
             }
@@ -785,7 +798,23 @@ for (const transition of [
       });
     });
     await page.goto("/comms");
-    const workshop = page.getByRole("button", { name: /^workshop(,|$)/ });
+    const workshop = page.getByRole("button", { name: /^operations(,|$)/ });
+    const composer = page.getByRole("textbox", {
+      name: "Message",
+      exact: true,
+    });
+    await composer.fill(
+      "Private committed conversation before identity change",
+    );
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect(
+      page.getByRole("article").filter({
+        hasText: "Private committed conversation before identity change",
+      }),
+    ).toHaveCount(1);
+    await composer.fill("Private draft before identity change");
     async function copyFailure() {
       await workshop.click({ button: "right" });
       await page
@@ -806,13 +835,13 @@ for (const transition of [
       .getByRole("menuitem", { name: "Archive channel", exact: true })
       .click();
     await page
-      .getByRole("alertdialog", { name: "Archive #workshop?" })
+      .getByRole("alertdialog", { name: "Archive #operations?" })
       .getByRole("button", { name: "Archive channel", exact: true })
       .click();
     await expect(
       page
         .getByRole("region", { name: "Status messages", exact: true })
-        .getByText("#workshop archived.", { exact: true }),
+        .getByText("#operations archived.", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Undo", exact: true }),
@@ -848,7 +877,7 @@ for (const transition of [
     await expect(
       page
         .getByRole("region", { name: "Status messages", exact: true })
-        .getByText("#workshop archived.", { exact: true }),
+        .getByText("#operations archived.", { exact: true }),
     ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Undo", exact: true }),
@@ -863,6 +892,12 @@ for (const transition of [
     await expect(
       page.getByRole("textbox", { name: "Message", exact: true }),
     ).toBeVisible();
+    await expect(composer).toHaveValue("");
+    await expect(
+      page.getByRole("article").filter({
+        hasText: "Private committed conversation before identity change",
+      }),
+    ).toHaveCount(0);
     await copyFailure();
     await expect(failure).toBeVisible();
     await expect(failure).toHaveCount(1);

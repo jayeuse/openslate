@@ -48,7 +48,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Person } from "../../shared/data/sample-people";
-import { EMOTES } from "../domain/model";
+import { EMOTES } from "../domain/view-model";
 
 const ProfilePopoverContext = createContext<{
   activeId: string | null;
@@ -297,7 +297,7 @@ export function ProfilePopover({
           <Button
             onClick={() => {
               setOpen(false);
-              onMessage(person.name);
+              onMessage(person.id);
             }}
           >
             Message {person.name}
@@ -318,6 +318,10 @@ type MessageMenuProps = {
   highlighted?: boolean;
   children: ReactNode;
   mutable: boolean;
+  canReact: boolean;
+  canReply: boolean;
+  canCreateThread: boolean;
+  canReport: boolean;
   canEdit: boolean;
   editExpired: boolean;
   canElevate: boolean;
@@ -343,6 +347,10 @@ export function MessageMenu({
   highlighted,
   children,
   mutable,
+  canReact,
+  canReply,
+  canCreateThread,
+  canReport,
   canEdit,
   editExpired,
   canElevate,
@@ -417,7 +425,10 @@ export function MessageMenu({
       >
         <ContextMenuGroup>
           <ContextMenuSub>
-            <ContextMenuSubTrigger className="min-h-9" disabled={!mutable}>
+            <ContextMenuSubTrigger
+              className="min-h-9"
+              disabled={!mutable || !canReact}
+            >
               <Smile />
               Add reaction
             </ContextMenuSubTrigger>
@@ -463,7 +474,7 @@ export function MessageMenu({
           )}
           <ContextMenuItem
             className="min-h-9"
-            disabled={!mutable}
+            disabled={!mutable || !canReply}
             onClick={onReply}
           >
             <Reply />
@@ -474,7 +485,7 @@ export function MessageMenu({
         <ContextMenuGroup>
           <ContextMenuItem
             className="min-h-9"
-            disabled={!mutable}
+            disabled={!mutable || !canCreateThread}
             onClick={onThread}
           >
             <MessagesSquare />
@@ -499,6 +510,9 @@ export function MessageMenu({
             <ContextMenuItem
               key={view}
               className="min-h-9"
+              disabled={
+                view === "report" ? !canReport : view === "outbox" && !mutable
+              }
               onClick={() => {
                 const opener = article.current;
                 if (opener) onTool?.(view, opener);

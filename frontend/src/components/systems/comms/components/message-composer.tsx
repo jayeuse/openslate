@@ -7,7 +7,7 @@ import {
   messageAuthorId,
   type LocalAttachment,
   type Message,
-} from "../domain/model";
+} from "../domain/view-model";
 import { Alert } from "@/components/ui/alert";
 import {
   Attachment,
@@ -32,7 +32,10 @@ import {
   useSampleRuntime,
   useSampleState,
 } from "../../shared/runtime/sample-state";
-import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
+import {
+  useVerifiedWorkspaceUserId,
+  useVerifiedWorkspaceOrganizationId,
+} from "../../shared/runtime/workspace-identity";
 import {
   legacyCommsDraftTextKey,
   ownedCommsDraftTextId,
@@ -51,10 +54,12 @@ import {
   type CommsSettings,
 } from "../domain/configuration";
 import { formatFileSize, type MessageDraft } from "./message-shared";
+import { useCommsClient } from "../state/client-context";
 
 type FilePreview = LocalAttachment & { previewUrl?: string };
 export function MessageComposer({
   id,
+  conversationId = id,
   label = "Message",
   sendLabel = "Send message",
   canPost,
@@ -70,6 +75,7 @@ export function MessageComposer({
   settings = DEFAULT_COMMS_SETTINGS,
 }: {
   id: string;
+  conversationId?: string;
   label?: string;
   sendLabel?: string;
   canPost: boolean;
@@ -84,9 +90,18 @@ export function MessageComposer({
   preferences?: CommsPreferences;
   settings?: CommsSettings;
 }) {
+  const { client } = useCommsClient();
+  const sendIdentity = useRef<{ draft: string; key: string } | null>(null);
+  const lifetime = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, []);
   const runtime = useSampleRuntime();
   const userId = useVerifiedWorkspaceUserId();
-  const ownedComposerId = ownedCommsDraftTextId(userId, id);
+  const organizationId = useVerifiedWorkspaceOrganizationId();
+  const ownedComposerId = ownedCommsDraftTextId(userId, id, organizationId);
   const legacyKey = legacyCommsDraftTextKey(id);
   const legacyValue = runtime.read(legacyKey, "");
   const removeLegacy = useCallback(
@@ -164,7 +179,22 @@ export function MessageComposer({
         restoreComposerFocus.current = true;
         setSending(true);
         try {
+          const signal = lifetime.current?.signal;
+          if (!signal || signal.aborted) return;
+          const fingerprint = JSON.stringify({
+            text,
+            files: files.map((file) => file.id),
+            recordId,
+            replyToId: replyingTo?.id,
+          });
+          if (sendIdentity.current?.draft !== fingerprint)
+            sendIdentity.current = {
+              draft: fingerprint,
+              key: crypto.randomUUID(),
+            };
           const error = await onSend({
+            clientKey: sendIdentity.current.key,
+            signal,
             sentAt: Math.round(performance.timeOrigin + event.timeStamp),
             text,
             files: files.map(({ id, name, size, type }) => ({
@@ -179,9 +209,11 @@ export function MessageComposer({
             setError(error);
             return;
           }
+          if (signal.aborted) return;
           setError("");
           const cleared = await draftText.clear(submittedTextRevision);
           if (!cleared) return;
+          sendIdentity.current = null;
           setFiles([]);
           setRecordId("");
           setRecordPickerOpen(false);
@@ -215,7 +247,7 @@ export function MessageComposer({
             <p className="font-medium">
               Replying to{" "}
               {people.find(
-                (person) => person.id === messageAuthorId(replyingTo, people),
+                (person) => person.id === messageAuthorId(replyingTo),
               )?.name ?? replyingTo.author}
             </p>
             <p className="text-muted-foreground truncate">{replyingTo.text}</p>
@@ -274,7 +306,7 @@ export function MessageComposer({
                   {file.name}
                 </AttachmentTitle>
                 <AttachmentDescription>
-                  {formatFileSize(file.size)} · Not uploaded
+                  {formatFileSize(file.size)} · Local sample attachment
                 </AttachmentDescription>
               </AttachmentContent>
               <AttachmentActions>
@@ -342,25 +374,46 @@ export function MessageComposer({
             aria-label="Upload files"
             className="sr-only"
             disabled={!canPost || isPending}
-            onChange={(event) => {
-              const chosen = Array.from(event.target.files ?? []).map(
-                (file): FilePreview => {
-                  const id = crypto.randomUUID();
-                  const url = cacheLocalAttachment(id, file);
-                  const previewUrl = file.type.startsWith("image/")
-                    ? url
-                    : undefined;
-                  return {
-                    id,
-                    name: file.name,
-                    size: file.size,
-                    type: file.type,
-                    previewUrl,
-                  };
-                },
-              );
-              setFiles((items) => [...items, ...chosen]);
+            onChange={async (event) => {
+              const chosen = Array.from(event.target.files ?? []);
               event.target.value = "";
+              if (!client) return;
+              const signal = lifetime.current?.signal;
+              if (!signal || signal.aborted) return;
+              setSending(true);
+              try {
+                for (const file of chosen) {
+                  const reserved = await client.reserveAttachment(
+                    conversationId,
+                    { filename: file.name, expected_size: file.size },
+                    { signal },
+                  );
+                  const uploaded = await client.uploadAttachment(
+                    conversationId,
+                    reserved.id,
+                    file,
+                    { signal },
+                  );
+                  await client.bootstrap({ signal });
+                  cacheLocalAttachment(uploaded.id, file);
+                  setFiles((items) => [
+                    ...items,
+                    {
+                      id: uploaded.id,
+                      name: file.name,
+                      size: file.size,
+                      type: file.type,
+                    },
+                  ]);
+                }
+                setError("");
+              } catch {
+                setError(
+                  "The file could not be attached. Your draft is still available.",
+                );
+              } finally {
+                setSending(false);
+              }
             }}
           />
           <InputGroupButton

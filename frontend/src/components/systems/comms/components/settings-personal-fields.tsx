@@ -24,7 +24,7 @@ import { Slider } from "@/components/ui/slider";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Choice, Toggle } from "../../shared/components/ui";
 import { TextField } from "./ui";
-import type { Channel } from "../domain/model";
+import type { Channel } from "../domain/view-model";
 import {
   DEFAULT_COMMS_PREFERENCES,
   type CommsPreferences,

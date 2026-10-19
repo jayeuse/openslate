@@ -1,8 +1,11 @@
-import { expect, signedInSession, test, type Page } from "./helpers/test";
+import { expect, signedInAs, test, type Page } from "./helpers/test";
 import { wirePagination } from "../helpers/pagination";
 
 async function openSignedIn(page: Page, path: string) {
-  await signedInSession(page, "00000000-0000-4000-8000-000000000101");
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000101",
+    role: "admin",
+  });
   await page.goto(path);
 }
 

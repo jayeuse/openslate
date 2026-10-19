@@ -1,16 +1,13 @@
-import {
-  expect,
-  signedInSession,
-  signedOut,
-  test,
-  type Page,
-} from "./helpers/test";
+import { expect, signedInAs, signedOut, test, type Page } from "./helpers/test";
 import { sandboxDocumentFromDesign } from "../helpers/sandbox-fixtures";
 import { initialDesign } from "../../src/components/systems/sandbox/domain/model";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 
 async function signIn(page: Page) {
-  await signedInSession(page, "00000000-0000-4000-8000-000000000101");
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000101",
+    role: "admin",
+  });
 }
 
 const routeTitles = [
@@ -107,6 +104,7 @@ test("Comms snapshot recovery stays within Comms while live routes and returning
     );
   const snapshotKey = workspaceSessionSnapshotStorageKey(
     "00000000-0000-4000-8000-000000000101",
+    "00000000-0000-4000-8000-000000000102",
   );
   await page.addInitScript(
     (key) => sessionStorage.setItem(key, "{"),

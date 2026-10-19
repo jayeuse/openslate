@@ -1,22 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import {
-  ArrowRight,
-  MessagesSquare,
-  Paperclip,
-  Pin,
-  Reply,
-} from "lucide-react";
+import { MessagesSquare, Paperclip, Pin, Reply } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SampleRecord } from "../../shared/data/sample-data";
 import {
   messageAuthorId,
-  samplePresence,
-  type CommsFlow,
+  presenceLabel,
   type Message,
   type Thread,
-} from "../domain/model";
+} from "../domain/view-model";
 import { Avatar, MessageMenu, ProfilePopover } from "./floating";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -49,13 +42,8 @@ import {
   type TimelinePeople,
 } from "./message-shared";
 import { reportCommsError } from "../state/comms-feedback";
-import {
-  commsGroup,
-  recordContext,
-  recordNumber,
-  type GroupTone,
-} from "../domain/groups";
-import { GroupMark } from "./group-mark";
+import { recordContext, type GroupTone } from "../domain/groups";
+import { useCommsClient } from "../state/client-context";
 
 function MessageText({
   text,
@@ -115,63 +103,6 @@ function TableGlyph() {
   );
 }
 
-/** A handoff between groups, drawn with the canvas's own line and arrow. */
-function FlowRow({
-  flow,
-  records,
-}: {
-  flow: CommsFlow;
-  records: SampleRecord[];
-}) {
-  const from = commsGroup(flow.from);
-  const to = commsGroup(flow.to);
-  const record = records.find((item) => item.id === flow.recordId);
-  return (
-    <div
-      role="note"
-      aria-label={`Handoff from ${from?.name ?? flow.from} to ${to?.name ?? flow.to}`}
-      className="my-3 flex items-center gap-3 px-3"
-    >
-      <span className="text-muted-foreground grid w-9 shrink-0 place-items-center">
-        <ArrowRight aria-hidden="true" className="size-4" />
-      </span>
-      <div className="bg-background flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-[calc(var(--radius)*1.25)] px-3 py-2 text-sm shadow-[inset_0_0_0_1px_var(--border)]">
-        <span className="inline-flex items-center gap-1.5 font-semibold">
-          <GroupMark tone={from?.tone ?? 0} />
-          {from?.name ?? flow.from}
-        </span>
-        <svg
-          viewBox="0 0 48 12"
-          aria-hidden="true"
-          className="h-3 w-12 shrink-0 text-[color:var(--canvas-edge)]"
-        >
-          <path d="M1 6h41" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M40 2l6 4-6 4z" fill="currentColor" />
-        </svg>
-        <span className="inline-flex items-center gap-1.5 font-semibold">
-          <GroupMark tone={to?.tone ?? 0} />
-          {to?.name ?? flow.to}
-        </span>
-        <span className="text-muted-foreground min-w-0">
-          {flow.recordId && (
-            <b className="text-foreground font-mono text-xs font-medium">
-              {recordNumber(flow.recordId)}
-            </b>
-          )}{" "}
-          {record ? `${record.title} · ` : ""}
-          {flow.text}
-        </span>
-        <time className="text-muted-foreground ml-auto text-xs tabular-nums">
-          {new Date(flow.created).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </time>
-      </div>
-    </div>
-  );
-}
-
 /** A record's due date in the viewer's own date format. */
 export function formatDueDate(value: string): string {
   const date = new Date(`${value}T00:00:00`);
@@ -184,18 +115,9 @@ export function formatDueDate(value: string): string {
       });
 }
 
-/** Plain names for the record details a linked record card can show. */
-const RECORD_CARD_LABELS: Record<string, string> = {
-  status: "Status",
-  assignee: "Assigned to",
-  customer: "Customer",
-  dueDate: "Due date",
-};
-
 export function MessageTimeline({
   visibleMessages,
   allMessages,
-  flows = [],
   onOpenRecord,
   records,
   threads,
@@ -203,8 +125,10 @@ export function MessageTimeline({
   people,
   roles,
   viewerId,
-  viewerPresence,
+  presence = {},
   elevated,
+  capabilities,
+  membershipRole,
   allowDownload = true,
   preferences = DEFAULT_COMMS_PREFERENCES,
   settings = DEFAULT_COMMS_SETTINGS,
@@ -219,8 +143,6 @@ export function MessageTimeline({
 }: {
   visibleMessages: Message[];
   allMessages: Message[];
-  /** Handoffs for this conversation, placed between messages by time. */
-  flows?: CommsFlow[];
   onOpenRecord?: (recordId: string) => void;
   records: SampleRecord[];
   threads: Thread[];
@@ -228,6 +150,14 @@ export function MessageTimeline({
   mutable: boolean;
 } & TimelinePeople &
   TimelineActions) {
+  const { client } = useCommsClient();
+  const lifetime = useRef<AbortController | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, []);
   const [editing, setEditing] = useState("");
   const [editText, setEditText] = useState("");
   // Failures show as a visible OpenComms notice (state/comms-feedback.ts).
@@ -240,22 +170,15 @@ export function MessageTimeline({
   return (
     <>
       {visibleMessages.map((message, index) => {
-        const authorId = messageAuthorId(message, people);
+        const authorId = messageAuthorId(message);
         const person = people.find((item) => item.id === authorId);
         const authorName = person?.name ?? message.author;
         const own = authorId === viewerId;
         const previous = visibleMessages[index - 1];
-        // Handoffs that happened before this message and after the last one.
-        const flowsBefore = flows.filter(
-          (flow) =>
-            flow.created <= message.created &&
-            (!previous || flow.created > previous.created),
-        );
         const grouped =
-          !flowsBefore.length &&
           preferences.groupMessages &&
           previous &&
-          messageAuthorId(previous, people) === authorId &&
+          messageAuthorId(previous) === authorId &&
           Math.abs(message.created - previous.created) < 5 * 60 * 1000;
         const newDay =
           !previous ||
@@ -281,9 +204,6 @@ export function MessageTimeline({
                 <Separator className="flex-1" />
               </div>
             )}
-            {flowsBefore.map((flow) => (
-              <FlowRow key={flow.id} flow={flow} records={records} />
-            ))}
             <MessageMenu
               id={message.id}
               highlighted={highlightedId === message.id}
@@ -294,8 +214,17 @@ export function MessageTimeline({
               )}
               label={`${authorName}, ${new Date(message.created).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
               own={own}
-              mutable={mutable}
-              canEdit={own && mutable}
+              mutable={mutable && !message.deleted}
+              canReact={capabilities?.react.allowed ?? false}
+              canReply={capabilities?.reply.allowed ?? false}
+              canCreateThread={
+                !message.parentId &&
+                (capabilities?.createThread.allowed ?? false)
+              }
+              canReport={
+                membershipRole !== undefined && membershipRole !== "guest"
+              }
+              canEdit={own && mutable && !message.deleted}
               editExpired={
                 settings.editWindowMinutes > 0 &&
                 now - message.created > settings.editWindowMinutes * 60 * 1000
@@ -304,17 +233,19 @@ export function MessageTimeline({
               onTool={(view, opener) =>
                 onMessageTool?.(view, message.id, opener)
               }
-              canElevate={elevated && mutable}
+              canElevate={elevated && mutable && !message.deleted}
               canDelete={
-                (own || elevated) &&
                 mutable &&
-                (settings.deleteWindowMinutes === 0 ||
-                  now - message.created <=
-                    settings.deleteWindowMinutes * 60 * 1000)
+                !message.deleted &&
+                (own
+                  ? settings.deleteWindowMinutes === 0 ||
+                    now - message.created <=
+                      settings.deleteWindowMinutes * 60 * 1000
+                  : (capabilities?.deleteOthersMessages.allowed ?? false))
               }
               pinned={message.pinned}
               onReaction={(emoji) => {
-                if (!mutable) return;
+                if (!mutable || !capabilities?.react.allowed) return;
                 const current = message.reactions?.[emoji] ?? [];
                 const next = current.includes(viewerId)
                   ? current.filter((id) => id !== viewerId)
@@ -342,7 +273,7 @@ export function MessageTimeline({
                   });
               }}
               onDelete={() => {
-                if (own || elevated)
+                if (own || capabilities?.deleteOthersMessages.allowed)
                   void Promise.resolve(onDelete(message.id)).then((error) => {
                     if (error) setNotice(error);
                   });
@@ -359,11 +290,7 @@ export function MessageTimeline({
                             roles.find((role) => role.id === person.role)
                               ?.name ?? "Unassigned"
                           }
-                          presence={samplePresence(
-                            person.id,
-                            viewerId,
-                            viewerPresence,
-                          )}
+                          presence={presenceLabel(presence, person.id)}
                           onMessage={onDirect}
                         />
                       ) : (
@@ -413,7 +340,7 @@ export function MessageTimeline({
                       <Reply className="size-3 shrink-0" />
                       <span className="truncate">
                         {quote
-                          ? `${people.find((item) => item.id === messageAuthorId(quote, people))?.name ?? quote.author}: ${quote.text}`
+                          ? `${people.find((item) => item.id === messageAuthorId(quote))?.name ?? quote.author}: ${quote.text}`
                           : "Original message unavailable"}
                       </span>
                     </Button>
@@ -488,31 +415,25 @@ export function MessageTimeline({
                   )}
                   {settings.linkPreviews &&
                     preferences.previews &&
-                    message.text.match(/https?:\/\/[^\s]+/) && (
+                    message.linkPreviews?.map((preview) => (
                       <a
-                        href={message.text.match(/https?:\/\/[^\s]+/)![0]}
+                        key={preview.url}
+                        href={preview.url}
                         target="_blank"
                         rel="noreferrer"
                         className="mt-2 block min-w-0 text-xs"
                       >
                         <Card className="w-full">
-                          <CardContent className="truncate p-3">
-                            Link preview ·{" "}
-                            {message.text.match(/https?:\/\/[^\s]+/)![0]}
+                          <CardContent className="p-3">
+                            <strong>{preview.title}</strong>
+                            <p>{preview.description}</p>
+                            <p className="text-muted-foreground">
+                              {preview.site_name}
+                            </p>
                           </CardContent>
                         </Card>
                       </a>
-                    )}
-                  {message.attachment && (
-                    <Attachment className="mt-2" size="sm">
-                      <AttachmentMedia>
-                        <Paperclip />
-                      </AttachmentMedia>
-                      <AttachmentContent>
-                        <AttachmentTitle>{message.attachment}</AttachmentTitle>
-                      </AttachmentContent>
-                    </Attachment>
-                  )}
+                    ))}
                   {message.files?.map((file) => (
                     <Attachment key={file.id} className="bg-muted/20 mt-2">
                       <AttachmentMedia
@@ -543,24 +464,49 @@ export function MessageTimeline({
                       <AttachmentContent>
                         <AttachmentTitle>{file.name}</AttachmentTitle>
                         <AttachmentDescription className="whitespace-normal">
-                          {formatFileSize(file.size)} · Not uploaded
+                          {formatFileSize(file.size)} · Local sample attachment
                         </AttachmentDescription>
                         {!settings.fileDownloads || !allowDownload ? (
                           <p className="text-muted-foreground mt-1 text-xs">
                             Downloads disabled by channel policy.
                           </p>
-                        ) : localAttachmentUrl(file.id) ? (
-                          <a
+                        ) : (
+                          <button
+                            type="button"
                             className="mt-1 inline-flex min-h-9 items-center text-xs underline"
-                            href={localAttachmentUrl(file.id)}
-                            download={file.name}
+                            disabled={!client || downloading === file.id}
+                            onClick={async () => {
+                              const signal = lifetime.current?.signal;
+                              if (!client || !signal || signal.aborted) return;
+                              setDownloading(file.id);
+                              try {
+                                const download =
+                                  await client.downloadAttachment(
+                                    message.conversation,
+                                    file.id,
+                                    { signal },
+                                  );
+                                await client.bootstrap({ signal });
+                                const url = URL.createObjectURL(download.bytes);
+                                try {
+                                  const anchor = document.createElement("a");
+                                  anchor.href = url;
+                                  anchor.download = download.filename;
+                                  anchor.click();
+                                } finally {
+                                  URL.revokeObjectURL(url);
+                                }
+                              } catch {
+                                setNotice(
+                                  "The attachment could not be downloaded. Local file bytes are unavailable after reload.",
+                                );
+                              } finally {
+                                setDownloading(null);
+                              }
+                            }}
                           >
                             Download {file.name}
-                          </a>
-                        ) : (
-                          <p className="text-muted-foreground mt-1 text-xs">
-                            File contents unavailable after reload.
-                          </p>
+                          </button>
                         )}
                       </AttachmentContent>
                     </Attachment>
@@ -572,7 +518,7 @@ export function MessageTimeline({
                         (item) => item.id === message.recordId,
                       );
                       const title = record?.title ?? "Linked record";
-                      const { module, group } = recordContext(record, people);
+                      const { module, group } = recordContext(record);
                       return (
                         <div
                           className={cn(
@@ -592,7 +538,7 @@ export function MessageTimeline({
                                 {group ? `${group.name} › ` : ""}
                                 {module}
                               </span>
-                              {settings.recordCardFields.includes("title") && (
+                              {record && (
                                 <span className="truncate text-sm font-semibold">
                                   {title}
                                 </span>
@@ -606,38 +552,28 @@ export function MessageTimeline({
                               Open in OpenView
                             </Link>
                           </div>
-                          {settings.recordCardFields.some(
-                            (field) => field !== "title",
-                          ) && (
+                          {!!record?.fields?.length && (
                             <dl className="grid grid-cols-2 sm:grid-cols-3">
-                              {settings.recordCardFields
-                                .filter((field) => field !== "title")
-                                .map((field) => (
-                                  <div
-                                    key={field}
-                                    className="min-w-0 border-r px-3 py-2 last:border-r-0"
+                              {record.fields.map((field) => (
+                                <div
+                                  key={field.id}
+                                  className="min-w-0 border-r px-3 py-2 last:border-r-0"
+                                >
+                                  <dt className="text-muted-foreground text-xs">
+                                    {field.label}
+                                  </dt>
+                                  <dd
+                                    className={cn(
+                                      "truncate text-xs",
+                                      // Code font is for data: dates.
+                                      field.label === "Due date" &&
+                                        "font-mono tabular-nums",
+                                    )}
                                   >
-                                    <dt className="text-muted-foreground text-xs">
-                                      {RECORD_CARD_LABELS[field] ?? field}
-                                    </dt>
-                                    <dd
-                                      className={cn(
-                                        "truncate text-xs",
-                                        // Code font is for data: dates.
-                                        field === "dueDate" &&
-                                          "font-mono tabular-nums",
-                                      )}
-                                    >
-                                      {field === "dueDate" && record
-                                        ? formatDueDate(record.dueDate)
-                                        : String(
-                                            record?.[
-                                              field as keyof SampleRecord
-                                            ] ?? "—",
-                                          )}
-                                    </dd>
-                                  </div>
-                                ))}
+                                    {field.displayValue}
+                                  </dd>
+                                </div>
+                              ))}
                             </dl>
                           )}
                         </div>
@@ -655,6 +591,7 @@ export function MessageTimeline({
                           pressed={users.includes(viewerId)}
                           disabled={
                             !mutable ||
+                            !capabilities?.react.allowed ||
                             !settings.allowedReactions.includes(emoji)
                           }
                           onPressedChange={(pressed) =>
@@ -696,14 +633,6 @@ export function MessageTimeline({
           </MessageScrollerItem>
         );
       })}
-      {flows
-        .filter(
-          (flow) =>
-            flow.created > (visibleMessages.at(-1)?.created ?? -Infinity),
-        )
-        .map((flow) => (
-          <FlowRow key={flow.id} flow={flow} records={records} />
-        ))}
     </>
   );
 }

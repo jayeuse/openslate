@@ -1,7 +1,150 @@
-import { expect, signedInSession, test } from "./helpers/test";
+import {
+  authMeBody,
+  defaultOrganization,
+  expect,
+  heldResponse,
+  signedInAs,
+  test,
+} from "./helpers/test";
+import { wireWorkspace } from "../helpers/wire";
+import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import type { Page } from "@playwright/test";
+
+async function createWorkshop(page: Page) {
+  await page
+    .getByRole("button", { name: "OpenComms menu", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("menuitem", { name: "New channel", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", {
+    name: "Create channel",
+    exact: true,
+  });
+  await editor
+    .getByRole("textbox", { name: "Channel name", exact: true })
+    .fill("workshop");
+  await editor
+    .getByRole("button", { name: "Create channel", exact: true })
+    .click();
+  await expect(editor).toBeHidden();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
+}
+
+async function populateHistory(page: Page) {
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  for (let index = 0; index < 6; index++) {
+    const text = `History ${index}. ${"Retained conversation context. ".repeat(30)}`;
+    await input.fill(text);
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect(
+      page.getByRole("article").filter({ hasText: text }),
+    ).toHaveCount(1);
+  }
+}
 
 test.beforeEach(async ({ page }) => {
-  await signedInSession(page, "00000000-0000-4000-8000-000000000101");
+  await signedInAs(page, {
+    id: "00000000-0000-4000-8000-000000000101",
+    role: "admin",
+  });
+});
+
+test("Comms binds drafts to the admitted organization while the next organization is being verified", async ({
+  page,
+}) => {
+  const userId = "00000000-0000-4000-8000-000000000101";
+  const orgA = { ...defaultOrganization, role: "admin" as const };
+  const orgB = {
+    org_id: "00000000-0000-4000-8000-000000000202",
+    name: "Second organization",
+    slug: "second",
+    role: "admin" as const,
+  };
+  let current: typeof orgA | typeof orgB = orgA;
+  const verification = heldResponse();
+  let holdVerification = false;
+  const identity = () =>
+    authMeBody({
+      id: userId,
+      role: "admin",
+      memberships: [orgA, orgB],
+      current_organization: { ...current, access: [] },
+    });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({ json: identity() }),
+  );
+  await page.route("**/api/auth/session", async (route) => {
+    if (holdVerification) {
+      verification.enter();
+      await verification.released;
+    }
+    await route.fulfill({
+      json: {
+        authenticated: true,
+        user_id: userId,
+        organization_id: current.org_id,
+        default_organization_blocked: null,
+        setup_required: false,
+      },
+    });
+  });
+  await page.route("**/api/auth/session/organization", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ org_id: orgB.org_id });
+    current = orgB;
+    holdVerification = true;
+    await route.fulfill({ json: identity() });
+  });
+  await page.route("**/api/workspace", (route) =>
+    route.fulfill({
+      json: wireWorkspace({
+        id: current.org_id,
+        display_name: current.name,
+        locale: "en-US",
+        timezone: "UTC",
+        currency: "USD",
+        today: "2026-10-19",
+        purge_enabled: true,
+      }),
+    }),
+  );
+  await page.goto("/comms");
+  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  await composer.fill("Organization A private draft");
+  await page
+    .getByRole("button", { name: "Organization: OpenSlate", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: /Second organization/ }).click();
+  await verification.entered;
+  try {
+    await expect(
+      page.getByRole("dialog", { name: "Session verification", exact: true }),
+    ).toBeVisible();
+    await expect(composer).toBeHidden();
+    expect(
+      await page.evaluate(
+        (key) => sessionStorage.getItem(key),
+        workspaceSessionSnapshotStorageKey(userId, orgB.org_id),
+      ),
+    ).toBeNull();
+  } finally {
+    holdVerification = false;
+    verification.release();
+  }
+  await expect(
+    page.getByRole("button", {
+      name: "Organization: Second organization",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "OpenComms", exact: true }).click();
+  await expect(composer).toHaveValue("");
+  await composer.fill("Organization B retained draft");
+  await page.reload();
+  await expect(composer).toHaveValue("Organization B retained draft");
 });
 
 test("Comms keeps separate conversation drafts and clears only a successfully sent message", async ({
@@ -10,6 +153,8 @@ test("Comms keeps separate conversation drafts and clears only a successfully se
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("/comms");
+  await createWorkshop(page);
+  await populateHistory(page);
   const message = page.getByRole("textbox", { name: "Message", exact: true });
   await expect(message).toBeVisible();
   await message.fill("Operations unsent journey draft");
@@ -41,11 +186,88 @@ test("Comms keeps separate conversation drafts and clears only a successfully se
   await expect(
     page.getByText("Edited operations journey message", { exact: true }),
   ).toBeVisible();
+  const edited = page
+    .getByRole("article")
+    .filter({ hasText: "Edited operations journey message" });
+  await edited.getByRole("button", { name: /^Message actions:/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Create thread", exact: true })
+    .click();
+  const thread = page.getByRole("region", {
+    name: "Thread conversation",
+    exact: true,
+  });
+  const reply = thread.getByRole("textbox", {
+    name: "Thread reply",
+    exact: true,
+  });
+  await reply.fill("Reply owned by the same conversation");
+  await thread.getByRole("button", { name: "Send reply", exact: true }).click();
+  await expect(reply).toHaveValue("");
+  await expect(
+    thread
+      .getByRole("article")
+      .filter({ hasText: "Reply owned by the same conversation" }),
+  ).toHaveCount(1);
+  await thread
+    .getByRole("button", { name: "Back to messages", exact: true })
+    .click();
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await expect(message).toHaveValue("Workshop retained journey draft");
   await page.reload();
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await expect(message).toHaveValue("Workshop retained journey draft");
+});
+
+test("Comms retains a rate-limited send draft and retries once after the real send window", async ({
+  page,
+}) => {
+  const start = new Date("2026-10-19T12:00:00Z");
+  await page.clock.setFixedTime(start);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/comms");
+  const composer = page.getByRole("form", {
+    name: "Message composer",
+    exact: true,
+  });
+  const draft = composer.getByRole("textbox", { name: "Message", exact: true });
+  const send = composer.getByRole("button", {
+    name: "Send message",
+    exact: true,
+  });
+  // The real client owns the 20-send/10-second limit, including administrators.
+  for (let index = 1; index <= 20; index++) {
+    const body = `Send-window setup ${index}.`;
+    await draft.fill(body);
+    await send.click();
+    await expect(draft).toHaveValue("");
+    await expect(
+      page.getByRole("article").filter({ hasText: body }),
+    ).toHaveCount(1);
+  }
+  const retained = "Rate-limited draft must be accepted exactly once";
+  const message = page.getByRole("article").filter({ hasText: retained });
+  await draft.fill(retained);
+  await send.click();
+  await expect(composer.getByRole("alert")).toHaveText(
+    "The message could not be sent. Your draft is still available.",
+  );
+  await expect(draft).toHaveValue(retained);
+  await expect(message).toHaveCount(0);
+  await expect(send).toBeEnabled();
+
+  // Fixed Date changes admission time, not browser timers. Do not edit the draft:
+  // the real composer retains its fingerprint/client key across this retry.
+  await page.clock.setFixedTime(new Date(start.getTime() + 11_000));
+  await send.click();
+  await expect(draft).toHaveValue("");
+  await expect(composer.getByRole("alert")).toHaveCount(0);
+  await expect(message).toHaveCount(1);
+  await page.reload();
+  await expect(draft).toHaveValue("");
+  await expect(message).toHaveCount(1);
+  expect(pageErrors).toEqual([]);
 });
 
 test("Comms preferences keep an editing draft, discard cancelled changes, and persist accepted settings", async ({
@@ -75,6 +297,24 @@ test("Comms preferences keep an editing draft, discard cancelled changes, and pe
   await openPreferences();
   await expect(density).toHaveValue("comfortable");
   await density.selectOption("compact");
+  const membership = heldResponse();
+  await page.route("**/api/auth/me", async (route) => {
+    membership.enter();
+    await membership.released;
+    await route.fulfill({
+      json: authMeBody({
+        id: "00000000-0000-4000-8000-000000000101",
+        role: "admin",
+      }),
+    });
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new FocusEvent("focus")));
+    await membership.entered;
+  } finally {
+    membership.release();
+  }
+  await expect(density).toHaveValue("compact");
   await settings.getByRole("button", { name: "Cancel", exact: true }).click();
   const discard = page.getByRole("alertdialog", {
     name: "Discard changes?",
@@ -102,10 +342,73 @@ test("Comms preferences keep an editing draft, discard cancelled changes, and pe
   await expect(settings).toBeHidden();
 });
 
+test("a partially saved new channel keeps unsaved settings and retries without creating another channel", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  await page
+    .getByRole("button", { name: "OpenComms menu", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("menuitem", { name: "New channel", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Create channel",
+    exact: true,
+  });
+  await dialog
+    .getByRole("textbox", { name: "Channel name", exact: true })
+    .fill("partial-save-room");
+  await dialog
+    .getByRole("tab", { name: "Files and records", exact: true })
+    .click();
+  const maximum = dialog.getByRole("spinbutton", {
+    name: "Maximum file size (MB)",
+    exact: true,
+  });
+  // Metadata is valid; the actual settings command refuses the platform's 10 MiB ceiling.
+  await maximum.fill("11");
+  await dialog
+    .getByRole("button", { name: "Create channel", exact: true })
+    .click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Some changes were saved",
+  );
+  await expect(maximum).toHaveValue("11");
+  await maximum.fill("10");
+  await dialog
+    .getByRole("button", { name: "Create channel", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  const row = page.getByRole("button", { name: /^partial-save-room(,|$)/ });
+  await expect(row).toHaveCount(1);
+  await page.reload();
+  await row.click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  const saved = page.getByRole("dialog", {
+    name: "Channel settings",
+    exact: true,
+  });
+  await saved
+    .getByRole("tab", { name: "Files and records", exact: true })
+    .click();
+  await expect(
+    saved.getByRole("spinbutton", {
+      name: "Maximum file size (MB)",
+      exact: true,
+    }),
+  ).toHaveValue("10");
+});
+
 test("a deleted message can be put back from the visible Undo notice", async ({
   page,
 }) => {
   await page.goto("/comms");
+  await createWorkshop(page);
   const message = page.getByRole("textbox", { name: "Message", exact: true });
   await message.fill("Undo journey message");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
@@ -139,6 +442,7 @@ test("a deleted message can be put back from the visible Undo notice", async ({
 
 test("archiving a channel asks first and can be undone", async ({ page }) => {
   await page.goto("/comms");
+  await createWorkshop(page);
   const row = page.getByRole("button", { name: /^workshop(,|$)/ });
   await row.click({ button: "right" });
   await page
@@ -183,8 +487,11 @@ test("archiving a channel asks first and can be undone", async ({ page }) => {
 test("blocking a person asks first; unblocking does not", async ({ page }) => {
   await page.goto("/comms");
   await page
-    .getByRole("button", { name: /^Morgan Kim/ })
-    .first()
+    .getByRole("button", { name: "Start direct message", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Start direct message", exact: true })
+    .getByRole("button", { name: "Message Noah Tan", exact: true })
     .click();
   await page.getByRole("button", { name: "Block user", exact: true }).click();
   const confirm = page.getByRole("alertdialog", { name: /^Block / });
@@ -228,7 +535,9 @@ test("OpenComms loads its example conversations without showing an error", async
   page,
 }) => {
   await page.goto("/comms");
-  await expect(page.getByText("Team spaces", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Service delivery", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();
@@ -265,7 +574,6 @@ test("the OpenComms menu keeps everyday items up front and admin tools behind on
     "Message retention",
     "Workspace settings",
     "Channel templates",
-    "Automation",
     "Bulk channel changes",
     "Settings history",
   ]);
@@ -273,10 +581,68 @@ test("the OpenComms menu keeps everyday items up front and admin tools behind on
   await expect(page.getByRole("dialog", { name: "Moderation" })).toBeVisible();
 });
 
+test("settings history keeps workspace changes visible while a channel is selected", async ({
+  page,
+}) => {
+  await page.goto("/comms");
+  async function openTool(name: string) {
+    await page
+      .getByRole("button", { name: "OpenComms menu", exact: true })
+      .first()
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Admin tools", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name, exact: true }).click();
+  }
+  await openTool("Workspace settings");
+  const settings = page.getByRole("dialog", {
+    name: "Workspace settings",
+    exact: true,
+  });
+  await settings.getByRole("tab", { name: "Messaging", exact: true }).click();
+  await settings
+    .getByRole("spinbutton", { name: "Slow mode (seconds)", exact: true })
+    .fill("1");
+  await settings
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(settings).toBeHidden();
+  await openTool("Settings history");
+  const history = page.getByRole("dialog", {
+    name: "Settings history",
+    exact: true,
+  });
+  await expect(
+    history
+      .getByRole("article")
+      .filter({ hasText: "Changed workspace settings" }),
+  ).toHaveCount(1);
+});
+
 test("a channel has one settings dialog, reached the same way from its row and its header", async ({
   page,
 }) => {
   await page.goto("/comms");
+  await createWorkshop(page);
+  await page
+    .getByRole("button", { name: "OpenComms menu", exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole("menuitem", { name: "New category", exact: true })
+    .click();
+  const category = page.getByRole("dialog", {
+    name: "Create category",
+    exact: true,
+  });
+  await category
+    .getByRole("textbox", { name: "Category name", exact: true })
+    .fill("Another category");
+  await category
+    .getByRole("button", { name: "Create category", exact: true })
+    .click();
+  await expect(category).toBeHidden();
   const row = page.getByRole("button", { name: /^workshop(,|$)/ });
   await row.click({ button: "right" });
   const rowMenu = page.getByRole("menu", { name: "Channel actions: workshop" });
@@ -303,6 +669,7 @@ test("a channel has one settings dialog, reached the same way from its row and i
 
 test("two quick deletes each get their own Undo", async ({ page }) => {
   await page.goto("/comms");
+  await createWorkshop(page);
   const message = page.getByRole("textbox", { name: "Message", exact: true });
   for (const text of ["First quick delete", "Second quick delete"]) {
     await message.fill(text);
@@ -335,17 +702,18 @@ test("categories carry their access group, and a channel says who can use it", a
   page,
 }) => {
   await page.goto("/comms");
+  await createWorkshop(page);
   await expect(
     page.getByRole("button", { name: /^Service delivery/ }),
-  ).toContainText("Operations");
-  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
+  ).toContainText("Dispatch team");
+  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await expect(
-    page.getByRole("button", { name: /^Visible\ to\ Operations \./ }),
+    page.getByRole("button", { name: /^Visible to Dispatch team \./ }),
   ).toBeVisible();
-  await page.getByRole("button", { name: /^finance\-desk(,|$)/ }).click();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await expect(
     page.getByRole("button", {
-      name: /^Visible\ to\ Finance\ and\ Commercial \./,
+      name: /^Visible to everyone \./,
     }),
   ).toBeVisible();
 });
@@ -356,94 +724,103 @@ test("a linked record opens beside the conversation and gives way to a thread", 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/comms");
   const followed = page.getByRole("list", { name: "Records you follow" });
-  await followed.getByRole("button", { name: /Replace pump seal/ }).click();
+  await followed
+    .getByRole("button", { name: /Riverside service visit/ })
+    .click();
   const panel = page.getByRole("complementary", { name: "Record" });
   await expect(
-    panel.getByRole("heading", { name: "Replace pump seal" }),
+    panel.getByRole("heading", { name: "Riverside service visit" }),
   ).toBeVisible();
   await expect(panel).toContainText("Service requests");
   await expect(
     panel.getByRole("link", { name: "Open in OpenView" }),
-  ).toHaveAttribute("href", /record=sample-sr-1004/);
+  ).toHaveAttribute("href", /record=c0440000-0000-4000-8000-00000000000a/);
   await expect(panel.getByRole("list", { name: "Mentioned in" })).toContainText(
     "#operations",
   );
   // A thread takes the same place.
-  await page.getByRole("button", { name: /^Thread: Riverside asked/ }).click();
+  await page.getByRole("button", { name: /^Thread: Morning handover/ }).click();
   await expect(panel).toHaveCount(0);
   await expect(
     page.getByRole("complementary", { name: "Thread panel" }),
   ).toBeVisible();
   // The record card in the timeline opens the record again.
   await page
-    .getByRole("button", { name: /^Open record: .*Replace pump seal/ })
+    .getByRole("button", { name: /^Open record: .*Riverside service visit/ })
     .first()
     .click();
   await expect(panel).toBeVisible();
-});
-
-test("handoffs appear between messages and are not messages", async ({
-  page,
-}) => {
-  await page.goto("/comms");
-  const handoff = page.getByRole("note", {
-    name: "Handoff from Customer service to Operations",
-  });
-  await expect(handoff).toBeVisible();
-  await expect(handoff).toContainText("SR-1004");
-  await expect(
-    page.getByRole("article").filter({ hasText: "SR-1004" }),
-  ).toHaveCount(0);
 });
 
 test("group access in channel settings changes who the channel says it is for", async ({
   page,
 }) => {
   await page.goto("/comms");
-  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
+  await createWorkshop(page);
+  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
   const settings = page.getByRole("dialog", { name: "Channel settings" });
-  const access = settings.getByRole("group", { name: "Who can use #dispatch" });
-  await expect(access).toContainText("not enforced yet");
-  const commercial = access.getByRole("radiogroup", { name: "Commercial" });
+  const access = settings.getByRole("group", { name: "Who can use #workshop" });
+  await expect(access).toContainText("Saved choices are enforced");
+  const commercial = access.getByRole("radiogroup", { name: "Dispatch team" });
   await commercial.getByText("Read", { exact: true }).click();
   await expect(
     commercial.getByRole("radio", { name: "Read", exact: true }),
   ).toBeChecked();
-  await expect(access).toContainText("can read");
+  await expect(access).toContainText("Guests can only read");
   await settings
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
   await expect(
     page.getByRole("button", {
-      name: /^Visible\ to\ Operations\ and\ Commercial \./,
+      name: /^Visible to Dispatch team \./,
     }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await settings.getByRole("tab", { name: "Permissions", exact: true }).click();
+  await settings.getByText("Capabilities by group", { exact: true }).click();
+  await settings
+    .getByRole("button", { name: "Check one person", exact: true })
+    .click();
+  const inspector = page.getByRole("dialog", {
+    name: "Effective access",
+    exact: true,
+  });
+  await inspector
+    .getByLabel("Check access for", { exact: true })
+    .selectOption({ label: "Noah Tan" });
+  await expect(inspector.getByRole("status")).toContainText(
+    "Conversation access: read",
+  );
 });
 
 test("lowering Everyone keeps what each group can already do", async ({
   page,
 }) => {
   await page.goto("/comms");
-  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
+  await createWorkshop(page);
+  await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
   const access = page
     .getByRole("dialog", { name: "Channel settings" })
-    .getByRole("group", { name: "Who can use #operations" });
+    .getByRole("group", { name: "Who can use #workshop" });
   const everyone = access.getByRole("radiogroup", { name: "Everyone" });
+  await everyone.getByText("Read and post", { exact: true }).click();
   await everyone.getByText("Read", { exact: true }).click();
   await expect(
     access
-      .getByRole("radiogroup", { name: "Operations" })
+      .getByRole("radiogroup", { name: "Dispatch team" })
       .getByRole("radio", { name: "Read and post" }),
   ).toBeChecked();
-  await expect(access).toContainText(
-    "can post here, and everyone else can read.",
-  );
+  await expect(
+    everyone.getByRole("radio", { name: "Read", exact: true }),
+  ).toBeChecked();
 });
 
 test("on a phone, a record's mention closes the record and shows the message", async ({
@@ -453,19 +830,19 @@ test("on a phone, a record's mention closes the record and shows the message", a
   await page.goto("/comms");
   await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await page
-    .getByRole("button", { name: /^Open record: .*Replace pump seal/ })
+    .getByRole("button", { name: /^Open record: .*Riverside service visit/ })
     .first()
     .click();
   const record = page.getByRole("dialog", { name: "Record" });
   await expect(record).toBeVisible();
   await record
     .getByRole("list", { name: "Mentioned in" })
-    .getByRole("button", { name: /#operations · Sofia Garcia/ })
+    .getByRole("button", { name: /#operations · Noah Tan/ })
     .click();
   await expect(record).toHaveCount(0);
   await expect(
     page.getByText(
-      "Riverside asked for a clear next update time. Can we confirm one before I call back?",
+      "Two vans are loaded. The spare tool kit is beside dispatch.",
       { exact: true },
     ),
   ).toBeInViewport();
@@ -476,6 +853,13 @@ test("OpenComms opens at the latest message, with few and meaningful unread mark
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/comms");
+  await expect(
+    page
+      .getByRole("button", { name: /^operations(,|$)/ })
+      .getByLabel("Unread", { exact: true }),
+  ).toHaveCount(0);
+  await populateHistory(page);
+  await page.reload();
   const list = page.getByLabel("Messages", { exact: true });
   await expect
     .poll(() =>
@@ -520,27 +904,65 @@ test("each message's actions are named for it and fit its author", async ({
   await expect(page.getByRole("menuitem", { name: /Schedule/ })).toHaveCount(0);
 });
 
-test("groups decide a category, a channel's members, and the Permissions summary", async ({
+test("Comms rechecks reaction capabilities when the admitted member becomes a guest", async ({
+  page,
+}) => {
+  const identity = {
+    id: "00000000-0000-4000-8000-000000000101",
+    role: "member" as const,
+  };
+  await signedInAs(page, identity);
+  await page.goto("/comms");
+  const root = page
+    .getByRole("article")
+    .filter({ hasText: "Two vans are loaded." });
+  await root.getByRole("button", { name: /^Message actions:/ }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Add reaction", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await signedInAs(page, { ...identity, role: "guest" });
+  await page.reload();
+  await expect(root).toBeVisible();
+  await root.getByRole("button", { name: /^Message actions:/ }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Add reaction", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("menuitem", { name: "Create thread", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("menuitem", { name: "Report message", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeDisabled();
+});
+
+test("category defaults preserve existing members and the saved Permissions summary", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/comms");
-  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await expect(
     page.getByRole("complementary", { name: "Channel members" }),
-  ).toContainText("Members 14");
+  ).toContainText("Members 4");
   // A category's group is chosen in its settings.
   await page
     .getByRole("button", { name: "Category settings: Service delivery" })
     .click();
   const category = page.getByRole("dialog", { name: "Category settings" });
-  await category.getByLabel("Access group").selectOption("Finance");
+  await category.getByLabel("Access group").selectOption("");
   await category
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
-  await expect(
-    page.getByRole("button", { name: /^Service delivery/ }),
-  ).toContainText("Finance group");
+  await page
+    .getByRole("button", { name: "Category settings: Service delivery" })
+    .click();
+  await expect(category.getByLabel("Access group")).toHaveValue("");
+  await category.getByRole("button", { name: "Cancel", exact: true }).click();
   // Permissions start from groups; exceptions are folded away.
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
@@ -549,9 +971,9 @@ test("groups decide a category, a channel's members, and the Permissions summary
   await settings.getByRole("tab", { name: "Permissions" }).click();
   await expect(
     settings.getByRole("list", { name: "Access by group" }),
-  ).toContainText("Finance");
+  ).toContainText("Everyone");
   await expect(
-    settings.getByText("Permissions for", { exact: true }),
+    settings.getByText("Capabilities for", { exact: true }),
   ).toBeHidden();
 });
 
@@ -560,8 +982,10 @@ test("on a phone, opening a channel from the list shows no error", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/comms");
-  await expect(page.getByText("Team spaces", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
+  await expect(
+    page.getByText("Service delivery", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();
@@ -573,12 +997,19 @@ test("a channel row names its state, and leaving a channel marks it read", async
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/comms");
+  await createWorkshop(page);
+  await page
+    .getByRole("button", { name: /^workshop(,|$)/ })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Mark unread", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "workshop, unread", exact: true }),
   ).toBeVisible();
   // Switching right after load saves once, without a conflict.
   await page.getByRole("button", { name: /^workshop(,|$)/ }).click();
-  await page.getByRole("button", { name: /^dispatch(,|$)/ }).click();
+  await page.getByRole("button", { name: /^operations(,|$)/ }).click();
   await expect(page.locator('[data-type="error"]')).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "workshop", exact: true }),

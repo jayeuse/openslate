@@ -3,13 +3,13 @@
 import { cn } from "@/lib/utils";
 import type { Person } from "../../shared/data/sample-people";
 import {
-  COMMS_GROUPS,
   EVERYONE_GROUP_ID,
   channelGroupAccess,
   groupMembers,
   type GroupTone,
 } from "../domain/groups";
-import type { Category, Channel, GroupAccessLevel } from "../domain/model";
+import type { Category, Channel, GroupAccessLevel } from "../domain/view-model";
+import { useCommsClient } from "../state/client-context";
 import { GroupMark } from "./group-mark";
 
 const LEVELS: { value: GroupAccessLevel; label: string }[] = [
@@ -30,6 +30,7 @@ export function GroupAccessField({
   people: Person[];
   onChange: (access: Record<string, GroupAccessLevel>) => void;
 }) {
+  const { groups } = useCommsClient();
   const access = channelGroupAccess(channel, categories);
   const everyoneLevel = access[EVERYONE_GROUP_ID] ?? "none";
   // Everyone comes first: a group can add access, never have less than it.
@@ -47,25 +48,12 @@ export function GroupAccessField({
       note: "Including guests, who can only read",
       floor: "none",
     },
-    ...COMMS_GROUPS.map((group) => ({
+    ...groups.map((group) => ({
       ...group,
       note: peopleCount(groupMembers(group.id, people).length),
       floor: everyoneLevel,
     })),
   ];
-  const everyone = groupMembers(EVERYONE_GROUP_ID, people);
-  const reach = (level: GroupAccessLevel) =>
-    (access[EVERYONE_GROUP_ID] ?? "none") === level
-      ? everyone
-      : everyone.filter((person) =>
-          COMMS_GROUPS.some(
-            (group) =>
-              access[group.id] === level &&
-              person.departments.includes(group.id),
-          ),
-        );
-  const posters = new Set(reach("post").map((person) => person.id));
-  const readers = reach("read").filter((person) => !posters.has(person.id));
   const name = channel.name.trim() || "this channel";
   const floorNoteId = `group-access-floor-${channel.id}`;
   function choose(rowId: string, level: GroupAccessLevel) {
@@ -77,7 +65,7 @@ export function GroupAccessField({
     // takes access away from a group.
     onChange({
       ...Object.fromEntries(
-        COMMS_GROUPS.map((group) => [
+        groups.map((group) => [
           group.id,
           higher(access[group.id] ?? "none", everyoneLevel),
         ]),
@@ -95,8 +83,8 @@ export function GroupAccessField({
         Who can use {name.startsWith("this") ? name : `#${name}`}
       </legend>
       <p className="text-muted-foreground -mt-1 text-xs">
-        Choose what each group may do. In this example, group access is shown in
-        OpenComms but not enforced yet.
+        Choose what each group may do. Saved choices are enforced on local
+        sample conversations. Guests remain read-only.
       </p>
       <div className="border-card-edge overflow-hidden rounded-[calc(var(--radius)*1.25)] border">
         {rows.map((row) => (
@@ -152,24 +140,8 @@ export function GroupAccessField({
         Everyone first.
       </p>
       <p className="bg-muted rounded-[var(--radius)] px-3 py-2 text-sm shadow-[inset_0_0_0_1px_var(--border)]">
-        {everyoneLevel === "post" ? (
-          <strong className="text-foreground font-semibold">
-            Everyone can post here.
-          </strong>
-        ) : (
-          <>
-            <strong className="text-foreground font-semibold">
-              {posters.size
-                ? `${peopleCount(posters.size)} can post here`
-                : "Nobody can post here"}
-            </strong>
-            {everyoneLevel === "read"
-              ? ", and everyone else can read."
-              : readers.length
-                ? `, and ${readers.length} more can read.`
-                : ". Nobody else can open it."}
-          </>
-        )}
+        Save to apply these choices. Check one person in Permissions to inspect
+        saved access. Guests can only read.
       </p>
     </fieldset>
   );

@@ -4,15 +4,14 @@ import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
-import { samplePresence } from "../domain/model";
+import { presenceLabel, type Presence } from "../domain/view-model";
 import { Avatar, ProfilePopover } from "./floating";
 import { Action } from "../../shared/components/ui";
 
 export function MembersPanel({
   members,
   roles,
-  viewerId,
-  viewerPresence,
+  presence,
   onClose,
   onDirect,
 }: {
@@ -20,6 +19,7 @@ export function MembersPanel({
   roles: Role[];
   viewerId: string;
   viewerPresence: string;
+  presence: Presence;
   onClose: () => void;
   onDirect: (name: string) => void;
 }) {
@@ -56,9 +56,7 @@ export function MembersPanel({
       {([false, true] as const).map((offline) => {
         const group = filtered.filter(
           (person) =>
-            (samplePresence(person.id, viewerId, viewerPresence) ===
-              "Offline") ===
-            offline,
+            (presenceLabel(presence, person.id) === "Offline") === offline,
         );
         return (
           <section key={String(offline)} className="mt-2">
@@ -75,7 +73,7 @@ export function MembersPanel({
                     roles.find((role) => role.id === person.role)?.name ??
                     "Unassigned"
                   }
-                  presence={samplePresence(person.id, viewerId, viewerPresence)}
+                  presence={presenceLabel(presence, person.id)}
                   onMessage={onDirect}
                   className={cn(
                     "hover:bg-muted min-h-12 w-full gap-3 px-1.5 py-1",
@@ -84,11 +82,7 @@ export function MembersPanel({
                 >
                   <Avatar
                     name={person.name}
-                    presence={samplePresence(
-                      person.id,
-                      viewerId,
-                      viewerPresence,
-                    )}
+                    presence={presenceLabel(presence, person.id)}
                   />
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">
@@ -97,7 +91,7 @@ export function MembersPanel({
                     <span className="text-muted-foreground block truncate text-xs">
                       {roles.find((role) => role.id === person.role)?.name ??
                         "Unassigned"}{" "}
-                      · {samplePresence(person.id, viewerId, viewerPresence)}
+                      · {presenceLabel(presence, person.id)}
                     </span>
                   </span>
                 </ProfilePopover>
