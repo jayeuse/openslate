@@ -34,9 +34,11 @@ export function channelGroupAccess(
   categories: Category[],
 ): Record<string, GroupAccessLevel> {
   if (channel.groupAccess) return channel.groupAccess;
-  const groupId = categories.find(
+  const category = categories.find(
     (category) => category.id === channel.categoryId,
-  )?.groupId;
+  );
+  if (category?.groupAccess) return category.groupAccess;
+  const groupId = category?.groupId;
   return groupId
     ? { [groupId]: "post", [EVERYONE_GROUP_ID]: "none" }
     : { [EVERYONE_GROUP_ID]: "post" };

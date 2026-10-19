@@ -63,6 +63,7 @@ export function ConfigurationFrame({
   const previousFocus = useRef<HTMLElement | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const fields = useRef<HTMLFieldSetElement>(null);
   const {
     discardOpen,
     requestClose: guardRequestClose,
@@ -87,12 +88,19 @@ export function ConfigurationFrame({
     if (!onSave || saving || disabled) return;
     setSaving(true);
     setError("");
+    let accepted = false;
     try {
-      await onSave();
+      accepted = (await onSave()) !== false;
     } catch {
       setError("Changes could not be saved. Your draft is still available.");
     } finally {
       setSaving(false);
+      if (!accepted)
+        requestAnimationFrame(() =>
+          fields.current
+            ?.querySelector<HTMLElement>('[aria-invalid="true"]')
+            ?.focus(),
+        );
     }
   }
   return (
@@ -141,7 +149,12 @@ export function ConfigurationFrame({
         </header>
         <Separator className="shrink-0" />
         <ScrollArea className="min-h-0 flex-1 overflow-hidden [&_[data-slot=scroll-area-viewport]]:[scrollbar-gutter:stable] [&_[data-slot=scroll-area-viewport]]:overscroll-contain">
-          <fieldset disabled={saving} aria-busy={saving} className="contents">
+          <fieldset
+            ref={fields}
+            disabled={saving}
+            aria-busy={saving}
+            className="contents"
+          >
             {children}
           </fieldset>
         </ScrollArea>

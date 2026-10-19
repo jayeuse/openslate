@@ -22,38 +22,42 @@ export const SETTINGS_SECTIONS: {
   label: string;
   description: string;
   keys: CommsSettingKey[];
+  common: CommsSettingKey[];
 }[] = [
   {
     id: "overview",
     label: "Overview",
     description: "Set the tone and defaults for conversations.",
-    keys: ["mode", "pinnedRecordId"],
+    keys: [],
+    common: [],
   },
   {
     id: "messaging",
     label: "Messaging",
     description: "Control composition and message changes.",
     keys: [
-      "editWindowMinutes",
-      "deleteWindowMinutes",
+      "mode",
       "slowModeSeconds",
       "formatting",
       "linkPreviews",
       "allowedReactions",
       "mentionLimit",
     ],
+    common: ["mode"],
   },
   {
     id: "threads",
     label: "Threads",
     description: "Choose how conversations branch and stay visible.",
     keys: ["autoArchiveDays", "defaultThreadSubscription", "threadBranches"],
+    common: [],
   },
   {
     id: "members",
     label: "Members",
     description: "Assign responsibility and set membership rules.",
     keys: ["joinRule", "defaultMemberIds", "dmRule"],
+    common: [],
   },
   {
     id: "notifications",
@@ -71,6 +75,7 @@ export const SETTINGS_SECTIONS: {
       "notificationPreview",
       "desktopNotifications",
     ],
+    common: ["notificationMode"],
   },
   {
     id: "files",
@@ -84,14 +89,24 @@ export const SETTINGS_SECTIONS: {
       "allowedRecordModules",
       "requireRecordLink",
       "recordCardFields",
+      "pinnedRecordId",
     ],
+    common: ["allowedFileTypes", "maxFileSizeMb"],
   },
   {
     id: "moderation",
     label: "Posting and history",
     description:
       "Lock the channel, limit who can post, and set how long messages are kept. In this example, nothing is deleted automatically.",
-    keys: ["locked", "restrictedPersonIds", "restrictionUntil", "allowExport"],
+    keys: [
+      "editWindowMinutes",
+      "deleteWindowMinutes",
+      "locked",
+      "restrictedPersonIds",
+      "restrictionUntil",
+      "allowExport",
+    ],
+    common: ["editWindowMinutes", "deleteWindowMinutes"],
   },
 ];
 export const SETTINGS_LABELS: Record<CommsSettingKey, string> = {
@@ -189,7 +204,6 @@ export function SettingsFields({
   workspace,
   people,
   onChange,
-  onLock,
 }: {
   keys: CommsSettingKey[];
   values: CommsSettings;
@@ -201,7 +215,6 @@ export function SettingsFields({
     key: K,
     value: CommsSettings[K],
   ) => void;
-  onLock?: (key: CommsSettingKey, value: boolean) => void;
 }) {
   const { catalog } = useCommsClient();
   const linked = useCommsRead("settings-records", (client, signal) =>
@@ -384,18 +397,37 @@ export function SettingsFields({
                 {disabled ? "Locked by workspace" : "Customized here"}
               </span>
             )}
-            {workspace && onLock && key !== "dmRule" && (
-              <Toggle
-                control="switch"
-                label={`Lock ${label} for categories and channels`}
-                checked={locked.includes(key)}
-                onCheckedChange={(checked) => onLock(key, checked)}
-              />
-            )}
             {index < keys.length - 1 && <Separator />}
           </Field>
         );
       })}
     </FieldGroup>
+  );
+}
+
+export function SettingsLocks({
+  keys,
+  locked,
+  onLock,
+}: {
+  keys: CommsSettingKey[];
+  locked: CommsSettingKey[];
+  onLock: (key: CommsSettingKey, value: boolean) => void;
+}) {
+  return (
+    <FieldSet>
+      <FieldLegend>Workspace locks</FieldLegend>
+      {keys
+        .filter((key) => key !== "dmRule")
+        .map((key) => (
+          <Toggle
+            key={key}
+            control="switch"
+            label={`Lock ${SETTINGS_LABELS[key].replace(/^Lock /, "")} for categories and channels`}
+            checked={locked.includes(key)}
+            onCheckedChange={(value) => onLock(key, value)}
+          />
+        ))}
+    </FieldSet>
   );
 }

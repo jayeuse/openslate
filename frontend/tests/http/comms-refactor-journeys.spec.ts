@@ -608,6 +608,7 @@ test("settings history keeps workspace changes visible while a channel is select
     exact: true,
   });
   await settings.getByRole("tab", { name: "Messaging", exact: true }).click();
+  await settings.getByRole("button", { name: /Advanced settings/ }).click();
   await settings
     .getByRole("spinbutton", { name: "Slow mode (seconds)", exact: true })
     .fill("1");
@@ -770,6 +771,7 @@ test("group access in channel settings changes who the channel says it is for", 
     .click();
   const settings = page.getByRole("dialog", { name: "Channel settings" });
   const access = settings.getByRole("group", { name: "Who can use #workshop" });
+  await settings.getByRole("tab", { name: "Access", exact: true }).click();
   await expect(access).toContainText("Saved choices are enforced");
   const commercial = access.getByRole("radiogroup", { name: "Dispatch team" });
   await commercial.getByText("Read", { exact: true }).click();
@@ -788,8 +790,7 @@ test("group access in channel settings changes who the channel says it is for", 
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
-  await settings.getByRole("tab", { name: "Permissions", exact: true }).click();
-  await settings.getByText("Capabilities by group", { exact: true }).click();
+  await settings.getByRole("tab", { name: "Access", exact: true }).click();
   await settings
     .getByRole("button", { name: "Check one person", exact: true })
     .click();
@@ -817,6 +818,10 @@ test("lowering Everyone keeps what each group can already do", async ({
   const access = page
     .getByRole("dialog", { name: "Channel settings" })
     .getByRole("group", { name: "Who can use #workshop" });
+  await page
+    .getByRole("dialog", { name: "Channel settings" })
+    .getByRole("tab", { name: "Access", exact: true })
+    .click();
   const everyone = access.getByRole("radiogroup", { name: "Everyone" });
   await everyone.getByText("Read and post", { exact: true }).click();
   await everyone.getByText("Read", { exact: true }).click();
@@ -970,7 +975,11 @@ test("category defaults preserve existing members and the saved Permissions summ
     .getByRole("menuitem", { name: "Category settings", exact: true })
     .click();
   const category = page.getByRole("dialog", { name: "Category settings" });
-  await category.getByLabel("Access group").selectOption("");
+  await category.getByRole("tab", { name: "Access", exact: true }).click();
+  await category
+    .getByRole("radiogroup", { name: "Everyone", exact: true })
+    .getByText("Read and post", { exact: true })
+    .click();
   await category
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
@@ -980,14 +989,19 @@ test("category defaults preserve existing members and the saved Permissions summ
   await page
     .getByRole("menuitem", { name: "Category settings", exact: true })
     .click();
-  await expect(category.getByLabel("Access group")).toHaveValue("");
+  await category.getByRole("tab", { name: "Access", exact: true }).click();
+  await expect(
+    category
+      .getByRole("radiogroup", { name: "Everyone", exact: true })
+      .getByRole("radio", { name: "Read and post", exact: true }),
+  ).toBeChecked();
   await category.getByRole("button", { name: "Cancel", exact: true }).click();
   // Permissions start from groups; exceptions are folded away.
   await page
     .getByRole("button", { name: "Channel settings", exact: true })
     .click();
   const settings = page.getByRole("dialog", { name: "Channel settings" });
-  await settings.getByRole("tab", { name: "Permissions" }).click();
+  await settings.getByRole("tab", { name: "Access" }).click();
   await expect(
     settings.getByRole("list", { name: "Access by group" }),
   ).toContainText("Everyone");

@@ -10,6 +10,7 @@ export interface Category {
   id: string;
   name: string;
   groupId?: string;
+  groupAccess?: Record<string, GroupAccessLevel>;
 }
 export interface Channel {
   id: string;

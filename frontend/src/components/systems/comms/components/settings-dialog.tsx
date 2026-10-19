@@ -1,9 +1,9 @@
 "use client";
-import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FieldGroup } from "@/components/ui/field";
+import { NativeSelectOption } from "@/components/ui/native-select";
 import { Alert } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/empty";
 import type { Person, Role } from "../../shared/data/sample-people";
 import { useVerifiedWorkspaceUserId } from "../../shared/runtime/workspace-identity";
-import { Action, Toggle } from "../../shared/components/ui";
+import { Action, Choice, Toggle } from "../../shared/components/ui";
 import type { Category, Channel } from "../domain/view-model";
 import type * as C from "../contract/types";
 import { lockableCapabilitySchema } from "../contract/schemas";
@@ -36,11 +36,16 @@ import {
   type CommsSettingKey,
   type CommsSettings,
 } from "../domain/configuration";
-import { PersonalFields } from "./settings-personal-fields";
+import {
+  PersonalFields,
+  PERSONAL_ADVANCED_KEYS,
+} from "./settings-personal-fields";
+import { SettingsAdvanced } from "./settings-advanced";
 import { MembershipPreview, NotificationPreview } from "./settings-previews";
 import { changed, cleanSettings, settingsError } from "./settings-draft";
 import {
   SettingsFields,
+  SettingsLocks,
   SETTINGS_LABELS,
   SETTINGS_SECTIONS,
 } from "./settings-fields";
@@ -50,7 +55,11 @@ import {
   ConfirmActionDialog,
   type ConfirmActionRequest,
 } from "./confirm-action-dialog";
-import { messageFromCommsError, useCommsCommands } from "../state/runtime";
+import {
+  messageFromCommsError,
+  useCommsCommands,
+  useCommsRead,
+} from "../state/runtime";
 
 export interface CommsSettingsDialogProps {
   scope: CommsScope | "personal";
@@ -62,7 +71,9 @@ export interface CommsSettingsDialogProps {
   onClose: () => void;
   title?: string;
   overview?: ReactNode;
-  overviewEnd?: ReactNode;
+  overviewAdvanced?: ReactNode;
+  access?: ReactNode;
+  advancedMetadataCount?: number;
   additionalDirty?: boolean;
   onBeforeSave?: () => boolean | Promise<boolean>;
   onSaveMetadata?: (
@@ -83,13 +94,14 @@ export function CommsSettingsDialog({
   onClose,
   title,
   overview,
-  overviewEnd,
+  overviewAdvanced,
+  access,
+  advancedMetadataCount = 0,
   additionalDirty = false,
   onBeforeSave,
   onSaveMetadata,
   onAfterSave,
   saveLabel,
-  initialSubject,
   initialTab,
 }: CommsSettingsDialogProps) {
   const userId = useVerifiedWorkspaceUserId();
@@ -100,6 +112,23 @@ export function CommsSettingsDialog({
   const target: CommsScope = personal
     ? { kind: "workspace", id: "workspace" }
     : scope;
+  const admission = useCommsRead(
+    `settings-admission:${personal ? "personal" : `${target.kind}:${target.id}`}`,
+    async (client, signal) => {
+      // Editors retain their existing entry checks and per-command admission.
+      // URL-only settings must not expose write controls from a readable scope.
+      if (personal || onSaveMetadata || target.kind === "category") return true;
+      return target.kind === "channel"
+        ? (await client.getCapabilities(target.id, { signal })).capabilities
+            .manageChannel.allowed
+        : (
+            await client.getChannelCreationCheck(
+              { kind: "workspace" },
+              { signal },
+            )
+          ).membership_role === "admin";
+    },
+  );
   const [baseline] = useState(() =>
     structuredClone(getCommsScope(config, target)),
   );
@@ -477,16 +506,21 @@ export function CommsSettingsDialog({
         { id: "navigation", label: "Navigation & panels" },
         { id: "shortcuts", label: "Shortcuts" },
       ]
-    : [...SETTINGS_SECTIONS, { id: "permissions", label: "Permissions" }];
+    : [...SETTINGS_SECTIONS, { id: "permissions", label: "Access" }];
   const search = query.trim().toLowerCase();
-  function fields(keys: CommsSettingKey[]) {
-    const visible = keys.filter(
+  function visibleKeys(keys: CommsSettingKey[]) {
+    return keys.filter(
       (key) =>
         (key !== "dmRule" || (!personal && target.kind === "workspace")) &&
         (!search ||
           `${SETTINGS_LABELS[key]} ${key}`.toLowerCase().includes(search)) &&
-        (!modifiedOnly || Object.hasOwn(overrides, key)),
+        (!modifiedOnly ||
+          Object.hasOwn(overrides, key) ||
+          lockedSettings.includes(key)),
     );
+  }
+  function fields(keys: CommsSettingKey[]) {
+    const visible = visibleKeys(keys);
     return visible.length ? (
       <SettingsFields
         keys={visible}
@@ -496,24 +530,8 @@ export function CommsSettingsDialog({
         workspace={!personal && target.kind === "workspace"}
         people={people}
         onChange={changeSetting}
-        onLock={(key, locked) =>
-          setLockedSettings((current) =>
-            locked
-              ? [...new Set([...current, key])]
-              : current.filter((item) => item !== key),
-          )
-        }
       />
-    ) : (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>No settings match these filters.</EmptyTitle>
-          <EmptyDescription>
-            Try another search or turn off Modified only.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
+    ) : null;
   }
   const capabilities = (query: string) => (
     <PermissionFields
@@ -532,8 +550,76 @@ export function CommsSettingsDialog({
             : current.filter((item) => item !== capability),
         )
       }
-      onInspect={() => setInspect(true)}
     />
+  );
+  if (!admission.data)
+    return (
+      <ConfigurationFrame
+        title={title ?? currentLabel}
+        opener={opener}
+        onClose={onClose}
+      >
+        <div className="p-5">
+          <Alert role={admission.status === "loading" ? "status" : "alert"}>
+            {admission.status === "loading"
+              ? "Checking settings access…"
+              : "You cannot manage settings for this scope."}
+          </Alert>
+          {admission.error && (
+            <Action onClick={admission.reload}>Try again</Action>
+          )}
+        </div>
+      </ConfigurationFrame>
+    );
+  const currentSection = SETTINGS_SECTIONS.find((item) => item.id === section);
+  const searchableSections = personal
+    ? SETTINGS_SECTIONS.filter((item) => item.id === "notifications")
+    : SETTINGS_SECTIONS;
+  const sectionKeys = search
+    ? searchableSections.flatMap((item) => item.keys)
+    : (currentSection?.keys ?? []);
+  const commonKeys = search
+    ? searchableSections.flatMap((item) => item.common)
+    : (currentSection?.common ?? []);
+  const advancedKeys = sectionKeys.filter((key) => !commonKeys.includes(key));
+  const showPersonalFields =
+    personal && (!!search || section !== "notifications");
+  const advancedCount = showPersonalFields
+    ? (search
+        ? Object.values(PERSONAL_ADVANCED_KEYS).flat()
+        : (PERSONAL_ADVANCED_KEYS[section] ?? [])
+      ).filter((key) =>
+        changed(preferences[key], DEFAULT_COMMS_PREFERENCES[key]),
+      ).length +
+      (search
+        ? advancedKeys.filter((key) => Object.hasOwn(overrides, key)).length
+        : 0)
+    : new Set([
+        ...advancedKeys.filter((key) => Object.hasOwn(overrides, key)),
+        ...(!personal && target.kind === "workspace"
+          ? sectionKeys.filter((key) => lockedSettings.includes(key))
+          : []),
+      ]).size;
+  const capabilityCount = new Set([
+    ...Object.keys(draft.capabilities.everyone),
+    ...draft.capabilities.group_grants.map((grant) => grant.capability),
+    ...lockedCapabilities,
+  ]).size;
+  const advanced = (children: ReactNode) => (
+    <SettingsAdvanced
+      searching={!!search}
+      key={`${personal ? "personal" : target.kind}:${search ? "search" : section}`}
+      storageKey={`openslate:comms:advanced:${client?.context.org_id}:${userId}:${personal ? "personal" : target.kind}:${search ? "search" : section}`}
+      count={
+        advancedCount +
+        (!personal && (section === "permissions" || search)
+          ? capabilityCount
+          : 0) +
+        (section === "overview" ? advancedMetadataCount : 0)
+      }
+    >
+      {children}
+    </SettingsAdvanced>
   );
   return (
     <ConfigurationFrame
@@ -572,7 +658,7 @@ export function CommsSettingsDialog({
         </Action>
       }
     >
-      <div className="flex items-end gap-3 px-5 py-4 sm:px-6">
+      <div className="flex flex-wrap items-end gap-3 px-5 py-3 sm:px-6">
         <div className="min-w-0 flex-1">
           <TextField
             label="Search settings"
@@ -602,9 +688,27 @@ export function CommsSettingsDialog({
         onValueChange={(value) => setSection(String(value))}
         className="gap-0 sm:grid sm:grid-cols-[190px_minmax(0,1fr)]"
       >
+        {!verticalTabs && (
+          <div className="px-5 pt-3">
+            <Choice
+              label="Settings section"
+              value={section}
+              onChange={(event) => {
+                setSection(event.target.value);
+                setQuery("");
+              }}
+            >
+              {sections.map((item) => (
+                <NativeSelectOption key={item.id} value={item.id}>
+                  {item.label}
+                </NativeSelectOption>
+              ))}
+            </Choice>
+          </div>
+        )}
         <TabsList
           aria-label="Settings sections"
-          className="bg-muted/20 max-w-full items-stretch justify-start overflow-x-auto rounded-none border-b p-2 sm:sticky sm:top-0 sm:flex-col sm:self-start sm:border-r sm:border-b-0"
+          className="bg-muted/20 hidden max-w-full items-stretch justify-start rounded-none p-2 sm:sticky sm:top-0 sm:flex sm:flex-col sm:self-start sm:border-r"
         >
           {sections.map((item) => (
             <TabsTrigger
@@ -623,164 +727,169 @@ export function CommsSettingsDialog({
             </TabsTrigger>
           )}
         </TabsList>
-        <div className="min-w-0 px-5 py-5 sm:px-6">
-          {search ? (
-            <TabsContent value="search">
-              <h3 className="mb-4 text-sm font-semibold">Search results</h3>
-              {personal ? (
+        <div className="min-w-0 px-5 py-4 sm:px-6">
+          <TabsContent value={search ? "search" : section}>
+            <FieldGroup>
+              <div>
+                <h3 className="text-sm font-semibold">
+                  {search
+                    ? "Search results"
+                    : sections.find((item) => item.id === section)?.label}
+                </h3>
+                {!search && currentSection && (
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    {currentSection.description}
+                  </p>
+                )}
+              </div>
+              {!search && !personal && section === "overview" && overview}
+              {!search &&
+                !personal &&
+                section === "permissions" &&
+                (access ?? (
+                  <GroupAccessSummary
+                    scope={target.kind}
+                    channel={channel}
+                    category={categories.find((item) => item.id === target.id)}
+                    categories={categories}
+                  />
+                ))}
+              {!personal && (section === "permissions" || search) && (
+                <Action className="self-start" onClick={() => setInspect(true)}>
+                  Check one person
+                </Action>
+              )}
+              {showPersonalFields ? (
                 <PersonalFields
                   preferences={preferences}
                   baseline={initialPreferences}
                   setPreferences={setPreferences}
-                  section="all"
+                  section={search ? "all" : section}
                   search={search}
                   modifiedOnly={modifiedOnly}
                   channels={channels}
+                  tier="common"
                 />
               ) : (
-                fields(SETTINGS_SECTIONS.flatMap((item) => item.keys))
+                fields(commonKeys)
               )}
-              {!personal && <div className="mt-6">{capabilities(search)}</div>}
-              {personal &&
-                fields(
-                  SETTINGS_SECTIONS.find((item) => item.id === "notifications")!
-                    .keys,
-                )}
-            </TabsContent>
-          ) : personal ? (
-            <TabsContent value={section}>
-              <FieldGroup>
-                {section === "notifications" ? (
-                  fields(
-                    SETTINGS_SECTIONS.find(
-                      (item) => item.id === "notifications",
-                    )!.keys,
-                  )
-                ) : (
-                  <PersonalFields
-                    preferences={preferences}
-                    baseline={initialPreferences}
-                    setPreferences={setPreferences}
-                    section={section}
-                    search=""
-                    modifiedOnly={modifiedOnly}
-                    channels={channels}
-                  />
-                )}
-                {section === "appearance" && (
-                  <Link
-                    href="/platform?section=account"
-                    onClick={(event) => {
-                      if (dirty) {
-                        event.preventDefault();
-                        setError(
-                          "Save or cancel your changes before opening global settings.",
-                        );
-                      }
-                    }}
-                    className="text-sm underline underline-offset-4"
-                  >
-                    Global theme and presence settings
-                  </Link>
-                )}
-                {section === "notifications" && (
-                  <>
-                    <Action
-                      type="button"
-                      onClick={() =>
-                        setNotificationPreview(!notificationPreview)
-                      }
-                    >
-                      Preview notification
-                    </Action>
-                    {notificationPreview && (
-                      <NotificationPreview settings={values} />
+              {personal && search && fields(commonKeys)}
+              {search && !visibleKeys(sectionKeys).length && !personal && (
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>No settings match these filters.</EmptyTitle>
+                    <EmptyDescription>
+                      Try another search or turn off Modified only.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              )}
+              {advanced(
+                <>
+                  {showPersonalFields ? (
+                    <PersonalFields
+                      preferences={preferences}
+                      baseline={initialPreferences}
+                      setPreferences={setPreferences}
+                      section={search ? "all" : section}
+                      search={search}
+                      modifiedOnly={modifiedOnly}
+                      channels={channels}
+                      tier="advanced"
+                    />
+                  ) : (
+                    fields(advancedKeys)
+                  )}
+                  {personal && search && fields(advancedKeys)}
+                  {!personal &&
+                    target.kind === "workspace" &&
+                    visibleKeys(sectionKeys).length > 0 && (
+                      <SettingsLocks
+                        keys={visibleKeys(sectionKeys)}
+                        locked={lockedSettings}
+                        onLock={(key, locked) =>
+                          setLockedSettings((current) =>
+                            locked
+                              ? [...new Set([...current, key])]
+                              : current.filter((item) => item !== key),
+                          )
+                        }
+                      />
                     )}
+                  {!personal &&
+                    (section === "permissions" || search) &&
+                    capabilities(search)}
+                  {!search &&
+                    !personal &&
+                    section === "overview" &&
+                    overviewAdvanced}
+                  {!search && !personal && section === "members" && channel && (
+                    <MembershipPreview
+                      channel={channel}
+                      people={people}
+                      settings={values}
+                      roles={memberRoles}
+                      onRoleChange={(id, role) =>
+                        setMemberRoles((current) => ({
+                          ...current,
+                          [id]: role,
+                        }))
+                      }
+                    />
+                  )}
+                </>,
+              )}
+              {personal && (
+                <>
+                  {section === "appearance" && (
                     <Link
-                      href="/platform?section=notifications"
+                      href="/platform?section=account"
                       onClick={(event) => {
                         if (dirty) {
                           event.preventDefault();
                           setError(
-                            "Save or cancel your changes before opening the notification center.",
+                            "Save or cancel your changes before opening global settings.",
                           );
                         }
                       }}
                       className="text-sm underline underline-offset-4"
                     >
-                      Open notification center
+                      Global theme and presence settings
                     </Link>
-                  </>
-                )}
-              </FieldGroup>
-            </TabsContent>
-          ) : section === "permissions" ? (
-            <TabsContent value="permissions" className="flex flex-col gap-6">
-              <GroupAccessSummary
-                scope={target.kind}
-                channel={channel}
-                category={categories.find((item) => item.id === target.id)}
-                categories={categories}
-                onChangeGroups={
-                  overview && target.kind !== "workspace"
-                    ? () => setSection("overview")
-                    : undefined
-                }
-              />
-              <details
-                open={Boolean(initialSubject)}
-                className="group/exceptions border-card-edge rounded-[calc(var(--radius)*1.25)] border"
-              >
-                <summary className="hover:bg-muted focus-visible:outline-ring flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-[calc(var(--radius)*1.25)] px-3 text-sm font-semibold outline-none focus-visible:outline-2 [&::-webkit-details-marker]:hidden">
-                  <ChevronRight
-                    aria-hidden="true"
-                    className="text-muted-foreground size-4 shrink-0 transition-transform duration-(--motion-fast) group-open/exceptions:rotate-90 motion-reduce:transition-none"
-                  />
-                  <span className="mr-auto">Capabilities by group</span>
-                  <span className="text-muted-foreground text-xs font-normal">
-                    Advanced
-                  </span>
-                </summary>
-                <div className="border-t p-3">{capabilities("")}</div>
-              </details>
-            </TabsContent>
-          ) : (
-            <TabsContent value={section}>
-              <FieldGroup>
-                <div>
-                  <h3 className="text-sm font-semibold">
-                    {
-                      SETTINGS_SECTIONS.find((item) => item.id === section)
-                        ?.label
-                    }
-                  </h3>
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    {
-                      SETTINGS_SECTIONS.find((item) => item.id === section)
-                        ?.description
-                    }
-                  </p>
-                </div>
-                {section === "overview" && overview}
-                {section === "members" && (
-                  <MembershipPreview
-                    channel={channel}
-                    people={people}
-                    settings={values}
-                    roles={memberRoles}
-                    onRoleChange={(id, role) =>
-                      setMemberRoles((current) => ({ ...current, [id]: role }))
-                    }
-                  />
-                )}
-                {fields(
-                  SETTINGS_SECTIONS.find((item) => item.id === section)?.keys ??
-                    [],
-                )}
-                {section === "overview" && overviewEnd}
-              </FieldGroup>
-            </TabsContent>
-          )}
+                  )}
+                  {section === "notifications" && (
+                    <>
+                      <Action
+                        type="button"
+                        onClick={() =>
+                          setNotificationPreview(!notificationPreview)
+                        }
+                      >
+                        Preview notification
+                      </Action>
+                      {notificationPreview && (
+                        <NotificationPreview settings={values} />
+                      )}
+                      <Link
+                        href="/platform?section=notifications"
+                        onClick={(event) => {
+                          if (dirty) {
+                            event.preventDefault();
+                            setError(
+                              "Save or cancel your changes before opening the notification center.",
+                            );
+                          }
+                        }}
+                        className="text-sm underline underline-offset-4"
+                      >
+                        Open notification center
+                      </Link>
+                    </>
+                  )}
+                </>
+              )}
+            </FieldGroup>
+          </TabsContent>
         </div>
       </Tabs>
       <ConfirmActionDialog

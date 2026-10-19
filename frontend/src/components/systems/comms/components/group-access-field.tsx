@@ -20,18 +20,21 @@ const LEVELS: { value: GroupAccessLevel; label: string }[] = [
 
 /** Who can use a channel, chosen per access group in plain words. */
 export function GroupAccessField({
-  channel,
+  subject,
   categories,
   people,
   onChange,
 }: {
-  channel: Channel;
+  subject: Channel | Category;
   categories: Category[];
   people: Person[];
   onChange: (access: Record<string, GroupAccessLevel>) => void;
 }) {
   const { groups } = useCommsClient();
-  const access = channelGroupAccess(channel, categories);
+  const access =
+    "categoryId" in subject
+      ? channelGroupAccess(subject, categories)
+      : (subject.groupAccess ?? { everyone: "post" as const });
   const everyoneLevel = access[EVERYONE_GROUP_ID] ?? "none";
   // Everyone comes first: a group can add access, never have less than it.
   const rows: {
@@ -40,6 +43,7 @@ export function GroupAccessField({
     tone: GroupTone;
     note: string;
     floor: GroupAccessLevel;
+    readOnly?: boolean;
   }[] = [
     {
       id: EVERYONE_GROUP_ID,
@@ -53,9 +57,19 @@ export function GroupAccessField({
       note: peopleCount(groupMembers(group.id, people).length),
       floor: everyoneLevel,
     })),
+    {
+      id: "guests",
+      name: "Guests",
+      tone: 0,
+      note: "Read-only wherever group access permits reading",
+      floor: "none",
+      readOnly: true,
+    },
   ];
-  const name = channel.name.trim() || "this channel";
-  const floorNoteId = `group-access-floor-${channel.id}`;
+  const name =
+    subject.name.trim() ||
+    `this ${"categoryId" in subject ? "channel" : "category"}`;
+  const floorNoteId = `group-access-floor-${subject.id}`;
   function choose(rowId: string, level: GroupAccessLevel) {
     if (rowId !== EVERYONE_GROUP_ID) {
       onChange({ ...access, [rowId]: level });
@@ -75,12 +89,17 @@ export function GroupAccessField({
   }
   return (
     <fieldset
-      id={`who-can-use-${channel.id}`}
+      id={`who-can-use-${subject.id}`}
       tabIndex={-1}
       className="flex scroll-mt-4 flex-col gap-3 outline-none"
     >
       <legend className="mb-1 text-sm font-semibold">
-        Who can use {name.startsWith("this") ? name : `#${name}`}
+        {"categoryId" in subject
+          ? "Who can use"
+          : "Default access for channels in"}{" "}
+        {name.startsWith("this") || !("categoryId" in subject)
+          ? name
+          : `#${name}`}
       </legend>
       <p className="text-muted-foreground -mt-1 text-xs">
         Choose what each group may do. Saved choices are enforced on local
@@ -112,20 +131,24 @@ export function GroupAccessField({
                   key={level.value}
                   className={cn(
                     "has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50",
-                    "text-muted-foreground has-[:focus-visible]:outline-ring flex min-h-9 cursor-pointer items-center rounded-[calc(var(--radius)*0.75)] px-2.5 text-xs font-medium has-[:focus-visible]:outline-2",
+                    "text-muted-foreground has-[:focus-visible]:outline-ring flex min-h-11 cursor-pointer items-center rounded-[calc(var(--radius)*0.75)] px-2.5 text-xs font-medium has-[:focus-visible]:outline-2",
                     "has-[:checked]:bg-popover has-[:checked]:text-action-text has-[:checked]:font-semibold has-[:checked]:shadow-[var(--lift),inset_0_0_0_1px_var(--border)]",
                   )}
                 >
                   <input
                     type="radio"
                     className="sr-only"
-                    name={`group-access-${channel.id}-${row.id}`}
+                    name={`group-access-${subject.id}-${row.id}`}
                     value={level.value}
                     checked={
-                      higher(access[row.id] ?? "none", row.floor) ===
+                      (row.readOnly
+                        ? "read"
+                        : higher(access[row.id] ?? "none", row.floor)) ===
                       level.value
                     }
-                    disabled={RANK[level.value] < RANK[row.floor]}
+                    disabled={
+                      row.readOnly || RANK[level.value] < RANK[row.floor]
+                    }
                     onChange={() => choose(row.id, level.value)}
                   />
                   {level.label}
@@ -140,8 +163,8 @@ export function GroupAccessField({
         Everyone first.
       </p>
       <p className="bg-muted rounded-[var(--radius)] px-3 py-2 text-sm shadow-[inset_0_0_0_1px_var(--border)]">
-        Save to apply these choices. Check one person in Permissions to inspect
-        saved access. Guests can only read.
+        Save to apply these choices. Check one person in Access to inspect saved
+        access. Guests can only read.
       </p>
     </fieldset>
   );

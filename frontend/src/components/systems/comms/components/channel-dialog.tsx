@@ -1,7 +1,7 @@
 "use client";
 import { NativeSelectOption } from "@/components/ui/native-select";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Alert } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,7 +38,7 @@ type EditorProps = {
 );
 
 export function ChannelDialog(props: EditorProps) {
-  const { client, groups } = useCommsClient();
+  const { client } = useCommsClient();
   const [draft, setDraft] = useState(() => ({
     ...props.value,
     id: props.value.id || crypto.randomUUID(),
@@ -46,6 +46,8 @@ export function ChannelDialog(props: EditorProps) {
   const [initialDraft] = useState(draft);
   const [beforeId, setBeforeId] = useState("unchanged");
   const [error, setError] = useState("");
+  const nameId = useId();
+  const nameErrorId = useId();
   const pendingSave = useRef<
     | { kind: "channel"; value: Channel; beforeId: string }
     | { kind: "category"; value: Category; beforeId: string }
@@ -65,6 +67,7 @@ export function ChannelDialog(props: EditorProps) {
   const confirmedCategory = useRef({
     name: props.value.name,
     groupId: "groupId" in props.value ? props.value.groupId : undefined,
+    groupAccess: props.value.groupAccess,
   });
   const confirmedAccess = useRef(
     "groupAccess" in props.value ? JSON.stringify(props.value.groupAccess) : "",
@@ -193,28 +196,36 @@ export function ChannelDialog(props: EditorProps) {
         position: current?.data.position ?? props.categories.length,
         department_id: current?.data.department_id ?? null,
         default_access:
-          current && value.groupId === confirmedCategory.current.groupId
+          current &&
+          JSON.stringify(value.groupAccess) ===
+            JSON.stringify(confirmedCategory.current.groupAccess) &&
+          value.groupId === confirmedCategory.current.groupId
             ? current.data.default_access
-            : value.groupId
-              ? [
-                  {
-                    subject: "group" as const,
-                    group_id: value.groupId,
-                    level: "post" as const,
-                  },
-                ]
-              : [{ subject: "everyone" as const, level: "post" as const }],
+            : value.groupAccess
+              ? access(value.groupAccess)
+              : value.groupId
+                ? [
+                    {
+                      subject: "group" as const,
+                      group_id: value.groupId,
+                      level: "post" as const,
+                    },
+                  ]
+                : [{ subject: "everyone" as const, level: "post" as const }],
       };
       if (!current) {
         savedId.current = (await client.createCategory(details)).data.id;
         confirmedCategory.current = {
           name: value.name,
           groupId: value.groupId,
+          groupAccess: value.groupAccess,
         };
         accepted(scope());
       } else if (
         confirmedCategory.current.name !== value.name ||
-        confirmedCategory.current.groupId !== value.groupId
+        confirmedCategory.current.groupId !== value.groupId ||
+        JSON.stringify(confirmedCategory.current.groupAccess) !==
+          JSON.stringify(value.groupAccess)
       ) {
         await client.updateCategory(savedId.current, details, {
           if_match: current.etag,
@@ -222,6 +233,7 @@ export function ChannelDialog(props: EditorProps) {
         confirmedCategory.current = {
           name: value.name,
           groupId: value.groupId,
+          groupAccess: value.groupAccess,
         };
         accepted(scope());
       }
@@ -297,45 +309,99 @@ export function ChannelDialog(props: EditorProps) {
         beforeId !== "unchanged"
       }
       saveLabel={creating ? `Create ${props.kind}` : "Save changes"}
-      overviewEnd={
-        channel && !creating ? (
-          <div className="flex flex-col items-start gap-2 border-t pt-4">
-            <Action
-              type="button"
-              onClick={() =>
-                setDraft({ ...channel, archived: !channel.archived })
-              }
-            >
-              {channel.archived ? "Restore channel" : "Archive channel"}
-            </Action>
-            <p className="text-muted-foreground text-xs">
-              {channel.archived ===
-              ("archived" in props.value && props.value.archived)
-                ? channel.archived
-                  ? "This channel is archived. Restoring it lets people post again."
-                  : "Archiving keeps messages and pauses posting."
-                : channel.archived
-                  ? "This channel will be archived when you save. Messages stay available."
-                  : "This channel will be restored when you save."}
-            </p>
-          </div>
-        ) : undefined
+      advancedMetadataCount={
+        Number(beforeId !== "unchanged") +
+        Number(
+          !!channel &&
+            !creating &&
+            channel.archived !==
+              ("archived" in props.value && props.value.archived),
+        )
+      }
+      access={
+        channel && channel.scope !== "groups" && !creating ? (
+          <GroupAccessSummary
+            scope="channel"
+            channel={channel}
+            categories={props.categories}
+          />
+        ) : (
+          <GroupAccessField
+            subject={draft}
+            categories={props.categories}
+            people={people}
+            onChange={(groupAccess) => setDraft({ ...draft, groupAccess })}
+          />
+        )
+      }
+      overviewAdvanced={
+        <>
+          <Choice
+            label={channel ? "Channel order" : "Category order"}
+            value={beforeId}
+            onChange={(event) => setBeforeId(event.target.value)}
+          >
+            <NativeSelectOption value="unchanged">
+              Keep current position
+            </NativeSelectOption>
+            {(channel
+              ? props.channels.filter(
+                  (item) => item.categoryId === channel.categoryId,
+                )
+              : props.categories
+            )
+              .filter((item) => item.id !== draft.id)
+              .map((item) => (
+                <NativeSelectOption key={item.id} value={item.id}>
+                  Before {channel ? "#" : ""}
+                  {item.name}
+                </NativeSelectOption>
+              ))}
+            <NativeSelectOption value="">At the end</NativeSelectOption>
+          </Choice>
+          {channel && !creating ? (
+            <div className="flex flex-col items-start gap-2 border-t pt-4">
+              <Action
+                type="button"
+                onClick={() =>
+                  setDraft({ ...channel, archived: !channel.archived })
+                }
+              >
+                {channel.archived ? "Restore channel" : "Archive channel"}
+              </Action>
+              <p className="text-muted-foreground text-xs">
+                {channel.archived ===
+                ("archived" in props.value && props.value.archived)
+                  ? channel.archived
+                    ? "This channel is archived. Restoring it lets people post again."
+                    : "Archiving keeps messages and pauses posting."
+                  : channel.archived
+                    ? "This channel will be archived when you save. Messages stay available."
+                    : "This channel will be restored when you save."}
+              </p>
+            </div>
+          ) : undefined}
+        </>
       }
       overview={
         <FieldGroup>
           {error && (
-            <Alert role="alert" variant="destructive">
+            <Alert id={nameErrorId} role="alert" variant="destructive">
               {error}
             </Alert>
           )}
           <TextField
+            id={nameId}
+            aria-invalid={!!error}
+            aria-describedby={error ? nameErrorId : undefined}
             label={channel ? "Channel name" : "Category name"}
             autoFocus
             value={draft.name}
             required
-            onChange={(event) =>
-              setDraft({ ...draft, name: event.target.value })
-            }
+            onChange={(event) => {
+              setError("");
+              setDraft({ ...draft, name: event.target.value });
+            }}
           />
           {channel && (
             <>
@@ -365,66 +431,8 @@ export function ChannelDialog(props: EditorProps) {
                   </NativeSelectOption>
                 ))}
               </Choice>
-              {channel.scope === "groups" ? (
-                <GroupAccessField
-                  channel={channel}
-                  categories={props.categories}
-                  people={people}
-                  onChange={(groupAccess) =>
-                    setDraft({ ...channel, groupAccess })
-                  }
-                />
-              ) : (
-                <GroupAccessSummary
-                  scope="channel"
-                  channel={channel}
-                  categories={props.categories}
-                />
-              )}
             </>
           )}
-          {!channel && (
-            <Choice
-              label="Access group"
-              value={"groupId" in draft ? (draft.groupId ?? "") : ""}
-              onChange={(event) =>
-                setDraft({
-                  ...draft,
-                  groupId: event.target.value || undefined,
-                })
-              }
-            >
-              <NativeSelectOption value="">Everyone</NativeSelectOption>
-              {groups.map((group) => (
-                <NativeSelectOption key={group.id} value={group.id}>
-                  {group.name}
-                </NativeSelectOption>
-              ))}
-            </Choice>
-          )}
-          <Choice
-            label={channel ? "Channel order" : "Category order"}
-            value={beforeId}
-            onChange={(event) => setBeforeId(event.target.value)}
-          >
-            <NativeSelectOption value="unchanged">
-              Keep current position
-            </NativeSelectOption>
-            {(channel
-              ? props.channels.filter(
-                  (item) => item.categoryId === channel.categoryId,
-                )
-              : props.categories
-            )
-              .filter((item) => item.id !== draft.id)
-              .map((item) => (
-                <NativeSelectOption key={item.id} value={item.id}>
-                  Before {channel ? "#" : ""}
-                  {item.name}
-                </NativeSelectOption>
-              ))}
-            <NativeSelectOption value="">At the end</NativeSelectOption>
-          </Choice>
         </FieldGroup>
       }
     />

@@ -43,7 +43,6 @@ export function PermissionFields({
   modifiedOnly,
   onChange,
   onLock,
-  onInspect,
 }: {
   value: C.CapabilityConfiguration;
   scope: C.SettingsScope;
@@ -52,7 +51,6 @@ export function PermissionFields({
   modifiedOnly: boolean;
   onChange: (value: C.CapabilityConfiguration) => void;
   onLock: (key: C.Capability, value: boolean) => void;
-  onInspect: () => void;
 }) {
   const { groups } = useCommsClient();
   const [subject, setSubject] = useState("everyone");
@@ -72,9 +70,6 @@ export function PermissionFields({
           Groups add capabilities. There are no person grants or deny rules.
           Guests remain read-only.
         </p>
-        <Action type="button" onClick={onInspect}>
-          Check one person
-        </Action>
       </div>
       <Choice
         label="Capabilities for"
@@ -186,7 +181,7 @@ export function PermissionInspector({
   opener: HTMLElement | null;
   onBack: () => void;
 }) {
-  const { client, groups } = useCommsClient();
+  const { client } = useCommsClient();
   const [personId, setPersonId] = useState(client?.context.user_id ?? "");
   const [channelId, setChannelId] = useState(
     channel?.id ?? channels[0]?.id ?? "",
@@ -263,10 +258,27 @@ export function PermissionInspector({
                     </div>
                     <p className="text-muted-foreground text-xs break-words">
                       Source: {source.kind.replaceAll("_", " ")}
-                      {"group_id" in source
-                        ? ` · ${groups.find((group) => group.id === source.group_id)?.name ?? source.group_id}`
-                        : ""}
+                      {"group_name" in source ? ` · ${source.group_name}` : ""}
                       {"scope" in source ? ` · ${source.scope.kind}` : ""}
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      {source.kind === "guest_cap"
+                        ? "Guests are read-only; group grants cannot enable writing."
+                        : source.kind === "admin"
+                          ? "Organization administrators manage settings in this organization."
+                          : source.kind === "manager"
+                            ? `Conversation manager: ${source.reason.replaceAll("_", " ")}.`
+                            : source.kind === "default"
+                              ? `Default for ${source.basis.replaceAll("_", " ")}.`
+                              : source.kind === "group_grant"
+                                ? "This group's grant enables the capability at this scope and below."
+                                : source.kind === "workspace_lock"
+                                  ? "The workspace lock fixes the inherited capability value."
+                                  : source.kind === "everyone"
+                                    ? "The most specific Everyone setting determines this default."
+                                    : source.kind === "department_manager"
+                                      ? "Department management grants this capability in the linked category."
+                                      : source.reason.replaceAll("_", " ")}
                     </p>
                     {index < capabilitySchema.options.length - 1 && (
                       <Separator />

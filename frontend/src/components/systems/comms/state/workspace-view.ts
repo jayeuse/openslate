@@ -94,6 +94,12 @@ export async function loadWorkspace(
     name: category.name,
     groupId: category.default_access.find((row) => row.subject === "group")
       ?.group_id,
+    groupAccess: Object.fromEntries(
+      category.default_access.map((row) => [
+        row.subject === "everyone" ? "everyone" : row.group_id,
+        row.level,
+      ]),
+    ),
   }));
   for (const { category } of bootstrap.categories) {
     const response = await client.getSettings(

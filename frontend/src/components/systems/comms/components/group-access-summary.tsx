@@ -7,7 +7,6 @@ import {
 } from "../domain/groups";
 import type { Category, Channel, GroupAccessLevel } from "../domain/view-model";
 import { useCommsClient } from "../state/client-context";
-import { Action } from "../../shared/components/ui";
 import { GroupMark } from "./group-mark";
 
 const LEVEL_LABEL: Record<GroupAccessLevel, string> = {
@@ -17,21 +16,19 @@ const LEVEL_LABEL: Record<GroupAccessLevel, string> = {
 };
 
 /**
- * The Permissions tab starts from groups: who can use this place, in the
- * same words as Who can use. Role and person exceptions sit below it.
+ * Saved access for fixed-scope channels and workspace defaults. Editable
+ * group levels use the same Access tab, never a second permissions form.
  */
 export function GroupAccessSummary({
   scope,
   channel,
   category,
   categories,
-  onChangeGroups,
 }: {
   scope: "workspace" | "category" | "channel";
   channel?: Channel;
   category?: Category;
   categories: Category[];
-  onChangeGroups?: () => void;
 }) {
   const { groups } = useCommsClient();
   const rows =
@@ -69,7 +66,7 @@ export function GroupAccessSummary({
             : scope === "category"
               ? categoryGroup
                 ? `This category belongs to the ${categoryGroup.name} group. New channels here start with that group.`
-                : "This category is open to everyone. Choose a group on Overview to limit it."
+                : "Use Access to choose default group levels for new channels."
               : "Every category and channel starts from its group. Set a category's group in its settings."}
         </p>
       </div>
@@ -99,11 +96,6 @@ export function GroupAccessSummary({
             </li>
           ))}
         </ul>
-      )}
-      {onChangeGroups && (
-        <Action type="button" className="self-start" onClick={onChangeGroups}>
-          Change who can use this {scope}
-        </Action>
       )}
     </section>
   );
