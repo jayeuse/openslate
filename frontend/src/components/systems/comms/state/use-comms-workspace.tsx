@@ -8,6 +8,7 @@ import type {
   CapabilityCheck,
   Member,
   Settings,
+  HistoryPage,
 } from "../contract/types";
 import type { Presence } from "../domain/view-model";
 import { useCommsClient } from "./client-context";
@@ -16,6 +17,8 @@ import { isCommsReadRefusal } from "./runtime";
 type CommsWorkspace = Awaited<ReturnType<typeof loadWorkspace>>;
 
 const empty = {
+  client: null,
+  historyPages: {} as Record<string, HistoryPage>,
   bootstrap: undefined as Bootstrap | undefined,
   presence: {} as Presence,
   removedCount: 0,

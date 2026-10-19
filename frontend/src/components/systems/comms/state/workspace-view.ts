@@ -3,6 +3,7 @@ import type * as C from "../contract/types";
 import type { Person } from "../../shared/data/sample-people";
 import type { SampleRecord } from "../../shared/data/sample-data";
 import type { CommsGroup } from "../domain/groups";
+import { loadQuotes, messageView } from "./message-view";
 import {
   type Category,
   type Channel,
@@ -108,6 +109,8 @@ export async function loadWorkspace(
   const channels: Channel[] = [];
   const directs: Direct[] = [];
   const rawMessages = new Map<string, C.Message>();
+  const historyPages: Record<string, C.HistoryPage> = {};
+  let removedCount = 0;
   const checks: Record<string, C.CapabilityCheck> = {};
   const members: Record<string, C.Member[]> = {};
   const effective: Record<string, C.Settings> = {};
@@ -244,22 +247,22 @@ export async function loadWorkspace(
         blocked: false,
       });
     config.resolved[room.id] = resolved(settings.data);
-    let before: number | undefined;
-    for (;;) {
-      const history = await client.getHistory(
-        room.id,
-        { limit: 100, ...(before ? { before_seq: before } : {}) },
-        options,
-      );
-      for (const message of history.items) rawMessages.set(message.id, message);
-      if (!history.pagination.has_older) break;
-      const next = history.items[0]?.seq;
-      if (next === undefined || next === before)
-        throw new Error("Incomplete message history");
-      before = next;
-    }
+    for (const message of await complete((offset) =>
+      client.listPins(room.id, { limit: 100, offset }, options),
+    ))
+      rawMessages.set(message.id, message);
+    if (check?.capabilities.moderate.allowed)
+      removedCount += (
+        await client.listRemovedMessages(room.id, { limit: 1 }, options)
+      ).pagination.total;
   }
   for (const thread of threads) {
+    const root = await client.getMessage(
+      thread.conversation_id,
+      thread.root_message_id,
+      options,
+    );
+    rawMessages.set(root.data.id, root.data);
     let before: number | undefined;
     for (;;) {
       const replies = await client.getReplies(
@@ -276,83 +279,6 @@ export async function loadWorkspace(
       before = next;
     }
   }
-  const projected = new Map<string, Message>();
-  for (const message of rawMessages.values()) {
-    if (message.state !== "live") {
-      projected.set(message.id, {
-        id: message.id,
-        conversation: message.conversation_id,
-        authorId: message.author_id,
-        author: people.get(message.author_id)?.name ?? "Unavailable person",
-        text: "Message removed",
-        created: Date.parse(message.created_at),
-        pinned: false,
-        deleted: true,
-      });
-      continue;
-    }
-    for (const reference of message.record_references) {
-      if (reference.state !== "available") continue;
-      records.set(reference.record_id, {
-        id: reference.record_id,
-        title: reference.title,
-        moduleName: reference.module_name,
-        fields: reference.fields.map((field) => ({
-          id: field.field_id,
-          label: field.label,
-          displayValue: field.display_value,
-        })),
-        customer: "",
-        assignee: "",
-        dueDate: "",
-        status:
-          reference.fields.find((field) => field.label === "Status")
-            ?.display_value ?? "",
-      });
-    }
-    projected.set(message.id, {
-      id: message.id,
-      conversation: message.conversation_id,
-      authorId: message.author_id,
-      author: people.get(message.author_id)?.name ?? "Unavailable person",
-      text: message.body,
-      linkPreviews: message.link_previews,
-      parentId: message.parent_id ?? undefined,
-      created: Date.parse(message.created_at),
-      pinned: message.pinned_at !== null,
-      files: message.attachments.map((file) => ({
-        id: file.id,
-        name: file.filename,
-        size: file.size,
-        type: file.media_type,
-      })),
-      recordId: message.record_references.find(
-        (record) => record.state === "available",
-      )?.record_id,
-      replyToId: message.reply_to_id ?? undefined,
-      reactions: Object.fromEntries(
-        message.reactions.map((reaction) => [
-          reaction.emoji,
-          reaction.user_ids,
-        ]),
-      ),
-    });
-  }
-  const displayThreads: Thread[] = threads.map((thread) => {
-    return {
-      name: thread.name,
-      locked: thread.locked,
-      archived: thread.archived,
-      id: thread.id,
-      conversation: thread.conversation_id,
-      messageId: thread.root_message_id,
-      resolved: thread.resolved,
-      subscribed: thread.followed,
-      replies: [...rawMessages.values()]
-        .filter((message) => message.parent_id === thread.root_message_id)
-        .flatMap((message) => projected.get(message.id) ?? []),
-    };
-  });
   const presence: Presence = {};
   const userIds = [...people.keys()];
   for (let offset = 0; offset < userIds.length; offset += 100) {
@@ -377,11 +303,47 @@ export async function loadWorkspace(
         source.participant_ids.includes(block.blocked_user_id),
       );
   }
+  // These complete metadata consumers must not silently become a timeline page.
+  for (const hit of await complete((offset) =>
+    client.search({ has: "record", limit: 100, offset }, options),
+  )) {
+    const message = await client.getMessage(
+      hit.conversation_id,
+      hit.message_id,
+      options,
+    );
+    rawMessages.set(message.data.id, message.data);
+  }
+  for (const { conversation } of bootstrap.conversations) {
+    const history = await client.getHistory(
+      conversation.id,
+      { limit: 50 },
+      options,
+    );
+    historyPages[conversation.id] = history;
+    for (const message of history.items) rawMessages.set(message.id, message);
+  }
+  await loadQuotes(client, rawMessages, signal);
+  const projected = new Map<string, Message>();
+  for (const message of rawMessages.values())
+    projected.set(message.id, messageView(message, people, records));
+  const displayThreads: Thread[] = threads.map((thread) => ({
+    name: thread.name,
+    locked: thread.locked,
+    archived: thread.archived,
+    id: thread.id,
+    conversation: thread.conversation_id,
+    messageId: thread.root_message_id,
+    resolved: thread.resolved,
+    subscribed: thread.followed,
+    replies: [...rawMessages.values()]
+      .filter((message) => message.parent_id === thread.root_message_id)
+      .flatMap((message) => projected.get(message.id) ?? []),
+  }));
   return {
     presence,
-    removedCount: [...rawMessages.values()].filter(
-      (message) => message.state === "deleted",
-    ).length,
+    removedCount,
+    historyPages,
     client,
     bootstrap,
     checks,

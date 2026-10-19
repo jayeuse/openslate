@@ -1,6 +1,7 @@
 "use client";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import {
   useCommsWorkspace,
   CommsWorkspaceProvider,
@@ -30,6 +31,8 @@ function CommsScreen({
 }: {
   resource: ReturnType<typeof useCommsWorkspace>["commsResource"];
 }) {
+  // Start shared display metadata with the frame, not after history arrives.
+  useWorkspaceDisplayRegion();
   const { channels, messages, threads, records } = useCommsWorkspaceView();
   const allMessages = [...messages, ...threads.flatMap(threadMessages)];
   const navigation = useCommsNavigationState(

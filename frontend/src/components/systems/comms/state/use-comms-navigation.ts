@@ -14,6 +14,9 @@ import {
   type Thread,
 } from "../domain/view-model";
 import type { CommsPreferences } from "../domain/configuration";
+import { useCommsRead } from "./runtime";
+import { useCommsClient } from "./client-context";
+import type { CommsClient } from "../contract/client";
 
 export function useCommsNavigationState(
   firstConversation = "",
@@ -21,6 +24,7 @@ export function useCommsNavigationState(
   threads: Thread[] = [],
 ) {
   const router = useRouter();
+  const { client } = useCommsClient();
   const [navigating, startNavigation] = useTransition();
   const query = useSearchParams();
   const view = ["threads", "activity", "inbox", "browse"].includes(
@@ -30,6 +34,32 @@ export function useCommsNavigationState(
     : null;
   const messageId = query.get("message") ?? "";
   const linkedMessage = messages.find((message) => message.id === messageId);
+  const linked = useCommsRead(
+    `message-target:${messageId}:${!!linkedMessage}`,
+    async (client, signal) => {
+      if (!messageId || linkedMessage) return null;
+      for (const { conversation } of (await client.bootstrap({ signal }))
+        .conversations) {
+        try {
+          return (
+            await client.getMessage(conversation.id, messageId, { signal })
+          ).data;
+        } catch (error) {
+          if (!(
+            typeof error === "object" &&
+            error !== null &&
+            "failure" in error &&
+            typeof error.failure === "object" &&
+            error.failure !== null &&
+            "status" in error.failure &&
+            error.failure.status === 404
+          ))
+            throw error;
+        }
+      }
+      return null;
+    },
+  );
   const linkedThread = threads.find(
     (thread) => thread.id === query.get("thread"),
   );
@@ -37,6 +67,7 @@ export function useCommsNavigationState(
     query.get("conversation") ??
     (query.get("settings") === "permissions" ? query.get("channel") : null) ??
     linkedMessage?.conversation ??
+    linked.data?.conversation_id ??
     linkedThread?.conversation ??
     (messageId || query.has("thread") ? "" : firstConversation);
   const threadId =
@@ -44,7 +75,9 @@ export function useCommsNavigationState(
     (linkedMessage?.parentId
       ? threads.find((thread) => thread.messageId === linkedMessage.parentId)
           ?.id
-      : "") ??
+      : linked.data?.parent_id
+        ? linked.data.thread?.id
+        : "") ??
     "";
   const panel = query.get("panel");
   const memberOpen = panel === "members";
@@ -101,21 +134,27 @@ export function useCommsNavigationState(
     });
   };
   const [search, setSearch] = useState("");
-  const [replyingToId, setReplyingToId] = useState("");
-  const replyingTo =
-    messages.find(
-      (message) => message.id === replyingToId && !message.deleted,
-    ) ?? null;
+  const [reply, setReply] = useState<{
+    client: CommsClient;
+    message: Message;
+  } | null>(null);
+  // A quote may come from an older history page, not the workspace's newest 50.
+  const replyCandidate =
+    reply?.client === client && reply.message.conversation === selected
+      ? (messages.find((message) => message.id === reply.message.id) ??
+        reply.message)
+      : null;
+  const replyingTo = replyCandidate?.deleted ? null : replyCandidate;
   function setReplyingTo(action: SetStateAction<Message | null>) {
     const next = typeof action === "function" ? action(replyingTo) : action;
-    setReplyingToId(next?.id ?? "");
+    setReply(client && next ? { client, message: next } : null);
   }
   const [highlightedId, setHighlightedId] = useState("");
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const messageList = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setSearch("");
-    setReplyingToId("");
+    setReply(null);
     setHighlightedId(messageId);
     setAwayFromLatest(false);
   }, [selected, messageId]);
@@ -176,11 +215,9 @@ export type NavigationState = ReturnType<typeof useCommsNavigationState>;
 export function createCommsNavigationActions({
   state,
   preferences,
-  clockNow,
   allMessages,
   threads,
   canParticipate,
-  patchPreferences,
   setThreadDirectory,
 }: {
   state: NavigationState;
@@ -217,18 +254,6 @@ export function createCommsNavigationActions({
   }
 
   function select(id: string, detail?: Record<string, string | null>) {
-    const left = state.selected;
-    patchPreferences({
-      readAt: {
-        ...preferences.readAt,
-        // The conversation being left was seen too, including the one that
-        // was open on arrival, so it does not come back as unread.
-        ...(left && left !== id
-          ? { [left]: Math.max(clockNow, latestChannelActivity(left)) }
-          : {}),
-        [id]: Math.max(clockNow, latestChannelActivity(id)),
-      },
-    });
     state.navigate(id, detail);
     state.setSearch("");
     state.setReplyingTo(null);
@@ -248,12 +273,11 @@ export function createCommsNavigationActions({
       threadMessages(item).some((reply) => reply.id === id),
     );
     const message = allMessages.find((item) => item.id === id);
-    if (message)
-      state.navigate(message.conversation, {
-        message: id,
-        thread: containingThread?.id ?? null,
-        panel: containingThread ? "thread" : null,
-      });
+    state.navigate(message?.conversation ?? state.selected, {
+      message: id,
+      thread: containingThread?.id ?? null,
+      panel: containingThread ? "thread" : null,
+    });
   }
 
   function beginReply(message: Message) {

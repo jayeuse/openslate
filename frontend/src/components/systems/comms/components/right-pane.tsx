@@ -1,6 +1,7 @@
 "use client";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MembersPanel, ThreadPanel } from "./ui";
+import dynamic from "next/dynamic";
+import { MembersPanel } from "./ui";
 import { RecordPanel } from "./record-panel";
 import type { CommsDialogsState } from "./comms-dialogs";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
@@ -9,6 +10,10 @@ import type { CommsConversation } from "../state/use-comms-conversation";
 import type { createCommsConversationOperations } from "../state/use-comms-conversation-operations";
 import { useCommsCommands } from "../state/runtime";
 import { threadMessages, type Thread } from "../domain/view-model";
+
+const ThreadPanel = dynamic(() =>
+  import("./thread-panel").then((module) => module.ThreadPanel),
+);
 
 export function RightPane({
   navigation,

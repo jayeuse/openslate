@@ -33,6 +33,8 @@ export interface Message {
   authorId: string;
   text: string;
   created: number;
+  seq?: number;
+  edited?: boolean;
   pinned: boolean;
   files?: LocalAttachment[];
   replyToId?: string;

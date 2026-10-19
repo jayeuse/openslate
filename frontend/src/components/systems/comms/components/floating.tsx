@@ -309,6 +309,9 @@ export function ProfilePopover({
 }
 
 type MessageMenuProps = {
+  position?: number;
+  pageSize?: number;
+  onOpen?: () => void;
   id: string;
   /** Names the actions button, so each message's button is distinct. */
   label: string;
@@ -340,6 +343,9 @@ type MessageMenuProps = {
   onDelete: () => void;
 };
 export function MessageMenu({
+  position,
+  pageSize,
+  onOpen,
   id,
   label,
   own,
@@ -369,11 +375,19 @@ export function MessageMenu({
   const [buttonAnchor, setButtonAnchor] = useState<HTMLElement | null>(null);
   const article = useRef<HTMLDivElement | null>(null);
   return (
-    <ContextMenu open={open} onOpenChange={setOpen}>
+    <ContextMenu
+      open={open}
+      onOpenChange={(next) => {
+        if (next) onOpen?.();
+        setOpen(next);
+      }}
+    >
       <ContextMenuTrigger
         render={
           <article
             id={id}
+            aria-posinset={position}
+            aria-setsize={pageSize}
             tabIndex={-1}
             data-highlighted={highlighted || undefined}
           />
@@ -384,13 +398,17 @@ export function MessageMenu({
           highlighted && "bg-accent ring-border ring-1",
           className,
         )}
-        onContextMenu={() => setButtonAnchor(null)}
+        onContextMenu={() => {
+          onOpen?.();
+          setButtonAnchor(null);
+        }}
         onKeyDown={(event) => {
           if (
             event.key === "ContextMenu" ||
             (event.shiftKey && event.key === "F10")
           ) {
             event.preventDefault();
+            onOpen?.();
             setButtonAnchor(event.currentTarget);
             setOpen(true);
           }
@@ -407,6 +425,7 @@ export function MessageMenu({
           className="bg-card absolute top-1 right-1 size-8 opacity-100 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
           onClick={(event) => {
             event.stopPropagation();
+            onOpen?.();
             setButtonAnchor(event.currentTarget);
             setOpen(true);
           }}
@@ -414,130 +433,132 @@ export function MessageMenu({
           <MoreHorizontal className="size-4" />
         </Button>
       </ContextMenuTrigger>
-      <ContextMenuContent
-        anchor={buttonAnchor ?? undefined}
-        sideOffset={4}
-        collisionPadding={10}
+      {open && (
+        <ContextMenuContent
+          anchor={buttonAnchor ?? undefined}
+          sideOffset={4}
+          collisionPadding={10}
 
-        aria-label={`Message actions: ${label}`}
-        finalFocus={() => buttonAnchor ?? article.current}
-        className="w-56"
-      >
-        <ContextMenuGroup>
-          <ContextMenuSub>
-            <ContextMenuSubTrigger
-              className="min-h-9"
-              disabled={!mutable || !canReact}
-            >
-              <Smile />
-              Add reaction
-            </ContextMenuSubTrigger>
-            <ContextMenuSubContent
-              side="right"
-              align="start"
-              sideOffset={5}
-              collisionPadding={10}
-
-              aria-label="Common reactions"
-              className="w-44"
-            >
-              <ContextMenuGroup>
-                {EMOTES.filter(
-                  ({ emoji }) =>
-                    !allowedReactions || allowedReactions.includes(emoji),
-                ).map(({ emoji, label }) => (
-                  <ContextMenuItem
-                    key={emoji}
-                    className="min-h-9"
-                    aria-label={`React with ${emoji}`}
-                    onClick={() => onReaction(emoji)}
-                  >
-                    <span className="text-lg">{emoji}</span>
-                    {label}
-                  </ContextMenuItem>
-                ))}
-              </ContextMenuGroup>
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          {canEdit && (
-            <ContextMenuItem
-              className="min-h-9"
-              disabled={editExpired}
-              onClick={onEdit}
-            >
-              <Pencil />
-              Edit message
-            </ContextMenuItem>
-          )}
-          <ContextMenuItem
-            className="min-h-9"
-            disabled={!mutable || !canReply}
-            onClick={onReply}
-          >
-            <Reply />
-            Reply
-          </ContextMenuItem>
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          <ContextMenuItem
-            className="min-h-9"
-            disabled={!mutable || !canCreateThread}
-            onClick={onThread}
-          >
-            <MessagesSquare />
-            Create thread
-          </ContextMenuItem>
-          {canElevate && (
-            <ContextMenuItem className="min-h-9" onClick={onPin}>
-              <Pin />
-              {pinned ? "Unpin message" : "Pin message"}
-            </ContextMenuItem>
-          )}
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          {(
-            [
-              ...(own ? [] : ([["report", "Report message"]] as const)),
-              ["message-history", "Edit history"],
-              ...(own ? ([["outbox", "Schedule a copy"]] as const) : []),
-            ] as const
-          ).map(([view, itemLabel]) => (
-            <ContextMenuItem
-              key={view}
-              className="min-h-9"
-              disabled={
-                view === "report" ? !canReport : view === "outbox" && !mutable
-              }
-              onClick={() => {
-                const opener = article.current;
-                if (opener) onTool?.(view, opener);
-              }}
-            >
-              {itemLabel}
-            </ContextMenuItem>
-          ))}
-        </ContextMenuGroup>
-        {canDelete && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuGroup>
-              <ContextMenuItem
-                variant="destructive"
+          aria-label={`Message actions: ${label}`}
+          finalFocus={() => buttonAnchor ?? article.current}
+          className="w-56"
+        >
+          <ContextMenuGroup>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger
                 className="min-h-9"
-                onClick={onDelete}
+                disabled={!mutable || !canReact}
               >
-                <Trash2 />
-                Delete message
+                <Smile />
+                Add reaction
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent
+                side="right"
+                align="start"
+                sideOffset={5}
+                collisionPadding={10}
+
+                aria-label="Common reactions"
+                className="w-44"
+              >
+                <ContextMenuGroup>
+                  {EMOTES.filter(
+                    ({ emoji }) =>
+                      !allowedReactions || allowedReactions.includes(emoji),
+                  ).map(({ emoji, label }) => (
+                    <ContextMenuItem
+                      key={emoji}
+                      className="min-h-9"
+                      aria-label={`React with ${emoji}`}
+                      onClick={() => onReaction(emoji)}
+                    >
+                      <span className="text-lg">{emoji}</span>
+                      {label}
+                    </ContextMenuItem>
+                  ))}
+                </ContextMenuGroup>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            {canEdit && (
+              <ContextMenuItem
+                className="min-h-9"
+                disabled={editExpired}
+                onClick={onEdit}
+              >
+                <Pencil />
+                Edit message
               </ContextMenuItem>
-            </ContextMenuGroup>
-          </>
-        )}
-      </ContextMenuContent>
+            )}
+            <ContextMenuItem
+              className="min-h-9"
+              disabled={!mutable || !canReply}
+              onClick={onReply}
+            >
+              <Reply />
+              Reply
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuItem
+              className="min-h-9"
+              disabled={!mutable || !canCreateThread}
+              onClick={onThread}
+            >
+              <MessagesSquare />
+              Create thread
+            </ContextMenuItem>
+            {canElevate && (
+              <ContextMenuItem className="min-h-9" onClick={onPin}>
+                <Pin />
+                {pinned ? "Unpin message" : "Pin message"}
+              </ContextMenuItem>
+            )}
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            {(
+              [
+                ...(own ? [] : ([["report", "Report message"]] as const)),
+                ["message-history", "Edit history"],
+                ...(own ? ([["outbox", "Schedule a copy"]] as const) : []),
+              ] as const
+            ).map(([view, itemLabel]) => (
+              <ContextMenuItem
+                key={view}
+                className="min-h-9"
+                disabled={
+                  view === "report" ? !canReport : view === "outbox" && !mutable
+                }
+                onClick={() => {
+                  const opener = article.current;
+                  if (opener) onTool?.(view, opener);
+                }}
+              >
+                {itemLabel}
+              </ContextMenuItem>
+            ))}
+          </ContextMenuGroup>
+          {canDelete && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuGroup>
+                <ContextMenuItem
+                  variant="destructive"
+                  className="min-h-9"
+                  onClick={onDelete}
+                >
+                  <Trash2 />
+                  Delete message
+                </ContextMenuItem>
+              </ContextMenuGroup>
+            </>
+          )}
+        </ContextMenuContent>
+      )}
     </ContextMenu>
   );
 }

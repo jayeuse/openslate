@@ -256,11 +256,14 @@ test("Comms retains a rate-limited send draft and retries once after the real se
   await expect(draft).toHaveValue(retained);
   await expect(message).toHaveCount(0);
   await expect(send).toBeEnabled();
+  await expect(page.getByText("Not sent", { exact: true })).toBeVisible();
 
   // Fixed Date changes admission time, not browser timers. Do not edit the draft:
   // the real composer retains its fingerprint/client key across this retry.
   await page.clock.setFixedTime(new Date(start.getTime() + 11_000));
-  await send.click();
+  await page
+    .getByRole("button", { name: "Retry message", exact: true })
+    .click();
   await expect(draft).toHaveValue("");
   await expect(composer.getByRole("alert")).toHaveCount(0);
   await expect(message).toHaveCount(1);
@@ -856,12 +859,18 @@ test("OpenComms opens at the latest message, with few and meaningful unread mark
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/comms");
+  // Inspect unread state before opening the now automatically acknowledged feed.
+  await page.goto("/comms?view=inbox");
   await expect(
     page
+      .getByRole("complementary", { name: "Conversations", exact: true })
       .getByRole("button", { name: /^operations(,|$)/ })
       .getByLabel("2 unread", { exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("complementary", { name: "Conversations", exact: true })
+    .getByRole("button", { name: /^operations(,|$)/ })
+    .click();
   await populateHistory(page);
   await page.reload();
   const list = page.getByLabel("Messages", { exact: true });
@@ -876,15 +885,15 @@ test("OpenComms opens at the latest message, with few and meaningful unread mark
   const conversations = page.getByRole("complementary", {
     name: "Conversations",
   });
-  // Counts stay authoritative until this conversation is explicitly marked read.
+  // S07 acknowledges only the focused, visible conversation.
   await expect
     .poll(() => conversations.getByLabel(/\d+ unread/, { exact: true }).count())
     .toBeLessThanOrEqual(8);
   await expect(
     page
       .getByRole("button", { name: /^operations(,|$)/ })
-      .getByLabel("2 unread", { exact: true }),
-  ).toBeVisible();
+      .getByLabel(/\d+ unread/, { exact: true }),
+  ).toHaveCount(0);
 });
 
 test("each message's actions are named for it and fit its author", async ({

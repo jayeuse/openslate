@@ -339,7 +339,7 @@ test("Comms sidebar remains usable on desktop and phone in light and dark", asyn
     for (const theme of ["light", "dark"] as const) {
       await page.setViewportSize(viewport);
       await page.emulateMedia({ colorScheme: theme });
-      await page.goto("/comms");
+      await page.goto(viewport.width < 640 ? "/comms" : "/comms?view=inbox");
       const sidebar = page.getByRole("complementary", {
         name: "Conversations",
         exact: true,
@@ -410,8 +410,7 @@ test("Comms Inbox groups authoritative unread counts and category mute preserves
 }) => {
   await seedSidebar(page);
   await page.clock.setFixedTime(new Date("2026-10-19T12:00:00Z"));
-  await page.goto("/comms");
-  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.goto("/comms?view=inbox");
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(
     inbox.getByRole("button", { name: /^operations, 2 unread/ }),

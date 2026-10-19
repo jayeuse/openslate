@@ -1,12 +1,6 @@
 "use client";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Hash, MessageSquare } from "lucide-react";
-import {
-  MessageScrollerProvider,
-  MessageScroller,
-  MessageScrollerViewport,
-  MessageScrollerContent,
-} from "@/components/ui/message-scroller";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { Alert } from "@/components/ui/alert";
 import { Action } from "../../shared/components/ui";
@@ -20,6 +14,10 @@ import { createCommsMessageOperations } from "../state/use-comms-message-operati
 import { useCommsListActions } from "../state/use-comms-list-actions";
 import { reportCommsDone, reportCommsError } from "../state/comms-feedback";
 import { threadMessages, type Message } from "../domain/view-model";
+import { useCommsHistory } from "../state/use-comms-history";
+import { useVisibleCommsRead } from "../state/use-visible-comms-read";
+import { useCommsClient } from "../state/client-context";
+import type { MessageDraft } from "./message-shared";
 
 export function ConversationView({
   conversation,
@@ -30,9 +28,6 @@ export function ConversationView({
   startDirect,
   jumpToMessage,
   beginReply,
-  scrollToLatest,
-  hydrated,
-  desktop,
 }: {
   conversation: CommsConversation;
   navigation: NavigationState;
@@ -46,7 +41,8 @@ export function ConversationView({
   hydrated: boolean;
   desktop: boolean;
 }) {
-  const { people, messages, threads, records } = useCommsWorkspaceView();
+  const { people, messages, threads, bootstrap } = useCommsWorkspaceView();
+  const { client } = useCommsClient();
   const { run, isPending } = useCommsCommands();
   const { toggleDirect } = useCommsListActions();
   const {
@@ -61,15 +57,37 @@ export function ConversationView({
     viewerId,
     identity,
   } = conversation;
-  const {
-    selected,
-    messageList,
-    mobileConversation,
-    messageId,
-    replyingTo,
-    setReplyingTo,
-  } = navigation;
-  const allMessages = [...messages, ...threads.flatMap(threadMessages)];
+  const { selected, messageList, messageId, replyingTo, setReplyingTo } =
+    navigation;
+  const history = useCommsHistory(selected, messageId, canView, messageList);
+  const records = history.records;
+  const allMessages = useMemo(
+    () => [
+      ...new Map(
+        [
+          ...messages,
+          ...threads.flatMap(threadMessages),
+          ...history.quotes,
+          ...history.messages,
+        ].map((message) => [message.id, message]),
+      ).values(),
+    ],
+    [messages, threads, history.quotes, history.messages],
+  );
+  const summary = bootstrap?.conversations.find(
+    (row) => row.conversation.id === selected,
+  );
+  const [entry, setEntry] = useState<{
+    id: string;
+    after: number;
+    first: number | null;
+  }>();
+  if (summary && entry?.id !== selected)
+    setEntry({
+      id: selected,
+      after: summary.last_read_seq,
+      first: summary.first_unread_seq,
+    });
   const channelThreads = canView
     ? threads.filter(
         (item) =>
@@ -79,13 +97,23 @@ export function ConversationView({
       )
     : [];
   const visibleMessages = canView
-    ? messages.filter(
+    ? history.messages.filter(
         (item) =>
           item.conversation === selected &&
           item.text.toLowerCase().includes(navigation.search.toLowerCase()),
       )
     : [];
   const [announcement, announce] = useState("");
+  const [delivery, setDelivery] = useState<{
+    id: string;
+    state: "sending" | "failed";
+  }>();
+  useVisibleCommsRead(
+    messageList,
+    summary,
+    canView && !navigation.navigating && !history.loading,
+    history.page,
+  );
   const operations = createCommsMessageOperations({
     run,
     selected,
@@ -94,12 +122,15 @@ export function ConversationView({
     setReplyingTo,
     setNotice: reportCommsError,
     announce,
-    scrollToLatest,
+    scrollToLatest: () => {
+      navigation.update({ message: null });
+      history.latest();
+    },
     allMessages,
   });
   const undoQueue = useRef<Promise<unknown>>(Promise.resolve());
   async function deleteWithUndo(id: string) {
-    const original = messages.find((item) => item.id === id);
+    const original = allMessages.find((item) => item.id === id);
     const error = await operations.deleteMessage(id);
     if (!error && original && check?.capabilities.deleteOthersMessages.allowed)
       reportCommsDone("Message deleted.", {
@@ -112,31 +143,12 @@ export function ConversationView({
       });
     return error;
   }
-  // A route target is applied once it is rendered, not on every workspace refresh.
-  const targetAvailable = allMessages.some(
-    (message) => message.id === messageId && message.conversation === selected,
-  );
-  useEffect(() => {
-    if (!hydrated) return;
-    if (messageId) {
-      if (!targetAvailable) return;
-      const frame = requestAnimationFrame(() => {
-        const target = document.getElementById(messageId);
-        target?.focus();
-        target?.scrollIntoView({ block: "center" });
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-    messageList.current?.scrollTo({ top: messageList.current.scrollHeight });
-  }, [
-    selected,
-    mobileConversation,
-    desktop,
-    hydrated,
-    messageId,
-    targetAvailable,
-    messageList,
-  ]);
+  async function send(draft: MessageDraft) {
+    setDelivery({ id: selected, state: "sending" });
+    const error = await operations.sendMessage(draft);
+    setDelivery(error ? { id: selected, state: "failed" } : undefined);
+    return error;
+  }
   return (
     <section
       aria-label="Conversation"
@@ -183,42 +195,78 @@ export function ConversationView({
             ?.title ?? "View record"}
         </a>
       )}
-      <MessageScrollerProvider autoScroll={false} defaultScrollPosition="start">
-        <MessageScroller className="min-h-0 flex-1">
-          <MessageScrollerViewport
-            ref={messageList}
-            aria-label="Messages"
-            className="px-2 py-4 sm:px-4"
-            onScroll={(event) => {
-              const list = event.currentTarget;
-              navigation.setAwayFromLatest(
-                list.scrollHeight - list.scrollTop - list.clientHeight > 120,
-              );
-            }}
-          >
-            <MessageScrollerContent className="gap-0">
-              {!canView ? (
-                <Alert>This conversation is not available</Alert>
-              ) : (
+      <div className="min-h-0 flex-1">
+        <div
+          ref={messageList}
+          role="region"
+          tabIndex={0}
+          aria-label="Messages"
+          aria-busy={history.loading ? "true" : "false"}
+          className="relative h-full min-w-0 scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain px-2 py-4 sm:px-4"
+          onWheel={(event) => {
+            if (event.deltaY !== 0) history.pin();
+          }}
+          onTouchMove={() => history.pin()}
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) history.pin();
+          }}
+          onKeyDown={(event) => {
+            if (
+              [
+                "ArrowUp",
+                "ArrowDown",
+                "PageUp",
+                "PageDown",
+                "Home",
+                "End",
+              ].includes(event.key)
+            )
+              history.pin();
+          }}
+          onScroll={(event) => {
+            const list = event.currentTarget;
+            navigation.setAwayFromLatest(
+              list.scrollHeight - list.scrollTop - list.clientHeight > 120,
+            );
+          }}
+        >
+          {!canView ? (
+            <Alert>This conversation is not available</Alert>
+          ) : (
+            <MessageTimeline
+              header={
                 <>
-                  <div className="mt-4 mb-8 px-3">
-                    <div className="bg-muted mb-3 flex size-12 items-center justify-center rounded-2xl">
-                      {channel ? (
-                        <Hash className="text-muted-foreground size-6" />
-                      ) : (
-                        <MessageSquare className="text-muted-foreground size-6" />
-                      )}
+                  {history.error && (
+                    <Alert role="alert" variant="destructive">
+                      {history.error}
+                      <Action onClick={history.retry}>Retry history</Action>
+                    </Alert>
+                  )}
+                  {history.page?.pagination.has_older && (
+                    <Action disabled={history.loading} onClick={history.older}>
+                      Load older messages
+                    </Action>
+                  )}
+                  {!history.page?.pagination.has_older && (
+                    <div className="mt-4 mb-8 px-3">
+                      <div className="bg-muted mb-3 flex size-12 items-center justify-center rounded-2xl">
+                        {channel ? (
+                          <Hash className="text-muted-foreground size-6" />
+                        ) : (
+                          <MessageSquare className="text-muted-foreground size-6" />
+                        )}
+                      </div>
+                      <h3 className="text-xl font-semibold tracking-tight">
+                        {channel
+                          ? `Welcome to #${channel.name}`
+                          : `A conversation with ${direct?.user}`}
+                      </h3>
+                      <p className="text-muted-foreground mt-2 text-sm">
+                        {channel?.description ||
+                          "This is the beginning of your conversation."}
+                      </p>
                     </div>
-                    <h3 className="text-xl font-semibold tracking-tight">
-                      {channel
-                        ? `Welcome to #${channel.name}`
-                        : `A conversation with ${direct?.user}`}
-                    </h3>
-                    <p className="text-muted-foreground mt-2 text-sm">
-                      {channel?.description ||
-                        "This is the beginning of your conversation."}
-                    </p>
-                  </div>
+                  )}
                   {visibleMessages.length === 0 && (
                     <Empty>
                       <EmptyDescription>
@@ -228,46 +276,111 @@ export function ConversationView({
                       </EmptyDescription>
                     </Empty>
                   )}
-                  <MessageTimeline
-                    key={selected}
-                    visibleMessages={visibleMessages}
-                    allMessages={allMessages}
-                    onOpenRecord={navigation.setRecordId}
-                    records={records}
-                    threads={channelThreads}
-                    highlightedId={navigation.highlightedId}
-                    {...identity}
-                    mutable={canParticipate && !isPending()}
-                    onMessageTool={(view, messageId, opener) =>
-                      dialogs.setTools({
-                        view,
-                        messageId,
-                        channelId: selected,
-                        opener,
-                      })
-                    }
-                    onChange={operations.changeMessage}
-                    onDelete={deleteWithUndo}
-                    onReply={beginReply}
-                    onThread={startThread}
-                    onJump={jumpToMessage}
-                    onDirect={startDirect}
-                  />
                 </>
-              )}
-            </MessageScrollerContent>
-          </MessageScrollerViewport>
-        </MessageScroller>
-      </MessageScrollerProvider>
-      {navigation.awayFromLatest && (
+              }
+              key={selected}
+              viewportRef={messageList}
+              restoreAnchor={history.restore}
+              targetId={messageId}
+              followLatest={history.followLatest}
+              visibleMessages={visibleMessages}
+              allMessages={allMessages}
+              onOpenRecord={navigation.setRecordId}
+              records={records}
+              threads={channelThreads}
+              highlightedId={navigation.highlightedId}
+              readBoundary={entry?.after}
+              firstUnread={entry?.first}
+              hasOlder={history.page?.pagination.has_older}
+              {...identity}
+              mutable={canParticipate && !isPending()}
+              onMessageTool={(view, messageId, opener) =>
+                dialogs.setTools({
+                  view,
+                  messageId,
+                  channelId: selected,
+                  opener,
+                })
+              }
+              onChange={operations.changeMessage}
+              onDelete={deleteWithUndo}
+              onReply={beginReply}
+              onThread={startThread}
+              onJump={jumpToMessage}
+              onDirect={startDirect}
+              footer={
+                history.page?.pagination.has_newer && (
+                  <Action disabled={history.loading} onClick={history.newer}>
+                    Load newer messages
+                  </Action>
+                )
+              }
+            />
+          )}
+        </div>
+      </div>
+      {entry?.first != null && canView && (
         <Action
           className="mx-auto mb-2"
           size="sm"
-          onClick={() => scrollToLatest("instant")}
+          onClick={() => {
+            if (!client || entry.first === null) return;
+            void client
+              .getMessageBySequence(selected, entry.first)
+              .then(({ data }) =>
+                navigation.navigate(selected, {
+                  message: data.id,
+                  ...(data.parent_id && data.thread
+                    ? { thread: data.thread.id, panel: "thread" }
+                    : {}),
+                }),
+              )
+              .catch(() =>
+                reportCommsError("The unread message is not available."),
+              );
+          }}
+        >
+          Jump to first unread
+        </Action>
+      )}
+      {(navigation.awayFromLatest ||
+        history.page?.pagination.has_newer ||
+        !!messageId) && (
+        <Action
+          className="mx-auto mb-2"
+          size="sm"
+          onClick={() => {
+            navigation.update({ message: null });
+            history.latest();
+            messageList.current?.scrollTo({
+              top: messageList.current.scrollHeight,
+            });
+          }}
         >
           Jump to latest
         </Action>
       )}
+      {delivery?.id === selected &&
+        (delivery.state === "sending" ? (
+          <p role="status" className="px-3 text-xs">
+            Sending…
+          </p>
+        ) : (
+          <Alert role="alert" variant="destructive" className="mx-3">
+            <span>Not sent</span>
+            <Action
+              disabled={!canPost || navigation.navigating}
+              onClick={() =>
+                document
+                  .getElementById(`composer-${selected}`)
+                  ?.closest("form")
+                  ?.requestSubmit()
+              }
+            >
+              Retry message
+            </Action>
+          </Alert>
+        ))}
       <MessageComposer
         key={selected}
         id={selected}
@@ -290,7 +403,7 @@ export function ConversationView({
                 : "Your role cannot post in this channel."
         }
         records={records}
-        onSend={operations.sendMessage}
+        onSend={send}
         pending={navigation.navigating || isPending(`message:send:${selected}`)}
       />
       <p role="status" className="sr-only">
