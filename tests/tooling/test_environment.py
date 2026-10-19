@@ -74,7 +74,7 @@ class SupabaseEnvironmentTests(unittest.TestCase):
             try:
                 self.assertEqual(
                     settings.get_settings().realtime_publish_url,
-                    "http://127.0.0.1:58001/realtime/v1/api/broadcast",
+                    "http://127.0.0.1:58100/realtime/v1/api/broadcast",
                 )
             finally:
                 settings.get_settings.cache_clear()
@@ -260,9 +260,11 @@ class SupabaseEnvironmentTests(unittest.TestCase):
         values = fixture()
         values.pop("SUPABASE_REALTIME_PUBLISH_PORT", None)
         environment.validate(values)
-        self.assertNotIn(
-            "SUPABASE_REALTIME_PUBLISH_PORT",
-            environment.compose_environment(values, services={"db"}),
+        self.assertEqual(
+            environment.compose_environment(values, services={"db"})[
+                "SUPABASE_REALTIME_PUBLISH_PORT"
+            ],
+            "58100",
         )
         values["SUPABASE_REALTIME_PUBLISH_PORT"] = "58101"
         try:
@@ -288,6 +290,46 @@ class SupabaseEnvironmentTests(unittest.TestCase):
                     environment.validate(values)
                 with self.assertRaises(environment.ConfigurationError):
                     environment.compose_environment(values, services={"db"})
+
+    def test_publisher_port_and_url_follow_the_public_api_without_collisions(self) -> None:
+        from app.core.config import settings
+
+        for api_port in (58000, 58001):
+            values = fixture()
+            values.pop("SUPABASE_REALTIME_PUBLISH_PORT", None)
+            values.pop("REALTIME_PUBLISH_URL", None)
+            gateway = f"http://127.0.0.1:{api_port}"
+            values.update(
+                SUPABASE_API_PORT=str(api_port),
+                SUPABASE_URL=gateway,
+                SUPABASE_PUBLIC_URL=gateway,
+                SUPABASE_AUTH_ISSUER=gateway + "/auth/v1",
+                API_EXTERNAL_URL=gateway + "/auth/v1",
+            )
+            environment.validate(values)
+            self.assertEqual(
+                environment.compose_environment(values, services={"db"})[
+                    "SUPABASE_REALTIME_PUBLISH_PORT"
+                ],
+                str(api_port + 100),
+            )
+            with patch.object(settings, "environment_inputs", return_value=values):
+                settings.get_settings.cache_clear()
+                try:
+                    self.assertEqual(
+                        settings.get_settings().realtime_publish_url,
+                        f"http://127.0.0.1:{api_port + 100}/realtime/v1/api/broadcast",
+                    )
+                finally:
+                    settings.get_settings.cache_clear()
+            for name in (*environment.PORT_KEYS, "GATEWAY_PORT"):
+                with (
+                    self.subTest(api_port=api_port, collision=name),
+                    self.assertRaisesRegex(
+                        environment.ConfigurationError, "SUPABASE_REALTIME_PUBLISH_PORT"
+                    ),
+                ):
+                    environment.validate({**values, "SUPABASE_REALTIME_PUBLISH_PORT": values[name]})
 
     def test_caddy_realtime_inputs_are_required_and_validated(self) -> None:
         for name, value in (("SUPABASE_PUBLISHABLE_KEY", ""), ("SUPABASE_API_PORT", "0")):

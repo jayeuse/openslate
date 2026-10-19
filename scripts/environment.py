@@ -31,6 +31,7 @@ from app.core.config.disposable_instance import SUPABASE_DB_IMAGE  # noqa: E402
 from app.core.config.environment import (  # noqa: E402
     ConfigurationError,
     read_environment,
+    realtime_publisher_port,
     with_realtime_publisher,
 )
 
@@ -262,10 +263,7 @@ def compose_environment(values: dict[str, str], *, services: set[str]) -> dict[s
                 for name in ("SUPABASE_DB_PORT", "SUPABASE_API_PORT", "SUPABASE_MAIL_PORT")
             }
         )
-        if "SUPABASE_REALTIME_PUBLISH_PORT" in values:
-            result["SUPABASE_REALTIME_PUBLISH_PORT"] = str(
-                port(values, "SUPABASE_REALTIME_PUBLISH_PORT")
-            )
+        result["SUPABASE_REALTIME_PUBLISH_PORT"] = str(realtime_publisher_port(values))
     if "caddy" in services:
         result.update(
             {
