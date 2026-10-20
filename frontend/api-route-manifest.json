@@ -696,6 +696,12 @@
     "path": "/api/workspace"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/direct-candidates-api.ts",
+    "function": "listDirectCandidates",
+    "method": "GET",
+    "path": "/api/comms/direct-candidates"
+  },
+  {
     "adapter": "frontend/src/components/systems/comms/adapters/message-api.ts",
     "function": "bootstrap",
     "method": "GET",

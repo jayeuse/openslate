@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.systems.comms.conversations.router import router as conversations
+from app.systems.comms.direct_candidates import router as direct_candidates
 from app.systems.comms.files.router import router as files
 from app.systems.comms.jobs.exports import router as exports
 from app.systems.comms.jobs.retention import router as retention
@@ -20,6 +21,7 @@ from app.systems.comms.settings.router import router as settings
 router = APIRouter()
 router.include_router(messages)
 router.include_router(conversations)
+router.include_router(direct_candidates)
 router.include_router(preferences)
 router.include_router(settings)
 router.include_router(threads)

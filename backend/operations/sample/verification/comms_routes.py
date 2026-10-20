@@ -2,6 +2,7 @@
 
 COMMS_ROUTES = frozenset(
     {
+        ("GET", "/api/comms/direct-candidates"),
         ("GET", "/api/comms/scheduled-messages"),
         ("POST", "/api/comms/scheduled-messages"),
         ("GET", "/api/comms/scheduled-messages/{schedule_id}"),

@@ -374,40 +374,8 @@ def can_start_direct(db: Session, user: User, target_id: UUID) -> bool:
 
 
 def can_start_directs(db: Session, user: User, target_ids: Collection[UUID]) -> bool:
-    # This leaf may consume D36; readability never invokes direct-start admission.
-    from app.systems.access.users.person_visibility import visible_person_ids
-    from app.systems.comms.settings.resolution import resolve_settings
+    # Both actual starts and bounded discovery consume this same set-form admission.
+    from app.systems.comms.direct_admission import admitted_direct_ids
 
-    membership = fresh_membership(db, user)
     ids = set(target_ids)
-    if membership is None or membership.role == "guest" or not ids or user.id in ids:
-        return False
-    targets = set(
-        db.scalars(
-            select(User.id)
-            .join(Membership, bound_membership_join())
-            .where(
-                User.id.in_(ids),
-                active_account_clause(),
-                Membership.role != "guest",
-            )
-        )
-    )
-    if targets != ids:
-        return False
-    if ids != visible_person_ids(db, user, ids) or _blocked(
-        db,
-        user.id,
-        ids,
-    ):
-        return False
-    rule = resolve_settings(db, {"kind": "workspace"})["dm_rule"]
-    if rule == "everyone":
-        return True
-    if rule == "none":
-        return False
-    channels = select(CommsConversation.id).where(
-        CommsConversation.kind == "channel",
-        visible_conversation_clause(db, user),
-    )
-    return set(db.scalars(conversation_reader_statement(channels, ids))) == ids
+    return bool(ids) and admitted_direct_ids(db, user, ids) == ids
