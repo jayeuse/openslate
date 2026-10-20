@@ -331,6 +331,25 @@ test("Realtime disposal aborts delayed token issuance before any join", async ()
   }
 });
 
+test("Realtime disposal during transport retirement cannot start another token request", async () => {
+  const harness = socketHarness(),
+    seen = observer(),
+    clock = schedule();
+  const fetch = installFetch(() => response(token()));
+  const connection = createCommsRealtime(context, seen.value, clock.value);
+  try {
+    const loading = connection.refresh();
+    await connection.dispose();
+    await expect(loading).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetch.requests).toHaveLength(0);
+    expect(harness.sockets).toHaveLength(0);
+  } finally {
+    await connection.dispose();
+    fetch.restore();
+    harness.restore();
+  }
+});
+
 test("Realtime rejects foreign duplicate expired or content-bearing token responses before joining", async () => {
   const harness = socketHarness(),
     seen = observer(),

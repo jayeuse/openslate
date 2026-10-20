@@ -10,11 +10,11 @@ import type {
 import { createReadyHttpCommsClient } from "./http-client";
 import { createCommsQueryScope } from "./comms-queries";
 import { createCommsCacheBridge } from "./cache-bridge";
-import { createCommsRealtime } from "./realtime-client";
+import { subscribeSharedRealtime } from "../../shared/adapters/connection-set";
 import { createCommsOutbox } from "./outbox";
 import { releaseAllLocalAttachments } from "../../shared/runtime/local-attachments";
 
-/** One admitted live account/organization lifetime; S27 will own leadership. */
+/** One admitted cache/outbox lifetime subscribing to the shared connection set. */
 export function createLiveCommsRuntime(
   cache: QueryClient,
   context: CommsContext,
@@ -44,7 +44,7 @@ export function createLiveCommsRuntime(
     if (!scope.signal.aborted)
       observers.forEach((observer) => observer.on_error({ kind: "network" }));
   };
-  const realtime = createCommsRealtime(scope.context, {
+  const observer: EventObserver = {
     on_event(event) {
       if (event.event === "grants" || event.event === "membership")
         releaseAllLocalAttachments();
@@ -68,11 +68,12 @@ export function createLiveCommsRuntime(
       if (!scope.signal.aborted)
         observers.forEach((observer) => observer.on_error(error));
     },
-  });
+  };
+  let stopRealtime: (() => void) | undefined;
   scope.signal.addEventListener(
     "abort",
     () => {
-      realtime.dispose();
+      stopRealtime?.();
       releaseAllLocalAttachments();
       observers.clear();
     },
@@ -127,7 +128,17 @@ export function createLiveCommsRuntime(
     scope,
     bridge,
     outbox,
-    start: () => realtime.refresh(),
+    start: async () => {
+      scope.signal.throwIfAborted();
+      stopRealtime?.();
+      stopRealtime = subscribeSharedRealtime(
+        scope.context,
+        observer,
+        (receipt) => {
+          void bridge.heartbeat(receipt).catch(failure);
+        },
+      );
+    },
     refresh,
     applyMessage: (message: Message) => bridge.accept(message),
     dispose: () => scope.dispose(),

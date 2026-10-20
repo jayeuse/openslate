@@ -8,7 +8,7 @@ import { profilePreferences } from "./helpers/profile-api";
 import type { MemorySnapshot } from "../../src/components/systems/comms/memory/store-types";
 import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
-test("connection feedback uses live transport availability, delays reconnecting and retries without losing a draft", async ({
+test("connection feedback delays reconnecting and recovers without losing a draft or bypassing a limit", async ({
   page,
 }) => {
   await seedTimeline(page, 12);
@@ -40,16 +40,18 @@ test("connection feedback uses live transport availability, delays reconnecting 
   await page.clock.resume();
   server.setTokenStatus(503);
   await page.clock.runFor(240_000);
-  await expect(status.getByText("Offline", { exact: true })).toBeVisible();
+  await expect(status.getByText("Reconnecting", { exact: true })).toBeVisible();
   server.setTokenStatus(200);
   server.pauseJoins(false);
-  await status.getByRole("button", { name: "Retry", exact: true }).click();
+  await page.clock.fastForward(60_000);
   await expect(status.getByText("Live", { exact: true })).toBeVisible();
-  server.setTokenStatus(429);
-  await page.clock.runFor(240_000);
+  server.setTokenStatus(429, 3);
+  await page.clock.fastForward(240_000);
   await expect(status).toContainText("Live updates paused in this tab");
   server.setTokenStatus(200);
   await status.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(status).toContainText("Live updates paused in this tab");
+  await page.clock.runFor(3_000);
   await expect(status.getByText("Live", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),

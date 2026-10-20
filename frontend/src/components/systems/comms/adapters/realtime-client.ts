@@ -6,6 +6,7 @@ import {
   realtimeEventSchemaFor,
 } from "../contract/schemas";
 import type { CommsContext, EventObserver } from "../contract/types";
+import type { ConnectionFailure } from "../../shared/adapters/workspace-event-source";
 
 const scheduleRefresh = (callback: () => void, milliseconds: number) => {
   const timer = setTimeout(callback, milliseconds);
@@ -17,11 +18,12 @@ const broadcastEnvelope = z.strictObject({
   payload: z.record(z.string(), z.unknown()),
 });
 
-/** Private receive-only connection lifetime. S27 owns cross-tab leadership. */
+/** Private receive-only transport; shared coordination owns managed retries. */
 export function createCommsRealtime(
   input: CommsContext,
   observer: EventObserver,
   schedule: typeof scheduleRefresh = scheduleRefresh,
+  onFailure?: (failure: ConnectionFailure) => void,
 ) {
   const context = Object.freeze(commsContextSchema.parse(input));
   const prefix = `org:${context.org_id}:`;
@@ -50,6 +52,7 @@ export function createCommsRealtime(
   let issuing: AbortController | undefined;
   let client: RealtimeClient | undefined;
   let cancelRefresh: (() => void) | undefined;
+  let retiring: Promise<unknown> = Promise.resolve();
   function retire() {
     cancelRefresh?.();
     cancelRefresh = undefined;
@@ -58,14 +61,17 @@ export function createCommsRealtime(
     const previous = client;
     client = undefined;
     if (previous) {
-      void previous.removeAllChannels();
-      void previous.disconnect();
+      void previous.removeAllChannels().catch(() => {});
+      retiring = Promise.all([retiring, previous.disconnect()]);
     }
+    return retiring;
   }
   async function refresh() {
     if (disposed) throw new DOMException("Connection retired", "AbortError");
     const current = ++generation;
-    retire();
+    await retire();
+    if (disposed || current !== generation)
+      throw new DOMException("Connection retired", "AbortError");
     const abort = new AbortController();
     issuing = abort;
     const active = () =>
@@ -85,6 +91,7 @@ export function createCommsRealtime(
           headers: { "X-Org": context.org_id },
           cache: "no-store",
           signal: abort.signal,
+          ...(onFailure ? { refreshOnUnauthorized: false } : {}),
         },
       );
       abort.signal.throwIfAborted();
@@ -165,7 +172,7 @@ export function createCommsRealtime(
             if (event.success) observer.on_event(event.data);
             else observer.on_error({ kind: "invalid_response" });
           })
-          .subscribe((status) => {
+          .subscribe((status, error) => {
             if (!active()) return;
             if (status === "SUBSCRIBED") {
               joined.add(topic);
@@ -173,6 +180,20 @@ export function createCommsRealtime(
                 observer.on_connection({ state: "live" });
             } else {
               joined.delete(topic);
+              if (onFailure) {
+                const message = error?.message ?? "";
+                const kind =
+                  /^(ChannelRateLimitReached|ConnectionRateLimitReached|ClientJoinRateLimitReached|JoinsRateLimitReached)\b/.test(
+                    message,
+                  )
+                    ? "limit"
+                    : /^(InvalidJWTToken|Unauthorized)\b/.test(message)
+                      ? "authentication"
+                      : "network";
+                void retire();
+                onFailure({ kind });
+                return;
+              }
               observer.on_connection({
                 state: "reconnecting",
                 retry_after_seconds: 1,
@@ -186,6 +207,20 @@ export function createCommsRealtime(
     } catch (error) {
       if (!active()) throw new DOMException("Connection retired", "AbortError");
       retire();
+      if (onFailure) {
+        onFailure({
+          kind:
+            error instanceof ApiError && error.status === 429
+              ? "limit"
+              : error instanceof ApiError && [401, 403].includes(error.status)
+                ? "authentication"
+                : "network",
+          ...(error instanceof ApiError && error.retryAfter !== undefined
+            ? { retryAfter: error.retryAfter }
+            : {}),
+        });
+        throw error;
+      }
       if (error instanceof ApiError && [401, 403, 429].includes(error.status))
         observer.on_connection({
           state: "paused",
@@ -204,10 +239,10 @@ export function createCommsRealtime(
   return {
     refresh,
     dispose() {
-      if (disposed) return;
+      if (disposed) return retiring;
       disposed = true;
       generation += 1;
-      retire();
+      return retire();
     },
   };
 }

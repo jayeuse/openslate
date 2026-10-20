@@ -343,6 +343,11 @@ test("sign-out clears the owned Comms draft, visible content and connection", as
     await expect(page).toHaveURL(/\/login$/);
     await expect.poll(server.connections).toBe(0);
     expect(
+      await page.evaluate(
+        () => Reflect.get(window, "__openViewStreamState")().active,
+      ),
+    ).toBe(0);
+    expect(
       await page.evaluate((key) => sessionStorage.getItem(key), key),
     ).toBeNull();
     await expect(

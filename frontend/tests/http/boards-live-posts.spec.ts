@@ -1,5 +1,6 @@
 import {
   authMeBody,
+  defaultOrganization,
   expect,
   test,
   type Locator,
@@ -156,6 +157,7 @@ async function installPostBrowserApi(page: Page) {
       contentType: "application/json",
       body: JSON.stringify({
         authenticated: true,
+        organization_id: defaultOrganization.org_id,
         user_id: currentViewerId,
         default_organization_blocked: null,
         setup_required: false,

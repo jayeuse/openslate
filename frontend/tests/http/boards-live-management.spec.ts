@@ -9,7 +9,7 @@ import type {
 } from "../../src/components/systems/boards/adapters/board-management-api";
 
 import { group as accessGroupFixture } from "../isolated/access/fixtures";
-import { authMeBody, isEventStream } from "./helpers/test";
+import { authMeBody, defaultOrganization, isEventStream } from "./helpers/test";
 import { pageOf } from "../helpers/pagination";
 import { wireBoard } from "../helpers/wire";
 
@@ -89,6 +89,7 @@ async function installArchivedBoard(page: Page) {
       return route.fulfill({
         json: {
           authenticated: true,
+          organization_id: defaultOrganization.org_id,
           user_id: actorId,
           setup_required: false,
           default_organization_blocked: null,

@@ -1,7 +1,16 @@
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  type ReactNode,
+} from "react";
 import { clearAccessDraftStorageExcept } from "../../access/state/draft-journal-storage";
+import {
+  bindWorkspaceConnections,
+  pauseWorkspaceConnections,
+} from "../adapters/connection-set";
 
 const VerifiedWorkspaceIdentityContext = createContext<string | null>(null);
 const VerifiedWorkspaceOrganizationContext = createContext<string | null>(null);
@@ -45,6 +54,20 @@ export function VerifiedWorkspaceIdentityProvider({
   children: ReactNode;
   suspended?: boolean;
 }) {
+  useLayoutEffect(() => {
+    const stop = bindWorkspaceConnections(userId, organizationId);
+    const unregister = userId
+      ? registerWorkspaceSessionClear(userId, stop)
+      : () => {};
+    return () => {
+      unregister();
+      stop();
+    };
+  }, [userId, organizationId]);
+  useLayoutEffect(
+    () => pauseWorkspaceConnections(suspended),
+    [suspended, userId, organizationId],
+  );
   return (
     <VerifiedWorkspaceIdentityContext.Provider value={userId}>
       <VerifiedWorkspaceOrganizationContext.Provider value={organizationId}>

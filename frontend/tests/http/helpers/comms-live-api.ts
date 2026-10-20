@@ -12,6 +12,7 @@ import type {
   SettingsScope,
 } from "../../../src/components/systems/comms/contract/types";
 import { defaultOrganization, defaultSignedInIdentity } from "./test";
+import { installOpenViewEventSource } from "./openview-event-source";
 
 /** Existing frozen fixture supplies metadata DTOs only; all browser reads/writes cross HTTP. */
 export async function installCommsLiveApi(
@@ -23,8 +24,12 @@ export async function installCommsLiveApi(
     messagePrefix?: string;
     removedCount?: number;
     runtime?: MemoryCommsRuntime;
+    workspaceEvents?: boolean;
+    messageStore?: LiveMessage[];
   } = {},
 ) {
+  if (options.workspaceEvents !== false)
+    await installOpenViewEventSource(page, { autoResync: true });
   const owner = {
     user_id: options.userId ?? defaultSignedInIdentity.id,
     org_id: options.organizationId ?? defaultOrganization.org_id,
@@ -63,10 +68,14 @@ export async function installCommsLiveApi(
   const writes: string[] = [];
   const candidateQueries: string[] = [];
   const retentionProofs: boolean[] = [];
-  const messages: LiveMessage[] = [];
+  const heartbeats: { orgId: string; state: string }[] = [];
+  const messages: LiveMessage[] = options.messageStore ?? [];
   const sockets = new Set<WebSocketRoute>();
   let joinsPaused = false;
   let tokenStatus = 200;
+  let tokenRetryAfter: number | undefined;
+  let joinLimit: string | null = null;
+  let tokenRequests = 0;
   const id = (seq: number) =>
     `94000000-0000-4000-8000-${String(seq).padStart(12, "0")}`;
   function append(body?: string, key?: string) {
@@ -99,7 +108,8 @@ export async function installCommsLiveApi(
     messages.push(message);
     return message;
   }
-  if (!options.runtime) for (let i = 0; i < 59; i++) append();
+  if (!options.runtime && messages.length === 0)
+    for (let i = 0; i < 59; i++) append();
   const broadcast = (event: C.CommsEvent) => {
     for (const socket of sockets)
       socket.send(
@@ -130,6 +140,16 @@ export async function installCommsLiveApi(
     socket.onMessage((raw) => {
       const frame = JSON.parse(String(raw));
       if (joinsPaused && frame.event === "phx_join") return;
+      if (joinLimit && frame.event === "phx_join") {
+        socket.send(
+          JSON.stringify({
+            ...frame,
+            event: "phx_reply",
+            payload: { status: "error", response: { reason: joinLimit } },
+          }),
+        );
+        return;
+      }
       if (["phx_join", "phx_leave", "heartbeat"].includes(frame.event))
         socket.send(
           JSON.stringify({
@@ -146,10 +166,15 @@ export async function installCommsLiveApi(
   await page.route("**/api/realtime/token", async (route) => {
     if (route.request().headers()["x-org"] !== owner.org_id)
       return route.fallback();
+    tokenRequests += 1;
     if (tokenStatus !== 200)
       return route.fulfill({
         status: tokenStatus,
         json: { detail: "Live updates unavailable" },
+        headers:
+          tokenRetryAfter === undefined
+            ? {}
+            : { "Retry-After": String(tokenRetryAfter) },
       });
     const now = await page.evaluate(() => Date.now());
     const topics = options.runtime
@@ -270,6 +295,7 @@ export async function installCommsLiveApi(
       }
     };
     const refused = (error: unknown) => {
+      if (page.isClosed()) return Promise.resolve();
       if (error instanceof Error && "failure" in error) {
         const failure = S.commsFailureSchema.parse(error.failure);
         return reply(failure.body, failure.status);
@@ -605,6 +631,37 @@ export async function installCommsLiveApi(
             offset: Number(url.searchParams.get("offset")),
           }),
         );
+      if (path === "/presence" && request.method() === "POST") {
+        const input = request.postDataJSON();
+        heartbeats.push({
+          orgId: request.headers()["x-org"],
+          state: input.state,
+        });
+        const rows = options.runtime
+          ? (await memory.client.bootstrap()).conversations.map((row) => ({
+              conversation_id: row.conversation.id,
+              high_water_seq: row.high_water_seq,
+            }))
+          : [{ conversation_id: room, high_water_seq: messages.length }];
+        const known = new Map(
+          (input.known_sequences ?? []).map(
+            (row: { conversation_id: string; high_water_seq: number }) => [
+              row.conversation_id,
+              row.high_water_seq,
+            ],
+          ),
+        );
+        const changed = rows
+          .filter(
+            (row) => known.get(row.conversation_id) !== row.high_water_seq,
+          )
+          .sort((a, b) => a.conversation_id.localeCompare(b.conversation_id));
+        return reply({
+          ...owner,
+          changed: changed.slice(0, 100),
+          truncated: changed.length > 100,
+        });
+      }
       if (path === "/presence")
         return reply({ org_id: owner.org_id, items: [] });
       if (path.endsWith("/removed-messages") && options.removedCount) {
@@ -725,10 +782,19 @@ export async function installCommsLiveApi(
     histories,
     writes,
     retentionProofs,
+    heartbeats,
     connections: () => sockets.size,
     candidateQueries,
-    setTokenStatus(value: number) {
+    tokenRequests: () => tokenRequests,
+    setTokenStatus(value: number, retryAfter?: number) {
       tokenStatus = value;
+      tokenRetryAfter = retryAfter;
+    },
+    setJoinLimit(value: string | null) {
+      joinLimit = value;
+    },
+    appendQuietly() {
+      return append();
     },
     pauseJoins(value: boolean) {
       joinsPaused = value;

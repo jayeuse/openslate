@@ -24,9 +24,9 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-// Supervisor defers the strict S04 target to S31; S26 keeps the per-slice 5% gate.
+// The strict S04 target stays deferred to S31; S27 uses S26's recorded baseline.
 const s04BaselineColdGzipBytes = 546_979;
-const baselineColdGzipBytes = 591_770;
+const baselineColdGzipBytes = 571_643;
 const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
 
 function manifestChunks(value: unknown): string[] {
@@ -202,13 +202,14 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
     const growthPercent = (growthBytes / baselineColdGzipBytes) * 100;
 
     const report = {
-      budget_slice: "S26",
-      previous_committed_slice: "S14@560d03cd",
-      comparison: "Historical S14 measurement, not a newly measured baseline",
+      budget_slice: "S27",
+      previous_committed_slice: "S26@478739de",
+      comparison:
+        "Recorded S26 closure measurement, not a newly measured baseline",
       strict_cap_deferred_to: "S31",
       strict_cap_met: cold.gzip_bytes < s04BaselineColdGzipBytes,
       s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
-      s26_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
+      deferred_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
       baseline_cold_gzip_bytes: baselineColdGzipBytes,
       maximum_cold_gzip_bytes: maximumColdGzipBytes,
       growth_bytes: growthBytes,

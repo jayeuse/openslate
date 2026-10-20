@@ -1,4 +1,10 @@
-import { authMeBody, expect, test, type Page } from "./helpers/test";
+import {
+  authMeBody,
+  defaultOrganization,
+  expect,
+  test,
+  type Page,
+} from "./helpers/test";
 import {
   installOpenViewEventSource,
   sendOpenViewEvent,
@@ -93,6 +99,7 @@ async function installOpenViewApi(page: Page): Promise<Api> {
       contentType: "application/json",
       body: JSON.stringify({
         authenticated: true,
+        organization_id: defaultOrganization.org_id,
         user_id: activeUser,
         default_organization_blocked: null,
         setup_required: false,
@@ -324,18 +331,14 @@ function resetLoadingProbe(page: Page) {
 // Counts invalidation streams the page opens across section changes.
 async function countEventStreams(page: Page) {
   await page.addInitScript(() => {
-    const Harness = window.EventSource;
-    const counted = window as Window & { __eventStreams?: number };
-    counted.__eventStreams = 0;
-    class CountedEventSource extends Harness {
-      constructor(url: string | URL, init?: EventSourceInit) {
-        super(url, init);
-        counted.__eventStreams = (counted.__eventStreams ?? 0) + 1;
-      }
-    }
-    Object.defineProperty(window, "EventSource", {
+    Object.defineProperty(window, "__eventStreams", {
       configurable: true,
-      value: CountedEventSource,
+      get: () =>
+        (
+          window as Window & {
+            __openViewStreamState?: () => { constructed: number };
+          }
+        ).__openViewStreamState?.().constructed ?? 0,
     });
   });
 }
@@ -362,6 +365,7 @@ test("revisiting Reports within the cache window shows its list at once without 
   const streamsAfterFirstLoad = await page.evaluate(
     () => (window as Window & { __eventStreams?: number }).__eventStreams,
   );
+  expect(streamsAfterFirstLoad).toBeGreaterThan(0);
 
   await sidebarLink(page, "Charts").click();
   await expect(page).toHaveURL(/section=charts/);

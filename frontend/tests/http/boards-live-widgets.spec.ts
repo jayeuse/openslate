@@ -1,5 +1,6 @@
 import {
   authMeBody,
+  defaultOrganization,
   expect,
   test,
   type Page,
@@ -116,6 +117,7 @@ async function installS26WidgetApi(page: Page, widgets: unknown[]) {
         authenticated: true,
         user_id: actor,
         default_organization_blocked: null,
+        organization_id: defaultOrganization.org_id,
         setup_required: false,
       });
     if (url.pathname === "/api/auth/me")
@@ -2920,6 +2922,7 @@ test("widget create and edit omit refresh even when the server returns a legacy 
     if (path === "/api/auth/session")
       return reply({
         authenticated: true,
+        organization_id: defaultOrganization.org_id,
         user_id: actor,
         default_organization_blocked: null,
         setup_required: false,
@@ -3077,6 +3080,7 @@ test("widget metadata and scoped record bursts refresh once on the shared stream
     if (path === "/api/auth/session")
       return reply({
         authenticated: true,
+        organization_id: defaultOrganization.org_id,
         user_id: actor,
         default_organization_blocked: null,
         setup_required: false,

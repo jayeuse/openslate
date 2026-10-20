@@ -1,5 +1,6 @@
 import {
   authMeBody,
+  defaultOrganization,
   expect,
   test,
   type Locator,
@@ -100,6 +101,7 @@ async function installRecordFilesApi(
     route.fulfill({
       json: {
         authenticated: true,
+        organization_id: defaultOrganization.org_id,
         user_id: activeUser,
         default_organization_blocked: null,
         setup_required: false,

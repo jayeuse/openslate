@@ -2346,8 +2346,8 @@
     "path": "/api/modules/{param}/purge/preview"
   },
   {
-    "adapter": "frontend/src/components/systems/shared/adapters/invalidation-events.ts",
-    "function": "subscribeWorkspaceInvalidations",
+    "adapter": "frontend/src/components/systems/shared/adapters/workspace-event-source.ts",
+    "function": "openWorkspaceEventStream",
     "method": "GET",
     "path": "/api/events"
   },
