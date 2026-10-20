@@ -1,5 +1,7 @@
 "use client";
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { useUserPreferences } from "@/components/theme-provider";
+import { commsShortcutAction } from "@/lib/shortcuts";
 import { useWorkspaceNavigationGuard } from "@/components/workspace-navigation-guard";
 import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import {
@@ -42,6 +44,8 @@ function CommsScreen({
   );
   const conversation = useCommsConversation(navigation.selected);
   const { preferences, canView, canParticipate } = conversation;
+  const { keyboardShortcuts, disabled: shortcutsDisabled } =
+    useUserPreferences();
   const dialogs = useCommsDialogs(navigation);
   const patchPreferences = useCommsPreferences(preferences);
   const { run, isPending } = useCommsCommands();
@@ -92,23 +96,23 @@ function CommsScreen({
   });
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      const shortcut = [
-        event.altKey ? "Alt" : "",
-        event.ctrlKey ? "Ctrl" : "",
-        event.metaKey ? "Meta" : "",
-        event.shiftKey ? "Shift" : "",
-        event.key.length === 1 ? event.key.toUpperCase() : event.key,
-      ]
-        .filter(Boolean)
-        .join("+");
-      const action = Object.entries(preferences.shortcuts).find(
-        ([, value]) => value.toLowerCase() === shortcut.toLowerCase(),
-      )?.[0];
+      if (
+        keyboardShortcuts !== true ||
+        shortcutsDisabled ||
+        document.querySelector('[role="dialog"]')
+      )
+        return;
+      const action = commsShortcutAction(event, preferences.shortcuts);
       if (action === "search") {
         event.preventDefault();
-        document
-          .querySelector<HTMLInputElement>('[aria-label="Search messages"]')
-          ?.focus();
+        const input = document.querySelector<HTMLInputElement>(
+          '[aria-label="Search messages"]',
+        );
+        if (input && !input.getClientRects().length)
+          document
+            .querySelector<HTMLButtonElement>('[aria-controls="comms-details"]')
+            ?.click();
+        requestAnimationFrame(() => input?.focus());
       }
       if (action === "newMessage") {
         event.preventDefault();
@@ -121,7 +125,13 @@ function CommsScreen({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [preferences.shortcuts, currentThread?.id, navigation.selected]);
+  }, [
+    preferences.shortcuts,
+    currentThread?.id,
+    navigation.selected,
+    keyboardShortcuts,
+    shortcutsDisabled,
+  ]);
   return (
     <CommsLayout
       resource={resource}

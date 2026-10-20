@@ -1,5 +1,12 @@
 "use client";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Hash, MessageSquare } from "lucide-react";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { Alert } from "@/components/ui/alert";
@@ -108,7 +115,38 @@ export function ConversationView({
           item.text.toLowerCase().includes(navigation.search.toLowerCase()),
       )
     : [];
-  const [announcement, announce] = useState("");
+  const [announcement, setAnnouncement] = useState("");
+  const [announcementRequest, requestAnnouncement] = useState<{
+    owner: string;
+    text: string;
+  }>();
+  const announcementTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const pendingAnnouncement = useRef("");
+  useLayoutEffect(() => {
+    clearTimeout(announcementTimer.current);
+    announcementTimer.current = undefined;
+    setAnnouncement("");
+    requestAnnouncement(undefined);
+    return () => clearTimeout(announcementTimer.current);
+  }, [selected]);
+  useLayoutEffect(() => {
+    if (announcementRequest?.owner !== selected) {
+      clearTimeout(announcementTimer.current);
+      announcementTimer.current = undefined;
+      return;
+    }
+    pendingAnnouncement.current = announcementRequest.text;
+    if (announcementTimer.current !== undefined) return;
+    setAnnouncement("");
+    announcementTimer.current = setTimeout(() => {
+      setAnnouncement(pendingAnnouncement.current);
+      announcementTimer.current = undefined;
+    }, 500);
+  }, [announcementRequest, selected]);
+  const announce = (text: string) =>
+    requestAnnouncement({ owner: selected, text });
   const [delivery, setDelivery] = useState<{
     id: string;
     state: "sending" | "failed";
@@ -192,7 +230,7 @@ export function ConversationView({
       )}
       {canView && settings.pinnedRecordId && (
         <a
-          className="bg-muted/30 border-b px-4 py-2 text-xs underline"
+          className="bg-muted/30 flex min-h-[24px] shrink-0 items-center border-b px-4 py-2 text-xs underline max-sm:min-h-[44px]"
           href={`/openview?record=${encodeURIComponent(settings.pinnedRecordId)}`}
         >
           Pinned record ·{" "}
@@ -207,7 +245,7 @@ export function ConversationView({
           tabIndex={0}
           aria-label="Messages"
           aria-busy={history.loading ? "true" : "false"}
-          className="relative h-full min-w-0 scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain px-2 py-4 sm:px-4"
+          className="relative h-full min-w-0 scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain px-2 py-4 motion-reduce:scroll-auto sm:px-4"
           onWheel={(event) => {
             if (event.deltaY !== 0) history.pin();
           }}
@@ -416,7 +454,13 @@ export function ConversationView({
         }}
         pending={navigation.navigating || isPending(`message:send:${selected}`)}
       />
-      <p role="status" className="sr-only">
+      <p
+        role="status"
+        aria-label="Message announcements"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
         {announcement}
       </p>
     </section>

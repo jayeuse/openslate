@@ -9,6 +9,27 @@ export const COMMS_SHORTCUTS = {
   },
 } as const;
 
+/** Match only unhandled, deliberate Comms commands; owners gate profile/context. */
+export function commsShortcutAction(
+  event: KeyboardEvent,
+  bindings: Record<string, string>,
+) {
+  if (event.defaultPrevented || event.repeat || event.isComposing)
+    return undefined;
+  const key = [
+    event.altKey ? "Alt" : "",
+    event.ctrlKey ? "Ctrl" : "",
+    event.metaKey ? "Meta" : "",
+    event.shiftKey ? "Shift" : "",
+    event.key.length === 1 ? event.key.toUpperCase() : event.key,
+  ]
+    .filter(Boolean)
+    .join("+");
+  return Object.entries(bindings).find(
+    ([, value]) => value.toLowerCase() === key.toLowerCase(),
+  )?.[0];
+}
+
 const undo = {
   key: "z",
   label: "Undo",

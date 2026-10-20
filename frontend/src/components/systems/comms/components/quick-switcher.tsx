@@ -22,7 +22,7 @@ export function QuickSwitcher({
 }) {
   const [open, setOpen] = useState(false),
     [search, setSearch] = useState("");
-  const { keyboardShortcuts } = useUserPreferences();
+  const { keyboardShortcuts, disabled } = useUserPreferences();
   const opener = useRef<HTMLElement | null>(null);
   function show() {
     opener.current =
@@ -36,6 +36,7 @@ export function QuickSwitcher({
     const handler = (event: KeyboardEvent) => {
       if (
         !keyboardShortcuts ||
+        disabled ||
         event.repeat ||
         event.isComposing ||
         event.altKey ||
@@ -50,7 +51,7 @@ export function QuickSwitcher({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [keyboardShortcuts]);
+  }, [keyboardShortcuts, disabled]);
   const matches = rows.filter(
     (row) =>
       !row.preferences.hidden &&
@@ -68,7 +69,10 @@ export function QuickSwitcher({
         <span className="text-muted-foreground ml-auto text-xs">Ctrl/⌘K</span>
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent finalFocus={() => opener.current}>
+        <DialogContent
+          finalFocus={() => opener.current}
+          className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
+        >
           <DialogTitle>Switch conversation</DialogTitle>
           <DialogDescription>
             Find a conversation in this organization.

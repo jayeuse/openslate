@@ -62,6 +62,7 @@ export function useCommsHistory(
         top: article.getBoundingClientRect().top - box.top,
         page,
       };
+    return !!article;
   }
   const resource = useCommsRead(
     `history:${id}:${JSON.stringify(active)}`,
@@ -72,7 +73,15 @@ export function useCommsHistory(
       }
       try {
         if (active.latest) anchor.current = null;
-        else remember();
+        else if (!remember()) {
+          // A paging click can scroll its button into view before the virtual
+          // range has rendered there. Capture that range before replacing it.
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => resolve()),
+          );
+          if (signal.aborted) return null;
+          remember();
+        }
         const page = await current.getHistory(id, active.request, { signal });
         const quotes = new Map(
           page.items.map((message) => [message.id, message]),

@@ -223,7 +223,7 @@ export function CommsDialogs({
       >
         <DialogContent
           finalFocus={() => state.directoryOpener.current}
-          className="max-w-lg"
+          className="max-w-lg max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
         >
           <div className="flex items-start justify-between gap-4">
             <div>

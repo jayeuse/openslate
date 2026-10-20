@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert } from "@/components/ui/alert";
 import { Action } from "../../shared/components/ui";
 import { ProfilePopoverProvider } from "./floating";
+import { ConnectionBanner } from "./connection-banner";
 import { cn } from "@/lib/utils";
 import type { useCommsPanelLayout } from "../state/use-comms-panel-layout";
 import type { useCommsWorkspace } from "../state/use-comms-workspace";
@@ -172,8 +173,9 @@ export function CommsLayout({
     <ProfilePopoverProvider>
       <div
         ref={container}
-        className="bg-card relative flex min-h-0 flex-1 overflow-hidden"
+        className="bg-card relative flex min-h-0 flex-1 flex-col overflow-hidden [&_button]:min-h-6 [&_button]:min-w-6 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       >
+        <ConnectionBanner />
         <LoadingRegion
           loading={resource.status === "loading" && !resource.hydrated}
           label="Loading conversations"
@@ -333,8 +335,8 @@ export function CommsLayout({
                     finalFocus={rightKind === "thread" ? false : undefined}
                     className={
                       detail
-                        ? "h-[calc(100dvh-24px)] max-h-[calc(100dvh-24px)] max-w-lg overflow-hidden p-0"
-                        : "h-[85dvh] max-w-md"
+                        ? "h-[calc(100dvh-24px)] max-h-[calc(100dvh-24px)] max-w-lg overflow-hidden p-0 [&_button]:min-h-6 [&_button]:min-w-6 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
+                        : "h-[85dvh] max-w-md [&_button]:min-h-6 [&_button]:min-w-6 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
                     }
                   >
                     <DialogTitle className="sr-only">

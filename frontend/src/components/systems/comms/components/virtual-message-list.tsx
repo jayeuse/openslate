@@ -22,7 +22,7 @@ export function VirtualMessageList({
   followLatest = true,
 }: {
   messages: Message[];
-  children: (index: number) => ReactNode;
+  children: (index: number, tabIndex: number) => ReactNode;
   header?: ReactNode;
   footer?: ReactNode;
   viewportRef: RefObject<HTMLDivElement | null>;
@@ -40,6 +40,9 @@ export function VirtualMessageList({
   }, [header]);
   const count = messages.length;
   const targetIndex = messages.findIndex((message) => message.id === targetId);
+  const focusedIndex = messages.findIndex(
+    (message) => message.id === focusedId,
+  );
   // eslint-disable-next-line react-hooks/incompatible-library -- This component explicitly opts out above; no virtualizer method is memoized or passed to memoized children.
   const virtual = useVirtualizer({
     count,
@@ -66,6 +69,12 @@ export function VirtualMessageList({
         ]),
       ].sort((a, b) => a - b),
   });
+  const tabStop =
+    focusedIndex >= 0
+      ? focusedIndex
+      : targetIndex >= 0
+        ? targetIndex
+        : (virtual.range?.endIndex ?? count - 1);
   const lastId = messages.at(-1)?.id;
   const positionRef = useRef({ targetId, lastId, followLatest });
   useLayoutEffect(() => {
@@ -116,6 +125,39 @@ export function VirtualMessageList({
         aria-label="Conversation messages"
         className="relative min-w-0"
         style={{ height: virtual.getTotalSize() }}
+        onKeyDown={(event) => {
+          if (
+            !["PageUp", "PageDown"].includes(event.key) ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey
+          )
+            return;
+          const article = (event.target as HTMLElement).closest("article");
+          if (event.target !== article) return;
+          const id =
+            article?.closest<HTMLElement>("[data-message-id]")?.dataset
+              .messageId;
+          const index = messages.findIndex((message) => message.id === id);
+          if (index < 0) return;
+          const next = Math.max(
+            0,
+            Math.min(count - 1, index + (event.key === "PageDown" ? 1 : -1)),
+          );
+          if (next === index) return;
+          event.preventDefault();
+          const nextId = messages[next].id;
+          setFocusedId(nextId);
+          virtual.scrollToIndex(next, { align: "center" });
+          requestAnimationFrame(() =>
+            viewportRef.current
+              ?.querySelector<HTMLElement>(
+                `[data-message-id="${CSS.escape(nextId)}"] article`,
+              )
+              ?.focus({ preventScroll: true }),
+          );
+        }}
         onFocusCapture={(event) => {
           const article = (event.target as HTMLElement).closest("article");
           if (article)
@@ -139,7 +181,7 @@ export function VirtualMessageList({
             className="absolute top-0 left-0 flow-root w-full"
             style={{ transform: `translateY(${item.start - margin}px)` }}
           >
-            {children(item.index)}
+            {children(item.index, item.index === tabStop ? 0 : -1)}
           </div>
         ))}
       </div>

@@ -80,6 +80,7 @@ export function ConversationHeader({
   const { groups } = useCommsClient();
   const { channel, direct, menuAccess, canView } = conversation;
   const { selected, threadId } = navigation;
+  const [detailsFor, setDetailsFor] = useState("");
   const [threadFilter, setThreadFilter] = useState<"active" | "inactive">(
     "active",
   );
@@ -118,12 +119,6 @@ export function ConversationHeader({
         <MessageSquare className="text-muted-foreground size-5 shrink-0" />
       )}
       <div className="min-w-0 flex-1">
-        <CommsMenu
-          compact
-          hasChannel={!!channel}
-          {...menuAccess}
-          onSelect={dialogs.openSetting}
-        />
         <h2
           data-slot="section-title"
           className="truncate text-sm font-semibold"
@@ -133,129 +128,166 @@ export function ConversationHeader({
         <p className="text-muted-foreground hidden truncate text-xs lg:block">
           {channel?.description ?? "Private conversation"}
         </p>
-        {channel && (
-          <p className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs sm:hidden">
-            <GroupMark
-              tone={channelTone(
-                channelGroupAccess(channel, categories),
-                groups,
-              )}
-              className="size-2"
-            />
-            <span className="truncate">
-              {visibleToLabel(channelGroupAccess(channel, categories), groups)}
-            </span>
-          </p>
-        )}
       </div>
-      {channel && (
-        <AccessChip
-          label={visibleToLabel(
-            channelGroupAccess(channel, categories),
-            groups,
+      <Action
+        type="button"
+        variant="ghost"
+        className="sm:hidden"
+        aria-expanded={detailsFor === selected}
+        aria-controls="comms-details"
+        onClick={() => setDetailsFor(detailsFor === selected ? "" : selected)}
+      >
+        Details
+      </Action>
+      <div
+        id="comms-details"
+        className={cn(
+          "w-full flex-wrap items-center gap-1.5 sm:contents",
+          detailsFor === selected ? "flex" : "hidden",
+        )}
+      >
+        <div className="w-full sm:w-auto md:hidden">
+          <CommsMenu
+            compact
+            hasChannel={!!channel}
+            {...menuAccess}
+            onSelect={dialogs.openSetting}
+          />
+          <p className="text-muted-foreground text-xs sm:hidden">
+            {channel?.description ?? "Private conversation"}
+          </p>
+          {channel && (
+            <p className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs sm:hidden">
+              <GroupMark
+                tone={channelTone(
+                  channelGroupAccess(channel, categories),
+                  groups,
+                )}
+                className="size-2"
+              />
+              <span className="truncate">
+                {visibleToLabel(
+                  channelGroupAccess(channel, categories),
+                  groups,
+                )}
+              </span>
+            </p>
           )}
-          tone={channelTone(channelGroupAccess(channel, categories), groups)}
-          onOpen={menuAccess.canManageChannel ? openChannel : undefined}
-        />
-      )}
-      <FloatingList label="Threads" icon={<MessageSquare className="size-4" />}>
-        {(close) => (
-          <CommsThreadList
-            items={channelThreads.map((thread) => ({
-              id: thread.id,
-              title:
-                allMessages.find((message) => message.id === thread.messageId)
-                  ?.text ?? "",
-              inactive: thread.resolved,
-              metadata: (
-                <>
-                  {thread.replies.length} replies ·{" "}
-                  {thread.resolved ? "Resolved" : "Active"}
-                </>
-              ),
-            }))}
-            filter={threadFilter}
-            onFilterChange={setThreadFilter}
-            onSelect={(item) => {
-              close();
-              navigation.setThreadId(item.id);
-            }}
-            emptyDescription={`No ${threadFilter} threads in this conversation.`}
-            filterClassName="mb-3"
+        </div>
+        {channel && (
+          <AccessChip
+            label={visibleToLabel(
+              channelGroupAccess(channel, categories),
+              groups,
+            )}
+            tone={channelTone(channelGroupAccess(channel, categories), groups)}
+            onOpen={menuAccess.canManageChannel ? openChannel : undefined}
           />
         )}
-      </FloatingList>
-      <FloatingList label="Pinned messages" icon={<Pin className="size-4" />}>
-        {(close) => (
-          <div className="flex flex-col gap-1">
-            {pinned.map((message) => (
-              <Button
-                type="button"
-                variant="outline"
-                key={message.id}
-                className="h-auto flex-col items-stretch gap-0 p-3 text-left whitespace-normal"
-                onClick={() => {
-                  close();
-                  jumpToMessage(message.id);
-                }}
-              >
-                <span className="mb-1 block text-xs font-medium">
-                  {people.find(
-                    (person) => person.id === messageAuthorId(message),
-                  )?.name ?? message.author}
-                </span>
-                <span className="text-muted-foreground line-clamp-3 text-sm">
-                  {message.text}
-                </span>
-              </Button>
-            ))}
-            {!pinned.length && (
-              <Empty>
-                <EmptyDescription>No pinned messages yet.</EmptyDescription>
-              </Empty>
-            )}
-          </div>
-        )}
-      </FloatingList>
-      <Action
-        variant="ghost"
-        size="icon"
-        aria-label="Members"
-        aria-expanded={
-          wide ? navigation.membersVisible && !threadId : navigation.memberOpen
-        }
-        onClick={() =>
-          navigation.setMemberOpen(
-            wide
-              ? threadId
-                ? true
-                : !navigation.membersVisible
-              : !navigation.memberOpen,
-          )
-        }
-      >
-        <Users className="size-4" />
-      </Action>
-      {channel && menuAccess.canManageChannel && (
+        <FloatingList
+          label="Threads"
+          icon={<MessageSquare className="size-4" />}
+        >
+          {(close) => (
+            <CommsThreadList
+              items={channelThreads.map((thread) => ({
+                id: thread.id,
+                title:
+                  allMessages.find((message) => message.id === thread.messageId)
+                    ?.text ?? "",
+                inactive: thread.resolved,
+                metadata: (
+                  <>
+                    {thread.replies.length} replies ·{" "}
+                    {thread.resolved ? "Resolved" : "Active"}
+                  </>
+                ),
+              }))}
+              filter={threadFilter}
+              onFilterChange={setThreadFilter}
+              onSelect={(item) => {
+                close();
+                navigation.setThreadId(item.id);
+              }}
+              emptyDescription={`No ${threadFilter} threads in this conversation.`}
+              filterClassName="mb-3"
+            />
+          )}
+        </FloatingList>
+        <FloatingList label="Pinned messages" icon={<Pin className="size-4" />}>
+          {(close) => (
+            <div className="flex flex-col gap-1">
+              {pinned.map((message) => (
+                <Button
+                  type="button"
+                  variant="outline"
+                  key={message.id}
+                  className="h-auto flex-col items-stretch gap-0 p-3 text-left whitespace-normal"
+                  onClick={() => {
+                    close();
+                    jumpToMessage(message.id);
+                  }}
+                >
+                  <span className="mb-1 block text-xs font-medium">
+                    {people.find(
+                      (person) => person.id === messageAuthorId(message),
+                    )?.name ?? message.author}
+                  </span>
+                  <span className="text-muted-foreground line-clamp-3 text-sm">
+                    {message.text}
+                  </span>
+                </Button>
+              ))}
+              {!pinned.length && (
+                <Empty>
+                  <EmptyDescription>No pinned messages yet.</EmptyDescription>
+                </Empty>
+              )}
+            </div>
+          )}
+        </FloatingList>
         <Action
           variant="ghost"
           size="icon"
-          aria-label="Channel settings"
-          onClick={(event) => openChannel(event.currentTarget)}
+          aria-label="Members"
+          aria-expanded={
+            wide
+              ? navigation.membersVisible && !threadId
+              : navigation.memberOpen
+          }
+          onClick={() =>
+            navigation.setMemberOpen(
+              wide
+                ? threadId
+                  ? true
+                  : !navigation.membersVisible
+                : !navigation.memberOpen,
+            )
+          }
         >
-          <Settings2 className="size-4" />
+          <Users className="size-4" />
         </Action>
-      )}
-      <Input
-        aria-label="Search messages"
-        placeholder="Search messages"
-        value={navigation.search}
-        onChange={(event) => {
-          navigation.setSearch(event.target.value);
-          navigation.setHighlightedId("");
-        }}
-        className="order-last h-9 w-full sm:w-40 lg:w-48"
-      />
+        {channel && menuAccess.canManageChannel && (
+          <Action
+            variant="ghost"
+            size="icon"
+            aria-label="Channel settings"
+            onClick={(event) => openChannel(event.currentTarget)}
+          >
+            <Settings2 className="size-4" />
+          </Action>
+        )}
+        <Input
+          aria-label="Search messages"
+          placeholder="Search messages"
+          value={navigation.search}
+          onChange={(event) => {
+            navigation.setSearch(event.target.value);
+            navigation.setHighlightedId("");
+          }}
+          className="order-last h-9 w-full sm:w-40 lg:w-48"
+        />
+      </div>
     </header>
   );
 }

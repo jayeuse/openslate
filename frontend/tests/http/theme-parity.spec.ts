@@ -5,6 +5,7 @@ import {
   test,
   type Page,
 } from "./helpers/test";
+import { seedTimeline } from "./helpers/comms-timeline-fixture";
 
 async function signIn(page: Page) {
   await signedInAs(page, {
@@ -57,6 +58,9 @@ async function signIn(page: Page) {
       },
     });
   });
+  return (value: string) => {
+    theme = value;
+  };
 }
 
 // Themes change look only. Compare the persistent shell and page, excluding
@@ -84,6 +88,32 @@ const THEMES = [
   { name: "Triplicate", id: "triplicate", font: /Archivo/ },
   { name: "Stockroom", id: "stockroom", font: /Archivo/ },
 ] as const;
+
+test("Comms keeps the same words and structure across organization looks", async ({
+  page,
+}) => {
+  await seedTimeline(page, 2);
+  const setTheme = await signIn(page);
+  await page.goto("/comms");
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByRole("article")).toHaveCount(2);
+  const slate = await snapshot(page);
+  for (const look of THEMES) {
+    setTheme(look.id);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", look.id);
+    await expect(
+      page.getByRole("textbox", { name: "Message", exact: true }),
+    ).toBeEnabled();
+    await expect(page.getByRole("article")).toHaveCount(2);
+    expect(await snapshot(page), look.id).toEqual(slate);
+    expect(
+      await page.evaluate(() => getComputedStyle(document.body).fontFamily),
+    ).toMatch(look.font);
+  }
+});
 
 test("each organization look keeps the same words and structure", async ({
   page,

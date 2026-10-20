@@ -233,7 +233,7 @@ export function MessageTimeline(props: TimelineProps) {
           (message) => message.seq === props.firstUnread,
         )
       : -1;
-  const renderRow = (index: number) => {
+  const renderRow = (index: number, tabIndex = -1) => {
     const message = visibleMessages[index];
     const person = maps.people.get(messageAuthorId(message));
     const quote = maps.messages.get(message.replyToId ?? "");
@@ -250,6 +250,7 @@ export function MessageTimeline(props: TimelineProps) {
         {...rest}
         {...actions}
         message={message}
+        tabIndex={tabIndex}
         position={props.viewportRef ? index + 1 : undefined}
         pageSize={props.viewportRef ? visibleMessages.length : undefined}
         previous={previous}
@@ -302,6 +303,7 @@ const TimelineRow = memo(function TimelineRow({
   message,
   position,
   pageSize,
+  tabIndex,
   previous,
   person,
   peopleById,
@@ -339,6 +341,7 @@ const TimelineRow = memo(function TimelineRow({
   message: Message;
   position?: number;
   pageSize?: number;
+  tabIndex?: number;
   dayLabel?: string;
   timeLabel: string;
   timestamp: string;
@@ -418,13 +421,15 @@ const TimelineRow = memo(function TimelineRow({
         </div>
       )}
       <MessageMenu
+        tabIndex={tabIndex}
+        sequence={message.seq}
         position={position}
         pageSize={pageSize}
         onOpen={() => setNow(Date.now())}
         id={domId}
         highlighted={highlightedId === message.id}
         className={cn(
-          "hover:bg-muted/40 px-3",
+          "hover:bg-muted/40 px-3 max-sm:pr-14",
           preferences.density === "compact" ? "py-0.5" : "py-1.5",
           !grouped && "mt-3",
         )}

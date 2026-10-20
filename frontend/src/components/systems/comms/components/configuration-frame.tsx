@@ -113,7 +113,7 @@ export function ConfigurationFrame({
       <DialogContent
         finalFocus={() => opener ?? false}
         className={cn(
-          "flex h-[90dvh] max-h-[90dvh] max-w-5xl flex-col overflow-hidden p-0",
+          "flex h-[90dvh] max-h-[90dvh] max-w-5xl flex-col overflow-hidden p-0 [&_button]:min-h-6 [&_button]:min-w-6 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11",
           className,
         )}
       >
@@ -197,6 +197,7 @@ export function ConfigurationFrame({
           }}
         >
           <AlertDialogContent
+            className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
             initialFocus={keepEditing}
             finalFocus={() => previousFocus.current ?? false}
           >

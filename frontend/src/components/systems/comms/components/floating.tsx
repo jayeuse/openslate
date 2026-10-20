@@ -134,7 +134,7 @@ export function FloatingList({
         collisionPadding={12}
 
         aria-label={label}
-        className="w-[min(360px,calc(100vw-24px))] p-4"
+        className="w-[min(360px,calc(100vw-24px))] p-4 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       >
         <div className="mb-3 flex items-center justify-between">
           <PopoverTitle className="text-sm font-semibold">{label}</PopoverTitle>
@@ -278,7 +278,7 @@ export function ProfilePopover({
 
         aria-label="Member profile"
         finalFocus={() => (activeId === null ? trigger.current : false)}
-        className="w-[min(280px,calc(100vw-24px))] gap-0 p-0"
+        className="w-[min(280px,calc(100vw-24px))] gap-0 p-0 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
       >
         <div className="bg-muted h-14" />
         <div className="flex flex-col gap-3 px-4 pb-4">
@@ -311,6 +311,8 @@ export function ProfilePopover({
 }
 
 type MessageMenuProps = {
+  tabIndex?: number;
+  sequence?: number;
   position?: number;
   pageSize?: number;
   onOpen?: () => void;
@@ -345,6 +347,8 @@ type MessageMenuProps = {
   onDelete: () => void;
 };
 export function MessageMenu({
+  tabIndex = -1,
+  sequence,
   position,
   pageSize,
   onOpen,
@@ -390,13 +394,16 @@ export function MessageMenu({
             id={id}
             aria-posinset={position}
             aria-setsize={pageSize}
-            tabIndex={-1}
+            tabIndex={tabIndex}
+            aria-label={
+              sequence === undefined ? label : `Message ${sequence}: ${label}`
+            }
             data-highlighted={highlighted || undefined}
           />
         }
         ref={article}
         className={cn(
-          "group focus-visible:ring-ring relative rounded-md outline-none select-text focus-visible:ring-2",
+          "group focus-visible:ring-ring relative rounded-md outline-none select-text focus-visible:ring-2 forced-colors:border forced-colors:border-[CanvasText]",
           highlighted && "bg-accent ring-border ring-1",
           className,
         )}
@@ -443,7 +450,7 @@ export function MessageMenu({
 
           aria-label={`Message actions: ${label}`}
           finalFocus={() => buttonAnchor ?? article.current}
-          className="w-56"
+          className="w-56 max-sm:[&_[role=menuitem]]:min-h-11"
         >
           <ContextMenuGroup>
             <ContextMenuSub>
@@ -461,7 +468,7 @@ export function MessageMenu({
                 collisionPadding={10}
 
                 aria-label="Common reactions"
-                className="w-44"
+                className="w-44 max-sm:[&_[role=menuitem]]:min-h-11"
               >
                 <ContextMenuGroup>
                   {EMOTES.filter(

@@ -99,7 +99,7 @@ export function DirectDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11">
         <DialogTitle>Start direct message</DialogTitle>
         <DialogDescription>
           Choose people available for direct messages in this organization.

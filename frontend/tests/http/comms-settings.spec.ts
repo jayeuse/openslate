@@ -375,6 +375,10 @@ test("settings content comes first with one phone footer in light and dark", asy
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       await page.emulateMedia({ colorScheme: theme });
       await page.goto(`/comms?conversation=${data.conversation}`);
+      if (width === 390)
+        await page
+          .getByRole("button", { name: "Details", exact: true })
+          .click();
       await openChannel(page);
       const dialog = settings(page);
       await expect(
