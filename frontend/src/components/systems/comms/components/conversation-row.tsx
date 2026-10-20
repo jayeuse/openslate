@@ -16,6 +16,7 @@ import { useCommsListActions } from "../state/use-comms-list-actions";
 import {
   countLabel,
   muteDurations,
+  muteActive,
   rowLabel,
   type SidebarActions,
   type SidebarRow,
@@ -84,6 +85,14 @@ export function ConversationRow({
   return (
     <div>
       <RowEditMenu
+        notification={{
+          value: muteActive(row.preferences.mute)
+            ? "mute"
+            : row.preferences.notify,
+          disabled: actions.isPending(`sidebar:${id}`),
+          onChange: (notify) =>
+            void actions.change(id, { notify, mute: { kind: "off" } }),
+        }}
         label="Channel settings"
         actionsLabel={`${channel ? "Channel" : "Conversation"} actions: ${row.name}`}
         onEdit={

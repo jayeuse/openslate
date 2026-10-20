@@ -134,8 +134,8 @@ export function NotificationPreview({ settings }: { settings: CommsSettings }) {
       <CardHeader className="p-4">
         <CardTitle>Notification preview</CardTitle>
         <CardDescription>
-          Appearance only; no notification is delivered. Delivery checks saved
-          access and notification rules when a message is sent.
+          Appearance only. Desktop alerts and sounds are not emitted in this
+          local example; live delivery remains deferred.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 p-4">
@@ -145,9 +145,14 @@ export function NotificationPreview({ settings }: { settings: CommsSettings }) {
             : "New activity in a conversation."}
         </Alert>
         <p className="text-muted-foreground text-xs">
-          {settings.notificationSound ? "Sound enabled" : "Silent"} ·{" "}
-          {settings.notificationBadges ? "Badges enabled" : "No badges"} ·{" "}
-          {settings.notificationMode}
+          {settings.notificationSound
+            ? "Sound preference on"
+            : "Sound preference off"}{" "}
+          ·{" "}
+          {settings.notificationBadges
+            ? "Badge preference on"
+            : "Badge preference off"}{" "}
+          · {settings.notificationMode}
         </p>
         {settings.quietHoursStart && (
           <p className="text-muted-foreground text-xs">

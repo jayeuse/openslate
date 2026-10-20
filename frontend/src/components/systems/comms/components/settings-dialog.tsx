@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
+import { useNotificationPermission } from "../state/use-notification-permission";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FieldGroup } from "@/components/ui/field";
 import { NativeSelectOption } from "@/components/ui/native-select";
@@ -105,6 +107,8 @@ export function CommsSettingsDialog({
   initialTab,
 }: CommsSettingsDialogProps) {
   const userId = useVerifiedWorkspaceUserId();
+  const region = useWorkspaceDisplayRegion();
+  const browserPermission = useNotificationPermission();
   const { client } = useCommsClient();
   const { run } = useCommsCommands();
   const [config] = useCommsConfiguration();
@@ -216,6 +220,8 @@ export function CommsSettingsDialog({
     key: K,
     value: CommsSettings[K],
   ) {
+    if (personal && key === "desktopNotifications" && value === true)
+      void browserPermission.request();
     if (personal)
       setPreferences((current) => ({
         ...current,
@@ -841,6 +847,37 @@ export function CommsSettingsDialog({
               )}
               {personal && (
                 <>
+                  {(section === "notifications" ||
+                    (!!search &&
+                      visibleKeys(["desktopNotifications"]).length > 0)) && (
+                    <section
+                      aria-label="Browser notification permission"
+                      className="flex flex-col gap-3"
+                    >
+                      <p className="text-muted-foreground text-sm">
+                        Quiet hours use{" "}
+                        {region?.timezone ??
+                          "your regional time zone (loading…)"}
+                        . Preferences belong to this organization; browser
+                        permission applies to this site. Desktop alerts and
+                        sounds are not emitted in this local example.
+                      </p>
+                      <p role="status" className="text-sm">
+                        {browserPermission.message}
+                      </p>
+                      {values.desktopNotifications &&
+                        browserPermission.permission === "default" && (
+                          <Action
+                            type="button"
+                            className="self-start"
+                            disabled={browserPermission.pending}
+                            onClick={() => void browserPermission.request()}
+                          >
+                            Enable browser permission
+                          </Action>
+                        )}
+                    </section>
+                  )}
                   {section === "appearance" && (
                     <Link
                       href="/platform?section=account"

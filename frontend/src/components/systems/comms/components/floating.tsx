@@ -18,6 +18,8 @@ import {
   ContextMenuSubTrigger,
   ContextMenuSubContent,
   ContextMenuSeparator,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
 } from "@/components/ui/context-menu";
 import {
   Popover,
@@ -570,6 +572,7 @@ export function RowEditMenu({
   children,
   onEdit,
   actions = [],
+  notification,
 }: {
   label: "Channel settings" | "Category settings";
   actionsLabel: string;
@@ -577,6 +580,11 @@ export function RowEditMenu({
   children: ReactNode;
   /** Absent for people who cannot change settings. */
   onEdit?: (opener: HTMLElement) => void;
+  notification?: {
+    value: "all" | "mentions" | "mute";
+    disabled: boolean;
+    onChange: (value: "all" | "mentions" | "mute") => void;
+  };
   actions?: {
     label: string;
     onSelect: (opener: HTMLElement) => void;
@@ -684,6 +692,49 @@ export function RowEditMenu({
               {action.label}
             </ContextMenuItem>
           ))}
+          {notification && (
+            <ContextMenuSub>
+              <ContextMenuSubTrigger
+                disabled={notification.disabled}
+                className="min-h-11 sm:min-h-9"
+              >
+                Notify:{" "}
+                {
+                  { all: "All", mentions: "Mentions", mute: "Mute" }[
+                    notification.value
+                  ]
+                }
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <ContextMenuRadioGroup
+                  value={notification.value}
+                  onValueChange={(value) => {
+                    if (
+                      value === "all" ||
+                      value === "mentions" ||
+                      value === "mute"
+                    )
+                      notification.onChange(value);
+                  }}
+                  aria-label="Conversation notifications"
+                >
+                  {(["all", "mentions", "mute"] as const).map((value) => (
+                    <ContextMenuRadioItem
+                      key={value}
+                      value={value}
+                      className="min-h-11 sm:min-h-9"
+                    >
+                      {
+                        { all: "All", mentions: "Mentions", mute: "Mute" }[
+                          value
+                        ]
+                      }
+                    </ContextMenuRadioItem>
+                  ))}
+                </ContextMenuRadioGroup>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+          )}
         </ContextMenuGroup>
       </ContextMenuContent>
     </ContextMenu>
