@@ -16,7 +16,8 @@ from app.core.database.organization_scope import worker_organization
 from app.core.database.session import AuditSession, get_engine
 from app.core.observability import log_event
 from app.systems.comms.realtime.grants import sweep_expired
-from app.systems.comms.realtime.publication import request_events
+from app.systems.comms.realtime.presence import sweep_presence
+from app.systems.comms.realtime.publication import request_events, take_committed_events
 from app.systems.manage.workspace.organizations import active_organization_ids
 
 BATCH_SIZE = 100
@@ -78,14 +79,17 @@ class CommsPublisher:
             for org_id in active_organization_ids(engine):
                 with worker_organization(org_id), AuditSession(engine) as db:
                     sweep_expired(db, base_model.utc_now())
+                    sweep_presence(db, base_model.utc_now())
                     db.commit()
+                    events = take_committed_events(db)
+                self.submit(events)
         except Exception:
             log_event(
                 "operational_attention", reason_code="comms_grant_sweep_failed", upstream="realtime"
             )
 
     def _run(self) -> None:
-        next_sweep = time.monotonic() + 60
+        next_sweep = time.monotonic() + 30
         with httpx.Client(
             timeout=1.0,
             follow_redirects=False,
@@ -104,7 +108,7 @@ class CommsPublisher:
                         self.queue.task_done()
                 if time.monotonic() >= next_sweep:
                     self._sweep()  # Sessions close before the next HTTP operation.
-                    next_sweep = time.monotonic() + 60
+                    next_sweep = time.monotonic() + 30
 
     def stop(self) -> bool:
         self._stop.set()

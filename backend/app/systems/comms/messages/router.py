@@ -44,6 +44,7 @@ from app.systems.comms.messages.schemas import (
     Tombstone,
 )
 from app.systems.comms.messages.service import MAX_SEQUENCE
+from app.systems.comms.realtime.events import message_event, user_event
 from app.systems.comms.settings.models import CommsMemberPreferences
 
 VERSION_HEADERS = {
@@ -206,10 +207,18 @@ def _change_message(
     if own and minutes and (utc_now() - message.created_at).total_seconds() > minutes * 60:
         raise error("comms_post_denied", "Message change window has ended", 403)
     if request is not None:
-        if not request.body.strip() and not any(db.scalar(select(model.id).where(
-            model.org_id == bound_organization_column(), model.message_id == message_id,
-            model.is_deleted.is_(False),
-        ).limit(1)) for model in (CommsMessageAttachment, CommsMessageRecordLink)):
+        if not request.body.strip() and not any(
+            db.scalar(
+                select(model.id)
+                .where(
+                    model.org_id == bound_organization_column(),
+                    model.message_id == message_id,
+                    model.is_deleted.is_(False),
+                )
+                .limit(1)
+            )
+            for model in (CommsMessageAttachment, CommsMessageRecordLink)
+        ):
             raise error("comms_message_empty", "Message is empty", 422)
         _mentions(db, user, conversation_id, request, settings)
         db.add(
@@ -234,6 +243,7 @@ def _change_message(
         )
     else:
         message.is_deleted, message.deleted_at, message.deleted_by = True, utc_now(), user.id
+    message_event(db, conversation_id, message.seq, "edited" if request is not None else "deleted")
     db.commit()
     db.refresh(message)
     return message
@@ -303,6 +313,7 @@ def mark_read(
             .execution_options(populate_existing=True)
         )
         watermark = min(request.last_read_seq, counter.last_seq)
+        changed = row is None or (row is not None and watermark > row.last_read_seq)
         if row is None:
             row = CommsReadState(
                 org_id=counter.org_id,
@@ -324,8 +335,11 @@ def mark_read(
             .with_for_update()
         )
         if pref is not None:
+            changed = changed or bool(pref.manual_unread)
             pref.manual_unread = False
         result = ReadResponse(conversation_id=conversation_id, last_read_seq=row.last_read_seq)
+        if changed:
+            user_event(db, user.id, "read", result.model_dump(mode="json"))
         db.commit()
         _private(response)
         return result

@@ -78,7 +78,7 @@ def create_group(db: Session, user: User, name: str, ids: list[UUID]) -> CommsCo
     return row
 
 
-def toggle_block(db: Session, user: User, target: UUID, *, enabled: bool) -> None:
+def toggle_block(db: Session, user: User, target: UUID, *, enabled: bool) -> bool:
     if target == user.id:
         raise error("comms_invalid", "Choose another person", 422)
     # Personal toggles serialize on the actor's bound membership, not an org-wide guard.
@@ -107,6 +107,7 @@ def toggle_block(db: Session, user: User, target: UUID, *, enabled: bool) -> Non
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    changed = (enabled and (row is None or row.is_deleted)) or (not enabled and row is not None)
     if not enabled:
         if row is not None:
             db.delete(row)
@@ -116,3 +117,4 @@ def toggle_block(db: Session, user: User, target: UUID, *, enabled: bool) -> Non
         )
     elif row.is_deleted:
         row.is_deleted, row.deleted_at, row.created_at = False, None, utc_now()
+    return changed

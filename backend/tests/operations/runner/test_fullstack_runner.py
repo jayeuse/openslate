@@ -13,6 +13,7 @@ from tests.postgres_runtime import DisposablePostgres
 
 class _RunnerPostgres:
     network = "test-network"
+    api_port = 58999
     mail_url = "http://127.0.0.1:58998"
 
     def __init__(self, root: Path) -> None:

@@ -22,6 +22,7 @@ from app.systems.comms.messages.interaction_models import (
 from app.systems.comms.messages.link_models import CommsMessageAttachment, CommsMessageRecordLink
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
 from app.systems.comms.rate_limit import admit_message_send
+from app.systems.comms.realtime.events import message_event
 from app.systems.comms.settings.resolution import Scope, resolve_settings
 from app.systems.manage.audit.context import AUDIT_CONTEXT_KEY, AuditContext
 from app.systems.manage.audit.listeners import PENDING_CHANGES_KEY, REALTIME_INVALIDATION_KEY
@@ -83,19 +84,32 @@ def _fingerprint(command: SendMessageCommand, conversation_id: UUID) -> str:
     payload = asdict(command)
     del payload["client_key"]
     payload["conversation_id"] = conversation_id
-    return hashlib.sha256(json.dumps(
-        payload, default=str, sort_keys=True, separators=(",", ":"),
-    ).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            default=str,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _find_original(
-    db: AuditSession, org_id: UUID, author_id: UUID, client_key: UUID,
+    db: AuditSession,
+    org_id: UUID,
+    author_id: UUID,
+    client_key: UUID,
 ) -> CommsMessage | None:
     # Lifetime identity includes tombstones and ignores mutable current content.
-    return db.scalar(select(CommsMessage).where(
-        CommsMessage.org_id == org_id, CommsMessage.author_id == author_id,
-        CommsMessage.client_key == client_key,
-    ).execution_options(populate_existing=True))
+    return db.scalar(
+        select(CommsMessage)
+        .where(
+            CommsMessage.org_id == org_id,
+            CommsMessage.author_id == author_id,
+            CommsMessage.client_key == client_key,
+        )
+        .execution_options(populate_existing=True)
+    )
 
 
 def _replay(message: CommsMessage, fingerprint: str) -> SendMessageResult:
@@ -107,7 +121,8 @@ def _replay(message: CommsMessage, fingerprint: str) -> SendMessageResult:
 def _is_client_key_collision(error: IntegrityError) -> bool:
     original = error.orig
     return (
-        isinstance(original, UniqueViolation) and original.sqlstate == "23505"
+        isinstance(original, UniqueViolation)
+        and original.sqlstate == "23505"
         and original.diag.schema_name == "public"
         and original.diag.table_name == "comms_messages"
         and original.diag.constraint_name == "uq_comms_messages_client_key"
@@ -117,13 +132,19 @@ def _is_client_key_collision(error: IntegrityError) -> bool:
 def _admit_transaction(db: AuditSession, org_id: UUID, author_id: UUID) -> None:
     context = db.info.get(AUDIT_CONTEXT_KEY)
     if (
-        not isinstance(db, AuditSession) or not db.is_active or db.in_nested_transaction()
-        or db.new or db.dirty or db.deleted or db.info.get(PENDING_CHANGES_KEY)
+        not isinstance(db, AuditSession)
+        or not db.is_active
+        or db.in_nested_transaction()
+        or db.new
+        or db.dirty
+        or db.deleted
+        or db.info.get(PENDING_CHANGES_KEY)
         or REALTIME_INVALIDATION_KEY in db.info
     ):
         raise InvalidSend("Send requires a transaction without caller writes")
     if (
-        session_organization(db) != org_id or not isinstance(context, AuditContext)
+        session_organization(db) != org_id
+        or not isinstance(context, AuditContext)
         or context.performed_by != author_id
     ):
         raise InvalidSend("Send context does not match the bound organization and actor")
@@ -146,18 +167,34 @@ def _validate_payload(command: SendMessageCommand) -> None:
 
 
 def _lock_context(
-    db: AuditSession, org_id: UUID, conversation_id: UUID, command: SendMessageCommand,
+    db: AuditSession,
+    org_id: UUID,
+    conversation_id: UUID,
+    command: SendMessageCommand,
 ) -> tuple[CommsMessage | None, CommsThread | None]:
-    conversation = db.scalar(select(CommsConversation).where(
-        CommsConversation.org_id == org_id, CommsConversation.id == conversation_id,
-    ).with_for_update().execution_options(populate_existing=True))
+    conversation = db.scalar(
+        select(CommsConversation)
+        .where(
+            CommsConversation.org_id == org_id,
+            CommsConversation.id == conversation_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if conversation is None or conversation.is_deleted:
         raise InvalidSend("Conversation unavailable")
     ids = sorted({identity for identity in (command.parent_id, command.reply_to_id) if identity})
-    references = db.scalars(select(CommsMessage).where(
-        CommsMessage.org_id == org_id, CommsMessage.conversation_id == conversation_id,
-        CommsMessage.id.in_(ids),
-    ).order_by(CommsMessage.id).with_for_update().execution_options(populate_existing=True)).all()
+    references = db.scalars(
+        select(CommsMessage)
+        .where(
+            CommsMessage.org_id == org_id,
+            CommsMessage.conversation_id == conversation_id,
+            CommsMessage.id.in_(ids),
+        )
+        .order_by(CommsMessage.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
     if len(references) != len(ids) or any(
         (row.is_deleted or row.deleted_at is not None) and row.id == command.reply_to_id
         for row in references
@@ -168,93 +205,161 @@ def _lock_context(
     if root is not None:
         if root.parent_id is not None or root.reply_count >= MAX_SEQUENCE:
             raise InvalidSend("Invalid thread root or exhausted reply count")
-        thread = db.scalar(select(CommsThread).where(
-            CommsThread.org_id == org_id, CommsThread.conversation_id == conversation_id,
-            CommsThread.root_message_id == root.id,
-        ).with_for_update().execution_options(populate_existing=True))
+        thread = db.scalar(
+            select(CommsThread)
+            .where(
+                CommsThread.org_id == org_id,
+                CommsThread.conversation_id == conversation_id,
+                CommsThread.root_message_id == root.id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if thread is not None and thread.is_deleted:
             raise InvalidSend("Thread unavailable")
     return root, thread
 
 
 def _link_targets(
-    db: AuditSession, org_id: UUID, command: SendMessageCommand,
+    db: AuditSession,
+    org_id: UUID,
+    command: SendMessageCommand,
 ) -> list[Record]:
     # Structural identity only: no S16 visibility/capability or S18 purpose policy.
     if command.mention_user_ids:
-        members = set(db.scalars(select(Membership.user_id).join(
-            User, User.id == Membership.user_id,
-        ).where(
-            Membership.org_id == org_id, Membership.is_deleted.is_(False),
-            User.is_deleted.is_(False), Membership.user_id.in_(command.mention_user_ids),
-        )))
+        members = set(
+            db.scalars(
+                select(Membership.user_id)
+                .join(
+                    User,
+                    User.id == Membership.user_id,
+                )
+                .where(
+                    Membership.org_id == org_id,
+                    Membership.is_deleted.is_(False),
+                    User.is_deleted.is_(False),
+                    Membership.user_id.in_(command.mention_user_ids),
+                )
+            )
+        )
         if members != set(command.mention_user_ids):
             raise InvalidSend("Mention reference unavailable")
     if command.attachment_ids:
-        files = db.scalars(select(File).where(
-            File.org_id == org_id, File.id.in_(command.attachment_ids),
-        ).order_by(File.id).with_for_update().execution_options(populate_existing=True)).all()
+        files = db.scalars(
+            select(File)
+            .where(
+                File.org_id == org_id,
+                File.id.in_(command.attachment_ids),
+            )
+            .order_by(File.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
         if len(files) != len(command.attachment_ids) or any(
             file.is_deleted or file.state != "ready" for file in files
         ):
             raise InvalidSend("Attachment reference unavailable")
-        owned = db.scalar(select(CommsMessageAttachment.id).where(
-            CommsMessageAttachment.org_id == org_id,
-            CommsMessageAttachment.file_id.in_(command.attachment_ids),
-        ).limit(1))
+        owned = db.scalar(
+            select(CommsMessageAttachment.id)
+            .where(
+                CommsMessageAttachment.org_id == org_id,
+                CommsMessageAttachment.file_id.in_(command.attachment_ids),
+            )
+            .limit(1)
+        )
         if owned is not None:
             raise InvalidSend("Attachment already belongs to a message")
-    records = list(db.scalars(select(Record).where(
-        Record.org_id == org_id, Record.id.in_(command.record_ids),
-    ).order_by(Record.id).with_for_update().execution_options(populate_existing=True)))
+    records = list(
+        db.scalars(
+            select(Record)
+            .where(
+                Record.org_id == org_id,
+                Record.id.in_(command.record_ids),
+            )
+            .order_by(Record.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
     if len(records) != len(command.record_ids) or any(record.is_deleted for record in records):
         raise InvalidSend("Record reference unavailable")
     module_ids = {record.module_id for record in records}
-    if module_ids and set(db.scalars(select(Module.id).where(
-        Module.org_id == org_id, Module.id.in_(module_ids), Module.is_deleted.is_(False),
-    ))) != module_ids:
+    if (
+        module_ids
+        and set(
+            db.scalars(
+                select(Module.id).where(
+                    Module.org_id == org_id,
+                    Module.id.in_(module_ids),
+                    Module.is_deleted.is_(False),
+                )
+            )
+        )
+        != module_ids
+    ):
         raise InvalidSend("Record module unavailable")
     return records
 
 
 def _stage_children(
-    db: AuditSession, message: CommsMessage, command: SendMessageCommand,
-    root: CommsMessage | None, thread: CommsThread | None, records: list[Record],
+    db: AuditSession,
+    message: CommsMessage,
+    command: SendMessageCommand,
+    root: CommsMessage | None,
+    thread: CommsThread | None,
+    records: list[Record],
 ) -> None:
     if root is not None:
         root.reply_count += 1
         root.last_reply_at = message.created_at
         if thread is None:
-            db.add(CommsThread(
-                org_id=message.org_id, conversation_id=message.conversation_id,
-                root_message_id=root.id,
-            ))
+            db.add(
+                CommsThread(
+                    org_id=message.org_id,
+                    conversation_id=message.conversation_id,
+                    root_message_id=root.id,
+                )
+            )
         conversation = db.get(CommsConversation, message.conversation_id)
         assert conversation is not None
         scope: Scope = (
             {"kind": "channel", "id": conversation.id}
-            if conversation.kind == "channel" else {"kind": "workspace"}
+            if conversation.kind == "channel"
+            else {"kind": "workspace"}
         )
         if resolve_settings(db, scope)["effective"]["default_thread_subscription"]:
-            followed = db.scalar(select(CommsThreadFollow.id).where(
-                CommsThreadFollow.org_id == message.org_id,
-                CommsThreadFollow.root_message_id == root.id,
-                CommsThreadFollow.user_id == message.author_id,
-            ))
+            followed = db.scalar(
+                select(CommsThreadFollow.id).where(
+                    CommsThreadFollow.org_id == message.org_id,
+                    CommsThreadFollow.root_message_id == root.id,
+                    CommsThreadFollow.user_id == message.author_id,
+                )
+            )
             if followed is None:
-                db.add(CommsThreadFollow(org_id=message.org_id, root_message_id=root.id,
-                                         user_id=message.author_id))
+                db.add(
+                    CommsThreadFollow(
+                        org_id=message.org_id, root_message_id=root.id, user_id=message.author_id
+                    )
+                )
     for user_id in command.mention_user_ids:
         db.add(CommsMention(org_id=message.org_id, message_id=message.id, user_id=user_id))
     for file_id in command.attachment_ids:
-        db.add(CommsMessageAttachment(
-            org_id=message.org_id, message_id=message.id, file_id=file_id,
-        ))
+        db.add(
+            CommsMessageAttachment(
+                org_id=message.org_id,
+                message_id=message.id,
+                file_id=file_id,
+            )
+        )
     for record in records:
-        db.add(CommsMessageRecordLink(
-            org_id=message.org_id, message_id=message.id,
-            record_id=record.id, module_id=record.module_id,
-        ))
+        db.add(
+            CommsMessageRecordLink(
+                org_id=message.org_id,
+                message_id=message.id,
+                record_id=record.id,
+                module_id=record.module_id,
+            )
+        )
 
 
 def send_message(
@@ -279,10 +384,15 @@ def send_message(
         fingerprint = _fingerprint(command, conversation_id)
         existing = _find_original(db, org_id, author_id, command.client_key)
         retry_after = admit_message_send(db, org_id, author_id) if existing is None else None
-        counter = db.scalar(select(CommsConversationCounter).where(
-            CommsConversationCounter.org_id == org_id,
-            CommsConversationCounter.conversation_id == conversation_id,
-        ).with_for_update().execution_options(populate_existing=True))
+        counter = db.scalar(
+            select(CommsConversationCounter)
+            .where(
+                CommsConversationCounter.org_id == org_id,
+                CommsConversationCounter.conversation_id == conversation_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         existing = _find_original(db, org_id, author_id, command.client_key)
         if existing is not None:
             # Recheck after both author/counter waits, before refusing a full budget.
@@ -307,17 +417,26 @@ def send_message(
             raise InvalidSend("Conversation sequence exhausted")
         counter.last_seq += 1
         message = CommsMessage(
-            org_id=org_id, conversation_id=conversation_id, author_id=author_id,
-            seq=counter.last_seq, client_key=command.client_key, body=command.body,
+            org_id=org_id,
+            conversation_id=conversation_id,
+            author_id=author_id,
+            seq=counter.last_seq,
+            client_key=command.client_key,
+            body=command.body,
             send_fingerprint=fingerprint,
-            parent_id=command.parent_id, reply_to_id=command.reply_to_id,
+            parent_id=command.parent_id,
+            reply_to_id=command.reply_to_id,
             also_send_to_channel=command.also_send_to_channel,
-            mentions_channel=command.mentions_channel, mentions_here=command.mentions_here,
+            mentions_channel=command.mentions_channel,
+            mentions_here=command.mentions_here,
         )
         db.add(message)
         # Establish the parent and its timestamp before any dependent insert.
         db.flush()
         _stage_children(db, message, command, root, thread, records)
+        message_event(db, conversation_id, message.seq, "created")
+        if root is not None:
+            message_event(db, conversation_id, root.seq, "thread")
         db.commit()
         db.refresh(message)
         return SendMessageResult(message, replayed=False)

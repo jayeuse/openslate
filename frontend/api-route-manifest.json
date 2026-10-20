@@ -744,6 +744,24 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/presence-api.ts",
+    "function": "getPresence",
+    "method": "GET",
+    "path": "/api/comms/presence"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/presence-api.ts",
+    "function": "heartbeatPresence",
+    "method": "POST",
+    "path": "/api/comms/presence"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/presence-api.ts",
+    "function": "sendTyping",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/typing"
+  },
+  {
     "adapter": "frontend/src/components/systems/comms/adapters/search-api.ts",
     "function": "search",
     "method": "GET",

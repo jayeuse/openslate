@@ -82,7 +82,7 @@ def get(db: Session, message: CommsMessage) -> CommsThread | None:
     )
 
 
-def follow(db: Session, user: User, message: CommsMessage, enabled: bool) -> None:
+def follow(db: Session, user: User, message: CommsMessage, enabled: bool) -> bool:
     row = db.scalar(
         select(CommsThreadFollow)
         .where(
@@ -99,6 +99,7 @@ def follow(db: Session, user: User, message: CommsMessage, enabled: bool) -> Non
         )
     elif not enabled and row is not None:
         db.delete(row)
+    return (enabled and row is None) or (not enabled and row is not None)
 
 
 def project(db: Session, user_id: UUID, roots: Collection[UUID]) -> dict[UUID, ThreadResponse]:

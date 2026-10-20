@@ -30,6 +30,7 @@ from app.systems.comms.conversations.schemas import (
     MemberRoleRequest,
 )
 from app.systems.comms.messages.schemas import Category, Conversation
+from app.systems.comms.realtime.events import membership_event, organization_event, user_event
 from app.systems.comms.realtime.grants import revoke_stale
 
 DB = Annotated[AuditSession, Depends(get_db)]
@@ -98,6 +99,8 @@ def get_category(category_id: UUID, db: DB, actor: Actor, response: Response) ->
 def create_category(payload: CategoryRequest, db: DB, actor: Actor, response: Response) -> Category:
     with service.transaction(db):
         row = mutations.create_category(db, actor, payload)
+        organization_event(db, "structure")
+        organization_event(db, "grants")
         result = reads.categories(db, [row])[0]
         service.headers(db, response, row)
         response.headers["Location"] = f"/api/comms/categories/{row.id}"
@@ -118,6 +121,8 @@ def update_category(
         service.require_management(db, actor, {"kind": "category", "id": category_id})
         service.match(db, row, if_match)
         mutations.update_category(db, row, payload)
+        organization_event(db, "structure")
+        organization_event(db, "grants")
         db.flush()
         result = reads.categories(db, [row])[0]
         service.headers(db, response, row)
@@ -128,6 +133,8 @@ def update_category(
 def create_channel(payload: ChannelRequest, db: DB, actor: Actor, response: Response) -> Any:
     with service.transaction(db):
         row = mutations.create_channel(db, actor, payload)
+        organization_event(db, "structure")
+        organization_event(db, "grants")
         db.flush()
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
@@ -150,6 +157,7 @@ def update_channel(
         mutations.update_channel(db, row, payload)
         mutations.retain_read(db, actor, row)
         revoke_stale(db)
+        organization_event(db, "structure")
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
     return result
@@ -169,6 +177,7 @@ def _archive(
         row.archived_at, row.updated_at = utc_now() if enabled else None, utc_now()
         mutations.retain_read(db, actor, row)
         revoke_stale(db)
+        organization_event(db, "structure")
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
     return result
@@ -198,6 +207,9 @@ def restore(
 def direct(payload: DirectRequest, db: DB, actor: Actor, response: Response) -> Any:
     with service.transaction(db):
         row, created = directs.find_or_create(db, actor, payload.recipient_id)
+        if created:
+            organization_event(db, "structure")
+            organization_event(db, "grants")
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
         response.status_code = 201 if created else 200
@@ -210,6 +222,8 @@ def direct(payload: DirectRequest, db: DB, actor: Actor, response: Response) -> 
 def group(payload: GroupRequest, db: DB, actor: Actor, response: Response) -> Any:
     with service.transaction(db):
         row = directs.create_group(db, actor, payload.name, payload.participant_ids)
+        organization_event(db, "structure")
+        organization_event(db, "grants")
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
         response.headers["Location"] = f"/api/comms/conversations/{row.id}"
@@ -252,6 +266,7 @@ def set_access(
         row.updated_at = utc_now()
         mutations.retain_read(db, actor, row)
         revoke_stale(db)
+        organization_event(db, "structure")
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
     return result
@@ -272,6 +287,7 @@ def set_member_role(
         service.match(db, row, if_match)
         member = mutations.set_member_role(db, row, user_id, payload.role)
         revoke_stale(db)
+        membership_event(db, row, user_id)
         result = reads.member_rows(db, [member])[0]
         service.private(response)
     return result
@@ -291,6 +307,7 @@ def remove_member(
         service.match(db, row, if_match)
         mutations.remove_member(db, row, user_id)
         revoke_stale(db)
+        membership_event(db, row, user_id)
         service.private(response)
 
 
@@ -312,6 +329,8 @@ def duplicate(
         source = service.manage_conversation(db, actor, conversation_id)
         service.match(db, source, if_match)
         row = mutations.duplicate(db, actor, source, payload)
+        organization_event(db, "structure")
+        organization_event(db, "grants")
         db.flush()
         result = reads.conversation(db, actor, row)
         service.headers(db, response, row)
@@ -330,12 +349,16 @@ def list_blocks(
 @router.post("/direct-blocks", status_code=204)
 def block(payload: BlockRequest, db: DB, actor: Actor, response: Response) -> None:
     with service.transaction(db):
-        directs.toggle_block(db, actor, payload.blocked_user_id, enabled=True)
+        if directs.toggle_block(db, actor, payload.blocked_user_id, enabled=True):
+            user_event(db, actor.id, "grants", {})
+            user_event(db, payload.blocked_user_id, "grants", {})
         service.private(response)
 
 
 @router.delete("/direct-blocks/{user_id}", status_code=204)
 def unblock(user_id: UUID, db: DB, actor: Actor, response: Response) -> None:
     with service.transaction(db):
-        directs.toggle_block(db, actor, user_id, enabled=False)
+        if directs.toggle_block(db, actor, user_id, enabled=False):
+            user_event(db, actor.id, "grants", {})
+            user_event(db, user_id, "grants", {})
         service.private(response)

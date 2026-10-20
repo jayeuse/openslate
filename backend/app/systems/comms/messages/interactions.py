@@ -32,6 +32,7 @@ from app.systems.comms.messages.link_models import CommsMessageRecordLink
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
 from app.systems.comms.messages.reads import get_message, project_messages
 from app.systems.comms.messages.schemas import AvailableRecord, MessageResponse, UnavailableRecord
+from app.systems.comms.realtime.events import message_event
 from app.systems.comms.settings.resolution import Scope, resolve_settings
 
 DB = Annotated[AuditSession, Depends(get_db)]
@@ -94,8 +95,10 @@ def _reaction(
                     org_id=message.org_id, message_id=identity, user_id=actor.id, emoji=emoji
                 )
             )
+            message_event(db, conversation, message.seq, "reaction")
         elif not enabled and row is not None:
             db.delete(row)
+            message_event(db, conversation, message.seq, "reaction")
         db.flush()
         result = project_messages(db, actor.id, [message])[0]
         private(response)
@@ -142,6 +145,7 @@ def set_pin(
         if bool(message.pinned_at) != payload.pinned:
             message.pinned_at = utc_now() if payload.pinned else None
             message.pinned_by = actor.id if payload.pinned else None
+            message_event(db, conversation_id, message.seq, "pin")
         db.flush()
         result = project_messages(db, actor.id, [message])[0]
         private(response)

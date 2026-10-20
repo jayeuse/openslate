@@ -26,6 +26,7 @@ from app.systems.comms.messages.schemas import (
     ReplyRequest,
     ThreadResponse,
 )
+from app.systems.comms.realtime.events import message_event
 
 DB = Annotated[AuditSession, Depends(get_db)]
 Actor = Annotated[User, Depends(get_account_user)]
@@ -80,6 +81,7 @@ def create_thread(
             response.headers["Location"] = (
                 f"/api/comms/conversations/{conversation_id}/threads/{root.id}"
             )
+            message_event(db, conversation_id, root.seq, "thread")
         else:
             response.status_code = 200
         value = thread_state.response(db, actor, root, response)
@@ -123,8 +125,12 @@ def update_thread(
             raise error("comms_precondition_required", "If-Match is required", 428)
         if if_match != thread_state.version(row, root):
             raise error("comms_precondition_failed", "Thread changed", 412)
-        for key, value in payload.model_dump(exclude_unset=True).items():
+        values = payload.model_dump(exclude_unset=True)
+        changed = any(getattr(row, key) != value for key, value in values.items())
+        for key, value in values.items():
             setattr(row, key, value)
+        if changed:
+            message_event(db, conversation_id, root.seq, "thread")
         result = thread_state.response(db, actor, root, response)
     return result
 
@@ -183,7 +189,8 @@ def follow_thread(
         root = thread_state.root(db, actor, conversation_id, root_message_id, lock=True)
         if thread_state.get(db, root) is None:
             raise error("comms_not_found", "Thread not found")
-        thread_state.follow(db, actor, root, payload.followed)
+        if thread_state.follow(db, actor, root, payload.followed):
+            message_event(db, conversation_id, root.seq, "thread")
         value = thread_state.response(db, actor, root, response)
     return value
 

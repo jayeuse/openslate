@@ -11,7 +11,9 @@ from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.comms.access import fresh_membership, readable_conversation_ids
 from app.systems.comms.conversations.models import CommsConversation
+from app.systems.comms.realtime.events import organization_event
 from app.systems.comms.realtime.models import CommsRealtimeGrant
+from app.systems.manage.audit.context import get_audit_context
 
 
 def lock_projection(db: Session) -> None:
@@ -91,6 +93,9 @@ def revoke_stale(db: Session) -> None:
             by_user[row.user_id] = live_readable_ids(db, actor) if actor else set()
         if row.conversation_id not in by_user[row.user_id]:
             db.delete(row)
+    # Operator-only maintenance has no app actor and cannot forge a request event.
+    if get_audit_context(db).performed_by is not None:
+        organization_event(db, "grants")
 
 
 def sweep_expired(db: Session, now: datetime) -> int:

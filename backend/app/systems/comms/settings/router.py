@@ -10,6 +10,7 @@ from app.core.database.session import AuditSession, get_db
 from app.systems.access.users.models import User
 from app.systems.comms.capabilities import channel_creation_check, inspect_capabilities
 from app.systems.comms.conversations.service import private, transaction
+from app.systems.comms.realtime.events import organization_event
 from app.systems.comms.settings import service
 from app.systems.comms.settings.resolution import Scope, locked_keys
 from app.systems.comms.settings.schemas import (
@@ -76,6 +77,7 @@ def _change(
         db.flush()
         result = service.settings(db, scope)
         service.headers(db, scope, response)
+        organization_event(db, "grants")
     return result
 
 
@@ -115,6 +117,7 @@ def set_locks(
         db.flush()
         result = service.settings(db, WORKSPACE)
         service.headers(db, WORKSPACE, response)
+        organization_event(db, "grants")
     return result
 
 
@@ -142,6 +145,7 @@ def _set_capabilities(
         db.flush()
         result = service.configuration(db, scope)
         service.headers(db, scope, response)
+        organization_event(db, "grants")
     return result
 
 
@@ -189,6 +193,7 @@ def set_capability_locks(
         db.flush()
         result = CapabilityLocks(capabilities=sorted(locked_keys(db, "capability")))
         service.headers(db, WORKSPACE, response)
+        organization_event(db, "grants")
     return result
 
 

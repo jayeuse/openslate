@@ -4179,6 +4179,28 @@
         "title": "ContentLink",
         "type": "object"
       },
+      "ConversationHead": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "high_water_seq": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "High Water Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "high_water_seq"
+        ],
+        "title": "ConversationHead",
+        "type": "object"
+      },
       "ConversationSummary": {
         "additionalProperties": false,
         "properties": {
@@ -8433,6 +8455,67 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HeartbeatRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "known_sequences": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationHead"
+            },
+            "maxItems": 100,
+            "title": "Known Sequences",
+            "type": "array"
+          },
+          "state": {
+            "enum": [
+              "online",
+              "away"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "HeartbeatRequest",
+        "type": "object"
+      },
+      "HeartbeatResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationHead"
+            },
+            "maxItems": 100,
+            "title": "Changed",
+            "type": "array"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "user_id",
+          "changed",
+          "truncated"
+        ],
+        "title": "HeartbeatResponse",
         "type": "object"
       },
       "HistoryPagination": {
@@ -12932,6 +13015,55 @@
         ],
         "title": "PostView",
         "type": "string"
+      },
+      "PresenceSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PresenceState"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "items"
+        ],
+        "title": "PresenceSnapshot",
+        "type": "object"
+      },
+      "PresenceState": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "enum": [
+              "online",
+              "away",
+              "offline"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "state"
+        ],
+        "title": "PresenceState",
+        "type": "object"
       },
       "PreviewUser": {
         "properties": {
@@ -37740,6 +37872,75 @@
         ]
       }
     },
+    "/api/comms/conversations/{conversation_id}/typing": {
+      "post": {
+        "operationId": "post_typing_api_comms_conversations__conversation_id__typing_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "One typing admission per actor/conversation every two seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Typing",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
     "/api/comms/direct-blocks": {
       "get": {
         "operationId": "list_blocks_api_comms_direct_blocks_get",
@@ -38376,6 +38577,138 @@
           }
         ],
         "summary": "Put Personal",
+        "tags": [
+          "comms"
+        ]
+      }
+    },
+    "/api/comms/presence": {
+      "get": {
+        "operationId": "get_presence_api_comms_presence_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user_ids",
+            "required": false,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "title": "User Ids",
+              "type": "array"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresenceSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Presence",
+        "tags": [
+          "comms"
+        ]
+      },
+      "post": {
+        "operationId": "post_presence_api_comms_presence_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-org",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Org"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeartbeatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeartbeatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Presence",
         "tags": [
           "comms"
         ]

@@ -16,6 +16,7 @@ from app.systems.access.users.models import Membership, User
 from app.systems.comms.access import error, fresh_membership, require_conversation_access
 from app.systems.comms.conversations.service import category, private, transaction
 from app.systems.comms.messages.schemas import CategoryPreferences, MemberPreferences
+from app.systems.comms.realtime.events import user_event
 from app.systems.comms.settings.models import CommsMemberPreferences, CommsPersonalPreferences
 from app.systems.comms.settings.schemas import (
     CategoryPreferencesRequest,
@@ -141,6 +142,7 @@ def put_personal(
             None,
         )
         _version(response, payload)
+        user_event(db, actor.id, "structure", {})
     return payload
 
 
@@ -185,6 +187,7 @@ def patch_member(
         row.mute, row.muted_until = values["mute"]["kind"], values["mute"].get("until")
         value = _project(row)
         _version(response, value)
+        user_event(db, actor.id, "membership", {"conversation_id": str(conversation_id)})
     return value
 
 
@@ -226,4 +229,5 @@ def put_category(
         row.mute, row.muted_until = mute["kind"], mute.get("until")
         value = _project(row, is_category=True)
         _version(response, value)
+        user_event(db, actor.id, "structure", {})
     return value

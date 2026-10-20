@@ -109,6 +109,10 @@ def execute_comms_control(
     *,
     on_substep: PhaseSubstep | None = None,
 ) -> dict[str, object]:
+    if action.values.get("operation") in ("presence_roundtrip", "partner_presence_roundtrip"):
+        from operations.sample.controls.comms_presence import execute_presence_control
+
+        return execute_presence_control(action, dataset, context, on_substep=on_substep)
     if action.values.get("operation") in ("token_roundtrip", "partner_token_roundtrip"):
         from operations.sample.controls.comms_realtime import execute_token_control
 

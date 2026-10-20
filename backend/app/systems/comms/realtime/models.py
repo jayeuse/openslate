@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -60,3 +61,44 @@ class CommsRealtimeAdmission(Base):
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     issued_at: Mapped[list[datetime]] = mapped_column(ARRAY(DateTime(timezone=True)))
+
+
+class CommsPresence(Base):
+    __tablename__ = "comms_presence"
+    __audit_enabled__: ClassVar[bool] = False
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_comms_presence_org_id_id"),
+        UniqueConstraint("org_id", "user_id", name="uq_comms_presence_user"),
+        CheckConstraint("state IN ('online','away','offline')", name="ck_comms_presence_state"),
+        Index("ix_comms_presence_seen", "org_id", "last_seen_at"),
+        Index("ix_comms_presence_user", "user_id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid7)
+    org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    state: Mapped[str] = mapped_column(Text)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CommsTyping(Base):
+    __tablename__ = "comms_typing"
+    __audit_enabled__: ClassVar[bool] = False
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_comms_typing_org_id_id"),
+        UniqueConstraint(
+            "org_id", "user_id", "conversation_id", name="uq_comms_typing_user_conversation"
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "conversation_id"],
+            ["comms_conversations.org_id", "comms_conversations.id"],
+            name="fk_comms_typing_conversation",
+            ondelete="CASCADE",
+        ),
+        Index("ix_comms_typing_conversation", "org_id", "conversation_id"),
+        Index("ix_comms_typing_user", "user_id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid7)
+    org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    conversation_id: Mapped[UUID]
+    last_sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

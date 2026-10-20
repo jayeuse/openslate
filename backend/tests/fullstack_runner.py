@@ -185,6 +185,14 @@ def main(arguments=()):
     batch = parse_batch(arguments, BACKEND)
     reset_only = arguments == ("--reset-acceptance-only",)
     realtime_only = arguments == ("--realtime-foundation-only",)
+    comms_native = arguments in (("--comms-realtime-only",), ("--comms-capacity-only",))
+    if comms_native:
+        target = "comms_capacity.py" if arguments == ("--comms-capacity-only",) else "comms_live.py"
+        batch = {
+            "targets": [f"tests/realtime/{target}"],
+            "layer": "integration",
+            "interactive": False,
+        }
     if realtime_only:
         batch = {
             "targets": [
@@ -219,7 +227,15 @@ def main(arguments=()):
         output = coverage_output(BACKEND)
         if output.exists():
             shutil.rmtree(output)
-    for port in (GATEWAY_PORT,) if realtime_only else () if backend_only else (8008, GATEWAY_PORT):
+    for port in (
+        (8008, GATEWAY_PORT)
+        if comms_native
+        else (GATEWAY_PORT,)
+        if realtime_only
+        else ()
+        if backend_only
+        else (8008, GATEWAY_PORT)
+    ):
         with socket.socket() as listener:
             try:
                 listener.bind(("127.0.0.1", port))
@@ -335,6 +351,36 @@ def main(arguments=()):
             caddy = DisposableCaddy(private, run_id, gateway_env, log)
             caddy.start()
             api_env["OPENSLATE_TEST_REALTIME_GATEWAY"] = WEB
+        if comms_native:
+            timed("native Comms API and same-origin gateway")
+            api_env["OPENSLATE_COMMS_NATIVE_API"] = API
+            api_env["OPENSLATE_COMMS_TELEMETRY"] = str(private / "comms-metrics.jsonl")
+            processes.append(
+                subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "uvicorn",
+                        "tests.realtime.measured_api:app",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        "8008",
+                        "--no-access-log",
+                        "--limit-concurrency",
+                        str(RUNNER_CONCURRENCY_LIMIT),
+                    ],
+                    cwd=BACKEND,
+                    env=api_env,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=True,
+                )
+            )
+            wait_for(API + "/api/ready", processes[-1])
+            caddy = DisposableCaddy(private, run_id, gateway_env, log)
+            caddy.start()
+            api_env["OPENSLATE_TEST_REALTIME_GATEWAY"] = WEB
         if not acceptance_only and not browser_only:
             timed("backend batch" if batch else "backend regression and coverage gate")
             execute = run_backend_batches if batch else run_backend_coverage
@@ -346,6 +392,12 @@ def main(arguments=()):
                     **api_env,
                     "MIGRATION_DATABASE_URL": owner_url,
                     "TEST_DATABASE_URL": database_env["DATABASE_URL"],
+                    # Operator-only metric reads; never passed to the separately started API.
+                    **(
+                        {"DATABASE_BOOTSTRAP_URL": database_env["DATABASE_BOOTSTRAP_URL"]}
+                        if arguments == ("--comms-capacity-only",)
+                        else {}
+                    ),
                 },
                 run_id,
                 *([batch] if batch else [shard] if shard else []),

@@ -223,6 +223,12 @@ services:
       RLIMIT_NOFILE: "10000"
       APP_NAME: realtime
       SEED_SELF_HOST: "true"
+      # D20: S02 observed the default 200 cap refusing 100/300 handshakes.
+      # Raise only this resource ceiling; topic RLS and browser-write denial stay unchanged.
+      TENANT_MAX_CONCURRENT_USERS: "500"
+      # S20 measured publisher429s at100; one approved300-member structure/grants
+      # change emits600 IDs-only events. Keep bounded headroom without changing authz.
+      TENANT_MAX_EVENTS_PER_SECOND: "1000"
       SELF_HOST_TENANT_NAME: realtime-dev
       RUN_JANITOR: "true"
       DISABLE_HEALTHCHECK_LOGGING: "true"

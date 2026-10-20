@@ -34,8 +34,10 @@ from app.systems.comms.messages.models import CommsConversationCounter as CommsC
 from app.systems.comms.messages.models import CommsMessage as CommsMessage
 from app.systems.comms.messages.models import CommsMessageRevision as CommsMessageRevision
 from app.systems.comms.messages.models import CommsReadState as CommsReadState
+from app.systems.comms.realtime.models import CommsPresence as CommsPresence
 from app.systems.comms.realtime.models import CommsRealtimeAdmission as CommsRealtimeAdmission
 from app.systems.comms.realtime.models import CommsRealtimeGrant as CommsRealtimeGrant
+from app.systems.comms.realtime.models import CommsTyping as CommsTyping
 from app.systems.comms.settings.models import CommsCapabilityGrant as CommsCapabilityGrant
 from app.systems.comms.settings.models import CommsMemberPreferences as CommsMemberPreferences
 from app.systems.comms.settings.models import CommsPersonalPreferences as CommsPersonalPreferences
