@@ -7,6 +7,8 @@ from app.systems.comms.files.router import router as files
 from app.systems.comms.messages.interactions import router as interactions
 from app.systems.comms.messages.router import router as messages
 from app.systems.comms.messages.threads import router as threads
+from app.systems.comms.moderation.lifecycle import router as lifecycle
+from app.systems.comms.moderation.router import router as moderation
 from app.systems.comms.realtime.router import router as realtime
 from app.systems.comms.search import router as search
 from app.systems.comms.settings.preferences import router as preferences
@@ -22,3 +24,5 @@ router.include_router(interactions)
 router.include_router(files)
 router.include_router(search)
 router.include_router(realtime)
+router.include_router(moderation)
+router.include_router(lifecycle)

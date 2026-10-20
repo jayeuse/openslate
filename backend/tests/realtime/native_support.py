@@ -133,6 +133,10 @@ def native_room(request):
             params = {"orgs": orgs, "users": [person.id for person in people]}
             for table in (
                 "in_app_notifications",
+                "comms_reports",
+                "comms_message_attachments",
+                "comms_message_record_links",
+                "comms_message_revisions",
                 "comms_mentions",
                 "comms_read_states",
                 "comms_presence",
@@ -140,12 +144,17 @@ def native_room(request):
                 "comms_realtime_grants",
                 "comms_realtime_admissions",
                 "comms_messages",
+                "files",
+                "comms_settings",
                 "comms_members",
                 "comms_conversation_counters",
                 "comms_conversations",
             ):
                 connection.execute(text(f"DELETE FROM {table} WHERE org_id=ANY(:orgs)"), params)
             for sql in (
+                "DELETE FROM lifecycle_rate_limit_failures WHERE org_id=ANY(:orgs)",
+                "DELETE FROM lifecycle_rate_limit_buckets WHERE org_id=ANY(:orgs)",
+                "DELETE FROM lifecycle_confirmation_challenges WHERE org_id=ANY(:orgs)",
                 "DELETE FROM identity_sessions WHERE user_id=ANY(:users)",
                 "DELETE FROM memberships WHERE org_id=ANY(:orgs)",
                 "DELETE FROM audit_logs WHERE org_id=ANY(:orgs)",

@@ -13,6 +13,7 @@ from app.systems.access.users.membership import bound_organization
 from app.systems.access.users.models import User
 from app.systems.comms.access import error, require_conversation_access
 from app.systems.comms.capabilities import (
+    capability_check,
     scope_management_decision,
     validate_capability_configuration,
 )
@@ -44,7 +45,9 @@ def read_scope(db: Session, actor: User, scope: Scope) -> ScopeContext:
     return context
 
 
-def lock_scope(db: Session, actor: User, scope: Scope, *, write: bool = True) -> None:
+def lock_scope(
+    db: Session, actor: User, scope: Scope, *, write: bool = True, allow_moderation: bool = False,
+) -> None:
     read_scope(db, actor, scope)
     # Structure writers already lock the resource. Keep that ordering and protect
     # ancestor settings/locks with shared ancestor locks; unrelated channels can write concurrently.
@@ -75,6 +78,10 @@ def lock_scope(db: Session, actor: User, scope: Scope, *, write: bool = True) ->
                     .execution_options(populate_existing=True)
                 )
     if write and not scope_management_decision(db, actor, scope)["allowed"]:
+        if (allow_moderation and scope["kind"] == "channel"
+                and capability_check(db, actor, scope["id"])["capabilities"]["moderate"]["allowed"]
+        ):
+            return
         raise error("comms_capability_denied", "Configuration change is not permitted", 403)
 
 

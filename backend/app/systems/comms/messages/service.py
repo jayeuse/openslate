@@ -21,6 +21,7 @@ from app.systems.comms.messages.interaction_models import (
 )
 from app.systems.comms.messages.link_models import CommsMessageAttachment, CommsMessageRecordLink
 from app.systems.comms.messages.models import CommsConversationCounter, CommsMessage
+from app.systems.comms.messages.mutations import message_capacity_error
 from app.systems.comms.notifications import stage_notifications
 from app.systems.comms.rate_limit import admit_message_send
 from app.systems.comms.realtime.events import message_event
@@ -157,12 +158,11 @@ def _admit_transaction(db: AuditSession, org_id: UUID, author_id: UUID) -> None:
 
 
 def _validate_payload(command: SendMessageCommand) -> None:
-    if not isinstance(command.body, str) or len(command.body) > 4000:
-        raise InvalidSend("Body must be text of at most 4000 Unicode characters")
-    if not command.body.strip() and not command.attachment_ids and not command.record_ids:
-        raise InvalidSend("A body, attachment or record link is required")
-    if len(command.attachment_ids) > 10:
-        raise InvalidSend("At most ten distinct attachments are allowed")
+    reason = message_capacity_error(
+        command.body, len(command.attachment_ids), len(command.record_ids),
+    )
+    if reason is not None:
+        raise InvalidSend(reason)
     if command.also_send_to_channel and command.parent_id is None:
         raise InvalidSend("Only a thread reply can also be sent to the channel")
 

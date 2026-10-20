@@ -1,6 +1,5 @@
 """The eight S17 message routes; configuration, revision reads and S18 remain separate."""
 
-from hashlib import sha256
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -25,11 +24,11 @@ from app.systems.comms.messages.commands import send
 from app.systems.comms.messages.interaction_models import CommsMention
 from app.systems.comms.messages.link_models import CommsMessageAttachment, CommsMessageRecordLink
 from app.systems.comms.messages.models import (
-    CommsConversationCounter,
     CommsMessage,
     CommsMessageRevision,
     CommsReadState,
 )
+from app.systems.comms.messages.mutations import advance_generation, lock_counter, message_version
 from app.systems.comms.messages.reads import get_message, history, project_messages
 from app.systems.comms.messages.schemas import (
     BootstrapResponse,
@@ -77,24 +76,8 @@ def _private(response: Response) -> None:
 
 def _version(response: Response, message: LiveMessage | Tombstone) -> LiveMessage | Tombstone:
     _private(response)
-    response.headers["ETag"] = '"' + sha256(message.model_dump_json().encode()).hexdigest() + '"'
+    response.headers["ETag"] = message_version(message)
     return message
-
-
-def _counter(db: AuditSession, conversation_id: UUID) -> CommsConversationCounter:
-    row = db.scalar(
-        select(CommsConversationCounter)
-        .where(
-            CommsConversationCounter.org_id == bound_organization_column(),
-            CommsConversationCounter.conversation_id == conversation_id,
-            CommsConversationCounter.is_deleted.is_(False),
-        )
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if row is None:
-        raise error("comms_not_found", "Conversation not found")
-    return row
 
 
 @router.get("/bootstrap", response_model=BootstrapResponse)
@@ -189,7 +172,7 @@ def _change_message(
     request: EditRequest | None,
 ) -> CommsMessage:
     require_conversation_access(db, user, conversation_id, "read")
-    _counter(db, conversation_id)
+    lock_counter(db, conversation_id)
     _, check, settings = _posting_context(db, user, conversation_id)
     message = get_message(db, conversation_id, message_id=message_id, lock=True)
     if message.is_deleted or message.deleted_at:
@@ -243,6 +226,7 @@ def _change_message(
         )
     else:
         message.is_deleted, message.deleted_at, message.deleted_by = True, utc_now(), user.id
+    advance_generation(message)
     message_event(db, conversation_id, message.seq, "edited" if request is not None else "deleted")
     db.commit()
     db.refresh(message)
@@ -300,7 +284,7 @@ def mark_read(
 ) -> ReadResponse:
     require_conversation_access(db, user, conversation_id, "read")
     try:
-        counter = _counter(db, conversation_id)
+        counter = lock_counter(db, conversation_id)
         require_conversation_access(db, user, conversation_id, "read")
         row = db.scalar(
             select(CommsReadState)

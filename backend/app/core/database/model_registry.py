@@ -34,6 +34,7 @@ from app.systems.comms.messages.models import CommsConversationCounter as CommsC
 from app.systems.comms.messages.models import CommsMessage as CommsMessage
 from app.systems.comms.messages.models import CommsMessageRevision as CommsMessageRevision
 from app.systems.comms.messages.models import CommsReadState as CommsReadState
+from app.systems.comms.moderation.models import CommsReport as CommsReport
 from app.systems.comms.realtime.models import CommsPresence as CommsPresence
 from app.systems.comms.realtime.models import CommsRealtimeAdmission as CommsRealtimeAdmission
 from app.systems.comms.realtime.models import CommsRealtimeGrant as CommsRealtimeGrant

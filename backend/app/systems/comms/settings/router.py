@@ -68,7 +68,10 @@ def _change(
     if_match: str | None,
 ) -> SettingsResponse | WorkspaceSettingsResponse:
     with transaction(db):
-        service.lock_scope(db, actor, scope)
+        keys = set(payload.keys if isinstance(payload, SettingsReset) else payload.model_fields_set)
+        service.lock_scope(db, actor, scope, allow_moderation=bool(keys) and keys <= {
+            "locked", "slow_mode_seconds", "restricted_person_ids", "restriction_until",
+        })
         service.match(db, scope, if_match)
         if isinstance(payload, SettingsReset):
             service.reset_settings(db, scope, payload.keys)

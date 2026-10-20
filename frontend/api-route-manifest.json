@@ -744,6 +744,84 @@
     "path": "/api/comms/conversations/{param}/messages"
   },
   {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "getReport",
+    "method": "GET",
+    "path": "/api/comms/reports/{param}"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "listMessageRevisions",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/messages/{param}/revisions"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "listRemovedMessages",
+    "method": "GET",
+    "path": "/api/comms/conversations/{param}/removed-messages"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "listReports",
+    "method": "GET",
+    "path": "/api/comms/reports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "previewPurge",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/purge/preview"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "purgeConversation",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/purge"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "removeMessage",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages/{param}/removal"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "removeReportedMessage",
+    "method": "POST",
+    "path": "/api/comms/reports/{param}/message-removal"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "reportMessage",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages/{param}/reports"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "resolveReport",
+    "method": "POST",
+    "path": "/api/comms/reports/{param}/resolution"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "restoreMessage",
+    "method": "POST",
+    "path": "/api/comms/conversations/{param}/messages/{param}/restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "restoreReportedMessage",
+    "method": "POST",
+    "path": "/api/comms/reports/{param}/message-restoration"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/moderation-api.ts",
+    "function": "setPostingRestrictions",
+    "method": "PUT",
+    "path": "/api/comms/conversations/{param}/restrictions"
+  },
+  {
     "adapter": "frontend/src/components/systems/comms/adapters/presence-api.ts",
     "function": "getPresence",
     "method": "GET",

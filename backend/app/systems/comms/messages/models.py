@@ -60,6 +60,10 @@ class CommsMessage(BaseModel):
             ondelete="RESTRICT",
         ),
         CheckConstraint("seq BETWEEN 1 AND 9007199254740991", name="ck_comms_messages_sequence"),
+        CheckConstraint(
+            "mutation_generation BETWEEN 0 AND 9007199254740991",
+            name="ck_comms_messages_mutation_generation",
+        ),
         CheckConstraint("char_length(body) <= 4000", name="ck_comms_messages_body_length"),
         CheckConstraint(
             "send_fingerprint ~ '^[0-9a-f]{64}$'", name="ck_comms_messages_send_fingerprint"
@@ -97,6 +101,9 @@ class CommsMessage(BaseModel):
     )
     conversation_id: Mapped[UUID] = mapped_column(nullable=False)
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    mutation_generation: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text("0"), nullable=False,
+    )
     author_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

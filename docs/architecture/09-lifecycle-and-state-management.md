@@ -16,4 +16,23 @@ Password challenges for destructive lifecycle work ask Supabase Auth to verify t
 
 Application file metadata remains in the OpenSlate PostgreSQL schema while bytes live in the private Supabase Storage `openslate-ready` bucket. The upload request validates the file type while the file is still `awaiting_upload`; an invalid file is refused with 422 and the row does not change. A valid file moves to `uploading`, its bytes are written through the [Storage adapter](../../backend/app/systems/platform/files/supabase_storage.py), and the same request sets `ready`. A write that Storage rejects sets `rejected`. Only `ready` permits authorized download. Reconciliation moves an uncertain upload to `ready` only when the exact bytes exist in the bucket. Deletion passes through `deleting` to `purged`. A reservation that is never uploaded expires 24 hours after it is created; the next reservation after that point purges it.
 
+Comms conversation purge (`comms/moderation/lifecycle.py` and `purge.py`) requires an
+archived, currently readable conversation and exact organization-administrator authority.
+Its password challenge binds the actor, organization, target and count/max-sequence impact
+digest. New deletion claims and the final source deletion retain administrator/source locks;
+completion of an already admitted Storage claim keeps the existing token-fenced cleanup rule. Message
+dependencies are removed through bounded individual audited ORM changes, with message
+relationships eagerly loaded to avoid per-message deletion reads. Attached bytes use the
+existing committed immutable-key deletion claims first; an uncertain provider deletion
+leaves its file state and conversation metadata for reconciliation and a fresh confirmation.
+This is not an atomic transaction across PostgreSQL and Storage. Message bodies and report
+reasons stay redacted in audit snapshots, and final Comms invalidations carry no content.
+
+Comms report-bound removal/restoration uses an open retained report and a compound
+report/source-generation validator. Current moderators need both `moderate` and
+`deleteOthersMessages`; exact organization admins may act on a reported private source
+without gaining ordinary private reads. Those commands return only the report reference,
+never restored message content, and do not resolve the report. Revisions still require the
+source author or a current conversation manager and are unavailable for a tombstone.
+
 After a committed audit-aware mutation, the [event publisher](../../backend/app/systems/platform/events/publisher.py) sends an opaque PostgreSQL `LISTEN`/`NOTIFY` invalidation for authenticated SSE. Supabase Realtime is not used for this flow. Notification failure does not roll back the business transaction; consumers resynchronize by reading authorized resources again. See [infrastructure](11-infrastructure.md#storage) and [runtime flows](13-runtime-flows.md).
