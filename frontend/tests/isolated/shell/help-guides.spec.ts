@@ -18,7 +18,11 @@ const guides: { href: string; title: string; tasks: RegExp[] }[] = [
   {
     href: "/comms",
     title: "OpenComms",
-    tasks: [/example/i, /message|conversation/i],
+    tasks: [
+      /server/i,
+      /separate labeled example workspace/i,
+      /message|conversation/i,
+    ],
   },
   { href: "/access", title: "Access", tasks: [/people/i, /group|access/i] },
   { href: "/openview", title: "OpenView", tasks: [/record/i, /view|report/i] },

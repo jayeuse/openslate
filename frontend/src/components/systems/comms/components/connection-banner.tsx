@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { CommsClient } from "../contract/client";
+import type { CommsViewClient as CommsClient } from "../contract/client";
 import type { ConnectionState } from "../contract/types";
 import { useCommsClient } from "../state/client-context";
 import { Action } from "../../shared/components/ui";
@@ -90,7 +90,7 @@ export function ConnectionBanner() {
           {organizationName}
         </span>
       )}
-      <span className="text-muted-foreground">Local example connection</span>
+      <span className="text-muted-foreground">Connection</span>
       <span>{label}</span>
       {(state === "offline" || state === "paused") && (
         <Action size="sm" variant="ghost" onClick={reload}>

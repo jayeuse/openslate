@@ -38,6 +38,7 @@ import { useWorkspaceDisplayRegion } from "@/components/use-display-region";
 import { datetimeInputToUtc, formatDateTimeLocal } from "@/lib/date-time";
 import { TextField } from "./message-shared";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { useCommsClient } from "../state/client-context";
 import { complete } from "../state/workspace-view";
 import {
   messageFromCommsError,
@@ -108,6 +109,10 @@ function LifecycleTools({
   opener,
   onClose,
 }: CommsToolsDialogProps) {
+  const { client: admittedClient, scope } = useCommsClient();
+  const example = scope?.kind === "example-tools";
+  const [password, setPassword] = useState("");
+  useEffect(() => setPassword(""), [admittedClient]);
   const workspace = useCommsWorkspaceView();
   const region = useWorkspaceDisplayRegion();
   const { run, isPending } = useCommsCommands();
@@ -229,6 +234,8 @@ function LifecycleTools({
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [sampleConfirmed, setSampleConfirmed] = useState(false);
+  const proofReady = example ? sampleConfirmed : password.length > 0;
+  const passwordProof = example ? sampleMarker : password;
   const [days, setDays] = useState(0);
   const [fileDays, setFileDays] = useState(0);
   const [inheritFiles, setInheritFiles] = useState(false);
@@ -298,6 +305,8 @@ function LifecycleTools({
         ),
       );
       return false;
+    } finally {
+      setPassword("");
     }
   }
   async function save() {
@@ -438,7 +447,7 @@ function LifecycleTools({
         view === "moderation"
           ? "Review reports, limit posting, and restore removed messages."
           : view === "retention"
-            ? "Preview and save retention for local sample data."
+            ? "Preview retention impact before confirming a protected change."
             : view === "history"
               ? "Preview a saved change before restoring its earlier values."
               : undefined
@@ -476,11 +485,21 @@ function LifecycleTools({
         {!resource.data && resource.status === "loading" && (
           <p role="status">Loading tool…</p>
         )}
-        {protectedView && (
+        {protectedView && example && (
           <Toggle
             label="Confirm sample operation — local example data only; no account password required."
             checked={sampleConfirmed}
             onCheckedChange={setSampleConfirmed}
+          />
+        )}
+        {protectedView && !example && (
+          <TextField
+            label="Current password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            disabled={isPending()}
           />
         )}
         {view === "thread" && (
@@ -534,7 +553,7 @@ function LifecycleTools({
               </Choice>
               <Button
                 variant="outline"
-                disabled={!sampleConfirmed || isPending() || !historyId}
+                disabled={!proofReady || isPending() || !historyId}
                 onClick={() => {
                   const entry = resource.data?.history.find(
                     (row) => row.id === historyId,
@@ -552,7 +571,7 @@ function LifecycleTools({
                         {
                           signal,
                           if_match: current.etag,
-                          password: sampleMarker,
+                          password: passwordProof,
                         },
                       );
                       setRestore({ entry, preview });
@@ -580,7 +599,7 @@ function LifecycleTools({
                       names={names}
                     />
                     <Button
-                      disabled={!sampleConfirmed || isPending()}
+                      disabled={!proofReady || isPending()}
                       onClick={() => {
                         void action(
                           `restore:${restore.entry.id}`,
@@ -595,7 +614,7 @@ function LifecycleTools({
                               {
                                 signal,
                                 if_match: restore.preview.etag,
-                                password: sampleMarker,
+                                password: passwordProof,
                               },
                             );
                             setRestore(undefined);
@@ -633,9 +652,7 @@ function LifecycleTools({
                 setRetentionPreview(undefined);
               }}
               preview={retentionPreview?.value}
-              disabled={
-                !sampleConfirmed || isPending() || !resource.data?.retention
-              }
+              disabled={!proofReady || isPending() || !resource.data?.retention}
               inherited={retentionTarget !== "workspace" && inheritRetention}
               onPreview={() => {
                 void action("retention-preview", async (client, signal) => {
@@ -657,7 +674,7 @@ function LifecycleTools({
                   const value = await client.previewRetention(policy, {
                     signal,
                     if_match: current.etag,
-                    password: sampleMarker,
+                    password: passwordProof,
                   });
                   setRetentionPreview({ value, policy, etag: current.etag });
                 });
@@ -675,7 +692,7 @@ function LifecycleTools({
                       {
                         signal,
                         if_match: retentionPreview.etag,
-                        password: sampleMarker,
+                        password: passwordProof,
                       },
                     );
                     setRetentionPreview(undefined);

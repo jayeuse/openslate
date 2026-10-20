@@ -49,7 +49,7 @@ export function ConversationView({
   desktop: boolean;
 }) {
   const { people, messages, threads, bootstrap } = useCommsWorkspaceView();
-  const { client } = useCommsClient();
+  const { client, reload } = useCommsClient();
   const { run, isPending } = useCommsCommands();
   const { toggleDirect } = useCommsListActions();
   const {
@@ -275,7 +275,12 @@ export function ConversationView({
           }}
         >
           {!canView ? (
-            <Alert>This conversation is not available</Alert>
+            <Alert role="alert">
+              <span>This conversation is not available</span>
+              <Action onClick={selected ? history.retry : reload}>
+                Retry history
+              </Action>
+            </Alert>
           ) : (
             <MessageTimeline
               header={
@@ -329,6 +334,7 @@ export function ConversationView({
               viewportRef={messageList}
               editRequest={editRequest}
               restoreAnchor={history.restore}
+              restoreId={history.restoreId}
               targetId={messageId}
               followLatest={history.followLatest}
               visibleMessages={visibleMessages}

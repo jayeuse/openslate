@@ -17,6 +17,7 @@ export function VirtualMessageList({
   footer,
   viewportRef,
   restoreAnchor,
+  restoreId = "",
   targetId = "",
   retainedId = "",
   followLatest = true,
@@ -27,6 +28,7 @@ export function VirtualMessageList({
   footer?: ReactNode;
   viewportRef: RefObject<HTMLDivElement | null>;
   restoreAnchor?: (align: (id: string, top: number) => boolean) => void;
+  restoreId?: string;
   targetId?: string;
   retainedId?: string;
   followLatest?: boolean;
@@ -62,7 +64,7 @@ export function VirtualMessageList({
       [
         ...new Set([
           ...defaultRangeExtractor(range),
-          ...[retainedId, focusedId, targetId].flatMap((id) => {
+          ...[retainedId, restoreId, focusedId, targetId].flatMap((id) => {
             const index = messages.findIndex((message) => message.id === id);
             return index < 0 ? [] : [index];
           }),

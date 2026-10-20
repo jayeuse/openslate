@@ -9,6 +9,7 @@ import {
   test,
 } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 
 // Asset metrics only: traces can retain response bodies and signed-in state.
 test.use({
@@ -23,11 +24,10 @@ const gzip = {
   memLevel: 8,
   strategy: constants.Z_DEFAULT_STRATEGY,
 };
-// Plan §6: S14 grows at most 5% from the previous committed slice, S13 (18447d82).
-const baselineColdGzipBytes = 588_981;
-const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
-// S26 has a separate strict target: below the original S04 baseline, not +5%.
+// Supervisor defers the strict S04 target to S31; S26 keeps the per-slice 5% gate.
 const s04BaselineColdGzipBytes = 546_979;
+const baselineColdGzipBytes = 591_770;
+const maximumColdGzipBytes = Math.floor(baselineColdGzipBytes * 1.05);
 
 function manifestChunks(value: unknown): string[] {
   if (typeof value === "string") {
@@ -117,119 +117,134 @@ test("cold Comms JavaScript and on-demand settings and tools have recorded asset
     id: "00000000-0000-4000-8000-000000000101",
     role: "admin",
   });
-  const requests = new Map<string, Request>();
-  const linkedRouteRequests: string[] = [];
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (/^\/openview(?:\.txt)?\/?$/.test(url.pathname))
-      linkedRouteRequests.push(
-        `${url.pathname}?${new URLSearchParams([...url.searchParams].filter(([key]) => key === "record" || key === "section")).toString()}`,
-      );
-    if (url.pathname.endsWith(".js"))
-      requests.set(request.url(), requests.get(request.url()) ?? request);
+  const server = await installCommsLiveApi(page, {
+    userId: "00000000-0000-4000-8000-000000000101",
+    channelName: "operations",
   });
-  const captured = new Set<string>();
-  async function checkpoint() {
-    const pending = [...requests].filter(([url]) => !captured.has(url));
-    for (const [url] of pending) captured.add(url);
-    const assets = await measure(pending.map(([, request]) => request));
-    return {
-      gzip_bytes: assets.reduce((sum, asset) => sum + asset.gzip_bytes, 0),
+  try {
+    const requests = new Map<string, Request>();
+    const linkedRouteRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (/^\/openview(?:\.txt)?\/?$/.test(url.pathname))
+        linkedRouteRequests.push(
+          `${url.pathname}?${new URLSearchParams([...url.searchParams].filter(([key]) => key === "record" || key === "section")).toString()}`,
+        );
+      if (url.pathname.endsWith(".js"))
+        requests.set(request.url(), requests.get(request.url()) ?? request);
+    });
+    const captured = new Set<string>();
+    async function checkpoint() {
+      const pending = [...requests].filter(([url]) => !captured.has(url));
+      for (const [url] of pending) captured.add(url);
+      const assets = await measure(pending.map(([, request]) => request));
+      return {
+        gzip_bytes: assets.reduce((sum, asset) => sum + asset.gzip_bytes, 0),
+        assets,
+      };
+    }
+
+    await page.goto("/comms");
+    await expect(
+      page.getByRole("textbox", { name: "Message", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: /^operations(,|$)/ }),
+    ).toBeVisible();
+    const coldRaw = await checkpoint();
+    const otherRoutes = await otherRouteChunks();
+    const excludedAssets = coldRaw.assets
+      .filter((asset) => otherRoutes.has(asset.path))
+      .map((asset) => ({
+        ...asset,
+        reason:
+          "Declared only in other-route client build manifests; absent from Comms and framework manifests",
+        owner_manifests: otherRoutes.get(asset.path),
+      }));
+    const assets = coldRaw.assets.filter(
+      (asset) => !otherRoutes.has(asset.path),
+    );
+    const cold = {
       assets,
+      gzip_bytes: assets.reduce((sum, asset) => sum + asset.gzip_bytes, 0),
     };
+    expect(cold.assets.length).toBeGreaterThan(0);
+
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
+    const settingsDialog = page.getByRole("dialog", {
+      name: "Channel settings",
+      exact: true,
+    });
+    await expect(
+      settingsDialog.getByLabel("Channel name", { exact: true }),
+    ).toHaveValue("operations");
+    const settings = await checkpoint();
+    await settingsDialog
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "OpenComms menu", exact: true })
+      .first()
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Admin tools", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Moderation", exact: true })
+      .click();
+    await expect(
+      page.getByRole("region", { name: "Moderation", exact: true }),
+    ).toBeVisible();
+    const tools = await checkpoint();
+    const growthBytes = cold.gzip_bytes - baselineColdGzipBytes;
+    const growthPercent = (growthBytes / baselineColdGzipBytes) * 100;
+
+    const report = {
+      budget_slice: "S26",
+      previous_committed_slice: "S14@560d03cd",
+      comparison: "Historical S14 measurement, not a newly measured baseline",
+      strict_cap_deferred_to: "S31",
+      strict_cap_met: cold.gzip_bytes < s04BaselineColdGzipBytes,
+      s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
+      s26_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
+      baseline_cold_gzip_bytes: baselineColdGzipBytes,
+      maximum_cold_gzip_bytes: maximumColdGzipBytes,
+      growth_bytes: growthBytes,
+      growth_percent: growthPercent,
+      linked_route_requests: linkedRouteRequests,
+      build_id: (await readFile(".next/BUILD_ID", "utf8")).trim(),
+      lock_sha256: createHash("sha256")
+        .update(await readFile("package-lock.json"))
+        .digest("hex"),
+      node: process.version,
+      zlib: process.versions.zlib,
+      browser: browser.version(),
+      gzip,
+      readiness:
+        "verified /comms with enabled Message composer and visible operations row; include JS requests already started",
+      cold,
+      cold_including_other_route_prefetch: coldRaw,
+      excluded_other_route_prefetch: excludedAssets,
+      settings,
+      tools,
+    };
+    await writeFile(
+      testInfo.outputPath("js-assets.json"),
+      JSON.stringify(report, null, 2),
+    );
+    await testInfo.attach("JavaScript asset metrics", {
+      body: JSON.stringify(report, null, 2),
+      contentType: "application/json",
+    });
+    console.info(
+      `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; growth=${growthBytes} bytes / ${growthPercent}%; limit=${maximumColdGzipBytes} bytes.`,
+    );
+    expect(cold.gzip_bytes).toBeLessThanOrEqual(maximumColdGzipBytes);
+  } finally {
+    server.close();
   }
-
-  await page.goto("/comms");
-  await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeEnabled();
-  await expect(
-    page.getByRole("button", { name: /^operations(,|$)/ }),
-  ).toBeVisible();
-  const coldRaw = await checkpoint();
-  const otherRoutes = await otherRouteChunks();
-  const excludedAssets = coldRaw.assets
-    .filter((asset) => otherRoutes.has(asset.path))
-    .map((asset) => ({
-      ...asset,
-      reason:
-        "Declared only in other-route client build manifests; absent from Comms and framework manifests",
-      owner_manifests: otherRoutes.get(asset.path),
-    }));
-  const assets = coldRaw.assets.filter((asset) => !otherRoutes.has(asset.path));
-  const cold = {
-    assets,
-    gzip_bytes: assets.reduce((sum, asset) => sum + asset.gzip_bytes, 0),
-  };
-  expect(cold.assets.length).toBeGreaterThan(0);
-
-  await page
-    .getByRole("button", { name: "Channel settings", exact: true })
-    .click();
-  const settingsDialog = page.getByRole("dialog", {
-    name: "Channel settings",
-    exact: true,
-  });
-  await expect(
-    settingsDialog.getByLabel("Channel name", { exact: true }),
-  ).toHaveValue("operations");
-  const settings = await checkpoint();
-  await settingsDialog
-    .getByRole("button", { name: "Cancel", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "OpenComms menu", exact: true })
-    .first()
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Admin tools", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "Moderation", exact: true }).click();
-  await expect(
-    page.getByRole("region", { name: "Moderation", exact: true }),
-  ).toBeVisible();
-  const tools = await checkpoint();
-  const growthBytes = cold.gzip_bytes - baselineColdGzipBytes;
-  const growthPercent = (growthBytes / baselineColdGzipBytes) * 100;
-
-  const report = {
-    budget_slice: "S14",
-    previous_committed_slice: "S13@18447d82",
-    s04_baseline_cold_gzip_bytes: s04BaselineColdGzipBytes,
-    s26_target_exclusive_gzip_bytes: s04BaselineColdGzipBytes,
-    baseline_cold_gzip_bytes: baselineColdGzipBytes,
-    maximum_cold_gzip_bytes: maximumColdGzipBytes,
-    growth_bytes: growthBytes,
-    growth_percent: growthPercent,
-    linked_route_requests: linkedRouteRequests,
-    build_id: (await readFile(".next/BUILD_ID", "utf8")).trim(),
-    lock_sha256: createHash("sha256")
-      .update(await readFile("package-lock.json"))
-      .digest("hex"),
-    node: process.version,
-    zlib: process.versions.zlib,
-    browser: browser.version(),
-    gzip,
-    readiness:
-      "verified /comms with enabled Message composer and visible operations row; include JS requests already started",
-    cold,
-    cold_including_other_route_prefetch: coldRaw,
-    excluded_other_route_prefetch: excludedAssets,
-    settings,
-    tools,
-  };
-  await writeFile(
-    testInfo.outputPath("js-assets.json"),
-    JSON.stringify(report, null, 2),
-  );
-  await testInfo.attach("JavaScript asset metrics", {
-    body: JSON.stringify(report, null, 2),
-    contentType: "application/json",
-  });
-  console.info(
-    `Cold JavaScript gzip: raw=${coldRaw.gzip_bytes} bytes; Comms+shell=${cold.gzip_bytes} bytes; other-route-only=${coldRaw.gzip_bytes - cold.gzip_bytes} bytes; growth=${growthBytes} bytes / ${growthPercent}%; limit=${maximumColdGzipBytes} bytes.`,
-  );
-  expect(cold.gzip_bytes).toBeLessThanOrEqual(maximumColdGzipBytes);
 });
 
 test("Comms retains its desktop and phone frame in light and dark", async ({
@@ -237,39 +252,51 @@ test("Comms retains its desktop and phone frame in light and dark", async ({
 }, testInfo) => {
   const userId = "00000000-0000-4000-8000-000000000101";
   await signedInAs(page, { id: userId, role: "admin" });
-  await page.route(`**/api/users/${userId}/preferences`, (route) =>
-    route.fulfill({ json: { ...profilePreferences(userId), theme: "system" } }),
-  );
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 390, height: 844 },
-  ]) {
-    for (const theme of ["light", "dark"] as const) {
-      await page.setViewportSize(viewport);
-      await page.emulateMedia({ colorScheme: theme });
-      await page.goto("/comms");
-      if (viewport.width < 640)
-        await page.getByRole("button", { name: /^operations(,|$)/ }).click();
-      await expect(
-        page.getByRole("textbox", { name: "Message", exact: true }),
-      ).toBeEnabled();
-      await expect(
-        page.getByRole("heading", { name: "operations", exact: true }),
-      ).toBeVisible();
-      if (theme === "dark")
-        await expect(page.locator("html")).toHaveClass(/\bdark\b/);
-      else await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
-      await expectNoHorizontalScroll(page);
-      await page.mouse.move(0, 0);
-      const path = testInfo.outputPath(`comms-${viewport.width}-${theme}.png`);
-      await page.screenshot({ path, animations: "disabled" });
-      await testInfo.attach(`Comms ${viewport.width} ${theme}`, {
-        path,
-        contentType: "image/png",
-      });
+  const server = await installCommsLiveApi(page, {
+    userId,
+    channelName: "operations",
+  });
+  try {
+    await page.route(`**/api/users/${userId}/preferences`, (route) =>
+      route.fulfill({
+        json: { ...profilePreferences(userId), theme: "system" },
+      }),
+    );
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      for (const theme of ["light", "dark"] as const) {
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ colorScheme: theme });
+        await page.goto("/comms");
+        if (viewport.width < 640)
+          await page.getByRole("button", { name: /^operations(,|$)/ }).click();
+        await expect(
+          page.getByRole("textbox", { name: "Message", exact: true }),
+        ).toBeEnabled();
+        await expect(
+          page.getByRole("heading", { name: "operations", exact: true }),
+        ).toBeVisible();
+        if (theme === "dark")
+          await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+        else await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
+        await expectNoHorizontalScroll(page);
+        await page.mouse.move(0, 0);
+        const path = testInfo.outputPath(
+          `comms-${viewport.width}-${theme}.png`,
+        );
+        await page.screenshot({ path, animations: "disabled" });
+        await testInfo.attach(`Comms ${viewport.width} ${theme}`, {
+          path,
+          contentType: "image/png",
+        });
+      }
     }
+    expect(errors).toEqual([]);
+  } finally {
+    server.close();
   }
-  expect(errors).toEqual([]);
 });

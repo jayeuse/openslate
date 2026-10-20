@@ -102,8 +102,8 @@ export function GroupAccessField({
           : `#${name}`}
       </legend>
       <p className="text-muted-foreground -mt-1 text-xs">
-        Choose what each group may do. Saved choices are enforced on local
-        sample conversations. Guests remain read-only.
+        Choose what each group may do. Saved choices apply to this conversation.
+        Guests remain read-only.
       </p>
       <div className="border-card-edge overflow-hidden rounded-[calc(var(--radius)*1.25)] border">
         {rows.map((row) => (

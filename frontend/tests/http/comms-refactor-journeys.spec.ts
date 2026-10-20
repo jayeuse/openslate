@@ -7,7 +7,11 @@ import {
   test,
 } from "./helpers/test";
 import { wireWorkspace } from "../helpers/wire";
-import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
+import {
+  commsDraftTextKey,
+  ownedCommsDraftTextId,
+} from "../../src/components/systems/comms/state/draft-text";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 import type { Page } from "@playwright/test";
 
 async function createWorkshop(page: Page) {
@@ -111,40 +115,75 @@ test("Comms binds drafts to the admitted organization while the next organizatio
       }),
     }),
   );
-  await page.goto("/comms");
-  const composer = page.getByRole("textbox", { name: "Message", exact: true });
-  await composer.fill("Organization A private draft");
-  await page
-    .getByRole("button", { name: "Organization: OpenSlate", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: /Second organization/ }).click();
-  await verification.entered;
+  const serverA = await installCommsLiveApi(page, {
+    userId,
+    organizationId: orgA.org_id,
+    messagePrefix: "Organization A message",
+  });
+  const serverB = await installCommsLiveApi(page, {
+    userId,
+    organizationId: orgB.org_id,
+    channelName: "second-live-room",
+    messagePrefix: "Organization B message",
+  });
   try {
+    await page.goto("/comms");
+    const composer = page.getByRole("textbox", {
+      name: "Message",
+      exact: true,
+    });
+    await composer.fill("Organization A private draft");
+    await page
+      .getByRole("button", { name: "Organization: OpenSlate", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: /Second organization/ }).click();
+    await verification.entered;
+    try {
+      await expect(
+        page.getByRole("dialog", { name: "Session verification", exact: true }),
+      ).toBeVisible();
+      await expect(composer).toBeHidden();
+      expect(
+        await page.evaluate(
+          (key) => sessionStorage.getItem(key),
+          commsDraftTextKey(
+            ownedCommsDraftTextId(userId, serverB.room, orgB.org_id),
+          ),
+        ),
+      ).toBeNull();
+    } finally {
+      holdVerification = false;
+      verification.release();
+    }
     await expect(
-      page.getByRole("dialog", { name: "Session verification", exact: true }),
+      page.getByRole("button", {
+        name: "Organization: Second organization",
+        exact: true,
+      }),
     ).toBeVisible();
-    await expect(composer).toBeHidden();
+    await page.getByRole("link", { name: "OpenComms", exact: true }).click();
+    await expect(composer).toHaveValue("");
+    await expect(
+      page.getByText("Organization A message 59", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Organization B message 59", { exact: true }),
+    ).toBeVisible();
     expect(
       await page.evaluate(
         (key) => sessionStorage.getItem(key),
-        workspaceSessionSnapshotStorageKey(userId, orgB.org_id),
+        commsDraftTextKey(
+          ownedCommsDraftTextId(userId, serverA.room, orgA.org_id),
+        ),
       ),
     ).toBeNull();
+    await composer.fill("Organization B retained draft");
+    await page.reload();
+    await expect(composer).toHaveValue("Organization B retained draft");
   } finally {
-    holdVerification = false;
-    verification.release();
+    serverA.close();
+    serverB.close();
   }
-  await expect(
-    page.getByRole("button", {
-      name: "Organization: Second organization",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "OpenComms", exact: true }).click();
-  await expect(composer).toHaveValue("");
-  await composer.fill("Organization B retained draft");
-  await page.reload();
-  await expect(composer).toHaveValue("Organization B retained draft");
 });
 
 test("Comms keeps separate conversation drafts and clears only a successfully sent message", async ({

@@ -1,4 +1,4 @@
-import type { CommsClient } from "../contract/client";
+import type { CommsViewClient as CommsClient } from "../contract/client";
 import type * as C from "../contract/types";
 import type { Person } from "../../shared/data/sample-people";
 import type { SampleRecord } from "../../shared/data/sample-data";
@@ -121,8 +121,6 @@ export async function loadWorkspace(
   const channels: Channel[] = [];
   const directs: Direct[] = [];
   const rawMessages = new Map<string, C.Message>();
-  const historyPages: Record<string, C.HistoryPage> = {};
-  let removedCount = 0;
   const checks: Record<string, C.CapabilityCheck> = {};
   const members: Record<string, C.Member[]> = {};
   const effective: Record<string, C.Settings> = {};
@@ -263,10 +261,6 @@ export async function loadWorkspace(
       client.listPins(room.id, { limit: 100, offset }, options),
     ))
       rawMessages.set(message.id, message);
-    if (check?.capabilities.moderate.allowed)
-      removedCount += (
-        await client.listRemovedMessages(room.id, { limit: 1 }, options)
-      ).pagination.total;
   }
   for (const thread of threads) {
     const root = await client.getMessage(
@@ -275,21 +269,6 @@ export async function loadWorkspace(
       options,
     );
     rawMessages.set(root.data.id, root.data);
-    let before: number | undefined;
-    for (;;) {
-      const replies = await client.getReplies(
-        thread.conversation_id,
-        thread.root_message_id,
-        { limit: 100, ...(before ? { before_seq: before } : {}) },
-        options,
-      );
-      for (const message of replies.items) rawMessages.set(message.id, message);
-      if (!replies.pagination.has_older) break;
-      const next = replies.items[0]?.seq;
-      if (next === undefined || next === before)
-        throw new Error("Incomplete thread history");
-      before = next;
-    }
   }
   const presence: Presence = {};
   const userIds = [...people.keys()];
@@ -326,15 +305,6 @@ export async function loadWorkspace(
     );
     rawMessages.set(message.data.id, message.data);
   }
-  for (const { conversation } of bootstrap.conversations) {
-    const history = await client.getHistory(
-      conversation.id,
-      { limit: 50 },
-      options,
-    );
-    historyPages[conversation.id] = history;
-    for (const message of history.items) rawMessages.set(message.id, message);
-  }
   await loadQuotes(client, rawMessages, signal);
   const projected = new Map<string, Message>();
   for (const message of rawMessages.values())
@@ -347,6 +317,7 @@ export async function loadWorkspace(
     conversation: thread.conversation_id,
     messageId: thread.root_message_id,
     resolved: thread.resolved,
+    replyCount: thread.reply_count,
     subscribed: thread.followed,
     replies: [...rawMessages.values()]
       .filter((message) => message.parent_id === thread.root_message_id)
@@ -354,8 +325,6 @@ export async function loadWorkspace(
   }));
   return {
     presence,
-    removedCount,
-    historyPages,
     client,
     bootstrap,
     checks,

@@ -15,7 +15,7 @@ import {
   useCommsRead,
   messageFromCommsError,
 } from "../state/runtime";
-import { complete } from "../state/workspace-view";
+import { useCommsClient } from "../state/client-context";
 
 export function DirectDialog({
   onClose,
@@ -24,28 +24,36 @@ export function DirectDialog({
   onClose: () => void;
   select: (id: string) => void;
 }) {
-  const choices = useCommsRead("direct-candidates", async (client, signal) => {
-    const [actor, candidates] = await Promise.all([
-      client.getChannelCreationCheck({ kind: "workspace" }, { signal }),
-      complete((offset) =>
-        client.listDirectCandidates({ limit: 100, offset }, { signal }),
-      ),
-    ]);
-    return { role: actor.membership_role, candidates };
-  });
+  const { live } = useCommsClient();
+  const [search, setSearch] = useState("");
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const q = search.trim();
+  const actor = useCommsRead("direct-creation-check", (client, signal) =>
+    client.getChannelCreationCheck({ kind: "workspace" }, { signal }),
+  );
+  const choices = useCommsRead(
+    `direct-candidates:${q}`,
+    async (_client, signal) => {
+      if (!q) return [];
+      if (!live) throw new Error("Live candidate search is unavailable");
+      return (
+        await live.client.listDirectCandidates({ q, limit: 20 }, { signal })
+      ).items;
+    },
+  );
   const { run, isPending } = useCommsCommands();
   const [group, setGroup] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
     [name, setName] = useState(""),
     [error, setError] = useState("");
   const candidates =
-    choices.data?.candidates.map((person) => ({
+    choices.data?.map((person) => ({
       id: person.user_id,
       name: person.display_name,
     })) ?? [];
   const pending = isPending("conversation:create");
   const canCreate =
-    !!choices.data && !choices.error && choices.data.role !== "guest";
+    !!actor.data && !actor.error && actor.data.membership_role !== "guest";
   async function submit() {
     if (
       !canCreate ||
@@ -65,10 +73,7 @@ export function DirectDialog({
                   name:
                     name.trim() ||
                     selected
-                      .map(
-                        (id) =>
-                          candidates.find((person) => person.id === id)?.name,
-                      )
+                      .map((id) => labels[id])
                       .filter(Boolean)
                       .join(", "),
                   participant_ids: [current.context.user_id, ...selected],
@@ -128,16 +133,19 @@ export function DirectDialog({
             Group message
           </Button>
         </div>
-        {choices.data?.role === "guest" && (
+        {actor.data?.membership_role === "guest" && (
           <Alert>Guests cannot start conversations.</Alert>
         )}
-        {choices.error && (
+        {(choices.error || actor.error) && (
           <Alert role="alert" variant="destructive">
-            {choices.error}
+            {choices.error || actor.error}
             <Button
               className="min-h-11 sm:min-h-0"
               variant="outline"
-              onClick={choices.reload}
+              onClick={() => {
+                choices.reload();
+                actor.reload();
+              }}
             >
               Retry
             </Button>
@@ -161,15 +169,33 @@ export function DirectDialog({
           </label>
         )}
         <SearchSelect
+          search={search}
+          onSearchChange={setSearch}
           label={group ? "Add person" : "Person"}
           value={group ? "" : (selected[0] ?? "")}
+          selectedOption={
+            !group && selected[0] && labels[selected[0]]
+              ? { value: selected[0], label: labels[selected[0]] }
+              : undefined
+          }
           options={candidates
             .filter((person) => !group || !selected.includes(person.id))
             .map((person) => ({ value: person.id, label: person.name }))}
-          onValueChange={(id) => setSelected(group ? [...selected, id] : [id])}
+          onValueChange={(id) => {
+            setLabels((current) => ({
+              ...current,
+              [id]:
+                candidates.find((person) => person.id === id)?.name ??
+                current[id] ??
+                "Person",
+            }));
+            setSelected(group ? [...selected, id] : [id]);
+          }}
           disabled={!canCreate || pending || (group && selected.length >= 49)}
           loading={!choices.data && choices.status === "loading"}
-          emptyMessage="No eligible people match."
+          emptyMessage={
+            q ? "No eligible people match." : "Type a name to find people."
+          }
         />
         {group && (
           <>
@@ -182,15 +208,12 @@ export function DirectDialog({
                   key={id}
                   className="flex items-center justify-between text-sm"
                 >
-                  <span>
-                    {candidates.find((person) => person.id === id)?.name ??
-                      "Person unavailable"}
-                  </span>
+                  <span>{labels[id] ?? "Person unavailable"}</span>
                   <Button
                     className="min-h-11 sm:min-h-0"
                     size="sm"
                     variant="ghost"
-                    aria-label={`Remove ${candidates.find((person) => person.id === id)?.name ?? "person"}`}
+                    aria-label={`Remove ${labels[id] ?? "person"}`}
                     onClick={() =>
                       setSelected(selected.filter((value) => value !== id))
                     }

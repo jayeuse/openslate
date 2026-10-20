@@ -79,7 +79,7 @@ Examples of in-scope problems: a login or session bypass; access to a module or 
 | Behavior that needs `ENVIRONMENT=development` with a loopback bind | Development removes some limits on purpose. See `docs/architecture/14-security-architecture.md`. |
 | Attacks from another process or user on the developer's own machine | Development trusts the local host. |
 | Malware detection in uploaded files | Content scanning is not a feature of OpenSlate. |
-| OpenComms sample screens | They are browser-local examples with no server permissions. |
+| Simulated OpenComms templates, settings history and join-request tools | These explicitly labeled tools use an isolated browser-local example workspace. Live conversations, messages, profiles and file access remain in scope. |
 | Attacks that need the installation owner or host access | That person already controls the installation. An administrator of one organization who reaches another organization's data is in scope. |
 | Infrastructure that the operator changes or runs: host, Docker, network, TLS certificates | The operator owns these. A flaw in the shipped default configuration is in scope. |
 | Problems in Supabase, PostgreSQL, or another upstream project | Report them to that project. |

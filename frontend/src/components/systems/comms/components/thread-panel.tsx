@@ -7,12 +7,9 @@ import {
   X,
 } from "lucide-react";
 import type { SampleRecord } from "../../shared/data/sample-data";
-import {
-  threadMessages,
-  type Message,
-  type Thread,
-} from "../domain/view-model";
+import { type Message, type Thread } from "../domain/view-model";
 import { Badge } from "@/components/ui/badge";
+import { Alert } from "@/components/ui/alert";
 import {
   Empty,
   EmptyDescription,
@@ -26,7 +23,8 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
-import { useSampleState } from "../../shared/runtime/sample-state";
+import { z } from "zod";
+import { useCommsDraftValue } from "../state/draft-values";
 import { Action, Toggle } from "../../shared/components/ui";
 import { MessageTimeline } from "./message-timeline";
 import { MessageComposer } from "./message-composer";
@@ -39,10 +37,14 @@ import type {
 } from "./message-shared";
 import { reportCommsDone, reportCommsError } from "../state/comms-feedback";
 import { useCommsCommands } from "../state/runtime";
+import { useCommsHistory } from "../state/use-comms-history";
 import {
   createCommsMessageOperations,
   submitCommsDraft,
 } from "../state/use-comms-message-operations";
+
+const booleanDraft = z.boolean();
+const replyDraft = z.string();
 
 export function ThreadPanel({
   thread,
@@ -95,8 +97,9 @@ export function ThreadPanel({
     (identity.membershipRole !== undefined &&
       identity.membershipRole !== "guest" &&
       message?.authorId === identity.viewerId);
-  const [alsoSend, setAlsoSend] = useSampleState(
+  const [alsoSend, setAlsoSend] = useCommsDraftValue(
     `comms-thread-also-send-${thread.id}`,
+    booleanDraft,
     false,
   );
   useLayoutEffect(() => {
@@ -108,8 +111,9 @@ export function ThreadPanel({
     (target ?? headingRef.current)?.focus({ preventScroll: true });
     target?.scrollIntoView({ block: "center", behavior: "instant" });
   }, [thread.id, highlightedId]);
-  const [replyingToId, setReplyingToId] = useSampleState<string>(
+  const [replyingToId, setReplyingToId] = useCommsDraftValue(
     `comms-thread-reply-${thread.id}`,
+    replyDraft,
     "",
   );
   const list = useRef<HTMLDivElement>(null);
@@ -117,7 +121,19 @@ export function ThreadPanel({
     id: string;
     text: string;
   }>();
-  const replies = threadMessages(thread);
+  const history = useCommsHistory(
+    thread.conversation,
+    highlightedId,
+    true,
+    list,
+    thread.messageId,
+  );
+  const replies = history.messages;
+  const loadedRecords = [
+    ...new Map(
+      [...records, ...history.records].map((record) => [record.id, record]),
+    ).values(),
+  ];
   const replyingTo =
     [...allMessages, ...replies].find(
       (message) => message.id === replyingToId && !message.deleted,
@@ -255,11 +271,25 @@ export function ThreadPanel({
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport ref={list} aria-label="Thread messages">
             <MessageScrollerContent className="gap-0 pb-4">
+              {history.loading && (
+                <p role="status" className="p-3 text-sm">
+                  Loading replies…
+                </p>
+              )}
+              {history.error && (
+                <Alert role="alert">
+                  {history.error}
+                  <Action onClick={history.retry}>Retry replies</Action>
+                </Alert>
+              )}
+              {history.page?.pagination.has_older && (
+                <Action onClick={history.older}>Load older replies</Action>
+              )}
               <MessageTimeline
                 editRequest={editRequest}
                 visibleMessages={replies}
-                allMessages={[...allMessages, ...replies]}
-                records={records}
+                allMessages={[...allMessages, ...replies, ...history.quotes]}
+                records={loadedRecords}
                 threads={[]}
                 highlightedId={highlightedId}
                 mutable={canPost && !pending}
@@ -279,7 +309,10 @@ export function ThreadPanel({
                 onJump={onJump}
                 onDirect={onDirect}
               />
-              {!replies.length && (
+              {history.page?.pagination.has_newer && (
+                <Action onClick={history.newer}>Load newer replies</Action>
+              )}
+              {!history.loading && !history.error && !replies.length && (
                 <Empty className="px-5 py-8">
                   <EmptyHeader>
                     <EmptyMedia variant="icon">
@@ -343,7 +376,7 @@ export function ThreadPanel({
               ? "This thread is locked. Unlock it in thread settings to reply."
               : "Your role cannot post in this thread."
         }
-        records={records}
+        records={loadedRecords}
         replyingTo={replyingTo}
         people={identity.people}
         onCancelReply={() => setReplyingTo(null)}

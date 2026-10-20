@@ -1,5 +1,5 @@
 "use client";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import {
   ChevronDown,
   FolderOpen,
@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useCommsRead } from "../state/runtime";
+import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 
 export type WorkspaceSetting =
   | "create-channel"
@@ -43,7 +45,6 @@ export type CommsMenuAccess = {
   canManageChannel: boolean;
   canCreate: boolean;
   canAdminister: boolean;
-  recoverableCount: number;
 };
 export type OpenWorkspaceSetting = (
   setting: WorkspaceSetting,
@@ -66,7 +67,6 @@ export function CommsMenu({
   canManageChannel,
   canCreate,
   canAdminister,
-  recoverableCount,
   onSelect,
 }: CommsMenuAccess & {
   compact?: boolean;
@@ -74,6 +74,24 @@ export function CommsMenu({
   onSelect: OpenWorkspaceSetting;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const { checks } = useCommsWorkspaceView();
+  const rooms = Object.entries(checks)
+    .filter(([, check]) => check.capabilities.moderate.allowed)
+    .map(([id]) => id);
+  const counts = useCommsRead(
+    `moderation-count:${rooms.join(",")}`,
+    async (client, signal) => {
+      let total = 0;
+      for (const room of rooms)
+        total += (
+          await client.listRemovedMessages(room, { limit: 1 }, { signal })
+        ).pagination.total;
+      return total;
+    },
+    open && canAdminister,
+  );
+  const recoverableCount = counts.data;
   const groups = [
     [
       { id: "personal", label: "My preferences", icon: UserRound },
@@ -134,7 +152,7 @@ export function CommsMenu({
       >
         OpenComms
       </h1>
-      <DropdownMenu>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger
           ref={trigger}
           aria-label="OpenComms menu"
@@ -167,8 +185,25 @@ export function CommsMenu({
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger className="min-h-10">
                   <ShieldCheck aria-hidden="true" /> Admin tools
-                  {recoverableCount > 0 && (
+                  {recoverableCount !== undefined && recoverableCount > 0 && (
                     <RecoverableBadge count={recoverableCount} />
+                  )}
+                  {counts.status === "loading" && (
+                    <span
+                      role="status"
+                      aria-label="Loading moderation count"
+                      className="ml-auto"
+                    >
+                      …
+                    </span>
+                  )}
+                  {counts.error && (
+                    <span
+                      role="status"
+                      className="text-muted-foreground ml-auto text-xs"
+                    >
+                      Count unavailable
+                    </span>
                   )}
                 </DropdownMenuSubTrigger>
                 <DropdownMenuContent
@@ -189,9 +224,11 @@ export function CommsMenu({
                           onClick={() => select(id)}
                         >
                           {label}
-                          {id === "moderation" && recoverableCount > 0 && (
-                            <RecoverableBadge count={recoverableCount} />
-                          )}
+                          {id === "moderation" &&
+                            recoverableCount !== undefined &&
+                            recoverableCount > 0 && (
+                              <RecoverableBadge count={recoverableCount} />
+                            )}
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuGroup>

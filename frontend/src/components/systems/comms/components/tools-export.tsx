@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { NativeSelectOption } from "@/components/ui/native-select";
 import { Choice, Toggle } from "../../shared/components/ui";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
+import { useCommsClient } from "../state/client-context";
 import { complete } from "../state/workspace-view";
 import {
   messageFromCommsError,
@@ -24,6 +25,9 @@ export function ExportTools({
   opener,
   onClose,
 }: CommsToolsDialogProps) {
+  const { client } = useCommsClient();
+  const [password, setPassword] = useState("");
+  useEffect(() => setPassword(""), [client]);
   const { bootstrap, checks } = useCommsWorkspaceView();
   const { run, isPending } = useCommsCommands();
   const rooms = bootstrap?.conversations.map((row) => row.conversation) ?? [];
@@ -64,9 +68,7 @@ export function ExportTools({
           },
           {
             signal,
-            ...(protectedSelection && confirmed
-              ? { password: "CONFIRM LOCAL SAMPLE" }
-              : {}),
+            ...(protectedSelection && confirmed ? { password } : {}),
           },
         ),
       );
@@ -78,6 +80,8 @@ export function ExportTools({
           "The export could not be started. Your choices are still here.",
         ),
       );
+    } finally {
+      setPassword("");
     }
   }
   async function download(id: string) {
@@ -99,7 +103,7 @@ export function ExportTools({
       setError(
         messageFromCommsError(
           failure,
-          "The sample export is unavailable. Start a new export.",
+          "The export is unavailable. Start a new export.",
         ),
       );
     }
@@ -145,9 +149,9 @@ export function ExportTools({
     >
       <FieldGroup className="p-5 sm:p-6">
         <p className="text-muted-foreground text-sm">
-          This local example records your format and dates but downloads fixed
-          sample CSV bytes, not message data or an XLSX workbook. Export bytes
-          do not survive a page reload.
+          Export the selected messages as CSV or XLSX. Private sources require a
+          recorded reason and your current password. Oversized exports fail
+          rather than returning a partial file.
         </p>
         {(error || resource.error || !allowed) && (
           <Alert role="alert" variant="destructive">
@@ -172,9 +176,7 @@ export function ExportTools({
           }
         >
           <NativeSelectOption value="csv">CSV</NativeSelectOption>
-          <NativeSelectOption value="xlsx">
-            XLSX request (sample CSV download)
-          </NativeSelectOption>
+          <NativeSelectOption value="xlsx">XLSX</NativeSelectOption>
         </Choice>
         <TextField
           label="From date"
@@ -190,8 +192,8 @@ export function ExportTools({
         />
         {protectedSelection && (
           <p role="status">
-            Private sources selected. An administrator reason and sample
-            confirmation are required.
+            Private sources selected. An administrator reason, confirmation and
+            current password are required.
           </p>
         )}
         <Button
@@ -200,7 +202,7 @@ export function ExportTools({
             !allowed ||
             isPending() ||
             !selected.length ||
-            (protectedSelection && (!reason.trim() || !confirmed))
+            (protectedSelection && (!reason.trim() || !confirmed || !password))
           }
         >
           Start export
@@ -220,7 +222,7 @@ export function ExportTools({
                 disabled={isPending()}
                 onClick={() => void download(job.id)}
               >
-                Download sample CSV
+                Download export
               </Button>
             )}
           </section>
@@ -241,11 +243,21 @@ export function ExportTools({
             }}
           />
           <Toggle
-            label="Confirm sample operation — local example data only; no account password required."
+            label="I confirm these private sources are needed for the recorded reason."
             checked={confirmed}
             onCheckedChange={setConfirmed}
             disabled={!allowed}
           />
+          {protectedSelection && (
+            <TextField
+              label="Current password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={isPending()}
+            />
+          )}
         </ToolAdvanced>
       </FieldGroup>
     </ConfigurationFrame>

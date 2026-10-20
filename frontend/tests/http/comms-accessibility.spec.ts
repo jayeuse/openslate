@@ -1,70 +1,18 @@
+import { expect, test, expectNoHorizontalScroll } from "./helpers/test";
 import {
-  expect,
-  test,
-  expectNoHorizontalScroll,
-  type Page,
-} from "./helpers/test";
-import { seedTimeline, timelineId } from "./helpers/comms-timeline-fixture";
+  seedTimeline,
+  timelineId,
+  timelineServer,
+} from "./helpers/comms-timeline-fixture";
 import { profilePreferences } from "./helpers/profile-api";
 import type { MemorySnapshot } from "../../src/components/systems/comms/memory/store-types";
 import { validateMemoryState } from "../../src/components/systems/comms/memory/snapshot";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
-import type { CommsClient } from "../../src/components/systems/comms/contract/client";
-import type {
-  ConnectionState,
-  EventObserver,
-  RequestOptions,
-} from "../../src/components/systems/comms/contract/types";
-
-async function connectionProbe(page: Page) {
-  await page.addInitScript(() => {
-    const freeze = Object.freeze;
-    const observers = new Set<EventObserver>();
-    Object.defineProperty(window, "s13Connection", {
-      value: (value: ConnectionState) =>
-        observers.forEach((observer) => observer.on_connection(value)),
-    });
-    Object.defineProperty(Object, "freeze", {
-      value: (value: unknown) => {
-        if (value && typeof value === "object" && !Object.isFrozen(value)) {
-          if (
-            typeof Reflect.get(value, "exportSnapshot") === "function" &&
-            Reflect.get(value, "controls")
-          )
-            Reflect.set(window, "s13Controls", Reflect.get(value, "controls"));
-          if (
-            Reflect.get(value, "context") &&
-            typeof Reflect.get(value, "bootstrap") === "function" &&
-            Reflect.get(value, "events")
-          ) {
-            const events = Reflect.get(
-              value,
-              "events",
-            ) as CommsClient["events"];
-            Object.defineProperty(value, "events", {
-              value: {
-                subscribe(observer: EventObserver, options?: RequestOptions) {
-                  observers.add(observer);
-                  const stop = events.subscribe(observer, options);
-                  return () => {
-                    observers.delete(observer);
-                    stop();
-                  };
-                },
-              },
-            });
-          }
-        }
-        return freeze(value);
-      },
-    });
-  });
-}
-test("connection feedback uses local client availability, delays reconnecting and retries without losing a draft", async ({
+test("connection feedback uses live transport availability, delays reconnecting and retries without losing a draft", async ({
   page,
 }) => {
   await seedTimeline(page, 12);
-  await connectionProbe(page);
+  const server = timelineServer(page);
   await page.clock.install();
   await page.goto("/comms");
   await expect(
@@ -79,12 +27,8 @@ test("connection feedback uses local client availability, delays reconnecting an
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Keep through client recovery");
   await page.clock.pauseAt(new Date(Date.now() + 1000));
-  await page.evaluate(() =>
-    Reflect.get(
-      window,
-      "s13Connection",
-    )({ state: "reconnecting", retry_after_seconds: 1 }),
-  );
+  server.pauseJoins(true);
+  server.dropConnections();
   await expect(status).toHaveAttribute("aria-busy", "true");
   await page.clock.runFor(2999);
   await expect(status.getByText("Reconnecting", { exact: true })).toHaveCount(
@@ -94,16 +38,17 @@ test("connection feedback uses local client availability, delays reconnecting an
   await expect(status.getByText("Reconnecting", { exact: true })).toBeVisible();
   await expect(status).toHaveAttribute("aria-busy", "false");
   await page.clock.resume();
-  await page.evaluate(() =>
-    Reflect.get(window, "s13Controls").setConnectionDropped(true),
-  );
+  server.setTokenStatus(503);
+  await page.clock.runFor(240_000);
   await expect(status.getByText("Offline", { exact: true })).toBeVisible();
+  server.setTokenStatus(200);
+  server.pauseJoins(false);
   await status.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(status.getByText("Live", { exact: true })).toBeVisible();
-  await page.evaluate(() =>
-    Reflect.get(window, "s13Controls").setTokenExpired(true),
-  );
+  server.setTokenStatus(429);
+  await page.clock.runFor(240_000);
   await expect(status).toContainText("Live updates paused in this tab");
+  server.setTokenStatus(200);
   await status.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(status.getByText("Live", { exact: true })).toBeVisible();
   await expect(

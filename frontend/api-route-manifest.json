@@ -2362,5 +2362,11 @@
     "function": "saveUserPreferences",
     "method": "PATCH",
     "path": "/api/users/{param}/preferences"
+  },
+  {
+    "adapter": "frontend/src/components/systems/comms/adapters/realtime-client.ts",
+    "function": "createCommsRealtime",
+    "method": "POST",
+    "path": "/api/realtime/token"
   }
 ]

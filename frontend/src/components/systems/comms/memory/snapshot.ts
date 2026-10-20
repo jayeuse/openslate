@@ -306,7 +306,7 @@ export function validateMemoryState(
   return parsed.data;
 }
 
-/** Pure admission only. SampleProvider remains the sole browser-storage writer. */
+/** Pure admission only. Browser storage, if any, belongs to the caller. */
 export function restoreMemorySnapshot(
   owner: CommsContext,
   initial: MemoryCommsState,

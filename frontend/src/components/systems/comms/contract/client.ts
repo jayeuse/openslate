@@ -1,5 +1,11 @@
 import type * as C from "./types";
 
+/** Shared view operations; the live runtime has explicit HTTP candidate/heartbeat DTOs. */
+export type CommsViewClient = Omit<
+  CommsClient,
+  "listDirectCandidates" | "heartbeatPresence"
+>;
+
 /**
  * Frozen, accepted S01 v1 contract including the owner-approved D27 matrix.
  * No evaluator, transport or routes are implemented here. Authorization always

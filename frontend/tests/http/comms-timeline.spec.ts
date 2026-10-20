@@ -1,6 +1,10 @@
 import { expect, test } from "./helpers/test";
 import { profilePreferences } from "./helpers/profile-api";
-import { seedTimeline, timelineId } from "./helpers/comms-timeline-fixture";
+import {
+  readTimelineSnapshot,
+  seedTimeline,
+  timelineId,
+} from "./helpers/comms-timeline-fixture";
 
 test("Comms shows Sending until its real send receipt is released", async ({
   page,
@@ -60,14 +64,9 @@ test("Comms Mark unread on fully read history survives refresh until new engagem
     .click();
   await page.clock.runFor(500);
   const reminder = () =>
-    page.evaluate(
-      ({ storageKey, owner, conversationId }) =>
-        JSON.parse(sessionStorage.getItem(storageKey)!).values[
-          "comms-memory-v1"
-        ].state.users[owner.user_id].conversations[conversationId]
-          .manual_unread,
-      fixture,
-    );
+    readTimelineSnapshot(page).state.users[fixture.owner.user_id].conversations[
+      fixture.conversationId
+    ].manual_unread;
   expect(await reminder()).toBe(true);
   await page.getByLabel("Messages", { exact: true }).press("PageUp");
   await page.clock.runFor(32);
@@ -119,14 +118,10 @@ test("Comms retains the entry unread divider after read acknowledgement and jump
   const fixture = await seedTimeline(page, 80, 30);
   await page.goto("/comms");
   await expect
-    .poll(() =>
-      page.evaluate(
-        ({ storageKey, owner, conversationId }) =>
-          JSON.parse(sessionStorage.getItem(storageKey)!).values[
-            "comms-memory-v1"
-          ].state.users[owner.user_id].last_read_seq[conversationId],
-        fixture,
-      ),
+    .poll(
+      () =>
+        readTimelineSnapshot(page).state.users[fixture.owner.user_id]
+          .last_read_seq[fixture.conversationId],
     )
     .toBe(80);
   await page
@@ -241,6 +236,24 @@ test("Comms bounded older and newer history retains the visible message anchor",
   await expect
     .poll(async () => Math.abs((await newerAnchor.boundingBox())!.y - newerTop))
     .toBeLessThan(2);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Reflect.deleteProperty(document, "visibilityState");
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(
+    page.getByRole("dialog", { name: "Session verification", exact: true }),
+  ).toBeHidden();
+  await expect(newerAnchor).toBeInViewport();
+  await expect
+    .poll(async () => Math.abs((await newerAnchor.boundingBox())!.y - newerTop))
+    .toBeLessThan(2);
   await feed.hover();
   await scrollFreely(newerAnchor, () => page.mouse.wheel(0, 120));
   await page
@@ -264,13 +277,9 @@ test("Comms only acknowledges visible focused history, never the Inbox or a hidd
     });
   });
   const read = () =>
-    page.evaluate(
-      ({ storageKey, owner, conversationId }) =>
-        JSON.parse(sessionStorage.getItem(storageKey)!).values[
-          "comms-memory-v1"
-        ].state.users[owner.user_id].last_read_seq[conversationId],
-      fixture,
-    );
+    readTimelineSnapshot(page).state.users[fixture.owner.user_id].last_read_seq[
+      fixture.conversationId
+    ];
   await page.goto("/comms?view=inbox");
   await expect(
     page.getByRole("region", { name: "Inbox", exact: true }),

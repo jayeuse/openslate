@@ -8,7 +8,10 @@ import { ApiError } from "@/lib/api";
 import { GuardedWorkspaceLink } from "@/components/workspace-navigation-guard";
 import { Alert } from "@/components/ui/alert";
 import { reportDone, reportError } from "@/lib/feedback";
-import { formatWorkspaceDateTime, type WorkspaceRegion } from "@/lib/date-time";
+import {
+  formatWorkspaceDateTime,
+  type WorkspaceRegion,
+} from "@/lib/date-time-display";
 import { manageWorkspaceOptions } from "../../manage/adapters/manage-queries";
 import {
   useVerifiedWorkspaceUserId,

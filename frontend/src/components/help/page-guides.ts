@@ -26,9 +26,10 @@ export const PAGE_GUIDES = {
   comms: {
     title: "OpenComms",
     entries: [
-      "OpenComms is an example messaging screen, not a connected organization messaging service.",
-      "Explore example conversations and messages to see how the screen works. Changes last until you close this tab.",
-      "Example contacts and conversations do not grant access to real people, records, or private files.",
+      "OpenComms reads conversations and messages from the current organization's server. Your access determines which conversations you can open.",
+      "A message is sent only after the server accepts it. If it is marked Not sent, Retry keeps the original send identity and your draft stays available.",
+      "People, linked records and files keep their own access checks. Opening a conversation does not grant access to everything linked from it.",
+      "Channel templates, settings history and join-request tools temporarily use a separate labeled example workspace. Those simulated changes are not saved to your organization.",
     ],
   },
   access: {

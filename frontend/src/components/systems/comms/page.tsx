@@ -1,5 +1,6 @@
 "use client";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useUserPreferences } from "@/components/theme-provider";
 import { commsShortcutAction } from "@/lib/shortcuts";
 import {
@@ -32,9 +33,15 @@ import { CommsLayout, CommsSkeleton } from "./components/comms-layout";
 import { ConversationList } from "./components/conversation-list";
 import { ConversationHeader } from "./components/conversation-header";
 import { ConversationView } from "./components/conversation-view";
-import { RightPane } from "./components/right-pane";
 import { CommsDialogs, useCommsDialogs } from "./components/comms-dialogs";
-import { CommsDestinations } from "./components/comms-destinations";
+const RightPane = dynamic(() =>
+  import("./components/right-pane").then((module) => module.RightPane),
+);
+const CommsDestinations = dynamic(() =>
+  import("./components/comms-destinations").then(
+    (module) => module.CommsDestinations,
+  ),
+);
 
 function CommsScreen({
   resource,
@@ -245,7 +252,7 @@ function CommsWorkspace() {
     </CommsWorkspaceProvider>
   );
 }
-export default function SampleComms() {
+export default function Comms() {
   return (
     <Suspense fallback={<CommsSkeleton />}>
       <CommsWorkspace />

@@ -1,38 +1,87 @@
 "use client";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import {
-  useSampleCommands,
-  useSampleResource,
-  sampleOperationMessage,
-} from "../../shared/runtime/sample-async";
-import type { CommsClient } from "../contract/client";
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api";
+import type { CommsViewClient as CommsClient } from "../contract/client";
 import { useCommsClient } from "./client-context";
 
 export function useCommsCommands() {
-  const { client } = useCommsClient();
-  const latest = useRef(client);
+  const binding = useCommsClient();
+  const cache = useQueryClient();
+  const [pending] = useState(() => new Map<string, Promise<unknown>>());
+  const lifetime = useRef<AbortController | null>(null);
+  const [pendingKeys, setPendingKeys] = useState<string[]>([]);
   useLayoutEffect(() => {
-    latest.current = client;
-  }, [client]);
-  const commands = useSampleCommands();
+    const controller = new AbortController();
+    lifetime.current = controller;
+    pending.clear();
+    setPendingKeys([]);
+    return () => controller.abort();
+  }, [binding.client, pending]);
+  useEffect(() => {
+    if (!pendingKeys.length) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [pendingKeys.length]);
   const run = useCallback(
-    <T>(
+    async <T>(
       key: string,
       action: (client: CommsClient, signal: AbortSignal) => Promise<T>,
-    ) =>
-      commands.run(key, async (signal) => {
-        if (!client) throw new Error("Organization is not admitted");
-        const result = await action(client, signal);
-        await client.bootstrap({ signal });
-        if (latest.current !== client)
-          throw Object.assign(new Error("OpenComms operation cancelled"), {
-            kind: "cancelled",
-          });
-        return result;
-      }),
-    [client, commands.run],
+    ): Promise<T> => {
+      const { client, scope, live } = binding;
+      const local = lifetime.current;
+      if (!client || !scope || !local)
+        throw new Error("Organization is not admitted");
+      const signal = AbortSignal.any([scope.signal, local.signal]);
+      signal.throwIfAborted();
+      const existing = pending.get(key);
+      if (existing) return existing as Promise<T>;
+      const task = Promise.resolve().then(async () => {
+        try {
+          signal.throwIfAborted();
+          const result = await action(client, signal);
+          signal.throwIfAborted();
+          // Follow-up reads never turn an accepted command into a failed write.
+          if (live) void live.refresh().catch(() => {});
+          else {
+            void cache.invalidateQueries({
+              queryKey: scope.keys.bootstrap,
+              exact: true,
+            });
+            void cache.invalidateQueries({
+              queryKey: scope.keys.all,
+              predicate: (query) => query.queryKey[5] === "read",
+            });
+          }
+          return result;
+        } finally {
+          if (!local.signal.aborted) {
+            pending.delete(key);
+            setPendingKeys([...pending.keys()]);
+          }
+        }
+      });
+      pending.set(key, task);
+      setPendingKeys([...pending.keys()]);
+      return task;
+    },
+    [binding, cache, pending],
   );
-  return { ...commands, run };
+  return {
+    run,
+    pendingKeys,
+    isPending: (key?: string) => (key ? pending.has(key) : pending.size > 0),
+  };
 }
 export function messageFromCommsError(
   error: unknown,
@@ -45,52 +94,67 @@ export function messageFromCommsError(
     error.kind === "cancelled"
   )
     return "The workspace changed before this operation finished. Try again.";
-  return sampleOperationMessage(error, fallback);
+  return fallback;
+}
+
+export function useCommsRefusals() {
+  const { scope } = useCommsClient();
+  const state = useQuery({
+    ...(scope?.refusalOptions() ?? {
+      queryKey: ["comms-refusal", "unadmitted", "unadmitted"] as const,
+      queryFn: async (): Promise<Record<string, boolean>> => ({}),
+      enabled: false,
+    }),
+    select: (flags: Record<string, boolean>) => flags,
+  });
+  return state.data;
 }
 
 export function useCommsRead<T>(
   key: string,
   load: (client: CommsClient, signal: AbortSignal) => Promise<T>,
+  enabled = true,
 ) {
   const binding = useCommsClient();
-  const [refused, setRefused] = useState(false);
-  const result = useSampleResource<{
-    client: CommsClient;
-    key: string;
-    value: T;
-  }>({
-    keys: ["comms-memory-v1"],
-    queryKey: `${binding.generation}:${key}`,
-    load: async (signal) => {
-      if (!binding.client) throw new Error("Organization is not admitted");
-      try {
-        const value = await load(binding.client, signal);
-        if (!signal.aborted) setRefused(false);
-        return { client: binding.client, key, value };
-      } catch (error) {
-        if (!signal.aborted && isCommsReadRefusal(error)) setRefused(true);
-        throw error;
-      }
+  const scope = binding.scope;
+  const result = useQuery({
+    queryKey: scope
+      ? [...scope.keys.conversation(key), "read"]
+      : ["comms-unadmitted", key],
+    enabled: enabled && !!binding.client && !!scope && !binding.error,
+    queryFn: ({ signal }) => {
+      if (!scope || !binding.client)
+        throw new Error("Organization is not admitted");
+      return scope.read(key, (signal) => load(binding.client!, signal), signal);
     },
   });
+  const refusals = useCommsRefusals();
+  const refused =
+    refusals?.bootstrap || refusals?.[key] || scope?.isRefused(key);
+  const error =
+    binding.error ||
+    (result.isError
+      ? messageFromCommsError(
+          result.error,
+          "This data could not be loaded. Try again.",
+        )
+      : "");
   return {
-    ...result,
-    data:
-      !refused &&
-      binding.client &&
-      result.data?.client === binding.client &&
-      result.data.key === key
-        ? result.data.value
-        : undefined,
-    error: binding.error || result.error,
-    status: binding.error
-      ? "error"
-      : !binding.client
-        ? "loading"
-        : result.status,
+    data: binding.client && !refused ? result.data : undefined,
+    error,
+    status: error
+      ? ("error" as const)
+      : !binding.client || result.isPending
+        ? ("loading" as const)
+        : ("ready" as const),
+    refreshing: result.isFetching && !result.isPending,
+    reload: () => {
+      void result.refetch();
+    },
   };
 }
 export function isCommsReadRefusal(error: unknown): boolean {
+  if (error instanceof ApiError) return [401, 403, 404].includes(error.status);
   return (
     typeof error === "object" &&
     error !== null &&

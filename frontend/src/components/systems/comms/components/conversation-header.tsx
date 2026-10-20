@@ -198,7 +198,7 @@ export function ConversationHeader({
                 inactive: thread.resolved,
                 metadata: (
                   <>
-                    {thread.replies.length} replies ·{" "}
+                    {thread.replyCount ?? thread.replies.length} replies ·{" "}
                     {thread.resolved ? "Resolved" : "Active"}
                   </>
                 ),

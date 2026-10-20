@@ -17,7 +17,7 @@ import {
 import type { CommsPreferences } from "../domain/configuration";
 import { useCommsRead } from "./runtime";
 import { useCommsClient } from "./client-context";
-import type { CommsClient } from "../contract/client";
+import type { CommsViewClient as CommsClient } from "../contract/client";
 
 export function useCommsNavigationState(
   firstConversation = "",

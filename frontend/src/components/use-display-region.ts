@@ -3,7 +3,7 @@
 import { useUserPreferences } from "@/components/theme-provider";
 import { useQuery } from "@tanstack/react-query";
 import { workspaceCalendarQueryOptions } from "@/components/systems/manage/adapters/workspace-api";
-import { isIanaTimezone, type WorkspaceRegion } from "@/lib/date-time";
+import { isIanaTimezone, type WorkspaceRegion } from "@/lib/date-time-display";
 
 /** Presentation only: callers retain the original workspace query/input zone. */
 export function useDisplayRegion<T extends WorkspaceRegion>(

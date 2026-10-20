@@ -1,27 +1,30 @@
 "use client";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
-import { useSampleResource } from "../../shared/runtime/sample-async";
 import { createCommsConfiguration } from "../domain/configuration-model";
 import type {
   Bootstrap,
   CapabilityCheck,
   Member,
   Settings,
-  HistoryPage,
 } from "../contract/types";
 import type { Presence } from "../domain/view-model";
 import { useCommsClient } from "./client-context";
 import { loadWorkspace } from "./workspace-view";
-import { isCommsReadRefusal } from "./runtime";
+import { useCommsRead, useCommsRefusals } from "./runtime";
 type CommsWorkspace = Awaited<ReturnType<typeof loadWorkspace>>;
 
 const empty = {
   client: null,
-  historyPages: {} as Record<string, HistoryPage>,
   bootstrap: undefined as Bootstrap | undefined,
   presence: {} as Presence,
-  removedCount: 0,
   configuration: createCommsConfiguration(),
   people: [],
   roles: [],
@@ -39,42 +42,23 @@ const empty = {
 
 export function useCommsWorkspace() {
   const binding = useCommsClient();
-  const [refused, setRefused] = useState(false);
   const [lastGood, setLastGood] = useState<CommsWorkspace>();
-  const resource = useSampleResource<CommsWorkspace>({
-    keys: ["comms-memory-v1"],
-    queryKey: binding.client
-      ? `${binding.client.context.user_id}:${binding.client.context.org_id}:${binding.generation}`
-      : "unadmitted",
-    load: async (signal) => {
-      if (!binding.client)
-        return Promise.reject(new Error("Organization is not admitted"));
-      try {
-        const value = await loadWorkspace(
-          binding.client,
-          signal,
-          binding.groups,
-        );
-        if (!signal.aborted) {
-          setRefused(false);
-          setLastGood(value);
-        }
-        return value;
-      } catch (error) {
-        if (!signal.aborted && isCommsReadRefusal(error)) setRefused(true);
-        throw error;
-      }
-    },
-  });
+  const resource = useCommsRead(
+    `workspace:${binding.groups.map((group) => group.id).join(",")}`,
+    (client, signal) => loadWorkspace(client, signal, binding.groups),
+  );
+  useLayoutEffect(() => {
+    if (resource.data) setLastGood(resource.data);
+  }, [resource.data]);
   const data =
-    !refused && binding.client && resource.data?.client === binding.client
+    binding.client && resource.data?.client === binding.client
       ? resource.data
       : undefined;
   return {
     commsResource: {
       ...resource,
       data,
-      hydrated: lastGood !== undefined,
+      hydrated: data !== undefined || lastGood !== undefined,
       status: binding.error
         ? "error"
         : !binding.client
@@ -107,7 +91,52 @@ export function CommsWorkspaceProvider({
 }
 export function useCommsWorkspaceView() {
   const value = useContext(WorkspaceContext);
+  const refusals = useCommsRefusals();
+  const visible = useMemo(() => {
+    if (!value || !refusals || !Object.values(refusals).some(Boolean))
+      return value;
+    const allowed = (id: string) => !refusals.bootstrap && !refusals[id];
+    const conversations = value.bootstrap?.conversations.filter((row) =>
+      allowed(row.conversation.id),
+    );
+    const members = Object.fromEntries(
+      Object.entries(value.members).filter(([id]) => allowed(id)),
+    );
+    const people = new Set(
+      Object.values(members).flatMap((rows) =>
+        rows.map((person) => person.user_id),
+      ),
+    );
+    const messages = value.messages.filter((message) =>
+      allowed(message.conversation),
+    );
+    const records = new Set(
+      messages.flatMap((message) =>
+        message.recordId ? [message.recordId] : [],
+      ),
+    );
+    return {
+      ...value,
+      bootstrap: value.bootstrap && {
+        ...value.bootstrap,
+        conversations: conversations ?? [],
+      },
+      channels: value.channels.filter((channel) => allowed(channel.id)),
+      directs: value.directs.filter((direct) => allowed(direct.id)),
+      messages,
+      members,
+      threads: value.threads.filter((thread) => allowed(thread.conversation)),
+      checks: Object.fromEntries(
+        Object.entries(value.checks).filter(([id]) => allowed(id)),
+      ),
+      effective: Object.fromEntries(
+        Object.entries(value.effective).filter(([id]) => allowed(id)),
+      ),
+      people: value.people.filter((person) => people.has(person.id)),
+      records: value.records.filter((record) => records.has(record.id)),
+    };
+  }, [value, refusals]);
   if (!value)
     throw new Error("OpenComms requires its client-resolved workspace");
-  return value;
+  return visible!;
 }

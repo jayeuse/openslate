@@ -62,7 +62,7 @@ export function GroupAccessSummary({
         <h3 className="text-sm font-semibold">Access by group</h3>
         <p className="text-muted-foreground mt-1 text-xs">
           {scope === "channel"
-            ? "Saved group access is enforced on local sample conversations. Guests remain read-only."
+            ? "Saved group access applies to this conversation. Guests remain read-only."
             : scope === "category"
               ? categoryGroup
                 ? `This category belongs to the ${categoryGroup.name} group. New channels here start with that group.`

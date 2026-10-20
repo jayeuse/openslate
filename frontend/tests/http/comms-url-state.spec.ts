@@ -7,10 +7,25 @@ import {
 } from "./helpers/test";
 import type { Page } from "@playwright/test";
 import { wireWorkspace } from "../helpers/wire";
+import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
+import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 
 const userId = "00000000-0000-4000-8000-000000000101";
 test.beforeEach(async ({ page }) => {
   await signedInAs(page, { id: userId, role: "admin" });
+  const owner = { user_id: userId, org_id: defaultOrganization.org_id };
+  await installCommsLiveApi(page, {
+    userId,
+    organizationId: owner.org_id,
+    runtime: createMemoryCommsRuntime({
+      owner,
+      initial: createMemorySeed(owner, {
+        role: "admin",
+        display_name: "URL owner",
+      }),
+    }),
+  });
 });
 
 async function createChannel(page: Page) {
@@ -246,6 +261,18 @@ test("Comms does not substitute content for unknown or another organization's co
       }),
     }),
   );
+  const otherOwner = { user_id: userId, org_id: orgB.org_id };
+  await installCommsLiveApi(page, {
+    userId,
+    organizationId: otherOwner.org_id,
+    runtime: createMemoryCommsRuntime({
+      owner: otherOwner,
+      initial: createMemorySeed(otherOwner, {
+        role: "admin",
+        display_name: "Other organization owner",
+      }),
+    }),
+  });
   await page.goto("/comms?conversation=unknown-conversation");
   await expect(
     page.getByText("This conversation is not available", { exact: true }),

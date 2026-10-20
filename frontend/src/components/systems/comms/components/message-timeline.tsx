@@ -129,6 +129,7 @@ type TimelineProps = {
   hasOlder?: boolean;
   viewportRef?: RefObject<HTMLDivElement | null>;
   restoreAnchor?: (align: (id: string, top: number) => boolean) => void;
+  restoreId?: string;
   targetId?: string;
   followLatest?: boolean;
   header?: ReactNode;
@@ -282,6 +283,7 @@ export function MessageTimeline(props: TimelineProps) {
       messages={visibleMessages}
       viewportRef={props.viewportRef}
       restoreAnchor={props.restoreAnchor}
+      restoreId={props.restoreId}
       targetId={props.targetId}
       followLatest={props.followLatest}
       retainedId={editing}
@@ -659,7 +661,7 @@ const TimelineRow = memo(function TimelineRow({
                 <AttachmentContent>
                   <AttachmentTitle>{file.name}</AttachmentTitle>
                   <AttachmentDescription className="whitespace-normal">
-                    {formatFileSize(file.size)} · Local sample attachment
+                    {formatFileSize(file.size)} · Uploaded attachment
                   </AttachmentDescription>
                   {!settings.fileDownloads || !allowDownload ? (
                     <p className="text-muted-foreground mt-1 text-xs">
@@ -822,7 +824,7 @@ const TimelineRow = memo(function TimelineRow({
                 onClick={() => onThread(message)}
               >
                 <MessagesSquare className="size-3" />
-                {thread.replies.length} replies
+                {thread.replyCount ?? thread.replies.length} replies
                 {thread.resolved ? " · Resolved" : ""}
               </Button>
             )}

@@ -48,7 +48,6 @@ export function useCommsConversation(selected: string) {
       canManageChannel: check?.capabilities.manageChannel.allowed ?? false,
       canCreate: check?.capabilities.createChannel.allowed ?? false,
       canAdminister: check?.capabilities.manageWorkspace.allowed ?? false,
-      recoverableCount: workspace.removedCount,
     },
     identity: {
       people: workspace.people,

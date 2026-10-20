@@ -9,7 +9,6 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Action } from "../../shared/components/ui";
-import { DirectDialog } from "./direct-dialog";
 import {
   ConfirmActionDialog,
   type ConfirmActionRequest,
@@ -30,6 +29,9 @@ import type { OpenWorkspaceSetting } from "./comms-menu";
 
 const ChannelDialog = dynamic(() =>
   import("./channel-dialog").then((module) => module.ChannelDialog),
+);
+const DirectDialog = dynamic(() =>
+  import("./direct-dialog").then((module) => module.DirectDialog),
 );
 const CommsSettingsDialog = dynamic(() =>
   import("./settings-dialog").then((module) => module.CommsSettingsDialog),
@@ -255,7 +257,8 @@ export function CommsDialogs({
               inactive: thread.resolved,
               metadata: (
                 <>
-                  #{channel.name} · {thread.replies.length} replies
+                  #{channel.name} · {thread.replyCount ?? thread.replies.length}{" "}
+                  replies
                 </>
               ),
             }))}

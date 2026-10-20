@@ -1,4 +1,4 @@
-import type { CommsClient } from "../contract/client";
+import type { CommsViewClient as CommsClient } from "../contract/client";
 import type * as C from "../contract/types";
 import type { Person } from "../../shared/data/sample-people";
 import type { SampleRecord } from "../../shared/data/sample-data";

@@ -1,18 +1,20 @@
 "use client";
-
 import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useLayoutEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authMeOptions } from "../../openview/adapters/openview-queries";
-import { useSampleRuntime } from "../../shared/runtime/sample-state";
+import {
+  listAccessGroups,
+  listAccessDepartments,
+  listAccessModules,
+} from "../../access/state/api";
+import { currentOrganizationId } from "@/lib/organization-context";
 import {
   registerWorkspaceSessionClear,
   useVerifiedWorkspaceOrganizationId,
@@ -20,16 +22,17 @@ import {
   useWorkspaceInteractionSuspended,
 } from "../../shared/runtime/workspace-identity";
 import {
-  createMemoryCommsRuntime,
-  type MemoryCommsRuntime,
-} from "../adapters/memory-client";
-import type { CommsClient } from "../contract/client";
+  createLiveCommsRuntime,
+  type LiveCommsRuntime,
+} from "../adapters/live-runtime";
+import type { createCommsQueryScope } from "../adapters/comms-queries";
+import type { CommsViewClient } from "../contract/client";
 import type { Bootstrap } from "../contract/types";
-import { createMemorySeed } from "../memory/seed";
-import { releaseAllLocalAttachments } from "../../shared/runtime/local-attachments";
 import type { CommsGroup } from "../domain/groups";
+import { complete } from "./workspace-view";
+import { clearCommsDraftTextStore } from "./draft-text";
 
-type ClientState = {
+export type CommsClientState = {
   organizationName: string | undefined;
   groups: CommsGroup[];
   catalog: {
@@ -38,25 +41,30 @@ type ClientState = {
     fields: { id: string; label: string }[];
   };
   generation: number;
-  client: CommsClient | null;
+  client: CommsViewClient | null;
+  live: LiveCommsRuntime | null;
+  scope: ReturnType<typeof createCommsQueryScope> | null;
   bootstrap: Bootstrap | undefined;
   error: string;
   reload: () => void;
 };
-const ClientContext = createContext<ClientState | null>(null);
-const snapshotKey = "comms-memory-v1";
+const ClientContext = createContext<CommsClientState | null>(null);
+export const CommsClientStateProvider = ClientContext.Provider;
+const emptyCatalog: CommsClientState["catalog"] = {
+  departments: [],
+  modules: [],
+  fields: [],
+};
 
-/** SampleProvider persists one canonical snapshot; consumers only receive the client. */
 export function CommsClientProvider({ children }: { children: ReactNode }) {
-  const userId = useVerifiedWorkspaceUserId();
-  const orgId = useVerifiedWorkspaceOrganizationId();
+  const userId = useVerifiedWorkspaceUserId(),
+    orgId = useVerifiedWorkspaceOrganizationId();
   return (
     <OwnedClient key={`${userId}:${orgId}`} userId={userId} orgId={orgId}>
       {children}
     </OwnedClient>
   );
 }
-
 function OwnedClient({
   userId,
   orgId,
@@ -66,215 +74,160 @@ function OwnedClient({
   orgId: string;
   children: ReactNode;
 }) {
-  const bridge = useSampleRuntime();
-  const queryClient = useQueryClient();
+  const cache = useQueryClient();
   const suspended = useWorkspaceInteractionSuspended();
-  // Observe the shell's identity cache, never create a second identity request/key.
   const identity = useQuery({ ...authMeOptions(), enabled: false });
-  const owner = useRef<MemoryCommsRuntime | null>(null);
-  const lifetime = useRef(0);
-  const [groups, setGroups] = useState<CommsGroup[]>([]);
-  const [catalog, setCatalog] = useState<ClientState["catalog"]>({
-    departments: [],
-    modules: [],
-    fields: [],
-  });
-  const stopPersistence = useRef<(() => void) | undefined>(undefined);
-  const admittedClient = useRef<CommsClient | null>(null);
-  const readSequence = useRef(0);
-  const [client, setClient] = useState<CommsClient | null>(null);
-  const [generation, setGeneration] = useState(0);
-  const [bootstrap, setBootstrap] = useState<Bootstrap>();
+  const [runtime, setRuntime] = useState<LiveCommsRuntime | null>(null);
   const [error, setError] = useState("");
-  const [refresh, setRefresh] = useState(0);
-  const reload = useCallback(() => setRefresh((value) => value + 1), []);
-  const readBootstrap = useCallback(async (current: CommsClient) => {
-    const sequence = ++readSequence.current;
-    try {
-      const value = await current.bootstrap();
-      if (
-        admittedClient.current !== current ||
-        sequence !== readSequence.current
-      )
-        return;
-      setBootstrap(value);
-      setError("");
-    } catch {
-      if (
-        admittedClient.current !== current ||
-        sequence !== readSequence.current
-      )
-        return;
-      setBootstrap(undefined);
-      setError("Conversations could not be loaded. Try again.");
-    }
-  }, []);
-
+  const [generation, setGeneration] = useState(0);
+  const reload = useCallback(() => setGeneration((value) => value + 1), []);
+  const role = identity.data?.currentOrganization?.role;
+  const organization = identity.data?.currentOrganization?.orgId;
   useLayoutEffect(() => {
+    const clear = () => {
+      clearCommsDraftTextStore(userId, orgId);
+    };
+    const unregister = registerWorkspaceSessionClear(userId, clear);
+    return () => {
+      unregister();
+      if (currentOrganizationId() !== orgId) clear();
+    };
+  }, [userId, orgId]);
+  useLayoutEffect(() => {
+    let retired = false;
+    let owned: LiveCommsRuntime | undefined;
     const dispose = () => {
-      lifetime.current += 1;
-      admittedClient.current = null;
-      readSequence.current += 1;
-      stopPersistence.current?.();
-      stopPersistence.current = undefined;
-      owner.current?.dispose();
-      owner.current = null;
-      releaseAllLocalAttachments();
+      retired = true;
+      owned?.dispose();
     };
     const unregister = registerWorkspaceSessionClear(userId, dispose);
+    setRuntime(null);
+    setError("");
+    if (!suspended && !identity.isError)
+      void cache
+        .cancelQueries({ queryKey: authMeOptions().queryKey, exact: true })
+        .then(() =>
+          retired
+            ? undefined
+            : cache.fetchQuery({ ...authMeOptions(), staleTime: 0 }),
+        )
+        .then((account) => {
+          if (retired || !account) return;
+          if (
+            account.id !== userId ||
+            account.currentOrganization?.orgId !== orgId
+          )
+            throw new Error("Organization changed");
+          owned = createLiveCommsRuntime(cache, {
+            user_id: userId,
+            org_id: orgId,
+          });
+          setRuntime(owned);
+          void owned.start().catch(() => {});
+        })
+        .catch(() => {
+          if (!retired)
+            setError("Your organization could not be verified. Try again.");
+        });
     return () => {
       unregister();
       dispose();
     };
-  }, [userId]);
-
-  const observedRole = identity.data?.currentOrganization?.role;
-  const observedOrganization = identity.data?.currentOrganization?.orgId;
-  useLayoutEffect(() => {
-    let retired = false;
-    const started = lifetime.current;
-    const active = () => !retired && lifetime.current === started;
-    admittedClient.current = null;
-    readSequence.current += 1;
-    const ticket = owner.current?.suspendAdmission();
-    setClient(null);
-    setBootstrap(undefined);
-    setError("");
-    if (suspended) return;
-
-    // A pre-verification request cannot reopen this admission cycle. This is the
-    // same cancellation/fresh-read boundary used by the organization editor.
-    void queryClient
-      .cancelQueries({ queryKey: authMeOptions().queryKey, exact: true })
-      .then(() =>
-        !active()
-          ? undefined
-          : queryClient.fetchQuery({ ...authMeOptions(), staleTime: 0 }),
-      )
-      .then((account) => {
-        if (!active() || !account) return;
-        const membership = account.currentOrganization;
-        if (account.id !== userId || membership?.orgId !== orgId) {
-          setError("Your organization could not be verified. Try again.");
-          return;
-        }
-        const context = { user_id: userId, org_id: orgId };
-        const actor = {
-          role: membership.role,
-          display_name: account.displayName ?? account.username,
-        };
-        let runtime = owner.current;
-        if (!runtime) {
-          const initial = createMemorySeed(context, actor);
-          runtime = createMemoryCommsRuntime({
-            owner: context,
-            initial,
-            snapshot: bridge.getSnapshot()[snapshotKey],
-          });
-          owner.current = runtime;
-          setGroups(
-            Object.values(initial.groups).map((group, index) => ({
+  }, [
+    cache,
+    userId,
+    orgId,
+    suspended,
+    identity.isError,
+    role,
+    organization,
+    generation,
+  ]);
+  const admitted =
+    !suspended && !identity.isError && runtime && !runtime.scope.signal.aborted
+      ? runtime
+      : null;
+  const bootstrap = useQuery({
+    queryKey: admitted?.scope.keys.bootstrap ?? [
+      "comms",
+      userId,
+      orgId,
+      "bootstrap",
+    ],
+    queryFn: admitted?.scope.bootstrapOptions().queryFn,
+    enabled: !!admitted,
+  });
+  const catalog = useQuery({
+    queryKey: [
+      ...(admitted?.scope.keys.all ?? ["comms-unadmitted", userId, orgId]),
+      "catalog",
+    ],
+    enabled: !!admitted && !!bootstrap.data,
+    queryFn: ({ signal }) => {
+      if (!admitted) throw new Error("Organization is not admitted");
+      return admitted.scope.read(
+        "catalog",
+        async (signal) => {
+          if (currentOrganizationId() !== orgId)
+            throw new DOMException("Organization changed", "AbortError");
+          const [groups, departments, modules] = await Promise.all([
+            complete((offset) =>
+              listAccessGroups({ limit: 100, offset, signal }),
+            ),
+            complete((offset) =>
+              listAccessDepartments({ limit: 100, offset, signal }),
+            ),
+            complete((offset) =>
+              listAccessModules({ limit: 100, offset, signal }),
+            ),
+          ]);
+          if (currentOrganizationId() !== orgId)
+            throw new DOMException("Organization changed", "AbortError");
+          return {
+            groups: groups.map((group): CommsGroup => ({
               id: group.id,
               name: group.name,
-              tone: ((index % 4) + 1) as CommsGroup["tone"],
-              memberIds: Object.values(initial.people)
-                .filter((person) => person.group_ids.includes(group.id))
-                .map((person) => person.user_id),
+              memberIds: group.member_ids,
+              tone: 0,
             })),
-          );
-          setCatalog({
-            departments: Object.values(initial.departments),
-            modules: Object.values(initial.modules),
-            fields: Object.values(initial.records).flatMap((record) =>
-              record.fields.map((field) => ({
-                id: field.field_id,
-                label: field.label,
+            catalog: {
+              departments: departments.map((row) => ({
+                id: row.id,
+                name: row.department_name,
               })),
-            ),
-          });
-          const currentOwner = runtime;
-          const persist = () => {
-            if (owner.current !== currentOwner) return;
-            bridge.commit((draft) => {
-              draft.update<unknown>(
-                snapshotKey,
-                null,
-                currentOwner.exportSnapshot(),
-              );
-            });
-            if (admittedClient.current)
-              void readBootstrap(admittedClient.current);
+              modules: modules.map((row) => ({
+                id: row.id,
+                name: row.module_name,
+              })),
+              fields: [],
+            },
           };
-          stopPersistence.current = runtime.subscribe(persist);
-          persist();
-        } else if (
-          ticket === undefined ||
-          !runtime.acceptAdmission(ticket, { context, ...actor })
-        ) {
-          setError("Your organization could not be verified. Try again.");
-          return;
-        }
-        runtime.refreshOwnerDisplayName(context, actor.display_name);
-        const current = runtime.client;
-        admittedClient.current = current;
-        setClient(current);
-        setGeneration((value) => value + 1);
-        void readBootstrap(current);
-      })
-      .catch(() => {
-        if (active())
-          setError("Your organization could not be verified. Try again.");
-      });
-    return () => {
-      retired = true;
-    };
-  }, [
-    bridge,
-    orgId,
-    userId,
-    queryClient,
-    suspended,
-    observedRole,
-    observedOrganization,
-    refresh,
-    readBootstrap,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!identity.isError || !admittedClient.current) return;
-    admittedClient.current = null;
-    readSequence.current += 1;
-    owner.current?.suspendAdmission();
-    setClient(null);
-    setBootstrap(undefined);
-    setError("Your organization could not be verified. Try again.");
-  }, [identity.isError]);
-
-  useEffect(() => {
-    const account = identity.data;
-    if (account?.id === userId && account.currentOrganization?.orgId === orgId)
-      owner.current?.refreshOwnerDisplayName(
-        { user_id: userId, org_id: orgId },
-        account.displayName ?? account.username,
+        },
+        signal,
       );
-  }, [identity.data, userId, orgId]);
-
+    },
+  });
   return (
     <ClientContext.Provider
       value={{
         organizationName:
-          !suspended &&
-          !identity.isError &&
-          identity.data?.id === userId &&
-          identity.data.currentOrganization?.orgId === orgId
+          identity.data?.currentOrganization?.orgId === orgId
             ? identity.data.currentOrganization.name
             : undefined,
-        groups,
-        catalog,
+        groups: admitted ? (catalog.data?.groups ?? []) : [],
+        catalog: admitted
+          ? (catalog.data?.catalog ?? emptyCatalog)
+          : emptyCatalog,
         generation,
-        client: suspended || identity.isError ? null : client,
-        bootstrap: suspended || identity.isError ? undefined : bootstrap,
-        error,
+        client: admitted?.client ?? null,
+        live: admitted,
+        scope: admitted?.scope ?? null,
+        bootstrap: admitted ? bootstrap.data : undefined,
+        error:
+          error ||
+          (admitted && bootstrap.isError
+            ? "Conversations could not be loaded. Try again."
+            : ""),
         reload,
       }}
     >
@@ -282,10 +235,8 @@ function OwnedClient({
     </ClientContext.Provider>
   );
 }
-
 export function useCommsClient() {
-  const context = useContext(ClientContext);
-  if (!context)
-    throw new Error("OpenComms requires its scoped client provider");
-  return context;
+  const value = useContext(ClientContext);
+  if (!value) throw new Error("OpenComms requires its admitted client");
+  return value;
 }

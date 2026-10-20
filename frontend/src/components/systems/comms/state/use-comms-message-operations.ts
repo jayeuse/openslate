@@ -1,6 +1,6 @@
 "use client";
 import type { Dispatch, SetStateAction } from "react";
-import type { CommsClient } from "../contract/client";
+import type { CommsViewClient as CommsClient } from "../contract/client";
 import type { MessageDraft } from "../components/message-shared";
 import type { Message } from "../domain/view-model";
 import { messageFromCommsError, type useCommsCommands } from "./runtime";

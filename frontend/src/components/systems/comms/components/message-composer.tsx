@@ -1,12 +1,5 @@
 import type { Person } from "../../shared/data/sample-people";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Clock, Paperclip, Reply, Send, X } from "lucide-react";
 import type { SampleRecord } from "../../shared/data/sample-data";
@@ -36,19 +29,13 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group";
 import { Choice } from "../../shared/components/ui";
-import {
-  useSampleRuntime,
-  useSampleState,
-} from "../../shared/runtime/sample-state";
+import { z } from "zod";
+import { useCommsDraftValue } from "../state/draft-values";
 import {
   useVerifiedWorkspaceUserId,
   useVerifiedWorkspaceOrganizationId,
 } from "../../shared/runtime/workspace-identity";
-import {
-  legacyCommsDraftTextKey,
-  ownedCommsDraftTextId,
-  useCommsDraftText,
-} from "../state/draft-text";
+import { ownedCommsDraftTextId, useCommsDraftText } from "../state/draft-text";
 import {
   localAttachmentUrl,
   releaseLocalAttachment,
@@ -71,6 +58,24 @@ import { useComposerUploads } from "../state/use-composer-uploads";
 import { useCommsWorkspaceView } from "../state/use-comms-workspace";
 
 type FilePreview = LocalAttachment & { previewUrl?: string };
+const filesSchema = z.array(
+  z.strictObject({
+    id: z.uuid(),
+    name: z.string(),
+    size: z.number().nonnegative(),
+    type: z.string(),
+  }),
+);
+const mentionsSchema = z.array(
+  z.strictObject({ id: z.string(), name: z.string() }),
+);
+const identitySchema = z
+  .strictObject({ fingerprint: z.string(), key: z.uuid() })
+  .nullable();
+const stringSchema = z.string();
+const booleanSchema = z.boolean();
+const noFiles: LocalAttachment[] = [];
+const noMentions: { id: string; name: string }[] = [];
 export function MessageComposer({
   id,
   conversationId = id,
@@ -110,39 +115,27 @@ export function MessageComposer({
   preferences?: CommsPreferences;
   settings?: CommsSettings;
 }) {
-  const { client } = useCommsClient();
+  const { client, live } = useCommsClient();
   const workspace = useCommsWorkspaceView();
-  const sendIdentity = useRef<{ draft: string; key: string } | null>(null);
+  const [sendIdentity, setSendIdentity, sendJournal] = useCommsDraftValue(
+    `identity:${id}`,
+    identitySchema,
+    null,
+  );
   const lifetime = useRef<AbortController | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
     return () => controller.abort();
   }, []);
-  const runtime = useSampleRuntime();
   const userId = useVerifiedWorkspaceUserId();
   const organizationId = useVerifiedWorkspaceOrganizationId();
   const ownedComposerId = ownedCommsDraftTextId(userId, id, organizationId);
-  const legacyKey = legacyCommsDraftTextKey(id);
-  const legacyValue = runtime.read(legacyKey, "");
-  const removeLegacy = useCallback(
-    () =>
-      runtime.execute(
-        (draft) => {
-          draft.remove(legacyKey);
-        },
-        { keys: [legacyKey] },
-      ),
-    [legacyKey, runtime],
-  );
-  const [text, setText, draftText] = useCommsDraftText(
-    ownedComposerId,
-    legacyValue,
-    removeLegacy,
-  );
-  const [savedFiles, setSavedFiles] = useSampleState<FilePreview[]>(
+  const [text, setText, draftText] = useCommsDraftText(ownedComposerId, "");
+  const [savedFiles, setSavedFiles] = useCommsDraftValue(
     `comms-draft-files-${id}`,
-    [],
+    filesSchema,
+    noFiles,
   );
   const files = savedFiles.map((file) => ({
     ...file,
@@ -159,24 +152,29 @@ export function MessageComposer({
       ),
     );
   }
-  const [recordId, setRecordId] = useSampleState(
+  const [recordId, setRecordId] = useCommsDraftValue(
     `comms-draft-record-${id}`,
+    stringSchema,
     "",
   );
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const [recordPickerOpen, setRecordPickerOpen] = useState(false);
-  const [scheduleOpen, setScheduleOpen] = useSampleState(
+  const [scheduleOpen, setScheduleOpen] = useCommsDraftValue(
     `comms-draft-schedule-open-${id}`,
+    booleanSchema,
     false,
   );
-  const [scheduleAt, setScheduleAt] = useSampleState(
+  const [scheduleAt, setScheduleAt] = useCommsDraftValue(
     `comms-draft-schedule-at-${id}`,
+    stringSchema,
     "",
   );
-  const [mentions, setMentions] = useSampleState<
-    { id: string; name: string }[]
-  >(`comms-draft-mentions-${id}`, []);
+  const [mentions, setMentions] = useCommsDraftValue(
+    `comms-draft-mentions-${id}`,
+    mentionsSchema,
+    noMentions,
+  );
   const [caret, setCaret] = useState(0);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [choice, setChoice] = useState(0);
@@ -408,13 +406,11 @@ export function MessageComposer({
             sendAt,
             alsoSendToChannel,
           });
-          if (sendIdentity.current?.draft !== fingerprint)
-            sendIdentity.current = {
-              draft: fingerprint,
-              key: crypto.randomUUID(),
-            };
+          if (!live) throw new Error("Live sending is not admitted");
+          const sendKey = live.outbox.identity(id, fingerprint, sendIdentity);
+          setSendIdentity({ fingerprint, key: sendKey });
           const error = await onSend({
-            clientKey: sendIdentity.current.key,
+            clientKey: sendKey,
             signal,
             sentAt: Math.round(performance.timeOrigin + event.timeStamp),
             text,
@@ -449,7 +445,8 @@ export function MessageComposer({
           setError("");
           const cleared = await draftText.clear(submittedTextRevision);
           if (!cleared) return;
-          sendIdentity.current = null;
+          setSendIdentity(null);
+          live.outbox.acknowledgeDraft(id, sendKey);
           setFiles([]);
           setRecordId("");
           setRecordPickerOpen(false);
@@ -470,7 +467,7 @@ export function MessageComposer({
           {mentionError || uploads.error || error}
         </Alert>
       )}
-      {draftText.storageUnavailable && (
+      {(draftText.storageUnavailable || sendJournal.storageUnavailable) && (
         <p role="status" className="text-muted-foreground mb-2 text-xs">
           Draft text cannot be saved in this browser. It will remain available
           until this composer is closed.
@@ -536,8 +533,7 @@ export function MessageComposer({
             disabled={!canPost || isPending}
           />
           <p className="text-muted-foreground text-xs">
-            This local example sends scheduled messages from Scheduled messages
-            → Send Now.
+            The server sends accepted scheduled messages at the chosen time.
           </p>
         </div>
       )}
@@ -631,7 +627,7 @@ export function MessageComposer({
                   <bdi>{file.name}</bdi>
                 </AttachmentTitle>
                 <AttachmentDescription>
-                  {formatFileSize(file.size)} · Local sample attachment
+                  {formatFileSize(file.size)} · Uploaded attachment
                 </AttachmentDescription>
               </AttachmentContent>
               <AttachmentActions>

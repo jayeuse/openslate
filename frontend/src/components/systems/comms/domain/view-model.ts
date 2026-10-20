@@ -54,6 +54,7 @@ export interface Thread {
   archived: boolean;
   resolved: boolean;
   replies: Message[];
+  replyCount?: number;
   subscribed: boolean;
 }
 export interface Direct {

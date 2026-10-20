@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 import { Action } from "../../shared/components/ui";
 import { RowEditMenu } from "./floating";
 import { GroupMark } from "./group-mark";
-import { SampleDataNote } from "./sample-data-note";
 import { CommsMenu } from "./comms-menu";
 import type { CommsDialogsState } from "./comms-dialogs";
 import { newChannel, threadMessages, type Thread } from "../domain/view-model";
@@ -114,9 +113,6 @@ export function ConversationList({
           </Action>
         )}
       </div>
-      <SampleDataNote className="border-b px-4 py-2 text-xs">
-        Conversations here are examples.
-      </SampleDataNote>
       <div className="px-2 pt-2">
         <QuickSwitcher rows={actions.rows} select={select} />
       </div>

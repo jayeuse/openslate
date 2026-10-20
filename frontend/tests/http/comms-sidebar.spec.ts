@@ -9,6 +9,8 @@ import { profilePreferences } from "./helpers/profile-api";
 import { wireWorkspace } from "../helpers/wire";
 import type { Page } from "@playwright/test";
 import { createMemorySeed } from "../../src/components/systems/comms/memory/seed";
+import { createMemoryCommsRuntime } from "../../src/components/systems/comms/adapters/memory-client";
+import { installCommsLiveApi } from "./helpers/comms-live-api";
 import { serializeSampleSessionSnapshot } from "../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../src/components/systems/shared/runtime/workspace-identity";
 
@@ -119,6 +121,11 @@ async function seedSidebar(
     },
     { key, value },
   );
+  await installCommsLiveApi(page, {
+    userId,
+    organizationId: owner.org_id,
+    runtime: createMemoryCommsRuntime({ owner, initial }),
+  });
   return { channel: channel.id, second };
 }
 async function rowAction(page: Page, name: string, action: string) {
@@ -156,6 +163,9 @@ for (const scenario of ["nonmembers", "empty"] as const) {
     await expect(picker).toBeEnabled();
     for (const name of ["Noah Tan", "Sofia Garcia"]) {
       await picker.click();
+      await page
+        .getByRole("combobox", { name: "Search add person", exact: true })
+        .fill(name);
       await expect(
         page.getByRole("option", { name: "Hidden person", exact: true }),
       ).toHaveCount(0);

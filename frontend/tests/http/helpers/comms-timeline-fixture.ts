@@ -6,6 +6,26 @@ import type { MemorySnapshot } from "../../../src/components/systems/comms/memor
 import { serializeSampleSessionSnapshot } from "../../../src/components/systems/shared/runtime/sample-state";
 import { workspaceSessionSnapshotStorageKey } from "../../../src/components/systems/shared/runtime/workspace-identity";
 import { defaultOrganization, signedInAs } from "./test";
+import { installCommsLiveApi } from "./comms-live-api";
+
+const liveFixtures = new WeakMap<
+  Page,
+  ReturnType<typeof createMemoryCommsRuntime>
+>();
+const liveServers = new WeakMap<
+  Page,
+  Awaited<ReturnType<typeof installCommsLiveApi>>
+>();
+export function timelineServer(page: Page) {
+  const server = liveServers.get(page);
+  if (!server) throw new Error("Timeline HTTP fixture is not installed");
+  return server;
+}
+export function readTimelineSnapshot(page: Page) {
+  const runtime = liveFixtures.get(page);
+  if (!runtime) throw new Error("Timeline HTTP fixture is not installed");
+  return runtime.exportSnapshot();
+}
 
 export const timelineId = (n: number) =>
   `78000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
@@ -99,6 +119,16 @@ export async function seedTimeline(
       if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, value);
     },
     { key, value },
+  );
+  const server = createMemoryCommsRuntime({ owner, initial, snapshot });
+  liveFixtures.set(page, server);
+  liveServers.set(
+    page,
+    await installCommsLiveApi(page, {
+      userId: owner.user_id,
+      organizationId: owner.org_id,
+      runtime: server,
+    }),
   );
   return {
     owner,

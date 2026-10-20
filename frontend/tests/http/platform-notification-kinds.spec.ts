@@ -474,9 +474,14 @@ test("Comms inbox opens a current-organization message through the shell's unsav
   });
   await expect(guard).toBeVisible();
   await expect(page).toHaveURL(/\/manage/);
+  expect([...new Set(state.sourceReads)]).toEqual([
+    `/api/comms/conversations/${id(730)}`,
+  ]);
+  const destinationBootstrap = page.waitForResponse("**/api/comms/bootstrap");
   await guard
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
+  await destinationBootstrap;
   await expect(page).toHaveURL(
     new RegExp(`/comms\\?conversation=${id(730)}&message=${id(720)}`),
   );
@@ -489,6 +494,7 @@ test("Comms inbox opens a current-organization message through the shell's unsav
   expect(state.selectedOrganizations).toEqual([id(702)]);
   expect([...new Set(state.sourceReads)]).toEqual([
     `/api/comms/conversations/${id(730)}`,
+    "/api/comms/bootstrap",
   ]);
 });
 

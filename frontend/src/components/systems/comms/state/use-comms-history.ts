@@ -1,5 +1,6 @@
 "use client";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -7,15 +8,11 @@ import {
   useState,
   type RefObject,
 } from "react";
-import type { CommsClient } from "../contract/client";
-import type {
-  HistoryPage,
-  HistoryRequest,
-  Message as WireMessage,
-} from "../contract/types";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import type { HistoryPage, HistoryRequest } from "../contract/types";
 import { useCommsClient } from "./client-context";
 import { useCommsWorkspaceView } from "./use-comms-workspace";
-import { isCommsReadRefusal, useCommsRead } from "./runtime";
+import { useCommsRead } from "./runtime";
 import { loadQuotes, messageView } from "./message-view";
 
 export function useCommsHistory(
@@ -23,32 +20,86 @@ export function useCommsHistory(
   targetId: string,
   enabled: boolean,
   viewportRef: RefObject<HTMLDivElement | null>,
+  root: string | null = null,
 ) {
-  const { client } = useCommsClient();
+  const { client, scope } = useCommsClient();
+  const cache = useQueryClient();
   const workspace = useCommsWorkspaceView();
-  const base =
-    workspace.client === client ? workspace.historyPages[id] : undefined;
-  const [cursor, setCursor] = useState<{
+  const [position, setPosition] = useState<{
     id: string;
-    request: HistoryRequest;
-    latest: boolean;
-  }>();
-  const active = cursor?.id === id ? cursor : undefined;
-  type Result = { page: HistoryPage; quotes: WireMessage[] };
-  const [good, setGood] = useState<{
-    client: CommsClient;
-    id: string;
-    result: Result;
-  }>();
-  const [refused, setRefused] = useState(false);
+    following: boolean;
+    resume?: HistoryRequest;
+    restoreId?: string;
+  }>({ id, following: true });
+  const following = position.id !== id || position.following;
+  const options = scope?.historyOptions(id, root) ?? {
+    queryKey: [
+      "comms",
+      "unadmitted",
+      "unadmitted",
+      "conversation",
+      id,
+      "history",
+      root,
+    ] as const,
+    initialPageParam: { limit: 50 } as HistoryRequest,
+    queryFn: async (): Promise<HistoryPage> => {
+      throw new Error("Organization is not admitted");
+    },
+    getPreviousPageParam: (): HistoryRequest | undefined => undefined,
+    getNextPageParam: (): HistoryRequest | undefined => undefined,
+    maxPages: 2,
+  };
+  const resource = useInfiniteQuery({
+    ...options,
+    initialPageParam:
+      position.id === id && position.resume
+        ? position.resume
+        : options.initialPageParam,
+    enabled: !!client && !!scope && enabled,
+    meta: { commsFollowLatest: following },
+  });
+  const page = useMemo((): HistoryPage | undefined => {
+    if (
+      !client ||
+      !enabled ||
+      scope?.isRefused(id) ||
+      !resource.data?.pages.length
+    )
+      return;
+    const pages = resource.data.pages;
+    const items = [
+      ...new Map(
+        pages.flatMap((page) => page.items).map((item) => [item.id, item]),
+      ).values(),
+    ].sort((a, b) => a.seq - b.seq);
+    return {
+      ...pages[0],
+      items,
+      pagination: {
+        limit: 100,
+        count: items.length,
+        first_seq: items[0]?.seq ?? null,
+        last_seq: items.at(-1)?.seq ?? null,
+        high_water_seq: Math.min(
+          ...pages.map((p) => p.pagination.high_water_seq),
+        ),
+        has_older: pages[0].pagination.has_older,
+        has_newer: pages.at(-1)!.pagination.has_newer,
+      },
+    };
+  }, [client, enabled, id, scope, resource.data]);
+  const displayed = useRef<HistoryPage | undefined>(undefined);
   const anchor = useRef<{ id: string; top: number; page: HistoryPage } | null>(
     null,
   );
-  const displayedPageRef = useRef<HistoryPage | undefined>(undefined);
-  function remember() {
-    const page = displayedPageRef.current;
-    const node = viewportRef.current;
-    if (!node || !page) return;
+  useLayoutEffect(() => {
+    displayed.current = page;
+  }, [page]);
+  const remember = useCallback(() => {
+    const node = viewportRef.current,
+      current = displayed.current;
+    if (!node || !current) return;
     const box = node.getBoundingClientRect();
     const article = [...node.querySelectorAll<HTMLElement>("article")].find(
       (item) => {
@@ -56,100 +107,109 @@ export function useCommsHistory(
         return rect.bottom > box.top && rect.top < box.bottom;
       },
     );
-    if (article)
+    if (article) {
       anchor.current = {
         id: article.id,
         top: article.getBoundingClientRect().top - box.top,
-        page,
+        page: current,
       };
-    return !!article;
-  }
-  const resource = useCommsRead(
-    `history:${id}:${JSON.stringify(active)}`,
-    async (current, signal) => {
-      if (!enabled || !active) {
-        if (!signal.aborted) setRefused(false);
-        return null;
-      }
-      try {
-        if (active.latest) anchor.current = null;
-        else if (!remember()) {
-          // A paging click can scroll its button into view before the virtual
-          // range has rendered there. Capture that range before replacing it.
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => resolve()),
-          );
-          if (signal.aborted) return null;
-          remember();
-        }
-        const page = await current.getHistory(id, active.request, { signal });
-        const quotes = new Map(
-          page.items.map((message) => [message.id, message]),
-        );
-        await loadQuotes(current, quotes, signal);
-        const result = { page, quotes: [...quotes.values()] };
-        if (!signal.aborted) {
-          setGood({ client: current, id, result });
-          setRefused(false);
-        }
-        return result;
-      } catch (error) {
-        if (!signal.aborted && isCommsReadRefusal(error)) setRefused(true);
-        throw error;
-      }
-    },
-  );
-  const result =
-    !refused && client && enabled
-      ? active
-        ? (resource.data ??
-          (good?.client === client && good.id === id ? good.result : undefined))
-        : base
-          ? { page: base, quotes: base.items }
-          : undefined
-      : undefined;
-  const page = result?.page;
+      return anchor.current;
+    }
+  }, [viewportRef]);
   useLayoutEffect(() => {
-    displayedPageRef.current = page;
-  }, [page]);
-  function request(next: HistoryRequest, latest = false) {
-    if (latest) anchor.current = null;
-    else remember();
-    if (result && client) setGood({ client, id, result });
-    const nextCursor = { id, request: next, latest };
-    if (JSON.stringify(nextCursor) === JSON.stringify(cursor))
-      resource.reload();
-    else setCursor(nextCursor);
-  }
+    const keepWindow = () => {
+      if (!client || !scope || scope.signal.aborted || !enabled || following)
+        return;
+      const saved = remember();
+      const seq = saved?.page.items.find(
+        (message) => message.id === saved.id,
+      )?.seq;
+      if (saved && seq !== undefined)
+        setPosition({
+          id,
+          following: false,
+          resume: { limit: 50, around_seq: seq },
+          restoreId: saved.id,
+        });
+    };
+    const visibility = () => {
+      if (document.visibilityState !== "visible") keepWindow();
+    };
+    window.addEventListener("blur", keepWindow);
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      window.removeEventListener("blur", keepWindow);
+      document.removeEventListener("visibilitychange", visibility);
+    };
+  }, [client, scope, enabled, following, id, remember]);
+  const replace = useCallback(
+    async (request: HistoryRequest, signal?: AbortSignal) => {
+      if (!client || !scope) return;
+      await cache.cancelQueries({
+        queryKey: scope.keys.history(id, root),
+        exact: true,
+      });
+      const result = await scope.read(
+        id,
+        (signal) =>
+          root
+            ? client.getReplies(id, root, request, { signal })
+            : client.getHistory(id, request, { signal }),
+        signal,
+      );
+      cache.setQueryData(scope.keys.history(id, root), {
+        pages: [result],
+        pageParams: [request],
+      });
+    },
+    [client, scope, cache, id, root],
+  );
   useEffect(() => {
-    if (
-      !client ||
-      !enabled ||
-      !targetId ||
-      base?.items.some((message) => message.id === targetId)
-    )
-      return;
+    if (!client || !scope || !enabled || !targetId || targetId === root) return;
     const abort = new AbortController();
-    void client
-      .getMessage(id, targetId, { signal: abort.signal })
+    void scope
+      .read(
+        id,
+        (signal) => client.getMessage(id, targetId, { signal }),
+        abort.signal,
+        false,
+      )
       .then(async ({ data }) => {
-        const seq = data.parent_id
-          ? (
-              await client.getMessage(id, data.parent_id, {
-                signal: abort.signal,
-              })
-            ).data.seq
-          : data.seq;
-        if (!abort.signal.aborted)
-          setCursor({
-            id,
-            request: { around_seq: seq, limit: 50 },
-            latest: false,
-          });
+        const target =
+          data.parent_id && !root
+            ? (
+                await client.getMessage(id, data.parent_id, {
+                  signal: abort.signal,
+                })
+              ).data
+            : data;
+        if (
+          displayed.current?.items.some((message) => message.id === target.id)
+        )
+          return;
+        remember();
+        setPosition({ id, following: false });
+        await replace({ around_seq: target.seq, limit: 50 }, abort.signal);
       })
       .catch(() => {});
     return () => abort.abort();
-  }, [client, id, targetId, enabled, base]);
+  }, [client, scope, id, root, targetId, enabled, remember, replace]);
+  const quoteIds =
+    page?.items
+      .flatMap((message) => (message.reply_to_id ? [message.reply_to_id] : []))
+      .join(",") ?? "";
+  const quotes = useCommsRead(
+    `quotes:${id}:${root ?? ""}:${quoteIds}`,
+    async (current, signal) => {
+      const values = new Map(
+        (page?.items ?? []).map((message) => [message.id, message]),
+      );
+      await loadQuotes(current, values, signal);
+      return [...values.values()].filter((message) =>
+        quoteIds.includes(message.id),
+      );
+    },
+  );
   const projected = useMemo(() => {
     const records = new Map(
       workspace.records.map((record) => [record.id, record]),
@@ -161,41 +221,44 @@ export function useCommsHistory(
       messages: (page?.items ?? []).map((message) =>
         messageView(message, people, records),
       ),
-      quotes: (result?.quotes ?? []).map((message) =>
+      quotes: (quotes.data ?? []).map((message) =>
         messageView(message, people, records),
       ),
       records: [...records.values()],
     };
-  }, [page, result?.quotes, workspace.people, workspace.records]);
+  }, [page, quotes.data, workspace.people, workspace.records]);
   return {
     ...projected,
     page,
-    followLatest: active?.latest ?? true,
-    error: resource.error,
-    loading: !!active && !resource.data && !resource.error,
-    retry: resource.reload,
-    latest: () => request({ limit: 50 }, true),
+    followLatest: following,
+    restoreId: position.id === id ? position.restoreId : undefined,
+    error: resource.isError ? "History could not be loaded. Try again." : "",
+    loading: enabled && resource.isPending,
+    retry: () => {
+      void resource.refetch();
+    },
+    latest: () => {
+      anchor.current = null;
+      setPosition({ id, following: true });
+      void replace({ limit: 50 }).catch(() => {});
+    },
     older: () => {
-      const pivot = page?.items[Math.min(50, page.items.length) - 1];
-      if (pivot) request({ before_seq: pivot.seq + 1, limit: 100 });
+      remember();
+      setPosition({ id, following: false });
+      void resource.fetchPreviousPage().catch(() => {});
     },
     newer: () => {
-      const pivot = page?.items[Math.max(0, page.items.length - 50)];
-      if (pivot) request({ after_seq: pivot.seq - 1, limit: 100 });
+      remember();
+      setPosition({ id, following: false });
+      void resource.fetchNextPage().catch(() => {});
     },
     pin: () => {
       anchor.current = null;
-      if (!active && page?.items.length)
-        request({ after_seq: page.items[0].seq - 1, limit: page.items.length });
+      setPosition({ id, following: false });
     },
     restore: (align: (id: string, top: number) => boolean) => {
       const saved = anchor.current;
-      if (
-        saved &&
-        saved.page !== page &&
-        resource.data?.page === page &&
-        saved.id !== targetId
-      )
+      if (saved && saved.page !== page && saved.id !== targetId)
         align(saved.id, saved.top);
     },
   };

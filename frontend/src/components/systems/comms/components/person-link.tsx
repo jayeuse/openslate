@@ -9,10 +9,9 @@ export function PersonLink({
   avatarOnly,
   ...props
 }: ComponentProps<typeof ProfilePopover> & { avatarOnly?: boolean }) {
-  const { client } = useCommsClient();
-  // Phase A verifies only the admitted account against core identity. A UUID
-  // from the local directory is not evidence of a real core profile.
-  return props.person.id === client?.context.user_id ? (
+  const { scope } = useCommsClient();
+  // Only live DTO identities may reach the authorized core profile boundary.
+  return scope?.kind === "live" ? (
     <PersonCardPopover
       personId={props.person.id}
       label={props.person.name}
